@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  ddm-racing:
+    build:
+      context: ./pi_controller
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=False
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./pi_controller/static:/app/static
+      - ./pi_controller/templates:/app/templates
+    restart: unless-stopped
+    networks:
+      - ddm-network
+
+  # Future: Add Redis for session storage
+  # redis:
+  #   image: redis:alpine
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - ddm-network
+
+networks:
+  ddm-network:
+    driver: bridge
