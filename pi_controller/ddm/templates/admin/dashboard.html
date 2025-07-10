@@ -191,6 +191,164 @@
             </div>
         </div>
         
+        <!-- Race Management System -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">🏁 Race Management System</h5>
+                        
+                        <!-- Race Status -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h6 class="card-title">Race Status</h6>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <span id="race-phase" class="badge bg-secondary">IDLE</span>
+                                            <span id="race-timer" class="h5 mb-0">00:00</span>
+                                        </div>
+                                        <div class="progress mt-2" style="height: 10px;">
+                                            <div id="race-progress" class="progress-bar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h6 class="card-title">Race Info</h6>
+                                        <div class="row">
+                                            <div class="col-6">
+                                                <small class="text-muted">Horses</small>
+                                                <div id="horse-count" class="h6">0</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <small class="text-muted">Bets</small>
+                                                <div id="bet-count" class="h6">0</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Race Controls -->
+                        <div class="row mb-4">
+                            <div class="col-md-8">
+                                <div class="btn-group" role="group">
+                                    <button id="create-race-btn" class="btn btn-primary" onclick="createRace()">
+                                        🏁 Create Race
+                                    </button>
+                                    <button id="start-race-btn" class="btn btn-success" onclick="startRace()" disabled>
+                                        ▶️ Start Race
+                                    </button>
+                                    <button id="pause-race-btn" class="btn btn-warning" onclick="pauseRace()" disabled>
+                                        ⏸️ Pause
+                                    </button>
+                                    <button id="stop-race-btn" class="btn btn-danger" onclick="stopRace()" disabled>
+                                        ⏹️ Stop
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-outline-primary w-100" onclick="showRaceConfig()">
+                                    ⚙️ Configure Race
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Horse Positions Display -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">🐎 Horse Positions</h6>
+                                        <div id="horse-positions"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Betting Panel -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">💰 Betting Panel</h6>
+                                        <div id="betting-panel"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Race Results -->
+                        <div class="row mb-4" id="race-results-section" style="display: none;">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">🏆 Race Results</h6>
+                                        <div id="race-results"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Race Configuration Modal -->
+        <div class="modal fade" id="raceConfigModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">⚙️ Race Configuration</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Race Duration (seconds)</label>
+                                    <input type="number" class="form-control" id="race-duration" value="60" min="10" max="300">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Betting Duration (seconds)</label>
+                                    <input type="number" class="form-control" id="betting-duration" value="30" min="5" max="120">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Number of Horses</label>
+                                    <input type="number" class="form-control" id="num-horses" value="4" min="2" max="8">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Track Length</label>
+                                    <input type="number" class="form-control" id="track-length" value="100" min="50" max="200">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Horse Names (comma-separated)</label>
+                            <input type="text" class="form-control" id="horse-names" 
+                                   placeholder="Lightning, Thunder, Storm, Blaze">
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="enable-betting" checked>
+                            <label class="form-check-label" for="enable-betting">
+                                Enable Betting
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="saveRaceConfig()">Save Config</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <!-- Animation History -->
         <div class="row">
             <div class="col-12">
