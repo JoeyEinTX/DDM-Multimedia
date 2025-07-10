@@ -192,3 +192,77 @@ def openai_status():
     except Exception as e:
         logger.error(f"Error checking OpenAI status: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@openai_api.route('/toggle', methods=['POST'])
+@require_admin_auth
+def toggle_openai_endpoint():
+    """Toggle OpenAI on/off."""
+    try:
+        data = request.get_json()
+        if not data or 'enabled' not in data:
+            return jsonify({'error': 'enabled parameter is required'}), 400
+        
+        enabled = data['enabled']
+        
+        from ddm.utils.openai_client import toggle_openai
+        success = toggle_openai(enabled)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'enabled': enabled,
+                'message': f'OpenAI {"enabled" if enabled else "disabled"}'
+            })
+        else:
+            return jsonify({'error': 'Failed to toggle OpenAI'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error toggling OpenAI: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@openai_api.route('/demo-mode', methods=['POST'])
+@require_admin_auth
+def set_demo_mode_endpoint():
+    """Enable/disable demo mode."""
+    try:
+        data = request.get_json()
+        if not data or 'demo_mode' not in data:
+            return jsonify({'error': 'demo_mode parameter is required'}), 400
+        
+        demo_mode = data['demo_mode']
+        
+        from ddm.utils.openai_client import set_demo_mode
+        success = set_demo_mode(demo_mode)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'demo_mode': demo_mode,
+                'message': f'Demo mode {"enabled" if demo_mode else "disabled"}'
+            })
+        else:
+            return jsonify({'error': 'Failed to set demo mode'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error setting demo mode: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@openai_api.route('/usage', methods=['GET'])
+@require_admin_auth
+def get_usage_stats():
+    """Get OpenAI usage statistics."""
+    try:
+        client = get_openai_client(current_app.config)
+        stats = client.get_usage_stats()
+        
+        return jsonify({
+            'success': True,
+            'usage': stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting usage stats: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
