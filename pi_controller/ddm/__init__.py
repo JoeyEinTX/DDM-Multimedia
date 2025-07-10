@@ -120,6 +120,7 @@ def register_blueprints(app):
     from ddm.api.guest import guest_api
     from ddm.api.devices import devices_api
     from ddm.api.status import status_api
+    from ddm.api.openai_api import openai_api
     
     # Register UI blueprints
     app.register_blueprint(admin_ui, url_prefix='/admin')
@@ -130,6 +131,7 @@ def register_blueprints(app):
     app.register_blueprint(guest_api, url_prefix='/api/guest')
     app.register_blueprint(devices_api, url_prefix='/api/devices')
     app.register_blueprint(status_api, url_prefix='/api/status')
+    app.register_blueprint(openai_api, url_prefix='/api/openai')
     
     # Register WebSocket events
     from ddm.websocket import events

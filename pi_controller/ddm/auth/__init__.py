@@ -1,4 +1,5 @@
 """DDM Racing System Authentication Package"""
 
-# Auth exports will be added here as we build them
-pass
+from .decorators import require_admin_auth, require_guest_auth
+
+__all__ = ['require_admin_auth', 'require_guest_auth']
