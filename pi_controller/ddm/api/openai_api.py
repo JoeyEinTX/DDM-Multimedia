@@ -266,3 +266,62 @@ def get_usage_stats():
     except Exception as e:
         logger.error(f"Error getting usage stats: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@openai_api.route('/voice-prompt', methods=['POST'])
+@require_admin_auth
+def voice_prompt():
+    """Process voice-activated animation prompt."""
+    try:
+        data = request.get_json()
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'Prompt is required'}), 400
+        
+        prompt = data['prompt'].strip()
+        
+        # Enforce 10-word limit
+        word_count = len(prompt.split())
+        if word_count > 10:
+            return jsonify({
+                'error': f'Prompt too long ({word_count} words). Maximum 10 words allowed.',
+                'word_count': word_count
+            }), 400
+        
+        if not prompt:
+            return jsonify({'error': 'Prompt cannot be empty'}), 400
+        
+        # Get OpenAI client
+        client = get_openai_client(current_app.config)
+        
+        # Generate LED sequence with voice prompt
+        result = client.generate_led_sequence(f"Voice command: {prompt}")
+        
+        if result:
+            try:
+                # Try to parse as JSON
+                sequence_data = json.loads(result)
+                return jsonify({
+                    'success': True,
+                    'prompt': prompt,
+                    'word_count': word_count,
+                    'sequence': sequence_data,
+                    'source': 'voice'
+                })
+            except json.JSONDecodeError:
+                # Return as text if not valid JSON
+                return jsonify({
+                    'success': True,
+                    'prompt': prompt,
+                    'word_count': word_count,
+                    'sequence': result,
+                    'source': 'voice'
+                })
+        else:
+            return jsonify({
+                'error': 'Failed to generate LED sequence from voice prompt',
+                'prompt': prompt
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error processing voice prompt: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
