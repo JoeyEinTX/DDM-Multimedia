@@ -83,6 +83,34 @@ def configure_logging(app):
     app.logger.setLevel(getattr(logging, app.config['LOG_LEVEL']))
 
 
+def initialize_openai_client(app):
+    """Initialize OpenAI client with app configuration."""
+    try:
+        from ddm.utils.openai_client import initialize_openai
+        
+        # Extract OpenAI configuration from app config
+        openai_config = {
+            'OPENAI_API_KEY': app.config.get('OPENAI_API_KEY'),
+            'OPENAI_MODEL': app.config.get('OPENAI_MODEL'),
+            'OPENAI_MAX_TOKENS': app.config.get('OPENAI_MAX_TOKENS'),
+            'OPENAI_TEMPERATURE': app.config.get('OPENAI_TEMPERATURE')
+        }
+        
+        if openai_config['OPENAI_API_KEY']:
+            success = initialize_openai(openai_config)
+            if success:
+                app.logger.info("OpenAI client initialized successfully")
+            else:
+                app.logger.warning("Failed to initialize OpenAI client")
+        else:
+            app.logger.warning("OpenAI API key not found - AI features disabled")
+            
+    except ImportError as e:
+        app.logger.warning(f"OpenAI dependencies not installed: {e}")
+    except Exception as e:
+        app.logger.error(f"Error initializing OpenAI client: {e}")
+
+
 def register_blueprints(app):
     """Register Flask blueprints."""
     # Import blueprints
