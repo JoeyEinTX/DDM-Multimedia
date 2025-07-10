@@ -41,10 +41,16 @@ class Config:
     DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///ddm_racing.db')
     
     # OpenAI configuration
+    OPENAI_ENABLED = os.environ.get('OPENAI_ENABLED', 'False').lower() in ['true', '1', 'yes']
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo')
     OPENAI_MAX_TOKENS = int(os.environ.get('OPENAI_MAX_TOKENS', 1000))
     OPENAI_TEMPERATURE = float(os.environ.get('OPENAI_TEMPERATURE', 0.7))
+    
+    # Credit protection settings
+    OPENAI_MAX_REQUESTS_PER_HOUR = int(os.environ.get('OPENAI_MAX_REQUESTS_PER_HOUR', 50))
+    OPENAI_MAX_REQUESTS_PER_DAY = int(os.environ.get('OPENAI_MAX_REQUESTS_PER_DAY', 200))
+    OPENAI_DEMO_MODE = os.environ.get('OPENAI_DEMO_MODE', 'False').lower() in ['true', '1', 'yes']
 
 
 class DevelopmentConfig(Config):
