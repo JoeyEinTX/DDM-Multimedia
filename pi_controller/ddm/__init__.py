@@ -36,6 +36,9 @@ def create_app(config_name=None):
     # Configure logging
     configure_logging(app)
     
+    # Initialize OpenAI client
+    initialize_openai_client(app)
+    
     # Initialize extensions
     socketio.init_app(
         app,
