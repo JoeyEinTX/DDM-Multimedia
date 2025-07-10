@@ -41,7 +41,8 @@ def create_app(config_name=None):
         app,
         cors_allowed_origins=app.config['SOCKETIO_CORS_ALLOWED_ORIGINS'],
         logger=app.config['SOCKETIO_LOGGER'],
-        engineio_logger=app.config['SOCKETIO_LOGGER']
+        engineio_logger=app.config['SOCKETIO_LOGGER'],
+        async_mode='threading'  # Use threading instead of eventlet for Python 3.12 compatibility
     )
     
     # Register blueprints
