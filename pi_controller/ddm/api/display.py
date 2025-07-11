@@ -110,6 +110,22 @@ def send_command():
                 'error': f'Animation "{animation}" is not allowed for mode "{mode}". Allowed animations: {allowed_animations}'
             }), 400
         
+        # Handle special case for race results with horse selections
+        if animation == 'race_results' and 'results' in data:
+            results = data['results']
+            logger.info(f"Race results finalized: Win #{results.get('win')}, Place #{results.get('place')}, Show #{results.get('show')}")
+            
+            # TODO: Send results to LED controller with horse numbers
+            # For now, just log the results
+            
+            return jsonify({
+                'success': True,
+                'message': f'Race results finalized with Win #{results.get("win")}, Place #{results.get("place")}, Show #{results.get("show")}',
+                'animation': animation,
+                'mode': mode,
+                'results': results
+            })
+        
         # TODO: Send command to LED controller
         # For now, just log the command
         logger.info(f"Sending animation command: {animation} for mode: {mode}")
