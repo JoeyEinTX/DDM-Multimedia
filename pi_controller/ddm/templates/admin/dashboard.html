@@ -682,6 +682,18 @@
                     modalDescription.className = 'text-muted mb-4';
                 }
                 
+                // Show/hide End Race button based on mode
+                const endRaceBtn = document.getElementById('modal-end-race-btn');
+                const cancelBtn = document.getElementById('modal-cancel-btn');
+                
+                if (mode === 'during_race') {
+                    endRaceBtn.style.display = 'inline-block';
+                    cancelBtn.textContent = 'Minimize';
+                } else {
+                    endRaceBtn.style.display = 'none';
+                    cancelBtn.textContent = 'Cancel';
+                }
+                
                 // Fetch available animations for this mode
                 const response = await fetch(`/api/display/mode-animations?mode=${mode}`);
                 const data = await response.json();
