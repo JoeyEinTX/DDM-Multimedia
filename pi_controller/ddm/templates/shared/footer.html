@@ -1,0 +1,498 @@
+<footer class="dashboard-footer" role="contentinfo">
+    <div class="container">
+        <div class="row">
+            <div class="col-12 col-md-6">
+                <div class="footer-brand">
+                    <h5 class="footer-title">🏇 DDM Racing System</h5>
+                    <p class="footer-subtitle">Voice-Activated LED Control System</p>
+                </div>
+            </div>
+            
+            <div class="col-12 col-md-6">
+                <div class="footer-info">
+                    <div class="footer-section">
+                        <h6 class="footer-section-title">System Info</h6>
+                        <ul class="footer-links">
+                            <li>
+                                <span class="footer-label">Version:</span>
+                                <span class="footer-value">{{ config.VERSION or '1.0.0' }}</span>
+                            </li>
+                            <li>
+                                <span class="footer-label">Build:</span>
+                                <span class="footer-value">{{ config.BUILD_DATE or 'Development' }}</span>
+                            </li>
+                            <li>
+                                <span class="footer-label">Status:</span>
+                                <span class="footer-value">
+                                    <span class="status-indicator status-online" aria-hidden="true"></span>
+                                    Online
+                                </span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="footer-bottom">
+                    <div class="footer-bottom-left">
+                        <p>&copy; {{ moment().format('YYYY') }} DDM Racing System. All rights reserved.</p>
+                    </div>
+                    
+                    <div class="footer-bottom-right">
+                        <div class="footer-controls">
+                            <!-- Device Info -->
+                            <div class="device-info">
+                                <span class="device-info-label">Device:</span>
+                                <span class="device-info-value" id="device-info">
+                                    <span class="orientation-indicator" id="orientation-indicator">📱</span>
+                                    <span class="breakpoint-indicator" id="breakpoint-indicator">SM</span>
+                                </span>
+                            </div>
+                            
+                            <!-- Keyboard Shortcuts -->
+                            <button class="footer-control-btn" type="button" data-bs-toggle="modal" data-bs-target="#keyboard-shortcuts-modal" aria-label="View keyboard shortcuts">
+                                <span class="sr-only">View keyboard shortcuts</span>
+                                ⌨️
+                            </button>
+                            
+                            <!-- Settings -->
+                            <button class="footer-control-btn" type="button" data-bs-toggle="modal" data-bs-target="#settings-modal" aria-label="Open settings">
+                                <span class="sr-only">Open settings</span>
+                                ⚙️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</footer>
+
+<!-- Keyboard Shortcuts Modal -->
+<div class="modal fade" id="keyboard-shortcuts-modal" tabindex="-1" aria-labelledby="keyboard-shortcuts-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="keyboard-shortcuts-modal-label">
+                    ⌨️ Keyboard Shortcuts
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="shortcuts-list">
+                    <div class="shortcut-item">
+                        <kbd>Alt + T</kbd>
+                        <span>Toggle Theme</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Alt + C</kbd>
+                        <span>Toggle High Contrast</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Alt + O</kbd>
+                        <span>Lock/Unlock Orientation</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Esc</kbd>
+                        <span>Close Modals</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Space</kbd>
+                        <span>Voice Prompt (when available)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal fade" id="settings-modal" tabindex="-1" aria-labelledby="settings-modal-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="settings-modal-label">
+                    ⚙️ Settings
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-group">
+                    <h6 class="settings-group-title">Appearance</h6>
+                    
+                    <div class="setting-item">
+                        <label for="theme-select" class="form-label">Theme</label>
+                        <select class="form-select" id="theme-select">
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="auto">Auto (System)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="high-contrast-toggle">
+                            <label class="form-check-label" for="high-contrast-toggle">
+                                High Contrast Mode
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
+                    <h6 class="settings-group-title">Layout</h6>
+                    
+                    <div class="setting-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="orientation-lock-toggle">
+                            <label class="form-check-label" for="orientation-lock-toggle">
+                                Lock Orientation
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="reduced-motion-toggle">
+                            <label class="form-check-label" for="reduced-motion-toggle">
+                                Reduce Motion
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
+                    <h6 class="settings-group-title">Voice Control</h6>
+                    
+                    <div class="setting-item">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="voice-enabled-toggle" checked>
+                            <label class="form-check-label" for="voice-enabled-toggle">
+                                Enable Voice Commands
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label for="voice-sensitivity" class="form-label">Voice Sensitivity</label>
+                        <input type="range" class="form-range" min="1" max="10" value="5" id="voice-sensitivity">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Footer Styles */
+.dashboard-footer {
+    background: rgba(0, 0, 0, 0.1);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: var(--spacing-xl) 0 var(--spacing-lg);
+    margin-top: var(--spacing-xxl);
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.footer-title {
+    color: var(--white);
+    font-size: var(--font-size-lg);
+    margin-bottom: var(--spacing-xs);
+}
+
+.footer-subtitle {
+    font-size: var(--font-size-sm);
+    margin-bottom: 0;
+}
+
+.footer-section-title {
+    color: var(--white);
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-sm);
+}
+
+.footer-links {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.footer-links li {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-xs);
+    font-size: var(--font-size-sm);
+}
+
+.footer-label {
+    font-weight: 500;
+}
+
+.footer-value {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.footer-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: var(--spacing-lg);
+    font-size: var(--font-size-sm);
+}
+
+.footer-bottom-left p {
+    margin: 0;
+}
+
+.footer-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.device-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+}
+
+.device-info-label {
+    font-weight: 500;
+}
+
+.device-info-value {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.orientation-indicator,
+.breakpoint-indicator {
+    display: inline-block;
+    font-size: var(--font-size-sm);
+}
+
+.breakpoint-indicator {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: bold;
+}
+
+.footer-control-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.8);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition-base);
+    font-size: var(--font-size-sm);
+    min-width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.footer-control-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--white);
+}
+
+/* Settings Modal Styles */
+.settings-group {
+    margin-bottom: var(--spacing-lg);
+}
+
+.settings-group-title {
+    color: var(--gray-700);
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-md);
+    border-bottom: 1px solid var(--gray-200);
+    padding-bottom: var(--spacing-sm);
+}
+
+.setting-item {
+    margin-bottom: var(--spacing-md);
+}
+
+.shortcuts-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.shortcut-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm);
+    background: var(--gray-50);
+    border-radius: var(--radius-sm);
+}
+
+.shortcut-item kbd {
+    background: var(--gray-800);
+    color: var(--white);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: bold;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767px) {
+    .footer-bottom {
+        flex-direction: column;
+        gap: var(--spacing-md);
+        text-align: center;
+    }
+    
+    .footer-controls {
+        justify-content: center;
+    }
+    
+    .footer-info {
+        margin-top: var(--spacing-lg);
+        text-align: center;
+    }
+}
+
+@media (max-width: 575px) {
+    .dashboard-footer {
+        padding: var(--spacing-lg) 0;
+    }
+    
+    .footer-title {
+        font-size: var(--font-size-base);
+    }
+    
+    .device-info {
+        font-size: var(--font-size-xs);
+    }
+    
+    .footer-control-btn {
+        min-width: 32px;
+        height: 32px;
+        font-size: var(--font-size-xs);
+    }
+}
+</style>
+
+<script>
+// Update device info
+function updateDeviceInfo() {
+    const orientationIndicator = document.getElementById('orientation-indicator');
+    const breakpointIndicator = document.getElementById('breakpoint-indicator');
+    
+    if (window.DDMResponsive) {
+        const state = window.DDMResponsive.getCurrentState();
+        
+        // Update orientation indicator
+        if (orientationIndicator) {
+            orientationIndicator.textContent = state.orientation === 'portrait' ? '📱' : '💻';
+            orientationIndicator.title = `${state.orientation} orientation`;
+        }
+        
+        // Update breakpoint indicator
+        if (breakpointIndicator) {
+            breakpointIndicator.textContent = state.breakpoint.toUpperCase();
+            breakpointIndicator.title = `${state.breakpoint} breakpoint`;
+        }
+    }
+}
+
+// Save settings
+function saveSettings() {
+    const theme = document.getElementById('theme-select').value;
+    const highContrast = document.getElementById('high-contrast-toggle').checked;
+    const orientationLock = document.getElementById('orientation-lock-toggle').checked;
+    const reducedMotion = document.getElementById('reduced-motion-toggle').checked;
+    const voiceEnabled = document.getElementById('voice-enabled-toggle').checked;
+    const voiceSensitivity = document.getElementById('voice-sensitivity').value;
+    
+    // Apply settings through DDMResponsive
+    if (window.DDMResponsive) {
+        window.DDMResponsive.setTheme(theme);
+        
+        if (highContrast !== window.DDMResponsive.getCurrentState().highContrast) {
+            window.DDMResponsive.toggleHighContrast();
+        }
+        
+        if (orientationLock) {
+            window.DDMResponsive.lockOrientation();
+        }
+    }
+    
+    // Save additional settings to localStorage
+    const additionalSettings = {
+        reducedMotion,
+        voiceEnabled,
+        voiceSensitivity
+    };
+    
+    localStorage.setItem('ddm-additional-settings', JSON.stringify(additionalSettings));
+    
+    // Apply reduced motion
+    document.body.classList.toggle('reduced-motion', reducedMotion);
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('settings-modal'));
+    modal.hide();
+    
+    // Show success message
+    showNotification('Settings saved successfully!', 'success');
+}
+
+// Load settings into modal
+function loadSettings() {
+    if (window.DDMResponsive) {
+        const state = window.DDMResponsive.getCurrentState();
+        
+        document.getElementById('theme-select').value = state.theme;
+        document.getElementById('high-contrast-toggle').checked = state.highContrast;
+        document.getElementById('orientation-lock-toggle').checked = state.orientationLocked;
+    }
+    
+    // Load additional settings
+    const stored = localStorage.getItem('ddm-additional-settings');
+    if (stored) {
+        try {
+            const settings = JSON.parse(stored);
+            document.getElementById('reduced-motion-toggle').checked = settings.reducedMotion || false;
+            document.getElementById('voice-enabled-toggle').checked = settings.voiceEnabled !== false;
+            document.getElementById('voice-sensitivity').value = settings.voiceSensitivity || 5;
+        } catch (e) {
+            console.warn('Failed to load additional settings:', e);
+        }
+    }
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', () => {
+    updateDeviceInfo();
+    
+    // Load settings when modal opens
+    document.getElementById('settings-modal').addEventListener('show.bs.modal', loadSettings);
+    
+    // Update device info when responsive state changes
+    document.addEventListener('ddm:orientationchange', updateDeviceInfo);
+});
+
+// Update device info periodically
+setInterval(updateDeviceInfo, 5000);
+</script>

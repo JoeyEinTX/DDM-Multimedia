@@ -195,8 +195,8 @@ body {
   border: none;
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   margin-bottom: var(--spacing-lg);
   transition: var(--transition-base);
 }
@@ -237,10 +237,10 @@ body {
   cursor: pointer;
   transition: var(--transition-base);
   min-height: var(--touch-target-min);
-  user-select: none;
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
+  user-select: none;
 }
 
 .btn:hover {

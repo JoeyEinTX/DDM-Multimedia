@@ -1,0 +1,435 @@
+{% extends "shared/base.html" %}
+
+{% block title %}Guest View - DDM Racing System{% endblock %}
+
+{% block body_class %}guest-view{% endblock %}
+
+{% block header_title %}DDM Racing System{% endblock %}
+{% block header_subtitle %}Guest View - Live Racing Display{% endblock %}
+
+{% block extra_css %}
+<style>
+/* Guest-specific styles */
+.guest-view {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.race-display {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: var(--radius-xxl);
+    padding: var(--spacing-xxl);
+    margin: var(--spacing-xl) 0;
+    box-shadow: var(--shadow-xl);
+    text-align: center;
+}
+
+.race-status {
+    font-size: var(--font-size-xxxl);
+    font-weight: bold;
+    color: var(--gray-800);
+    margin-bottom: var(--spacing-lg);
+}
+
+.race-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.info-card {
+    background: var(--white);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    box-shadow: var(--shadow-md);
+    transition: var(--transition-base);
+}
+
+.info-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+.info-card h3 {
+    color: var(--gray-700);
+    margin-bottom: var(--spacing-md);
+    font-size: var(--font-size-xl);
+}
+
+.info-card .value {
+    font-size: var(--font-size-xxxl);
+    font-weight: bold;
+    color: var(--gray-800);
+}
+
+.results-section {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: var(--radius-xxl);
+    padding: var(--spacing-xl);
+    margin-top: var(--spacing-xl);
+}
+
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-lg);
+}
+
+.result-card {
+    background: var(--white);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    text-align: center;
+    box-shadow: var(--shadow-md);
+    transition: var(--transition-base);
+}
+
+.result-card.win {
+    border-top: 4px solid var(--gold);
+}
+
+.result-card.place {
+    border-top: 4px solid var(--silver);
+}
+
+.result-card.show {
+    border-top: 4px solid var(--bronze);
+}
+
+.result-medal {
+    font-size: 3rem;
+    margin-bottom: var(--spacing-md);
+}
+
+.result-position {
+    font-size: var(--font-size-lg);
+    font-weight: bold;
+    margin-bottom: var(--spacing-sm);
+    color: var(--gray-700);
+}
+
+.result-horse {
+    font-size: var(--font-size-xxxl);
+    font-weight: bold;
+    color: var(--gray-800);
+}
+
+.live-animation {
+    height: 200px;
+    background: linear-gradient(45deg, #667eea, #764ba2, #667eea);
+    background-size: 400% 400%;
+    animation: gradient-flow 3s ease infinite;
+    border-radius: var(--radius-lg);
+    margin: var(--spacing-xl) 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--white);
+    font-size: var(--font-size-xl);
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+}
+
+@keyframes gradient-flow {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.connection-status {
+    position: fixed;
+    top: var(--spacing-lg);
+    right: var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.9);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: var(--z-overlay);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.connection-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #28a745;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767px) {
+    .race-display {
+        padding: var(--spacing-lg);
+        margin: var(--spacing-lg) 0;
+    }
+    
+    .race-status {
+        font-size: var(--font-size-xl);
+    }
+    
+    .info-card .value {
+        font-size: var(--font-size-xl);
+    }
+    
+    .result-horse {
+        font-size: var(--font-size-xl);
+    }
+    
+    .live-animation {
+        height: 150px;
+        font-size: var(--font-size-lg);
+    }
+}
+
+@media (max-width: 575px) {
+    .race-info {
+        grid-template-columns: 1fr;
+    }
+    
+    .results-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .connection-status {
+        position: static;
+        margin-bottom: var(--spacing-md);
+        justify-content: center;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Connection Status -->
+    <div class="connection-status">
+        <div class="connection-indicator"></div>
+        <span>Live Connection</span>
+    </div>
+    
+    <!-- Main Race Display -->
+    <div class="race-display">
+        <div class="race-status" id="race-status">
+            🏁 Welcome to DDM Racing
+        </div>
+        
+        <div class="race-info">
+            <div class="info-card">
+                <h3>Race Number</h3>
+                <div class="value" id="race-number">1</div>
+            </div>
+            
+            <div class="info-card">
+                <h3>Current Status</h3>
+                <div class="value" id="current-status">Pre-Race</div>
+            </div>
+            
+            <div class="info-card">
+                <h3>Horses</h3>
+                <div class="value" id="horse-count">20</div>
+            </div>
+            
+            <div class="info-card">
+                <h3>Next Race</h3>
+                <div class="value" id="next-race">5:30 PM</div>
+            </div>
+        </div>
+        
+        <!-- Live Animation Display -->
+        <div class="live-animation" id="live-animation">
+            🎨 Live LED Display Mirror
+        </div>
+    </div>
+    
+    <!-- Results Section -->
+    <div class="results-section" id="results-section" style="display: none;">
+        <h2 class="text-center mb-4">🏆 Race Results</h2>
+        
+        <div class="results-grid">
+            <div class="result-card win">
+                <div class="result-medal">🥇</div>
+                <div class="result-position">WIN</div>
+                <div class="result-horse" id="win-result">?</div>
+            </div>
+            
+            <div class="result-card place">
+                <div class="result-medal">🥈</div>
+                <div class="result-position">PLACE</div>
+                <div class="result-horse" id="place-result">?</div>
+            </div>
+            
+            <div class="result-card show">
+                <div class="result-medal">🥉</div>
+                <div class="result-position">SHOW</div>
+                <div class="result-horse" id="show-result">?</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Guest view functionality
+class GuestView {
+    constructor() {
+        this.socket = null;
+        this.currentRaceState = 'pre-race';
+        this.init();
+    }
+    
+    init() {
+        this.setupWebSocket();
+        this.setupResponsiveHandlers();
+        this.startStatusUpdates();
+    }
+    
+    setupWebSocket() {
+        // In a real implementation, you'd connect to a WebSocket
+        // For now, we'll simulate with polling
+        this.simulateWebSocket();
+    }
+    
+    simulateWebSocket() {
+        // Simulate receiving race updates
+        setInterval(() => {
+            this.updateRaceInfo();
+        }, 5000);
+        
+        // Simulate animation updates
+        setInterval(() => {
+            this.updateAnimationDisplay();
+        }, 2000);
+    }
+    
+    setupResponsiveHandlers() {
+        // Handle orientation changes
+        document.addEventListener('ddm:orientationchange', (event) => {
+            this.adjustLayout(event.detail);
+        });
+    }
+    
+    adjustLayout(state) {
+        const liveAnimation = document.getElementById('live-animation');
+        
+        if (state.orientation === 'portrait' && state.breakpoint === 'xs') {
+            liveAnimation.style.height = '100px';
+        } else if (state.orientation === 'landscape') {
+            liveAnimation.style.height = '250px';
+        } else {
+            liveAnimation.style.height = '200px';
+        }
+    }
+    
+    updateRaceInfo() {
+        // Simulate race state changes
+        const states = ['Pre-Race', 'Betting Open', 'Racing', 'Results'];
+        const currentIndex = states.indexOf(document.getElementById('current-status').textContent);
+        const nextIndex = (currentIndex + 1) % states.length;
+        
+        document.getElementById('current-status').textContent = states[nextIndex];
+        
+        // Update race status message
+        const statusMessages = {
+            'Pre-Race': '🏁 Preparing for the next race',
+            'Betting Open': '💰 Place your bets now!',
+            'Racing': '🏇 They\'re off! Race in progress',
+            'Results': '🏆 Race complete! Check results below'
+        };
+        
+        document.getElementById('race-status').textContent = statusMessages[states[nextIndex]];
+        
+        // Show/hide results section
+        const resultsSection = document.getElementById('results-section');
+        if (states[nextIndex] === 'Results') {
+            resultsSection.style.display = 'block';
+            this.showResults();
+        } else {
+            resultsSection.style.display = 'none';
+        }
+    }
+    
+    updateAnimationDisplay() {
+        const liveAnimation = document.getElementById('live-animation');
+        const currentStatus = document.getElementById('current-status').textContent;
+        
+        // Update animation based on race state
+        switch(currentStatus) {
+            case 'Pre-Race':
+                liveAnimation.style.background = 'linear-gradient(45deg, #667eea, #764ba2, #667eea)';
+                liveAnimation.textContent = '🎨 Warming up the lights';
+                break;
+            case 'Betting Open':
+                liveAnimation.style.background = 'linear-gradient(45deg, #ffc107, #fd7e14, #ffc107)';
+                liveAnimation.textContent = '💰 Betting lights active';
+                break;
+            case 'Racing':
+                liveAnimation.style.background = 'linear-gradient(45deg, #28a745, #20c997, #28a745)';
+                liveAnimation.textContent = '🏇 Race in progress!';
+                break;
+            case 'Results':
+                liveAnimation.style.background = 'linear-gradient(45deg, #ffd700, #ffed4e, #ffd700)';
+                liveAnimation.textContent = '🏆 Victory celebration!';
+                break;
+        }
+    }
+    
+    showResults() {
+        // Simulate random results
+        const horses = Array.from({length: 20}, (_, i) => i + 1);
+        const shuffled = horses.sort(() => 0.5 - Math.random());
+        
+        document.getElementById('win-result').textContent = shuffled[0];
+        document.getElementById('place-result').textContent = shuffled[1];
+        document.getElementById('show-result').textContent = shuffled[2];
+        
+        // Animate results
+        setTimeout(() => {
+            document.getElementById('win-result').style.animation = 'scaleIn 0.5s ease-out';
+        }, 500);
+        
+        setTimeout(() => {
+            document.getElementById('place-result').style.animation = 'scaleIn 0.5s ease-out';
+        }, 1000);
+        
+        setTimeout(() => {
+            document.getElementById('show-result').style.animation = 'scaleIn 0.5s ease-out';
+        }, 1500);
+    }
+    
+    startStatusUpdates() {
+        // Update time
+        setInterval(() => {
+            const now = new Date();
+            const nextRaceTime = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes from now
+            document.getElementById('next-race').textContent = 
+                nextRaceTime.toLocaleTimeString('en-US', { 
+                    hour: 'numeric', 
+                    minute: '2-digit',
+                    hour12: true 
+                });
+        }, 30000); // Update every 30 seconds
+    }
+}
+
+// Initialize guest view
+document.addEventListener('DOMContentLoaded', () => {
+    const guestView = new GuestView();
+    window.guestView = guestView;
+});
+
+// Handle fullscreen toggle
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'F11') {
+        event.preventDefault();
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            document.documentElement.requestFullscreen();
+        }
+    }
+});
+</script>
+{% endblock %}
