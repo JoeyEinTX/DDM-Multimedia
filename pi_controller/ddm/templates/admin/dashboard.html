@@ -362,8 +362,10 @@
         .horse-grid {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
-            max-width: 500px;
+            grid-template-rows: repeat(4, 1fr);
+            gap: 8px;
+            height: 100%;
+            max-height: 320px;
             margin: 0 auto;
         }
         
@@ -372,12 +374,11 @@
             color: white;
             border: none;
             border-radius: 8px;
-            padding: 15px 10px;
-            font-size: 1.2em;
+            padding: 8px;
+            font-size: 1.1em;
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s ease;
-            min-height: 60px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -712,6 +713,9 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning" id="reset-selections-btn" onclick="resetSelections()">
+                        🔄 Reset Selections
+                    </button>
                     <button type="button" class="btn btn-success btn-lg" id="finalize-results-btn" onclick="finalizeResults()" disabled>
                         🎉 Finalize Results
                     </button>
