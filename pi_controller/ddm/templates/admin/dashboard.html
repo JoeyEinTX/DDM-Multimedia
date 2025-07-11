@@ -756,9 +756,14 @@
                 if (data.success) {
                     showNotification(`Running "${formatAnimationName(animation)}" animation`, 'success');
                     
-                    // Close modal
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
-                    modal.hide();
+                    // Update background animation to mirror LED animation
+                    updateBackgroundAnimation(animation);
+                    
+                    // For during race mode, don't close modal - keep it open for live control
+                    if (mode !== 'during_race') {
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
+                        modal.hide();
+                    }
                 } else {
                     showNotification(data.error || 'Failed to run animation', 'error');
                 }
@@ -766,6 +771,35 @@
                 console.error('Error running animation:', error);
                 showNotification('Error running animation', 'error');
             }
+        }
+        
+        function updateBackgroundAnimation(animation) {
+            const bgElement = document.getElementById('bg-animation');
+            
+            // Remove all animation classes
+            bgElement.classList.remove('theyre-off', 'down-the-stretch', 'finish-race');
+            
+            // Add the appropriate animation class
+            if (animation === 'theyre_off') {
+                bgElement.classList.add('theyre-off');
+            } else if (animation === 'down_the_stretch') {
+                bgElement.classList.add('down-the-stretch');
+            } else if (animation === 'finish_race') {
+                bgElement.classList.add('finish-race');
+            }
+        }
+        
+        function endRace() {
+            // Clear background animation
+            const bgElement = document.getElementById('bg-animation');
+            bgElement.classList.remove('theyre-off', 'down-the-stretch', 'finish-race');
+            
+            // Close the modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
+            modal.hide();
+            
+            // Show notification
+            showNotification('Race ended - returning to main dashboard', 'info');
         }
     </script>
 </body>
