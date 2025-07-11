@@ -1,8 +1,8 @@
 """
-Race API Blueprint - Race State Management Endpoints
+Race API Blueprint - Simple Race State Management Endpoints
 
-Provides REST API endpoints for controlling Derby de Mayo race phases:
-- Pre-Race, Betting Open, During Race, After Race
+Provides REST API endpoints for controlling performative race phases:
+- Pre-Race, During Race, After Race
 """
 
 from flask import Blueprint, request, jsonify, current_app
@@ -41,46 +41,49 @@ def get_race_status():
         
         return jsonify({
             'success': True,
-            'race_status': status
+            'race_state': status
         })
-        
+    
     except Exception as e:
         logger.error(f"Error getting race status: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/create', methods=['POST'])
 @require_admin_auth
 def create_race():
-    """Create a new race."""
+    """Create a new race with specified configuration."""
     try:
         data = request.get_json() or {}
         
-        # Create race configuration
+        # Create race config
         config = RaceConfig(
             race_id=str(uuid.uuid4()),
             race_name=data.get('race_name', 'Derby de Mayo Race'),
             pre_race_duration=data.get('pre_race_duration', 30),
-            betting_duration=data.get('betting_duration', 60),
             race_duration=data.get('race_duration', 45),
             after_race_duration=data.get('after_race_duration', 30),
-            num_horses=data.get('num_horses', 6),
-            randomness=data.get('randomness', 0.3)
+            animation_speed=data.get('animation_speed', 1.0)
         )
         
-        # Create race
         controller = get_race_controller()
         race_state = controller.create_race(config)
         
         return jsonify({
             'success': True,
-            'message': 'Race created successfully',
+            'race_id': config.race_id,
             'race_state': race_state.to_dict()
         })
-        
+    
     except Exception as e:
         logger.error(f"Error creating race: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/start', methods=['POST'])
@@ -97,12 +100,16 @@ def start_race():
             })
         else:
             return jsonify({
-                'error': 'Failed to start race. Make sure a race is configured.'
+                'success': False,
+                'error': 'Failed to start race. Is a race configured?'
             }), 400
-        
+    
     except Exception as e:
         logger.error(f"Error starting race: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/stop', methods=['POST'])
@@ -119,12 +126,16 @@ def stop_race():
             })
         else:
             return jsonify({
-                'error': 'No race is currently running'
+                'success': False,
+                'error': 'No race running'
             }), 400
-        
+    
     except Exception as e:
         logger.error(f"Error stopping race: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/pause', methods=['POST'])
@@ -141,12 +152,16 @@ def pause_race():
             })
         else:
             return jsonify({
-                'error': 'Cannot pause race in current state'
+                'success': False,
+                'error': 'Cannot pause race'
             }), 400
-        
+    
     except Exception as e:
         logger.error(f"Error pausing race: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/resume', methods=['POST'])
@@ -163,173 +178,53 @@ def resume_race():
             })
         else:
             return jsonify({
-                'error': 'Cannot resume race in current state'
+                'success': False,
+                'error': 'Cannot resume race'
             }), 400
-        
+    
     except Exception as e:
         logger.error(f"Error resuming race: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@race_api.route('/bet', methods=['POST'])
-def place_bet():
-    """Place a bet on a horse (available to guests during betting phase)."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'Request body required'}), 400
-        
-        guest_name = data.get('guest_name')
-        horse_id = data.get('horse_id')
-        amount = data.get('amount', 10.0)
-        
-        if not guest_name or not horse_id:
-            return jsonify({
-                'error': 'guest_name and horse_id are required'
-            }), 400
-        
-        controller = get_race_controller()
-        
-        if controller.place_bet(guest_name, horse_id, amount):
-            return jsonify({
-                'success': True,
-                'message': f'Bet placed: ${amount} on horse {horse_id}'
-            })
-        else:
-            return jsonify({
-                'error': 'Cannot place bet. Betting may not be open or horse not found.'
-            }), 400
-        
-    except Exception as e:
-        logger.error(f"Error placing bet: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@race_api.route('/horses', methods=['GET'])
-def get_horses():
-    """Get list of horses in the current race."""
-    try:
-        controller = get_race_controller()
-        status = controller.get_race_status()
-        
-        if not status.get('race_configured'):
-            return jsonify({
-                'error': 'No race is currently configured'
-            }), 400
-        
-        race_state = status['race_status']['race_state']
-        horses = race_state.get('horses', [])
-        
         return jsonify({
-            'success': True,
-            'horses': horses
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting horses: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@race_api.route('/bets', methods=['GET'])
-@require_admin_auth
-def get_bets():
-    """Get all bets placed in the current race."""
-    try:
-        controller = get_race_controller()
-        status = controller.get_race_status()
-        
-        if not status.get('race_configured'):
-            return jsonify({
-                'error': 'No race is currently configured'
-            }), 400
-        
-        race_state = status['race_status']['race_state']
-        bets = race_state.get('bets', [])
-        
-        # Calculate bet totals by horse
-        bet_totals = {}
-        for bet in bets:
-            horse_id = bet['horse_id']
-            if horse_id not in bet_totals:
-                bet_totals[horse_id] = {'total_amount': 0, 'bet_count': 0}
-            bet_totals[horse_id]['total_amount'] += bet['amount']
-            bet_totals[horse_id]['bet_count'] += 1
-        
-        return jsonify({
-            'success': True,
-            'bets': bets,
-            'bet_totals': bet_totals
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting bets: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@race_api.route('/results', methods=['GET'])
-def get_race_results():
-    """Get race results if race is completed."""
-    try:
-        controller = get_race_controller()
-        status = controller.get_race_status()
-        
-        if not status.get('race_configured'):
-            return jsonify({
-                'error': 'No race is currently configured'
-            }), 400
-        
-        race_state = status['race_status']['race_state']
-        
-        if race_state.get('race_status') != 'completed':
-            return jsonify({
-                'error': 'Race is not yet completed'
-            }), 400
-        
-        return jsonify({
-            'success': True,
-            'winner': race_state.get('winner'),
-            'results': race_state.get('race_results', []),
-            'bets': race_state.get('bets', [])
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting race results: {e}")
-        return jsonify({'error': str(e)}), 500
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @race_api.route('/quick-race', methods=['POST'])
 @require_admin_auth
 def quick_race():
-    """Create and start a race with default settings (for quick testing)."""
+    """Start a quick race with default settings."""
     try:
-        # Create default race config
+        # Create quick race config
         config = RaceConfig(
             race_id=str(uuid.uuid4()),
-            race_name="Quick Derby de Mayo Race",
-            pre_race_duration=10,    # Shorter for testing
-            betting_duration=20,     # Shorter for testing
-            race_duration=15,        # Shorter for testing
-            after_race_duration=10,  # Shorter for testing
-            num_horses=4,           # Fewer horses for testing
-            randomness=0.4
+            race_name="Quick Race",
+            pre_race_duration=10,
+            race_duration=30,
+            after_race_duration=10,
+            animation_speed=1.5
         )
         
         controller = get_race_controller()
-        
-        # Create and start race
         race_state = controller.create_race(config)
         
+        # Start immediately
         if controller.start_race():
             return jsonify({
                 'success': True,
-                'message': 'Quick race started successfully',
+                'message': 'Quick race started!',
+                'race_id': config.race_id,
                 'race_state': race_state.to_dict()
             })
         else:
             return jsonify({
+                'success': False,
                 'error': 'Failed to start quick race'
             }), 500
-        
+    
     except Exception as e:
         logger.error(f"Error starting quick race: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

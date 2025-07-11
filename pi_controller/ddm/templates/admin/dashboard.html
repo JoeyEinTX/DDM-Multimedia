@@ -45,6 +45,128 @@
             transform: translateY(-5px);
         }
         
+        .mode-card {
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .mode-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+        }
+        
+        .animation-btn {
+            margin: 5px;
+            min-width: 150px;
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .modal-header .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+        
+        /* During Race Modal Special Styling */
+        .during-race-modal .modal-content {
+            border: 3px solid #28a745;
+            box-shadow: 0 0 20px rgba(40, 167, 69, 0.4);
+        }
+        
+        .during-race-modal .modal-header {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            animation: pulse-green 2s ease-in-out infinite;
+        }
+        
+        .during-race-modal .animation-btn {
+            font-size: 1.2em;
+            padding: 15px 25px;
+            margin: 10px;
+            min-width: 200px;
+            font-weight: bold;
+        }
+        
+        .during-race-modal .animation-btn:first-child {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+        }
+        
+        .during-race-modal .animation-btn:nth-child(2) {
+            background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+            color: white;
+            border: none;
+        }
+        
+        .during-race-modal .animation-btn:last-child {
+            background: linear-gradient(135deg, #dc3545 0%, #6f42c1 100%);
+            color: white;
+            border: none;
+        }
+        
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 20px rgba(40, 167, 69, 0.4); }
+            50% { box-shadow: 0 0 30px rgba(40, 167, 69, 0.8); }
+            100% { box-shadow: 0 0 20px rgba(40, 167, 69, 0.4); }
+        }
+        
+        #modal-end-race-btn {
+            display: none;
+        }
+        
+        /* Background animation mirroring */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: -1;
+            opacity: 0.1;
+            transition: all 0.5s ease;
+        }
+        
+        .bg-animation.theyre-off {
+            background: radial-gradient(circle at center, #28a745 0%, #20c997 50%, #17a2b8 100%);
+            animation: racing-pulse 0.5s ease-in-out infinite;
+        }
+        
+        .bg-animation.down-the-stretch {
+            background: linear-gradient(45deg, #ffc107, #fd7e14, #dc3545, #6f42c1);
+            animation: intensity-wave 1s ease-in-out infinite;
+        }
+        
+        .bg-animation.finish-race {
+            background: repeating-linear-gradient(
+                45deg,
+                #000 0px,
+                #000 20px,
+                #fff 20px,
+                #fff 40px
+            );
+            animation: checkered-flag 2s linear infinite;
+        }
+        
+        @keyframes racing-pulse {
+            0% { transform: scale(1); opacity: 0.1; }
+            50% { transform: scale(1.05); opacity: 0.2; }
+            100% { transform: scale(1); opacity: 0.1; }
+        }
+        
+        @keyframes intensity-wave {
+            0% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(180deg); }
+            100% { filter: hue-rotate(360deg); }
+        }
+        
+        @keyframes checkered-flag {
+            0% { background-position: 0 0; }
+            100% { background-position: 40px 40px; }
+        }
+        
         .feature-icon {
             font-size: 48px;
             margin-bottom: 20px;
@@ -75,6 +197,9 @@
     </style>
 </head>
 <body>
+    <!-- Background Animation Mirror -->
+    <div class="bg-animation" id="bg-animation"></div>
+    
     <!-- Header -->
     <div class="dashboard-header">
         <div class="container">
@@ -95,33 +220,94 @@
 
     <!-- Main Content -->
     <div class="container">
-        <div class="row">
-            <!-- Voice Control Card -->
-            <div class="col-lg-6 col-md-12">
-                <div class="card feature-card">
-                    <div class="feature-icon">🎤</div>
-                    <h3>Voice Animation Control</h3>
-                    <p class="text-muted">Speak your LED animation ideas and watch them come to life!</p>
-                    <button class="btn btn-primary btn-lg" onclick="voicePrompt.startListening()">
-                        🎤 Start Voice Prompt
-                    </button>
-                    <p class="small text-muted mt-2">
-                        <span id="voice-support-status">Checking voice support...</span>
-                    </p>
+        <!-- UI Mode Selection -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2 class="text-white mb-4">🎮 Racing Mode Control</h2>
+            </div>
+            
+            <!-- Pre-Race Mode -->
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card feature-card mode-card" onclick="openModeModal('pre_race')">
+                    <div class="feature-icon">🏁</div>
+                    <h4>Pre-Race</h4>
+                    <p class="text-muted">Setup and preparation animations</p>
                 </div>
             </div>
             
-            <!-- Manual Control Card -->
-            <div class="col-lg-6 col-md-12">
-                <div class="card feature-card">
-                    <div class="feature-icon">⌨️</div>
-                    <h3>Manual Animation Control</h3>
-                    <p class="text-muted">Type your animation description for precise control.</p>
-                    <div class="input-group">
-                        <input type="text" class="form-control" id="manualPrompt" placeholder="e.g., red lightning storm" maxlength="100">
-                        <button class="btn btn-primary" onclick="sendManualPrompt()">
-                            ✨ Generate
-                        </button>
+            <!-- Betting Open Mode -->
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card feature-card mode-card" onclick="openModeModal('betting_open')">
+                    <div class="feature-icon">💰</div>
+                    <h4>Betting Open</h4>
+                    <p class="text-muted">Betting period animations</p>
+                </div>
+            </div>
+            
+            <!-- During Race Mode -->
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card feature-card mode-card" onclick="openModeModal('during_race')">
+                    <div class="feature-icon">🏇</div>
+                    <h4>During Race</h4>
+                    <p class="text-muted">Active race animations</p>
+                </div>
+            </div>
+            
+            <!-- Results Mode -->
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card feature-card mode-card" onclick="openModeModal('results')">
+                    <div class="feature-icon">🏆</div>
+                    <h4>Results</h4>
+                    <p class="text-muted">Post-race celebration animations</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Voice & Manual Control (Collapsed) -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#voiceControls">
+                                🎤 Voice & Manual Controls
+                            </button>
+                        </h5>
+                    </div>
+                    <div id="voiceControls" class="collapse">
+                        <div class="card-body">
+                            <div class="row">
+                                <!-- Voice Control -->
+                                <div class="col-lg-6 col-md-12">
+                                    <div class="text-center">
+                                        <div class="feature-icon">🎤</div>
+                                        <h5>Voice Animation Control</h5>
+                                        <p class="text-muted">Speak your LED animation ideas and watch them come to life!</p>
+                                        <button class="btn btn-primary btn-lg" onclick="voicePrompt.startListening()">
+                                            🎤 Start Voice Prompt
+                                        </button>
+                                        <p class="small text-muted mt-2">
+                                            <span id="voice-support-status">Checking voice support...</span>
+                                        </p>
+                                    </div>
+                                </div>
+                                
+                                <!-- Manual Control -->
+                                <div class="col-lg-6 col-md-12">
+                                    <div class="text-center">
+                                        <div class="feature-icon">⌨️</div>
+                                        <h5>Manual Animation Control</h5>
+                                        <p class="text-muted">Type your animation description for precise control.</p>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" id="manualPrompt" placeholder="e.g., red lightning storm" maxlength="100">
+                                            <button class="btn btn-primary" onclick="sendManualPrompt()">
+                                                ✨ Generate
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -201,6 +387,33 @@
                             <p class="text-muted">No animations generated yet. Try the voice prompt above!</p>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Animation Mode Modal -->
+    <div class="modal fade" id="animationModal" tabindex="-1" aria-labelledby="animationModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="animationModalLabel">
+                        <span id="modal-mode-icon">🏁</span>
+                        <span id="modal-mode-title">Pre-Race Animations</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-4">Select an animation to run for this mode:</p>
+                    <div id="animation-buttons" class="text-center">
+                        <!-- Animation buttons will be populated here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="modal-cancel-btn">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="modal-end-race-btn" onclick="endRace()">
+                        🏁 End Race
+                    </button>
                 </div>
             </div>
         </div>
@@ -427,6 +640,133 @@
             // Here you would send the sequence to your LED controller
             console.log('Applying voice animation:', sequence);
         };
+        
+        // Mode modal functions
+        const MODE_CONFIG = {
+            'pre_race': {
+                title: 'Pre-Race Animations',
+                icon: '🏁',
+                description: 'Setup and preparation animations'
+            },
+            'betting_open': {
+                title: 'Betting Open Animations',
+                icon: '💰',
+                description: 'Betting period animations'
+            },
+            'during_race': {
+                title: 'During Race Animations',
+                icon: '🏇',
+                description: 'Active race animations'
+            },
+            'results': {
+                title: 'Results Animations',
+                icon: '🏆',
+                description: 'Post-race celebration animations'
+            }
+        };
+        
+        async function openModeModal(mode) {
+            try {
+                // Update modal title and icon
+                const config = MODE_CONFIG[mode];
+                document.getElementById('modal-mode-icon').textContent = config.icon;
+                document.getElementById('modal-mode-title').textContent = config.title;
+                
+                // Update modal description based on mode
+                const modalDescription = document.querySelector('.modal-body p');
+                if (mode === 'during_race') {
+                    modalDescription.textContent = 'Live race control - tap animations as the race progresses:';
+                    modalDescription.className = 'text-success mb-4 fw-bold';
+                } else {
+                    modalDescription.textContent = 'Select an animation to run for this mode:';
+                    modalDescription.className = 'text-muted mb-4';
+                }
+                
+                // Fetch available animations for this mode
+                const response = await fetch(`/api/display/mode-animations?mode=${mode}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    populateAnimationButtons(data.animations, mode);
+                    
+                    // Show modal with special styling for during race
+                    const modalElement = document.getElementById('animationModal');
+                    if (mode === 'during_race') {
+                        modalElement.classList.add('during-race-modal');
+                    } else {
+                        modalElement.classList.remove('during-race-modal');
+                    }
+                    
+                    const modal = new bootstrap.Modal(modalElement);
+                    modal.show();
+                } else {
+                    showNotification(data.error || 'Failed to load animations', 'error');
+                }
+            } catch (error) {
+                console.error('Error opening mode modal:', error);
+                showNotification('Error loading animations', 'error');
+            }
+        }
+        
+        function populateAnimationButtons(animations, mode) {
+            const buttonsContainer = document.getElementById('animation-buttons');
+            buttonsContainer.innerHTML = '';
+            
+            // Special descriptions for during race animations
+            const animationDescriptions = {
+                'theyre_off': "🏁 They're Off!\nBig green blast → racing energy",
+                'down_the_stretch': "🔥 Down The Stretch!\nFinal stretch intensity",
+                'finish_race': "🏁 Finish Race!\nCheckered flag celebration"
+            };
+            
+            animations.forEach(animation => {
+                const button = document.createElement('button');
+                button.className = 'btn btn-outline-primary animation-btn';
+                
+                // Use special descriptions for during race, otherwise format normally
+                if (mode === 'during_race' && animationDescriptions[animation]) {
+                    button.innerHTML = animationDescriptions[animation].replace('\n', '<br>');
+                } else {
+                    button.textContent = formatAnimationName(animation);
+                }
+                
+                button.onclick = () => runAnimation(animation, mode);
+                buttonsContainer.appendChild(button);
+            });
+        }
+        
+        function formatAnimationName(animation) {
+            // Convert snake_case to Title Case
+            return animation.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+        
+        async function runAnimation(animation, mode) {
+            try {
+                const response = await fetch('/api/display/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        animation: animation,
+                        mode: mode
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`Running "${formatAnimationName(animation)}" animation`, 'success');
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
+                    modal.hide();
+                } else {
+                    showNotification(data.error || 'Failed to run animation', 'error');
+                }
+            } catch (error) {
+                console.error('Error running animation:', error);
+                showNotification('Error running animation', 'error');
+            }
+        }
     </script>
 </body>
 </html>

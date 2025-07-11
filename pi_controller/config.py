@@ -51,6 +51,30 @@ class Config:
     OPENAI_MAX_REQUESTS_PER_HOUR = int(os.environ.get('OPENAI_MAX_REQUESTS_PER_HOUR', 50))
     OPENAI_MAX_REQUESTS_PER_DAY = int(os.environ.get('OPENAI_MAX_REQUESTS_PER_DAY', 200))
     OPENAI_DEMO_MODE = os.environ.get('OPENAI_DEMO_MODE', 'False').lower() in ['true', '1', 'yes']
+    
+    # UI Mode → Animation Mapping
+    UI_MODE_MAPPING = {
+        "pre_race": [
+            "welcome_animation",
+            "system_test",
+            "standby_mode",
+            "demo_mode"
+        ],
+        "betting_open": [
+            "sixty_min_warning",
+            "thirty_min_urgency",
+            "final_call"
+        ],
+        "during_race": [
+            "theyre_off",
+            "down_the_stretch",
+            "finish_race"
+        ],
+        "results": [
+            "after_race_party",
+            "race_results"
+        ]
+    }
 
 
 class DevelopmentConfig(Config):
