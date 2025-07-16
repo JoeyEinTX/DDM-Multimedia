@@ -14,7 +14,7 @@
     <link href="{{ url_for('static', filename='css/voice-prompt.css') }}" rel="stylesheet">
     
     <style>
-        /* DDM Color Palette Variables - Ultra-tight spacing v3.0 */
+        /* DDM Color Palette Variables - Fixed duplicate CSS v4.0 */
         :root {
             --ddm-teal: #13868B;
             --ddm-red: #D62828;
@@ -29,6 +29,7 @@
             background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
             min-height: 100vh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            /* Force refresh timestamp: 2025-07-16-17:05 */
         }
         
         .dashboard-header {
@@ -579,20 +580,6 @@
         
         .quick-actions-grid > * {
             margin-bottom: 0 !important;
-        }
-        
-        .quick-action-btn {
-            margin: 0;
-            min-width: 150px;
-            border: 2px solid var(--ddm-teal);
-            color: var(--ddm-teal);
-            background: transparent;
-            padding: 10px 18px;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
         }
         
         /* Responsive Layout Adjustments */
