@@ -1,0 +1,103 @@
+<!-- DDM Components Usage Examples -->
+<!-- This file demonstrates how to use the DDM component system -->
+
+<!-- Example 1: Basic Button -->
+{% set btn_text = "Start Voice Prompt" %}
+{% set btn_class = "ddm-btn-primary ddm-btn-lg" %}
+{% set btn_icon = "🎤" %}
+{% set btn_onclick = "startVoicePrompt()" %}
+{% include 'partials/ddm_button.html' %}
+
+<!-- Example 2: Card with Content -->
+{% set card_title = "System Status" %}
+{% set card_icon = "🔧" %}
+{% set card_id = "system-status-card" %}
+{% call(caller) %}
+    {% include 'partials/ddm_card.html' %}
+{% endcall %}
+    <div class="ddm-flex ddm-flex-between ddm-gap-md">
+        {% set status_text = "Flask Server" %}
+        {% set status_type = "online" %}
+        {% include 'partials/ddm_status.html' %}
+    </div>
+{% endcall %}
+
+<!-- Example 3: Grid Layout -->
+{% set grid_cols = "4" %}
+{% set grid_class = "racing-modes" %}
+{% call(caller) %}
+    {% include 'partials/ddm_grid.html' %}
+{% endcall %}
+    <!-- Grid items go here -->
+    <div class="ddm-card">
+        <div class="ddm-card-body ddm-text-center">
+            <div class="feature-icon">🏁</div>
+            <h4>Pre-Race</h4>
+        </div>
+    </div>
+{% endcall %}
+
+<!-- Example 4: Modal -->
+{% set modal_id = "voice-modal" %}
+{% set modal_title = "Voice Animation Control" %}
+{% set modal_icon = "🎤" %}
+{% set modal_size = "modal-md" %}
+{% call(caller) %}
+    {% include 'partials/ddm_modal.html' %}
+{% endcall %}
+    <div class="ddm-text-center ddm-p-lg">
+        <p class="ddm-text-secondary">Speak your animation description</p>
+        <!-- Voice controls here -->
+    </div>
+{% endcall %}
+
+<!-- Example 5: Button with Data Attributes -->
+{% set btn_text = "Reset Results" %}
+{% set btn_class = "ddm-btn-warning" %}
+{% set btn_icon = "🔄" %}
+{% set btn_data_attrs = {"action": "reset", "confirm": "true"} %}
+{% set btn_onclick = "resetRaceResults()" %}
+{% include 'partials/ddm_button.html' %}
+
+<!-- Example 6: Status Indicators -->
+<div class="ddm-flex ddm-gap-md">
+    {% set status_text = "OpenAI Ready" %}
+    {% set status_type = "online" %}
+    {% include 'partials/ddm_status.html' %}
+    
+    {% set status_text = "ESP32 Devices" %}
+    {% set status_type = "warning" %}
+    {% include 'partials/ddm_status.html' %}
+    
+    {% set status_text = "Connection Lost" %}
+    {% set status_type = "offline" %}
+    {% include 'partials/ddm_status.html' %}
+</div>
+
+<!-- Example 7: Grid with Dynamic Items -->
+{% set grid_cols = "3" %}
+{% set grid_items = [
+    {"content": "<div class='ddm-card'><div class='ddm-card-body'>Item 1</div></div>"},
+    {"content": "<div class='ddm-card'><div class='ddm-card-body'>Item 2</div></div>"},
+    {"content": "<div class='ddm-card'><div class='ddm-card-body'>Item 3</div></div>"}
+] %}
+{% include 'partials/ddm_grid.html' %}
+
+<!-- Example 8: Nested Components -->
+{% set card_title = "Quick Actions" %}
+{% set card_icon = "⚡" %}
+{% call(caller) %}
+    {% include 'partials/ddm_card.html' %}
+{% endcall %}
+    <div class="ddm-flex ddm-flex-col ddm-gap-md">
+        {% set btn_text = "Test Animation" %}
+        {% set btn_class = "ddm-btn-success ddm-w-full" %}
+        {% set btn_icon = "🧪" %}
+        {% include 'partials/ddm_button.html' %}
+        
+        {% set btn_text = "Refresh Status" %}
+        {% set btn_class = "ddm-btn-secondary ddm-w-full" %}
+        {% set btn_icon = "🔄" %}
+        {% include 'partials/ddm_button.html' %}
+    </div>
+{% endcall %}

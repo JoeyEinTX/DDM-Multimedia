@@ -1,0 +1,37 @@
+<!-- DDM Card Component -->
+<!-- Usage: {% include 'partials/ddm_card.html' with context %} -->
+<!-- Variables: card_title, card_content, card_icon, card_class, card_onclick -->
+
+<div class="ddm-card {{ card_class or '' }}"
+     {% if card_onclick %}onclick="{{ card_onclick }}" style="cursor: pointer;"{% endif %}
+     {% if card_id %}id="{{ card_id }}"{% endif %}>
+    
+    {% if card_title or card_icon %}
+    <div class="ddm-card-header">
+        {% if card_icon %}
+            <div class="ddm-flex ddm-gap-md">
+                <span class="ddm-icon">{{ card_icon }}</span>
+                {% if card_title %}
+                    <h5 class="mb-0">{{ card_title }}</h5>
+                {% endif %}
+            </div>
+        {% elif card_title %}
+            <h5 class="mb-0">{{ card_title }}</h5>
+        {% endif %}
+    </div>
+    {% endif %}
+    
+    <div class="ddm-card-body">
+        {% if card_content %}
+            {{ card_content | safe }}
+        {% else %}
+            {{ caller() }}
+        {% endif %}
+    </div>
+    
+    {% if card_footer %}
+    <div class="ddm-card-footer">
+        {{ card_footer | safe }}
+    </div>
+    {% endif %}
+</div>

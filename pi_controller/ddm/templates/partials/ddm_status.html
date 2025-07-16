@@ -1,0 +1,29 @@
+<!-- DDM Status Indicator Component -->
+<!-- Usage: {% include 'partials/ddm_status.html' with context %} -->
+<!-- Variables: status_text, status_type, status_icon, status_class -->
+
+<div class="ddm-status {{ status_class or '' }} ddm-status-{{ status_type or 'online' }}">
+    {% if status_icon %}
+        <span class="ddm-icon">{{ status_icon }}</span>
+    {% else %}
+        <span class="ddm-status-dot"></span>
+    {% endif %}
+    <span class="ddm-status-text">{{ status_text or 'Online' }}</span>
+</div>
+
+<style>
+.ddm-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    display: inline-block;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+</style>

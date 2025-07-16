@@ -15,7 +15,7 @@
     <link href="{{ url_for('static', filename='css/voice-prompt.css') }}" rel="stylesheet">
     
     <style>
-        /* Enhanced DDM Color Palette Variables */
+        /* DDM Dark Theme Color Palette */
         :root {
             --ddm-teal: #13868B;
             --ddm-red: #D62828;
@@ -26,19 +26,28 @@
             --ddm-off-white: #F9F6EF;
             --ddm-teal-light: #1db1b8;
             --ddm-teal-dark: #0f696d;
-            --ddm-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            --ddm-shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.25);
+            
+            /* Dark Theme Colors */
+            --ddm-dark-navy: #0a1628;
+            --ddm-dark-card: #1a2332;
+            --ddm-dark-border: #2a3441;
+            --ddm-dark-text: #e2e8f0;
+            --ddm-dark-text-muted: #94a3b8;
+            
+            --ddm-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            --ddm-shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.4);
             --ddm-border-radius: 12px;
             --ddm-transition: all 0.3s ease;
         }
         
         body {
-            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-light) 50%, var(--ddm-green) 100%);
-            background-size: 400% 400%;
-            animation: gradientShift 15s ease infinite;
+            background: var(--ddm-dark-navy);
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(19, 134, 139, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(78, 159, 61, 0.1) 0%, transparent 50%);
             min-height: 100vh;
             font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            /* Force refresh timestamp: 2025-07-16-17:05 */
+            color: var(--ddm-dark-text);
         }
         
         @keyframes gradientShift {
@@ -87,16 +96,17 @@
         }
         
         .card {
-            background: rgba(255, 255, 255, 0.97);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: var(--ddm-dark-card);
+            border: 1px solid rgba(18, 128, 140, 0.3);
             border-radius: var(--ddm-border-radius);
-            box-shadow: var(--ddm-shadow);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             backdrop-filter: blur(15px);
             -webkit-backdrop-filter: blur(15px);
             margin-bottom: 20px;
             transition: var(--ddm-transition);
             position: relative;
             overflow: hidden;
+            color: var(--ddm-dark-text);
         }
         
         .card::before {
@@ -107,7 +117,7 @@
             right: 0;
             height: 3px;
             background: linear-gradient(90deg, var(--ddm-teal), var(--ddm-green), var(--ddm-yellow), var(--ddm-red));
-            opacity: 0;
+            opacity: 0.7;
             transition: var(--ddm-transition);
         }
         
@@ -121,14 +131,14 @@
         }
         
         .card-title {
-            color: var(--ddm-teal-dark);
+            color: var(--ddm-dark-text);
             font-weight: 700;
             font-size: 1.2em;
             margin-bottom: 1rem;
             position: relative;
             padding-left: 8px;
             border-left: 4px solid var(--ddm-teal);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
         
         /* Section Title Styling */
@@ -180,9 +190,9 @@
         
         .feature-card h4 {
             font-weight: 600;
-            color: var(--ddm-teal-dark);
+            color: var(--ddm-dark-text);
             margin-top: 15px;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }
         
         .mode-card {
@@ -204,8 +214,8 @@
             min-height: 60px;
             margin: 0;
             border: 2px solid var(--ddm-teal);
-            color: var(--ddm-teal);
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+            color: var(--ddm-dark-text);
+            background: linear-gradient(135deg, rgba(26, 35, 50, 0.8) 0%, rgba(42, 52, 65, 0.8) 100%);
             padding: 12px 14px;
             border-radius: var(--ddm-border-radius);
             font-weight: 600;
@@ -214,8 +224,8 @@
             overflow: hidden;
             font-size: 0.9rem;
             box-sizing: border-box;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
         }
         
         .quick-action-btn::before {
@@ -362,6 +372,68 @@
         
         .modal-header .btn-close {
             filter: invert(1) grayscale(100%) brightness(200%);
+        }
+        
+        .modal-content {
+            background: var(--ddm-dark-card);
+            border: 1px solid var(--ddm-dark-border);
+            color: var(--ddm-dark-text);
+        }
+        
+        .modal-body {
+            background: var(--ddm-dark-card);
+            color: var(--ddm-dark-text);
+        }
+        
+        .modal-footer {
+            background: var(--ddm-dark-card);
+            border-top: 1px solid var(--ddm-dark-border);
+        }
+        
+        /* Button Styling for Dark Theme */
+        .btn-primary {
+            background: var(--ddm-teal);
+            border-color: var(--ddm-teal);
+            color: white;
+            font-weight: 600;
+        }
+        
+        .btn-primary:hover {
+            background: var(--ddm-teal-light);
+            border-color: var(--ddm-teal-light);
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--ddm-dark-border);
+            border-color: var(--ddm-dark-border);
+            color: var(--ddm-dark-text);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--ddm-dark-text-muted);
+            border-color: var(--ddm-dark-text-muted);
+        }
+        
+        .btn-warning {
+            background: var(--ddm-yellow);
+            border-color: var(--ddm-yellow);
+            color: var(--ddm-dark-navy);
+            font-weight: 600;
+        }
+        
+        .btn-success {
+            background: var(--ddm-green);
+            border-color: var(--ddm-green);
+            color: white;
+            font-weight: 600;
+        }
+        
+        .btn-danger {
+            background: var(--ddm-red);
+            border-color: var(--ddm-red);
+            color: white;
+            font-weight: 600;
         }
         
         /* During Race Modal Special Styling */

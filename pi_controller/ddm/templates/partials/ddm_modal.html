@@ -1,0 +1,36 @@
+<!-- DDM Modal Component -->
+<!-- Usage: {% include 'partials/ddm_modal.html' with context %} -->
+<!-- Variables: modal_id, modal_title, modal_content, modal_footer, modal_size -->
+
+<div class="modal fade" id="{{ modal_id or 'ddm-modal' }}" tabindex="-1" aria-labelledby="{{ modal_id or 'ddm-modal' }}Label" aria-hidden="true">
+    <div class="modal-dialog {{ modal_size or 'modal-lg' }} modal-dialog-centered">
+        <div class="modal-content ddm-modal">
+            
+            {% if modal_title %}
+            <div class="modal-header ddm-modal-header">
+                <h5 class="modal-title ddm-text-primary" id="{{ modal_id or 'ddm-modal' }}Label">
+                    {% if modal_icon %}
+                        <span class="ddm-icon me-2">{{ modal_icon }}</span>
+                    {% endif %}
+                    {{ modal_title }}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            {% endif %}
+            
+            <div class="modal-body ddm-modal-body">
+                {% if modal_content %}
+                    {{ modal_content | safe }}
+                {% else %}
+                    {{ caller() }}
+                {% endif %}
+            </div>
+            
+            {% if modal_footer %}
+            <div class="modal-footer ddm-modal-footer">
+                {{ modal_footer | safe }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>

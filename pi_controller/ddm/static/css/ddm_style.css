@@ -2,14 +2,52 @@
 
 /* ===== CSS VARIABLES ===== */
 :root {
-  /* Colors */
-  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  --success-gradient: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-  --warning-gradient: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
-  --danger-gradient: linear-gradient(135deg, #dc3545 0%, #6f42c1 100%);
+  /* DDM Racing Brand Colors - Figma Design System */
+  --ddm-teal: #12808C;
+  --ddm-teal-light: #2dd4bf;
+  --ddm-teal-dark: #0f6b72;
+  --ddm-red: #E63946;
+  --ddm-red-light: #f87171;
+  --ddm-red-dark: #dc2626;
+  --ddm-golden-yellow: #F4A300;
+  --ddm-golden-yellow-light: #fbbf24;
+  --ddm-golden-yellow-dark: #d97706;
+  --ddm-green: #4CAF50;
+  --ddm-green-light: #10b981;
+  --ddm-green-dark: #059669;
+  --ddm-blue: #0D3B66;
+  --ddm-blue-light: #3b82f6;
+  --ddm-blue-dark: #1e40af;
+  --ddm-orange: #fd7e14;
+  --ddm-orange-light: #fb923c;
+  --ddm-orange-dark: #ea580c;
+  --ddm-cream: #F8F9FA;
+  --ddm-cream-dark: #e2e8f0;
   
-  /* Racing Colors */
+  /* Dark Theme Colors */
+  --ddm-dark-navy: #0a1628;
+  --ddm-navy-darkest: #1a2332;
+  --ddm-navy-darker: #2a3441;
+  --ddm-navy-dark: #3a4550;
+  --ddm-dark-card: #1a2332;
+  --ddm-dark-border: #334155;
+  
+  /* Gradients */
+  --ddm-gradient-bg: linear-gradient(135deg, #0a1628 0%, #1a2332 50%, #2a3441 100%);
+  --ddm-teal-gradient: linear-gradient(135deg, #12808C 0%, #2dd4bf 100%);
+  --ddm-red-gradient: linear-gradient(135deg, #E63946 0%, #f87171 100%);
+  --ddm-golden-gradient: linear-gradient(135deg, #F4A300 0%, #fbbf24 100%);
+  --ddm-green-gradient: linear-gradient(135deg, #4CAF50 0%, #10b981 100%);
+  --ddm-blue-gradient: linear-gradient(135deg, #0D3B66 0%, #3b82f6 100%);
+  
+  /* Legacy Colors for Backwards Compatibility */
+  --primary-gradient: var(--ddm-teal-gradient);
+  --secondary-gradient: var(--ddm-blue-gradient);
+  --success-gradient: var(--ddm-green-gradient);
+  --warning-gradient: var(--ddm-golden-gradient);
+  --danger-gradient: var(--ddm-red-gradient);
+  
+  /* Racing Medal Colors */
   --gold: #DAA520;
   --gold-light: #FFD700;
   --gold-dark: #B8860B;
@@ -20,7 +58,7 @@
   --bronze-light: #CD853F;
   --bronze-dark: #A0522D;
   
-  /* Neutral Colors */
+  /* Neutral Colors - Dark Theme Optimized */
   --white: #ffffff;
   --gray-50: #f8f9fa;
   --gray-100: #e9ecef;
@@ -32,6 +70,24 @@
   --gray-700: #343a40;
   --gray-800: #212529;
   --gray-900: #000000;
+  
+  /* Dark Theme Text Colors */
+  --text-primary: var(--ddm-cream);
+  --text-secondary: rgba(248, 249, 250, 0.8);
+  --text-muted: rgba(248, 249, 250, 0.6);
+  --text-inverse: var(--ddm-navy-darkest);
+  
+  /* Button Color Classes */
+  --btn-primary-bg: var(--ddm-teal);
+  --btn-primary-hover: var(--ddm-teal-light);
+  --btn-secondary-bg: var(--ddm-blue);
+  --btn-secondary-hover: var(--ddm-blue-light);
+  --btn-success-bg: var(--ddm-green);
+  --btn-success-hover: var(--ddm-green-light);
+  --btn-warning-bg: var(--ddm-golden-yellow);
+  --btn-warning-hover: var(--ddm-golden-yellow-light);
+  --btn-danger-bg: var(--ddm-red);
+  --btn-danger-hover: var(--ddm-red-light);
   
   /* Spacing */
   --spacing-xs: 0.25rem;  /* 4px */
@@ -82,20 +138,432 @@
   --z-notification: 9999;
 }
 
-/* ===== DARK MODE VARIABLES ===== */
-[data-theme="dark"] {
-  --primary-gradient: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
-  --gray-50: #1a202c;
-  --gray-100: #2d3748;
-  --gray-200: #4a5568;
-  --gray-300: #718096;
-  --gray-400: #a0aec0;
-  --gray-500: #cbd5e0;
-  --gray-600: #e2e8f0;
-  --gray-700: #edf2f7;
-  --gray-800: #f7fafc;
-  --gray-900: #ffffff;
-  --white: #1a202c;
+/* ===== REUSABLE COMPONENT CLASSES ===== */
+
+/* DDM Button System */
+.ddm-btn {
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-lg);
+  font-weight: 600;
+  transition: var(--transition-base);
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  min-height: var(--touch-target-min);
+}
+
+.ddm-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.ddm-btn-primary {
+  background: var(--ddm-teal-gradient);
+  color: var(--text-inverse);
+}
+
+.ddm-btn-secondary {
+  background: var(--ddm-blue-gradient);
+  color: var(--text-primary);
+}
+
+.ddm-btn-success {
+  background: var(--ddm-green-gradient);
+  color: var(--text-inverse);
+}
+
+.ddm-btn-warning {
+  background: var(--ddm-golden-gradient);
+  color: var(--text-inverse);
+}
+
+.ddm-btn-danger {
+  background: var(--ddm-red-gradient);
+  color: var(--text-inverse);
+}
+
+.ddm-btn-lg {
+  padding: 1rem 2rem;
+  font-size: var(--font-size-lg);
+  min-height: var(--touch-target-lg);
+}
+
+.ddm-btn-sm {
+  padding: 0.5rem 1rem;
+  font-size: var(--font-size-sm);
+  min-height: var(--touch-target-min);
+}
+
+/* DDM Card System */
+.ddm-card {
+  background: var(--ddm-dark-card);
+  border: 1px solid var(--ddm-dark-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  transition: var(--transition-base);
+}
+
+.ddm-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-xl);
+}
+
+.ddm-card-header {
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--ddm-dark-border);
+  background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
+  color: var(--text-primary);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.ddm-card-body {
+  padding: var(--spacing-lg);
+  color: var(--text-primary);
+}
+
+.ddm-card-footer {
+  padding: var(--spacing-lg);
+  border-top: 1px solid var(--ddm-dark-border);
+  background: var(--ddm-dark-card);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+}
+
+/* DDM Grid System */
+.ddm-grid {
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+.ddm-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.ddm-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.ddm-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.ddm-grid-auto {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+/* Responsive Grid */
+@media (max-width: 768px) {
+  .ddm-grid-2,
+  .ddm-grid-3,
+  .ddm-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .ddm-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .ddm-grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* DDM Status Indicators */
+.ddm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.ddm-status-online {
+  background: rgba(76, 175, 80, 0.1);
+  color: var(--ddm-green);
+  border: 1px solid var(--ddm-green);
+}
+
+.ddm-status-offline {
+  background: rgba(230, 57, 70, 0.1);
+  color: var(--ddm-red);
+  border: 1px solid var(--ddm-red);
+}
+
+.ddm-status-warning {
+  background: rgba(244, 163, 0, 0.1);
+  color: var(--ddm-golden-yellow);
+  border: 1px solid var(--ddm-golden-yellow);
+}
+
+/* DDM Modal System */
+.ddm-modal {
+  background: var(--ddm-dark-card);
+  border: 1px solid var(--ddm-dark-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  color: var(--text-primary);
+}
+
+.ddm-modal-header {
+  background: var(--ddm-teal-gradient);
+  color: var(--text-primary);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.ddm-modal-body {
+  background: var(--ddm-dark-card);
+  color: var(--text-primary);
+}
+
+.ddm-modal-footer {
+  background: var(--ddm-dark-card);
+  border-top: 1px solid var(--ddm-dark-border);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+}
+
+/* DDM Typography */
+.ddm-text-primary {
+  color: var(--text-primary);
+}
+
+.ddm-text-secondary {
+  color: var(--text-secondary);
+}
+
+.ddm-text-muted {
+  color: var(--text-muted);
+}
+
+.ddm-text-inverse {
+  color: var(--text-inverse);
+}
+
+/* DDM Spacing Utilities */
+.ddm-p-xs { padding: var(--spacing-xs); }
+.ddm-p-sm { padding: var(--spacing-sm); }
+.ddm-p-md { padding: var(--spacing-md); }
+.ddm-p-lg { padding: var(--spacing-lg); }
+.ddm-p-xl { padding: var(--spacing-xl); }
+
+.ddm-m-xs { margin: var(--spacing-xs); }
+.ddm-m-sm { margin: var(--spacing-sm); }
+.ddm-m-md { margin: var(--spacing-md); }
+.ddm-m-lg { margin: var(--spacing-lg); }
+.ddm-m-xl { margin: var(--spacing-xl); }
+
+/* DDM Flex Utilities */
+.ddm-flex {
+  display: flex;
+}
+
+.ddm-flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ddm-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ddm-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.ddm-gap-xs { gap: var(--spacing-xs); }
+.ddm-gap-sm { gap: var(--spacing-sm); }
+.ddm-gap-md { gap: var(--spacing-md); }
+.ddm-gap-lg { gap: var(--spacing-lg); }
+.ddm-gap-xl { gap: var(--spacing-xl); }
+
+/* ===== RESPONSIVE POSITIONING SYSTEM ===== */
+
+/* Flexible positioning instead of absolute */
+.ddm-relative { position: relative; }
+.ddm-absolute { position: absolute; }
+.ddm-fixed { position: fixed; }
+.ddm-sticky { position: sticky; }
+
+/* Safe positioning with CSS variables */
+.ddm-top-0 { top: 0; }
+.ddm-right-0 { right: 0; }
+.ddm-bottom-0 { bottom: 0; }
+.ddm-left-0 { left: 0; }
+
+.ddm-top-sm { top: var(--spacing-sm); }
+.ddm-right-sm { right: var(--spacing-sm); }
+.ddm-bottom-sm { bottom: var(--spacing-sm); }
+.ddm-left-sm { left: var(--spacing-sm); }
+
+.ddm-top-md { top: var(--spacing-md); }
+.ddm-right-md { right: var(--spacing-md); }
+.ddm-bottom-md { bottom: var(--spacing-md); }
+.ddm-left-md { left: var(--spacing-md); }
+
+/* Responsive dimensions */
+.ddm-w-full { width: 100%; }
+.ddm-h-full { height: 100%; }
+.ddm-w-auto { width: auto; }
+.ddm-h-auto { height: auto; }
+
+/* Responsive breakpoints */
+.ddm-hidden { display: none; }
+.ddm-block { display: block; }
+.ddm-inline-block { display: inline-block; }
+
+@media (max-width: 768px) {
+  .ddm-md-hidden { display: none; }
+  .ddm-md-block { display: block; }
+}
+
+@media (max-width: 1024px) {
+  .ddm-lg-hidden { display: none; }
+  .ddm-lg-block { display: block; }
+}
+
+/* Z-index system */
+.ddm-z-behind { z-index: var(--z-behind); }
+.ddm-z-base { z-index: var(--z-base); }
+.ddm-z-modal { z-index: var(--z-modal); }
+.ddm-z-overlay { z-index: var(--z-overlay); }
+.ddm-z-notification { z-index: var(--z-notification); }
+
+/* ===== DARK THEME STYLES ===== */
+body {
+  background: var(--ddm-gradient-bg);
+  color: var(--text-primary);
+  font-family: var(--font-family-base);
+  min-height: 100vh;
+}
+
+/* Card Styles - Dark Theme */
+.card {
+  background: var(--ddm-dark-card);
+  border: 1px solid var(--ddm-dark-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.card-header {
+  background: rgba(26, 35, 50, 0.8);
+  border-bottom: 1px solid var(--ddm-dark-border);
+  color: var(--text-primary);
+}
+
+.card-body {
+  color: var(--text-primary);
+}
+
+/* DDM Button Classes */
+.ddm-button-primary {
+  background: var(--btn-primary-bg);
+  color: var(--text-inverse);
+  border: none;
+  font-weight: 600;
+  transition: var(--transition-base);
+}
+
+.ddm-button-primary:hover {
+  background: var(--btn-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.ddm-button-secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--ddm-dark-border);
+  font-weight: 600;
+  transition: var(--transition-base);
+}
+
+.ddm-button-secondary:hover {
+  background: var(--btn-secondary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Bootstrap Override for Dark Theme */
+.text-muted {
+  color: var(--text-muted) !important;
+}
+
+.text-white {
+  color: var(--text-primary) !important;
+}
+
+.text-primary {
+  color: var(--ddm-teal) !important;
+}
+
+.text-secondary {
+  color: var(--text-secondary) !important;
+}
+
+.text-success {
+  color: var(--ddm-green) !important;
+}
+
+.text-warning {
+  color: var(--ddm-golden-yellow) !important;
+}
+
+.text-danger {
+  color: var(--ddm-red) !important;
+}
+
+/* DDM Card Classes */
+.ddm-card {
+  background: var(--ddm-dark-card);
+  border: 1px solid rgba(18, 128, 140, 0.3);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+}
+
+.ddm-racing-header {
+  background: linear-gradient(135deg, rgba(26, 35, 50, 0.95) 0%, rgba(42, 52, 65, 0.95) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Dark Theme Overrides */
+.text-white, .text-ddm-cream {
+  color: var(--text-primary) !important;
+}
+
+.text-muted, .text-ddm-cream-70 {
+  color: var(--text-muted) !important;
+}
+
+.bg-ddm-navy-darker {
+  background: var(--ddm-navy-darker) !important;
+}
+
+.bg-ddm-dark-navy {
+  background: var(--ddm-dark-navy) !important;
+}
+
+.border-ddm-teal {
+  border-color: var(--ddm-teal) !important;
+}
+
+.border-ddm-blue {
+  border-color: var(--ddm-blue) !important;
 }
 
 /* ===== BASE STYLES ===== */

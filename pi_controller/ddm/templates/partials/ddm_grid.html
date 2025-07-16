@@ -1,0 +1,20 @@
+<!-- DDM Grid Layout Component -->
+<!-- Usage: {% include 'partials/ddm_grid.html' with context %} -->
+<!-- Variables: grid_cols, grid_class, grid_gap, grid_items -->
+
+<div class="ddm-grid {{ grid_class or '' }} ddm-grid-{{ grid_cols or 'auto' }}"
+     {% if grid_gap %}style="gap: {{ grid_gap }};"{% endif %}
+     {% if grid_id %}id="{{ grid_id }}"{% endif %}>
+    
+    {% if grid_items %}
+        {% for item in grid_items %}
+            <div class="ddm-grid-item {{ item.class or '' }}">
+                {% if item.content %}
+                    {{ item.content | safe }}
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        {{ caller() }}
+    {% endif %}
+</div>

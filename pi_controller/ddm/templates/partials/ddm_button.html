@@ -1,0 +1,21 @@
+<!-- DDM Button Component -->
+<!-- Usage: {% include 'partials/ddm_button.html' with context %} -->
+<!-- Variables: btn_text, btn_class, btn_icon, btn_onclick, btn_disabled -->
+
+<button 
+    class="ddm-btn {{ btn_class or 'ddm-btn-primary' }} {{ btn_size or '' }}"
+    {% if btn_onclick %}onclick="{{ btn_onclick }}"{% endif %}
+    {% if btn_disabled %}disabled{% endif %}
+    {% if btn_id %}id="{{ btn_id }}"{% endif %}
+    {% if btn_type %}type="{{ btn_type }}"{% endif %}
+    {% if btn_data_attrs %}
+        {% for attr, value in btn_data_attrs.items() %}
+            data-{{ attr }}="{{ value }}"
+        {% endfor %}
+    {% endif %}
+>
+    {% if btn_icon %}
+        <span class="ddm-icon">{{ btn_icon }}</span>
+    {% endif %}
+    {{ btn_text or 'Button' }}
+</button>
