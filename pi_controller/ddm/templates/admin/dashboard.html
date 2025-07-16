@@ -10,60 +10,179 @@
     <title>DDM Racing System - Admin Dashboard</title>
     
     <!-- CSS -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/voice-prompt.css') }}" rel="stylesheet">
     
     <style>
-        /* DDM Color Palette Variables - Fixed duplicate CSS v4.0 */
+        /* Enhanced DDM Color Palette Variables */
         :root {
             --ddm-teal: #13868B;
             --ddm-red: #D62828;
             --ddm-green: #4E9F3D;
             --ddm-yellow: #F4A300;
+            --ddm-orange: #FF6B35;
+            --ddm-cream: #F9F6EF;
             --ddm-off-white: #F9F6EF;
             --ddm-teal-light: #1db1b8;
             --ddm-teal-dark: #0f696d;
+            --ddm-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            --ddm-shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.25);
+            --ddm-border-radius: 12px;
+            --ddm-transition: all 0.3s ease;
         }
         
         body {
-            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
+            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-light) 50%, var(--ddm-green) 100%);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
             min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             /* Force refresh timestamp: 2025-07-16-17:05 */
         }
         
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
         .dashboard-header {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 20px 0;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.05) 100%);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+            padding: 25px 0;
             margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .dashboard-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+        }
+        
+        .dashboard-header h1 {
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            font-weight: 700;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .dashboard-header p {
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+            position: relative;
+            z-index: 1;
         }
         
         .card {
-            background: rgba(255, 255, 255, 0.95);
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            margin-bottom: 15px;
+            background: rgba(255, 255, 255, 0.97);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: var(--ddm-border-radius);
+            box-shadow: var(--ddm-shadow);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            margin-bottom: 20px;
+            transition: var(--ddm-transition);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--ddm-teal), var(--ddm-green), var(--ddm-yellow), var(--ddm-red));
+            opacity: 0;
+            transition: var(--ddm-transition);
+        }
+        
+        .card:hover {
+            box-shadow: var(--ddm-shadow-hover);
+            transform: translateY(-2px);
+        }
+        
+        .card:hover::before {
+            opacity: 1;
         }
         
         .card-title {
             color: var(--ddm-teal-dark);
-            font-weight: 600;
+            font-weight: 700;
+            font-size: 1.2em;
+            margin-bottom: 1rem;
+            position: relative;
+            padding-left: 8px;
+            border-left: 4px solid var(--ddm-teal);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Section Title Styling */
+        .section-title {
+            color: var(--ddm-cream);
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            margin-bottom: 1.5rem;
+            position: relative;
+            padding-left: 40px;
+        }
+        
+        .section-title::before {
+            content: '🏁';
+            position: absolute;
+            left: 0;
+            top: 0;
+            font-size: 1.5em;
+            opacity: 0.8;
         }
         
         .feature-card {
             text-align: center;
-            padding: 30px;
-            transition: transform 0.3s ease;
+            padding: 35px 25px;
+            transition: var(--ddm-transition);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: var(--ddm-transition);
         }
         
         .feature-card:hover {
-            transform: translateY(-5px);
+            transform: translateY(-8px);
+        }
+        
+        .feature-card:hover::before {
+            left: 100%;
+        }
+        
+        .feature-card h4 {
+            font-weight: 600;
+            color: var(--ddm-teal-dark);
+            margin-top: 15px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         }
         
         .mode-card {
@@ -76,27 +195,54 @@
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
         }
         
-        /* Quick Actions Button Styling */
+        /* Enhanced Quick Actions Button Styling */
         .quick-action-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 60px;
             margin: 0;
-            min-width: 150px;
             border: 2px solid var(--ddm-teal);
             color: var(--ddm-teal);
-            background: transparent;
-            padding: 6px 14px;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.3s ease;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+            padding: 12px 14px;
+            border-radius: var(--ddm-border-radius);
+            font-weight: 600;
+            transition: var(--ddm-transition);
             position: relative;
             overflow: hidden;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
+            box-sizing: border-box;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .quick-action-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: var(--ddm-transition);
         }
         
         .quick-action-btn:hover {
-            background: var(--ddm-teal);
+            background: linear-gradient(135deg, var(--ddm-teal), var(--ddm-teal-light));
             color: white;
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
+            box-shadow: 0 6px 20px rgba(19, 134, 139, 0.4);
+        }
+        
+        .quick-action-btn:hover::before {
+            left: 100%;
+        }
+        
+        .quick-action-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(19, 134, 139, 0.3);
         }
         
         .quick-action-btn:focus {
@@ -116,15 +262,15 @@
         }
         
         .quick-action-btn.btn-test:hover {
-            background: var(--ddm-green);
+            background: linear-gradient(135deg, var(--ddm-green), #5cb85c);
             color: white;
-            box-shadow: 0 4px 15px rgba(78, 159, 61, 0.4);
+            box-shadow: 0 6px 20px rgba(78, 159, 61, 0.4);
         }
         
         .quick-action-btn.btn-test.active {
-            background: var(--ddm-green);
+            background: linear-gradient(135deg, var(--ddm-green), #5cb85c);
             color: white;
-            box-shadow: 0 4px 15px rgba(78, 159, 61, 0.4);
+            box-shadow: 0 6px 20px rgba(78, 159, 61, 0.4);
         }
         
         .quick-action-btn.btn-clear {
@@ -133,14 +279,80 @@
         }
         
         .quick-action-btn.btn-clear:hover {
-            background: var(--ddm-yellow);
+            background: linear-gradient(135deg, var(--ddm-yellow), #ffc107);
             color: white;
+            box-shadow: 0 6px 20px rgba(244, 163, 0, 0.4);
+        }
+        
+        /* Reset Button Styling */
+        #reset-results-btn {
+            background: linear-gradient(135deg, var(--ddm-yellow), #ffc107);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: var(--ddm-border-radius);
+            transition: var(--ddm-transition);
+            box-shadow: 0 2px 8px rgba(244, 163, 0, 0.3);
+        }
+        
+        #reset-results-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #ffc107, var(--ddm-orange));
+            transform: translateY(-2px);
             box-shadow: 0 4px 15px rgba(244, 163, 0, 0.4);
+        }
+        
+        #reset-results-btn:disabled {
+            background: #6c757d;
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
         
         .animation-btn {
             margin: 5px;
             min-width: 150px;
+            border-radius: var(--ddm-border-radius);
+            transition: var(--ddm-transition);
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .animation-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* General Button Enhancements */
+        .btn {
+            border-radius: var(--ddm-border-radius);
+            transition: var(--ddm-transition);
+            font-weight: 500;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: var(--ddm-transition);
+        }
+        
+        .btn:hover::before {
+            left: 100%;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
         }
         
         .modal-header {
@@ -541,45 +753,30 @@
             box-shadow: 0 8px 20px rgba(184, 134, 11, 0.6);
         }
         
-        /* Winners Panel Styling */
+        /* Winners Panel Styling - Clean Version */
         .winners-panel {
             display: flex;
             flex-direction: column;
-            gap: 1px !important;
+            gap: 8px;
             height: 100%;
             justify-content: space-between;
             padding: 0 4px;
         }
         
-        .winners-panel > * {
-            margin-bottom: 0 !important;
-        }
-        
-        /* Card Layout Improvements */
-        .card.h-100 {
+        /* Clean Grid Styling - Fill Available Space */
+        .quick-actions-grid {
+            flex: 1;
             display: flex;
             flex-direction: column;
+            gap: 8px;
         }
         
+        /* Clean card body styling */
         .card.h-100 .card-body {
             flex: 1;
             display: flex;
             flex-direction: column;
             padding: 0.75rem;
-        }
-        
-        .card.h-100 .d-grid {
-            flex: 1;
-            align-content: center;
-        }
-        
-        /* Tightened Quick Actions spacing */
-        .quick-actions-grid {
-            gap: 1px !important;
-        }
-        
-        .quick-actions-grid > * {
-            margin-bottom: 0 !important;
         }
         
         /* Responsive Layout Adjustments */
@@ -593,7 +790,7 @@
             }
             
             .quick-actions-grid {
-                gap: 1px !important;
+                gap: 2px;
             }
         }
         
@@ -643,7 +840,7 @@
             }
             
             .quick-actions-grid {
-                gap: 1px !important;
+                gap: 2px;
             }
         }
         
@@ -651,12 +848,14 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 4px 10px;
-            border-radius: 8px;
+            padding: 12px 16px;
+            border-radius: 12px;
             transition: all 0.3s ease;
             background: rgba(0, 0, 0, 0.05);
             border: 2px solid transparent;
-            margin-bottom: 0px !important;
+            margin-bottom: 0;
+            min-height: 60px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
         
         .winner-item.win-place {
@@ -700,16 +899,16 @@
         
         .winner-label {
             font-weight: 600;
-            font-size: 0.9em;
+            font-size: 1.0em;
         }
         
         .winner-number {
-            font-size: 1.5em;
+            font-size: 1.8em;
             font-weight: bold;
-            min-width: 40px;
+            min-width: 50px;
             text-align: center;
-            padding: 4px 8px;
-            border-radius: 6px;
+            padding: 6px 12px;
+            border-radius: 8px;
             background: rgba(255, 255, 255, 0.2);
         }
         
@@ -757,29 +956,82 @@
         .feature-icon {
             font-size: 48px;
             margin-bottom: 20px;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
         }
         
         .status-indicator {
             display: inline-block;
-            width: 12px;
-            height: 12px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            margin-right: 8px;
+            margin-right: 10px;
+            position: relative;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
         
         .status-online {
-            background: #28a745;
-            animation: pulse 2s ease-in-out infinite;
+            background: linear-gradient(135deg, #28a745, #34ce57);
+            animation: statusPulse 2s ease-in-out infinite;
+        }
+        
+        .status-online::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(135deg, #28a745, #34ce57);
+            border-radius: 50%;
+            opacity: 0.3;
+            animation: statusGlow 2s ease-in-out infinite;
         }
         
         .status-offline {
-            background: #dc3545;
+            background: linear-gradient(135deg, #dc3545, #e74c3c);
         }
         
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
+        @keyframes statusPulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        @keyframes statusGlow {
+            0% { transform: scale(1); opacity: 0.3; }
+            50% { transform: scale(1.5); opacity: 0.1; }
+            100% { transform: scale(1); opacity: 0.3; }
+        }
+        
+        /* Enhanced Form Controls */
+        .form-control, .form-select {
+            border-radius: var(--ddm-border-radius);
+            border: 2px solid rgba(19, 134, 139, 0.3);
+            transition: var(--ddm-transition);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: var(--ddm-teal);
+            box-shadow: 0 0 0 0.2rem rgba(19, 134, 139, 0.25);
+        }
+        
+        .form-check-input:checked {
+            background-color: var(--ddm-teal);
+            border-color: var(--ddm-teal);
+        }
+        
+        .form-check-input:focus {
+            box-shadow: 0 0 0 0.2rem rgba(19, 134, 139, 0.25);
+        }
+        
+        /* Enhanced Input Groups */
+        .input-group .form-control {
+            border-right: none;
+        }
+        
+        .input-group .btn {
+            border-left: none;
         }
         
         /* Responsive Modal Sizing */
@@ -935,7 +1187,7 @@
         <!-- UI Mode Selection -->
         <div class="row mb-4">
             <div class="col-12">
-                <h2 class="text-white mb-4">🎮 Racing Mode Control</h2>
+                <h2 class="section-title">🎮 Racing Mode Control</h2>
             </div>
             
             <!-- Pre-Race Mode -->
@@ -1091,8 +1343,13 @@
                                         <div class="winner-number" id="winner-show-number">--</div>
                                     </div>
                                 </div>
-                                <div class="text-center mt-2">
+                                <div class="text-center" style="margin-top: 8px;">
                                     <small class="text-muted" id="results-timestamp">No race results yet</small>
+                                    <div class="mt-2">
+                                        <button class="btn btn-warning btn-sm" id="reset-results-btn" onclick="resetRaceResults()" disabled>
+                                            🔄 Reset Selections
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1103,7 +1360,7 @@
                         <div class="card h-100">
                             <div class="card-body">
                                 <h5 class="card-title">⚡ Quick Actions</h5>
-                                <div class="d-grid quick-actions-grid">
+                                <div class="quick-actions-grid">
                                     <button id="test-animation-btn" class="quick-action-btn btn-test" onclick="testAnimation()">
                                         🧪 Test Animation
                                     </button>
@@ -1241,6 +1498,9 @@
                     sendManualPrompt();
                 }
             });
+            
+            // Initialize reset button state
+            updateResetButtonState();
         });
         
         // Check voice support
@@ -1428,6 +1688,17 @@
             const clearBtn = document.getElementById('clear-logs-btn');
             clearBtn.classList.remove('active');
             
+            // For testing purposes, simulate some race results
+            const testResults = { win: 7, place: 3, show: 12 };
+            
+            // Update selection state to match test results
+            if (typeof selectionState !== 'undefined') {
+                selectionState.selections = testResults;
+                selectionState.step = 2; // Set to final step
+            }
+            
+            updateWinnersPanel(testResults);
+            
             showNotification('Test animation activated - LEDs will show test pattern', 'success');
         }
         
@@ -1440,6 +1711,84 @@
             clearBtn.classList.remove('active');
             
             showNotification('Logs cleared and animations reset', 'success');
+        }
+        
+        // Reset Race Results Function
+        function resetRaceResults() {
+            // Clear the displayed values
+            document.getElementById('winner-win-number').textContent = '--';
+            document.getElementById('winner-place-number').textContent = '--';
+            document.getElementById('winner-show-number').textContent = '--';
+            
+            // Remove active states
+            document.getElementById('winner-win').classList.remove('active');
+            document.getElementById('winner-place').classList.remove('active');
+            document.getElementById('winner-show').classList.remove('active');
+            
+            // Update timestamp
+            document.getElementById('results-timestamp').textContent = 'No race results yet';
+            
+            // Disable reset button
+            document.getElementById('reset-results-btn').disabled = true;
+            
+            // Reset the selection state for the modal
+            if (typeof selectionState !== 'undefined') {
+                selectionState = {
+                    step: 0,
+                    selections: { win: null, place: null, show: null },
+                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
+                };
+            }
+            
+            // Reset modal display elements if they exist
+            const winNumber = document.getElementById('win-number');
+            const placeNumber = document.getElementById('place-number');
+            const showNumber = document.getElementById('show-number');
+            
+            if (winNumber) winNumber.textContent = '?';
+            if (placeNumber) placeNumber.textContent = '?';
+            if (showNumber) showNumber.textContent = '?';
+            
+            // Remove selected classes from result boxes
+            const winBox = document.querySelector('.win-box');
+            const placeBox = document.querySelector('.place-box');
+            const showBox = document.querySelector('.show-box');
+            
+            if (winBox) winBox.classList.remove('selected');
+            if (placeBox) placeBox.classList.remove('selected');
+            if (showBox) showBox.classList.remove('selected');
+            
+            // Reset horse grid if it exists
+            const horseButtons = document.querySelectorAll('.horse-number');
+            if (horseButtons.length > 0) {
+                horseButtons.forEach(button => {
+                    button.classList.remove('selected', 'disabled', 'win', 'place', 'show');
+                });
+            }
+            
+            // Disable finalize button if it exists
+            const finalizeBtn = document.getElementById('finalize-results-btn');
+            if (finalizeBtn) {
+                finalizeBtn.disabled = true;
+            }
+            
+            // Update selection step display if modal elements exist
+            const selectionStep = document.getElementById('selection-step');
+            if (selectionStep) {
+                selectionStep.textContent = 'SELECT WINNING HORSE';
+            }
+            
+            showNotification('Race results reset successfully', 'success');
+        }
+        
+        // Function to update reset button state
+        function updateResetButtonState() {
+            const winNumber = document.getElementById('winner-win-number').textContent;
+            const placeNumber = document.getElementById('winner-place-number').textContent;
+            const showNumber = document.getElementById('winner-show-number').textContent;
+            
+            const hasResults = winNumber !== '--' || placeNumber !== '--' || showNumber !== '--';
+            document.getElementById('reset-results-btn').disabled = !hasResults;
         }
         
         // Voice prompt callbacks
@@ -1546,16 +1895,36 @@
         };
         
         function openHorseSelectionModal() {
-            // Reset state
-            selectionState = {
-                step: 0,
-                selections: { win: null, place: null, show: null },
-                stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
-            };
+            // Check if there are existing results from the main dashboard
+            const existingWin = document.getElementById('winner-win-number').textContent;
+            const existingPlace = document.getElementById('winner-place-number').textContent;
+            const existingShow = document.getElementById('winner-show-number').textContent;
+            
+            // Initialize selection state based on existing results
+            if (existingWin !== '--' || existingPlace !== '--' || existingShow !== '--') {
+                // Load existing results into selection state
+                selectionState = {
+                    step: 2, // Set to final step since we have results
+                    selections: { 
+                        win: existingWin !== '--' ? parseInt(existingWin) : null,
+                        place: existingPlace !== '--' ? parseInt(existingPlace) : null,
+                        show: existingShow !== '--' ? parseInt(existingShow) : null
+                    },
+                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
+                };
+            } else {
+                // Reset state for new selection
+                selectionState = {
+                    step: 0,
+                    selections: { win: null, place: null, show: null },
+                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
+                };
+            }
             
             // Create horse grid
             createHorseGrid();
             updateSelectionStep();
+            updateResultsDisplay();
             
             // Show modal
             const modal = new bootstrap.Modal(document.getElementById('horseSelectionModal'));
@@ -1607,6 +1976,15 @@
         function updateSelectionStep() {
             const stepLabel = document.getElementById('selection-step');
             stepLabel.textContent = selectionState.stepLabels[selectionState.step];
+            
+            // Update finalize button state
+            const finalizeBtn = document.getElementById('finalize-results-btn');
+            if (finalizeBtn) {
+                const hasAllSelections = selectionState.selections.win && 
+                                       selectionState.selections.place && 
+                                       selectionState.selections.show;
+                finalizeBtn.disabled = !hasAllSelections;
+            }
         }
         
         function updateResultsDisplay() {
@@ -1746,6 +2124,9 @@
             // Update timestamp
             const now = new Date().toLocaleTimeString();
             document.getElementById('results-timestamp').textContent = `Results updated at ${now}`;
+            
+            // Update reset button state
+            updateResetButtonState();
         }
         
         function populateAnimationButtons(animations, mode) {
