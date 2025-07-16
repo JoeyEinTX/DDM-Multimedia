@@ -11,8 +11,19 @@
     <link href="{{ url_for('static', filename='css/voice-prompt.css') }}" rel="stylesheet">
     
     <style>
+        /* DDM Color Palette Variables */
+        :root {
+            --ddm-teal: #13868B;
+            --ddm-red: #D62828;
+            --ddm-green: #4E9F3D;
+            --ddm-yellow: #F4A300;
+            --ddm-off-white: #F9F6EF;
+            --ddm-teal-light: #1db1b8;
+            --ddm-teal-dark: #0f696d;
+        }
+        
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
             min-height: 100vh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
@@ -27,13 +38,18 @@
         }
         
         .card {
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             border: none;
             border-radius: 15px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
             margin-bottom: 20px;
+        }
+        
+        .card-title {
+            color: var(--ddm-teal-dark);
+            font-weight: 600;
         }
         
         .feature-card {
@@ -56,13 +72,74 @@
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
         }
         
+        /* Quick Actions Button Styling */
+        .quick-action-btn {
+            margin: 5px 0;
+            min-width: 150px;
+            border: 2px solid var(--ddm-teal);
+            color: var(--ddm-teal);
+            background: transparent;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .quick-action-btn:hover {
+            background: var(--ddm-teal);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
+        }
+        
+        .quick-action-btn:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(19, 134, 139, 0.2);
+        }
+        
+        .quick-action-btn.active {
+            background: var(--ddm-teal);
+            color: white;
+            box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
+        }
+        
+        .quick-action-btn.btn-test {
+            border-color: var(--ddm-green);
+            color: var(--ddm-green);
+        }
+        
+        .quick-action-btn.btn-test:hover {
+            background: var(--ddm-green);
+            color: white;
+            box-shadow: 0 4px 15px rgba(78, 159, 61, 0.4);
+        }
+        
+        .quick-action-btn.btn-test.active {
+            background: var(--ddm-green);
+            color: white;
+            box-shadow: 0 4px 15px rgba(78, 159, 61, 0.4);
+        }
+        
+        .quick-action-btn.btn-clear {
+            border-color: var(--ddm-yellow);
+            color: var(--ddm-yellow);
+        }
+        
+        .quick-action-btn.btn-clear:hover {
+            background: var(--ddm-yellow);
+            color: white;
+            box-shadow: 0 4px 15px rgba(244, 163, 0, 0.4);
+        }
+        
         .animation-btn {
             margin: 5px;
             min-width: 150px;
         }
         
         .modal-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
             color: white;
         }
         
@@ -72,12 +149,12 @@
         
         /* During Race Modal Special Styling */
         .during-race-modal .modal-content {
-            border: 3px solid #28a745;
-            box-shadow: 0 0 20px rgba(40, 167, 69, 0.4);
+            border: 3px solid var(--ddm-green);
+            box-shadow: 0 0 20px rgba(78, 159, 61, 0.4);
         }
         
         .during-race-modal .modal-header {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            background: linear-gradient(135deg, var(--ddm-green) 0%, var(--ddm-teal) 100%);
             animation: pulse-green 2s ease-in-out infinite;
         }
         
@@ -90,27 +167,27 @@
         }
         
         .during-race-modal .animation-btn:first-child {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            background: linear-gradient(135deg, var(--ddm-green) 0%, var(--ddm-teal) 100%);
             color: white;
             border: none;
         }
         
         .during-race-modal .animation-btn:nth-child(2) {
-            background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+            background: linear-gradient(135deg, var(--ddm-yellow) 0%, var(--ddm-red) 100%);
             color: white;
             border: none;
         }
         
         .during-race-modal .animation-btn:last-child {
-            background: linear-gradient(135deg, #dc3545 0%, #6f42c1 100%);
+            background: linear-gradient(135deg, var(--ddm-red) 0%, var(--ddm-teal-dark) 100%);
             color: white;
             border: none;
         }
         
         @keyframes pulse-green {
-            0% { box-shadow: 0 0 20px rgba(40, 167, 69, 0.4); }
-            50% { box-shadow: 0 0 30px rgba(40, 167, 69, 0.8); }
-            100% { box-shadow: 0 0 20px rgba(40, 167, 69, 0.4); }
+            0% { box-shadow: 0 0 20px rgba(78, 159, 61, 0.4); }
+            50% { box-shadow: 0 0 30px rgba(78, 159, 61, 0.8); }
+            100% { box-shadow: 0 0 20px rgba(78, 159, 61, 0.4); }
         }
         
         #modal-end-race-btn {
@@ -131,12 +208,12 @@
         }
         
         .bg-animation.theyre-off {
-            background: radial-gradient(circle at center, #28a745 0%, #20c997 50%, #17a2b8 100%);
+            background: radial-gradient(circle at center, var(--ddm-green) 0%, var(--ddm-teal) 50%, var(--ddm-teal-light) 100%);
             animation: racing-pulse 0.5s ease-in-out infinite;
         }
         
         .bg-animation.down-the-stretch {
-            background: linear-gradient(45deg, #ffc107, #fd7e14, #dc3545, #6f42c1);
+            background: linear-gradient(45deg, var(--ddm-yellow), var(--ddm-red), var(--ddm-green), var(--ddm-teal));
             animation: intensity-wave 1s ease-in-out infinite;
         }
         
@@ -145,14 +222,14 @@
                 45deg,
                 #000 0px,
                 #000 20px,
-                #fff 20px,
-                #fff 40px
+                var(--ddm-off-white) 20px,
+                var(--ddm-off-white) 40px
             );
             animation: checkered-flag 2s linear infinite;
         }
         
         .bg-animation.race-results {
-            background: linear-gradient(45deg, #ffd700, #ffed4e, #ffd700, #ffed4e);
+            background: linear-gradient(45deg, var(--ddm-yellow), var(--ddm-green), var(--ddm-yellow), var(--ddm-green));
             animation: victory-celebration 3s ease-in-out infinite;
         }
         
@@ -785,13 +862,13 @@
                     <div class="card-body">
                         <h5 class="card-title">⚡ Quick Actions</h5>
                         <div class="d-grid gap-2">
-                            <button class="btn btn-outline-primary" onclick="testAnimation()">
+                            <button id="test-animation-btn" class="quick-action-btn btn-test" onclick="testAnimation()">
                                 🧪 Test Animation
                             </button>
-                            <button class="btn btn-outline-success" onclick="refreshStatus()">
+                            <button class="quick-action-btn" onclick="refreshStatus()">
                                 🔄 Refresh Status
                             </button>
-                            <button class="btn btn-outline-warning" onclick="clearLogs()">
+                            <button id="clear-logs-btn" class="quick-action-btn btn-clear" onclick="clearLogs()">
                                 🧹 Clear Logs
                             </button>
                         </div>
@@ -1097,11 +1174,26 @@
         }
         
         function testAnimation() {
-            showNotification('Test animation would be sent to LEDs', 'info');
+            // Activate the test animation button
+            const testBtn = document.getElementById('test-animation-btn');
+            testBtn.classList.add('active');
+            
+            // Remove active state from clear logs button
+            const clearBtn = document.getElementById('clear-logs-btn');
+            clearBtn.classList.remove('active');
+            
+            showNotification('Test animation activated - LEDs will show test pattern', 'success');
         }
         
         function clearLogs() {
-            showNotification('Logs cleared', 'success');
+            // Remove active state from both buttons
+            const testBtn = document.getElementById('test-animation-btn');
+            const clearBtn = document.getElementById('clear-logs-btn');
+            
+            testBtn.classList.remove('active');
+            clearBtn.classList.remove('active');
+            
+            showNotification('Logs cleared and animations reset', 'success');
         }
         
         // Voice prompt callbacks

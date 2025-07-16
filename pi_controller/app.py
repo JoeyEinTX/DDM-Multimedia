@@ -19,9 +19,10 @@ app = create_app()
 if __name__ == '__main__':
     # Run the application with SocketIO support
     print("🏇 Starting DDM Racing System...")
-    print(f"🌐 Admin Interface: http://localhost:{app.config['PORT']}/admin")
-    print(f"📱 Guest Interface: http://localhost:{app.config['PORT']}/guest")
+    print(f"� Main Interface (Admin): http://localhost:{app.config['PORT']}/admin")
+    print(f"� Guest Interface: TEMPORARILY DISABLED (use /admin)")
     print(f"🔧 API Base: http://localhost:{app.config['PORT']}/api")
+    print(f"� Root URL redirects to Admin: http://localhost:{app.config['PORT']}/")
     
     socketio.run(
         app,

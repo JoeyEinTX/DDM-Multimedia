@@ -124,6 +124,13 @@ def register_blueprints(app):
     from ddm.api.display import display_bp
     from ddm.api.race import race_api
     
+    # Add root route - redirect to admin for development
+    from flask import redirect, url_for
+    
+    @app.route('/')
+    def index():
+        return redirect(url_for('admin_ui.dashboard'))
+    
     # Register UI blueprints
     app.register_blueprint(admin_ui, url_prefix='/admin')
     app.register_blueprint(guest_ui, url_prefix='/guest')
