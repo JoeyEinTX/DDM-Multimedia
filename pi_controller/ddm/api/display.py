@@ -145,4 +145,83 @@ def send_command():
         }), 500
 
 
+@display_bp.route('/test-animation', methods=['POST'])
+def test_animation():
+    """Send test animation to verify ESP32 connectivity and LED control."""
+    try:
+        data = request.get_json() or {}
+        animation = data.get('animation', 'connectivity_test')
+        duration = data.get('duration', 5000)
+        
+        logger.info(f"Sending test animation: {animation} for {duration}ms")
+        
+        # TODO: Send test command to ESP32 devices
+        # This would typically:
+        # 1. Check ESP32 connectivity
+        # 2. Send test pattern (rainbow, chase, flash, etc.)
+        # 3. Return success/failure based on ESP32 response
+        
+        # For now, simulate the test
+        # In real implementation, this would communicate with ESP32
+        esp32_connected = False  # This would be actual ESP32 status check
+        
+        if esp32_connected:
+            return jsonify({
+                'success': True,
+                'message': f'Test animation "{animation}" sent to ESP32 devices',
+                'animation': animation,
+                'duration': duration,
+                'devices_reached': 0  # Would be actual count
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No ESP32 devices connected',
+                'message': 'Test animation prepared but no devices available'
+            })
+        
+    except Exception as e:
+        logger.error(f"Error sending test animation: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
+
+
+@display_bp.route('/clear-animations', methods=['POST'])
+def clear_animations():
+    """Clear all animations and reset ESP32 devices."""
+    try:
+        logger.info("Clearing all animations and resetting ESP32 devices")
+        
+        # TODO: Send clear/reset command to ESP32 devices
+        # This would typically:
+        # 1. Send stop command to all ESP32 devices
+        # 2. Reset LEDs to off/default state
+        # 3. Clear any queued animations
+        
+        # For now, simulate the clear
+        esp32_connected = False  # This would be actual ESP32 status check
+        
+        if esp32_connected:
+            return jsonify({
+                'success': True,
+                'message': 'All animations cleared, ESP32 devices reset',
+                'devices_reset': 0  # Would be actual count
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No ESP32 devices connected',
+                'message': 'Clear command prepared but no devices available'
+            })
+        
+    except Exception as e:
+        logger.error(f"Error clearing animations: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
+
+
 # Additional display routes can be added here as needed

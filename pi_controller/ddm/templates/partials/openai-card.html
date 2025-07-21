@@ -1,0 +1,37 @@
+<div class="card h-100">
+    <div class="card-body">
+        <h5 class="card-title">
+            🤖 OpenAI Integration
+        </h5>
+        
+        <!-- OpenAI Status -->
+        <div class="d-flex align-items-center mb-3">
+            <div id="openai-status" class="status-indicator status-offline"></div>
+            <span id="openai-text" class="text-muted">Checking...</span>
+        </div>
+        
+        <!-- OpenAI Toggle -->
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="openaiToggle">
+            <label class="form-check-label" for="openaiToggle">
+                Enable AI Features
+            </label>
+        </div>
+        
+        <!-- Manual Prompt -->
+        <div class="mb-3">
+            <div class="input-group">
+                <input type="text" class="form-control" id="manualPrompt" 
+                       placeholder="Ask AI something...">
+                <button class="btn btn-primary" onclick="DDMDashboard.sendManualPrompt()">
+                    Ask AI
+                </button>
+            </div>
+        </div>
+        
+        <!-- Usage Stats -->
+        <div id="openai-usage" class="mt-2">
+            <small class="text-muted">Loading usage data...</small>
+        </div>
+    </div>
+</div>

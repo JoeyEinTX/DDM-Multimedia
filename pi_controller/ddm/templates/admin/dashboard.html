@@ -13,1224 +13,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/voice-prompt.css') }}" rel="stylesheet">
-    
-    <style>
-        /* DDM Dark Theme Color Palette */
-        :root {
-            --ddm-teal: #13868B;
-            --ddm-red: #D62828;
-            --ddm-green: #4E9F3D;
-            --ddm-yellow: #F4A300;
-            --ddm-orange: #FF6B35;
-            --ddm-cream: #F9F6EF;
-            --ddm-off-white: #F9F6EF;
-            --ddm-teal-light: #1db1b8;
-            --ddm-teal-dark: #0f696d;
-            
-            /* Dark Theme Colors */
-            --ddm-dark-navy: #0a1628;
-            --ddm-dark-card: #1a2332;
-            --ddm-dark-border: #2a3441;
-            --ddm-dark-text: #e2e8f0;
-            --ddm-dark-text-muted: #94a3b8;
-            
-            --ddm-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            --ddm-shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.4);
-            --ddm-border-radius: 12px;
-            --ddm-transition: all 0.3s ease;
-        }
-        
-        body {
-            background: var(--ddm-dark-navy);
-            background-image: 
-                radial-gradient(circle at 25% 25%, rgba(19, 134, 139, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 75% 75%, rgba(78, 159, 61, 0.1) 0%, transparent 50%);
-            min-height: 100vh;
-            font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: var(--ddm-dark-text);
-        }
-        
-        @keyframes gradientShift {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-        
-        .dashboard-header {
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.05) 100%);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
-            padding: 25px 0;
-            margin-bottom: 30px;
-            position: relative;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-        }
-        
-        .dashboard-header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 40% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
-            pointer-events: none;
-        }
-        
-        .dashboard-header h1 {
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            font-weight: 700;
-            position: relative;
-            z-index: 1;
-        }
-        
-        .dashboard-header p {
-            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
-            position: relative;
-            z-index: 1;
-        }
-        
-        .card {
-            background: var(--ddm-dark-card);
-            border: 1px solid rgba(18, 128, 140, 0.3);
-            border-radius: var(--ddm-border-radius);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            margin-bottom: 20px;
-            transition: var(--ddm-transition);
-            position: relative;
-            overflow: hidden;
-            color: var(--ddm-dark-text);
-        }
-        
-        .card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, var(--ddm-teal), var(--ddm-green), var(--ddm-yellow), var(--ddm-red));
-            opacity: 0.7;
-            transition: var(--ddm-transition);
-        }
-        
-        .card:hover {
-            box-shadow: var(--ddm-shadow-hover);
-            transform: translateY(-2px);
-        }
-        
-        .card:hover::before {
-            opacity: 1;
-        }
-        
-        .card-title {
-            color: var(--ddm-dark-text);
-            font-weight: 700;
-            font-size: 1.2em;
-            margin-bottom: 1rem;
-            position: relative;
-            padding-left: 8px;
-            border-left: 4px solid var(--ddm-teal);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-        }
-        
-        /* Section Title Styling */
-        .section-title {
-            color: var(--ddm-cream);
-            font-weight: 700;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            margin-bottom: 1.5rem;
-            position: relative;
-            padding-left: 40px;
-        }
-        
-        .section-title::before {
-            content: '🏁';
-            position: absolute;
-            left: 0;
-            top: 0;
-            font-size: 1.5em;
-            opacity: 0.8;
-        }
-        
-        .feature-card {
-            text-align: center;
-            padding: 35px 25px;
-            transition: var(--ddm-transition);
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-            transition: var(--ddm-transition);
-        }
-        
-        .feature-card:hover {
-            transform: translateY(-8px);
-        }
-        
-        .feature-card:hover::before {
-            left: 100%;
-        }
-        
-        .feature-card h4 {
-            font-weight: 600;
-            color: var(--ddm-dark-text);
-            margin-top: 15px;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-        }
-        
-        .mode-card {
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .mode-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
-        }
-        
-        /* Enhanced Quick Actions Button Styling */
-        .quick-action-btn {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 60px;
-            margin: 0;
-            border: 2px solid var(--ddm-teal);
-            color: var(--ddm-dark-text);
-            background: linear-gradient(135deg, rgba(26, 35, 50, 0.8) 0%, rgba(42, 52, 65, 0.8) 100%);
-            padding: 12px 14px;
-            border-radius: var(--ddm-border-radius);
-            font-weight: 600;
-            transition: var(--ddm-transition);
-            position: relative;
-            overflow: hidden;
-            font-size: 0.9rem;
-            box-sizing: border-box;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-        }
-        
-        .quick-action-btn::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-            transition: var(--ddm-transition);
-        }
-        
-        .quick-action-btn:hover {
-            background: linear-gradient(135deg, var(--ddm-teal), var(--ddm-teal-light));
-            color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(19, 134, 139, 0.4);
-        }
-        
-        .quick-action-btn:hover::before {
-            left: 100%;
-        }
-        
-        .quick-action-btn:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 8px rgba(19, 134, 139, 0.3);
-        }
-        
-        .quick-action-btn:focus {
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(19, 134, 139, 0.2);
-        }
-        
-        .quick-action-btn.active {
-            background: var(--ddm-teal);
-            color: white;
-            box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
-        }
-        
-        .quick-action-btn.btn-test {
-            border-color: var(--ddm-green);
-            color: var(--ddm-green);
-        }
-        
-        .quick-action-btn.btn-test:hover {
-            background: linear-gradient(135deg, var(--ddm-green), #5cb85c);
-            color: white;
-            box-shadow: 0 6px 20px rgba(78, 159, 61, 0.4);
-        }
-        
-        .quick-action-btn.btn-test.active {
-            background: linear-gradient(135deg, var(--ddm-green), #5cb85c);
-            color: white;
-            box-shadow: 0 6px 20px rgba(78, 159, 61, 0.4);
-        }
-        
-        .quick-action-btn.btn-clear {
-            border-color: var(--ddm-yellow);
-            color: var(--ddm-yellow);
-        }
-        
-        .quick-action-btn.btn-clear:hover {
-            background: linear-gradient(135deg, var(--ddm-yellow), #ffc107);
-            color: white;
-            box-shadow: 0 6px 20px rgba(244, 163, 0, 0.4);
-        }
-        
-        /* Reset Button Styling */
-        #reset-results-btn {
-            background: linear-gradient(135deg, var(--ddm-yellow), #ffc107);
-            border: none;
-            color: white;
-            font-weight: 600;
-            padding: 8px 16px;
-            border-radius: var(--ddm-border-radius);
-            transition: var(--ddm-transition);
-            box-shadow: 0 2px 8px rgba(244, 163, 0, 0.3);
-        }
-        
-        #reset-results-btn:hover:not(:disabled) {
-            background: linear-gradient(135deg, #ffc107, var(--ddm-orange));
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(244, 163, 0, 0.4);
-        }
-        
-        #reset-results-btn:disabled {
-            background: #6c757d;
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .animation-btn {
-            margin: 5px;
-            min-width: 150px;
-            border-radius: var(--ddm-border-radius);
-            transition: var(--ddm-transition);
-            font-weight: 600;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .animation-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
-        
-        /* General Button Enhancements */
-        .btn {
-            border-radius: var(--ddm-border-radius);
-            transition: var(--ddm-transition);
-            font-weight: 500;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .btn::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: var(--ddm-transition);
-        }
-        
-        .btn:hover::before {
-            left: 100%;
-        }
-        
-        .btn:hover {
-            transform: translateY(-1px);
-        }
-        
-        .btn:active {
-            transform: translateY(0);
-        }
-        
-        .modal-header {
-            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
-            color: white;
-        }
-        
-        .modal-header .btn-close {
-            filter: invert(1) grayscale(100%) brightness(200%);
-        }
-        
-        .modal-content {
-            background: var(--ddm-dark-card);
-            border: 1px solid var(--ddm-dark-border);
-            color: var(--ddm-dark-text);
-        }
-        
-        .modal-body {
-            background: var(--ddm-dark-card);
-            color: var(--ddm-dark-text);
-        }
-        
-        .modal-footer {
-            background: var(--ddm-dark-card);
-            border-top: 1px solid var(--ddm-dark-border);
-        }
-        
-        /* Button Styling for Dark Theme */
-        .btn-primary {
-            background: var(--ddm-teal);
-            border-color: var(--ddm-teal);
-            color: white;
-            font-weight: 600;
-        }
-        
-        .btn-primary:hover {
-            background: var(--ddm-teal-light);
-            border-color: var(--ddm-teal-light);
-            transform: translateY(-1px);
-        }
-        
-        .btn-secondary {
-            background: var(--ddm-dark-border);
-            border-color: var(--ddm-dark-border);
-            color: var(--ddm-dark-text);
-        }
-        
-        .btn-secondary:hover {
-            background: var(--ddm-dark-text-muted);
-            border-color: var(--ddm-dark-text-muted);
-        }
-        
-        .btn-warning {
-            background: var(--ddm-yellow);
-            border-color: var(--ddm-yellow);
-            color: var(--ddm-dark-navy);
-            font-weight: 600;
-        }
-        
-        .btn-success {
-            background: var(--ddm-green);
-            border-color: var(--ddm-green);
-            color: white;
-            font-weight: 600;
-        }
-        
-        .btn-danger {
-            background: var(--ddm-red);
-            border-color: var(--ddm-red);
-            color: white;
-            font-weight: 600;
-        }
-        
-        /* During Race Modal Special Styling */
-        .during-race-modal .modal-content {
-            border: 3px solid var(--ddm-green);
-            box-shadow: 0 0 20px rgba(78, 159, 61, 0.4);
-        }
-        
-        .during-race-modal .modal-header {
-            background: linear-gradient(135deg, var(--ddm-green) 0%, var(--ddm-teal) 100%);
-            animation: pulse-green 2s ease-in-out infinite;
-        }
-        
-        .during-race-modal .animation-btn {
-            font-size: 1.2em;
-            padding: 15px 25px;
-            margin: 10px;
-            min-width: 200px;
-            font-weight: bold;
-        }
-        
-        .during-race-modal .animation-btn:first-child {
-            background: linear-gradient(135deg, var(--ddm-green) 0%, var(--ddm-teal) 100%);
-            color: white;
-            border: none;
-        }
-        
-        .during-race-modal .animation-btn:nth-child(2) {
-            background: linear-gradient(135deg, var(--ddm-yellow) 0%, var(--ddm-red) 100%);
-            color: white;
-            border: none;
-        }
-        
-        .during-race-modal .animation-btn:last-child {
-            background: linear-gradient(135deg, var(--ddm-red) 0%, var(--ddm-teal-dark) 100%);
-            color: white;
-            border: none;
-        }
-        
-        @keyframes pulse-green {
-            0% { box-shadow: 0 0 20px rgba(78, 159, 61, 0.4); }
-            50% { box-shadow: 0 0 30px rgba(78, 159, 61, 0.8); }
-            100% { box-shadow: 0 0 20px rgba(78, 159, 61, 0.4); }
-        }
-        
-        #modal-end-race-btn {
-            display: none;
-        }
-        
-        /* Background animation mirroring */
-        .bg-animation {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: -1;
-            opacity: 0.1;
-            transition: all 0.5s ease;
-        }
-        
-        .bg-animation.theyre-off {
-            background: radial-gradient(circle at center, var(--ddm-green) 0%, var(--ddm-teal) 50%, var(--ddm-teal-light) 100%);
-            animation: racing-pulse 0.5s ease-in-out infinite;
-        }
-        
-        .bg-animation.down-the-stretch {
-            background: linear-gradient(45deg, var(--ddm-yellow), var(--ddm-red), var(--ddm-green), var(--ddm-teal));
-            animation: intensity-wave 1s ease-in-out infinite;
-        }
-        
-        .bg-animation.finish-race {
-            background: repeating-linear-gradient(
-                45deg,
-                #000 0px,
-                #000 20px,
-                var(--ddm-off-white) 20px,
-                var(--ddm-off-white) 40px
-            );
-            animation: checkered-flag 2s linear infinite;
-        }
-        
-        .bg-animation.race-results {
-            background: linear-gradient(45deg, var(--ddm-yellow), var(--ddm-green), var(--ddm-yellow), var(--ddm-green));
-            animation: victory-celebration 3s ease-in-out infinite;
-        }
-        
-        @keyframes victory-celebration {
-            0% { 
-                background-position: 0% 0%;
-                opacity: 0.1;
-            }
-            50% { 
-                background-position: 100% 100%;
-                opacity: 0.2;
-            }
-            100% { 
-                background-position: 0% 0%;
-                opacity: 0.1;
-            }
-        }
-        
-        @keyframes racing-pulse {
-            0% { transform: scale(1); opacity: 0.1; }
-            50% { transform: scale(1.05); opacity: 0.2; }
-            100% { transform: scale(1); opacity: 0.1; }
-        }
-        
-        @keyframes intensity-wave {
-            0% { filter: hue-rotate(0deg); }
-            50% { filter: hue-rotate(180deg); }
-            100% { filter: hue-rotate(360deg); }
-        }
-        
-        @keyframes checkered-flag {
-            0% { background-position: 0 0; }
-            100% { background-position: 40px 40px; }
-        }
-        
-        /* Horse Selection Modal Styles */
-        .horse-selection-modal .modal-content {
-            border: 4px solid #ffd700;
-            box-shadow: 0 0 30px rgba(255, 215, 0, 0.6);
-        }
-        
-        .horse-selection-modal .modal-header {
-            background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
-            color: #333;
-            text-align: center;
-        }
-        
-        .horse-selection-modal .modal-title {
-            font-size: 2em;
-            font-weight: bold;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .results-display {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 15px;
-            padding: 20px;
-            border: 2px solid #dee2e6;
-        }
-        
-        .results-display-vertical {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 15px;
-            padding: 6px;
-            border: 2px solid #dee2e6;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-        
-        .result-box {
-            background: white;
-            border-radius: 10px;
-            padding: 10px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
-            text-align: center;
-            min-height: 70px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            flex-grow: 1;
-            margin-bottom: 0;
-        }
-        
-        .win-box {
-            border: 3px solid #DAA520;
-        }
-        
-        .place-box {
-            border: 3px solid #A8A8A8;
-        }
-        
-        .show-box {
-            border: 3px solid #B8860B;
-        }
-        
-        .result-label {
-            font-size: 1.1em;
-            font-weight: bold;
-            margin-bottom: 8px;
-        }
-        
-        .result-number {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #333;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
-            transition: all 0.8s ease;
-        }
-        
-        .result-box.selected {
-            transform: scale(1.05);
-            box-shadow: 0 12px 24px rgba(0,0,0,0.3);
-        }
-        
-        .win-box.selected {
-            background: linear-gradient(135deg, #DAA520 0%, #FFD700 50%, #B8860B 100%);
-            animation: gold-pulse 2s ease-in-out infinite;
-            border-color: #FFD700;
-        }
-        
-        .place-box.selected {
-            background: linear-gradient(135deg, #A8A8A8 0%, #D3D3D3 50%, #C0C0C0 100%);
-            animation: silver-pulse 2s ease-in-out infinite;
-            border-color: #D3D3D3;
-        }
-        
-        .show-box.selected {
-            background: linear-gradient(135deg, #B8860B 0%, #CD853F 50%, #A0522D 100%);
-            animation: bronze-pulse 2s ease-in-out infinite;
-            border-color: #CD853F;
-        }
-        
-        .result-number.reveal {
-            animation: pixelate-in 1.5s ease-out forwards;
-        }
-        
-        @keyframes gold-pulse {
-            0% { 
-                box-shadow: 0 0 20px rgba(218, 165, 32, 0.6); 
-                transform: scale(1.05);
-            }
-            50% { 
-                box-shadow: 0 0 40px rgba(255, 215, 0, 0.9); 
-                transform: scale(1.08);
-            }
-            100% { 
-                box-shadow: 0 0 20px rgba(218, 165, 32, 0.6); 
-                transform: scale(1.05);
-            }
-        }
-        
-        @keyframes silver-pulse {
-            0% { 
-                box-shadow: 0 0 20px rgba(168, 168, 168, 0.6); 
-                transform: scale(1.05);
-            }
-            50% { 
-                box-shadow: 0 0 40px rgba(211, 211, 211, 0.9); 
-                transform: scale(1.08);
-            }
-            100% { 
-                box-shadow: 0 0 20px rgba(168, 168, 168, 0.6); 
-                transform: scale(1.05);
-            }
-        }
-        
-        @keyframes bronze-pulse {
-            0% { 
-                box-shadow: 0 0 20px rgba(184, 134, 11, 0.6); 
-                transform: scale(1.05);
-            }
-            50% { 
-                box-shadow: 0 0 40px rgba(205, 133, 63, 0.9); 
-                transform: scale(1.08);
-            }
-            100% { 
-                box-shadow: 0 0 20px rgba(184, 134, 11, 0.6); 
-                transform: scale(1.05);
-            }
-        }
-        
-        @keyframes pixelate-in {
-            0% { 
-                opacity: 0;
-                transform: scale(0.1);
-                filter: blur(10px);
-            }
-            25% { 
-                opacity: 0.3;
-                transform: scale(0.5);
-                filter: blur(8px);
-            }
-            50% { 
-                opacity: 0.6;
-                transform: scale(0.8);
-                filter: blur(4px);
-            }
-            75% { 
-                opacity: 0.9;
-                transform: scale(1.1);
-                filter: blur(1px);
-            }
-            100% { 
-                opacity: 1;
-                transform: scale(1);
-                filter: blur(0);
-            }
-        }
-        /* Horse Selection Modal Styling */
-        .horse-selection-modal {
-            max-width: 90vw;
-        }
-        
-        .horse-grid-container {
-            padding: 15px;
-            background: var(--ddm-off-white);
-            border-radius: 12px;
-            margin-bottom: 20px;
-        }
-        
-        .horse-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
-            max-width: 100%;
-        }
-        
-        /* Responsive grid adjustments */
-        @media (max-width: 991px) {
-            .horse-grid {
-                grid-template-columns: repeat(4, 1fr);
-                gap: 8px;
-            }
-        }
-        
-        @media (max-width: 767px) {
-            .horse-grid {
-                grid-template-columns: repeat(3, 1fr);
-                gap: 6px;
-            }
-        }
-        
-        @media (max-width: 575px) {
-            .horse-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 4px;
-            }
-        }
-        
-        .horse-number {
-            background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 15px 10px;
-            font-size: 1.2em;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            min-height: 55px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .horse-number:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
-        }
-        
-        .horse-number.selected {
-            background: linear-gradient(135deg, var(--ddm-yellow) 0%, var(--ddm-red) 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(244, 163, 0, 0.6);
-        }
-        
-        .horse-number.disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            opacity: 0.5;
-        }
-        
-        .horse-number.disabled:hover {
-            transform: none;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .horse-number.selected.win {
-            background: linear-gradient(135deg, #DAA520 0%, #FFD700 50%, #B8860B 100%);
-            box-shadow: 0 8px 20px rgba(218, 165, 32, 0.6);
-        }
-        
-        .horse-number.selected.place {
-            background: linear-gradient(135deg, #A8A8A8 0%, #D3D3D3 50%, #C0C0C0 100%);
-            box-shadow: 0 8px 20px rgba(168, 168, 168, 0.6);
-        }
-        
-        .horse-number.selected.show {
-            background: linear-gradient(135deg, #B8860B 0%, #CD853F 50%, #A0522D 100%);
-            box-shadow: 0 8px 20px rgba(184, 134, 11, 0.6);
-        }
-        
-        /* Winners Panel Styling - Clean Version */
-        .winners-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            height: 100%;
-            justify-content: space-between;
-            padding: 0 4px;
-        }
-        
-        /* Clean Grid Styling - Fill Available Space */
-        .quick-actions-grid {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        
-        /* Clean card body styling */
-        .card.h-100 .card-body {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            padding: 0.75rem;
-        }
-        
-        /* Responsive Layout Adjustments */
-        @media (max-width: 1199px) {
-            .winners-panel {
-                gap: 1px;
-            }
-            
-            .winner-item {
-                padding: 4px 8px;
-            }
-            
-            .quick-actions-grid {
-                gap: 2px;
-            }
-        }
-        
-        @media (max-width: 991px) {
-            .winners-panel {
-                flex-direction: row;
-                justify-content: space-between;
-                align-items: center;
-                gap: 2px;
-            }
-            
-            .winner-item {
-                flex: 1;
-                text-align: center;
-                padding: 3px 6px;
-            }
-            
-            .winner-label {
-                font-size: 0.8em;
-            }
-            
-            .winner-number {
-                font-size: 1.2em;
-            }
-            
-            .quick-actions-grid {
-                gap: 2px !important;
-            }
-        }
-        
-        @media (max-width: 767px) {
-            .winners-panel {
-                flex-direction: column;
-                gap: 1px;
-            }
-            
-            .winner-item {
-                padding: 4px 8px;
-            }
-            
-            .winner-label {
-                font-size: 0.9em;
-            }
-            
-            .winner-number {
-                font-size: 1.3em;
-            }
-            
-            .quick-actions-grid {
-                gap: 2px;
-            }
-        }
-        
-        .winner-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 16px;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-            background: rgba(0, 0, 0, 0.05);
-            border: 2px solid transparent;
-            margin-bottom: 0;
-            min-height: 60px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .winner-item.win-place {
-            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(218, 165, 32, 0.1));
-            border-color: #FFD700;
-            box-shadow: 0 0 0 rgba(255, 215, 0, 0);
-            transition: all 0.3s ease;
-        }
-        
-        .winner-item.win-place.active {
-            background: linear-gradient(135deg, #FFD700, #DAA520);
-            color: white;
-            animation: gold-pulse 2s ease-in-out infinite;
-        }
-        
-        .winner-item.place-place {
-            background: linear-gradient(135deg, rgba(192, 192, 192, 0.1), rgba(169, 169, 169, 0.1));
-            border-color: #C0C0C0;
-            box-shadow: 0 0 0 rgba(192, 192, 192, 0);
-            transition: all 0.3s ease;
-        }
-        
-        .winner-item.place-place.active {
-            background: linear-gradient(135deg, #C0C0C0, #A9A9A9);
-            color: white;
-            animation: silver-pulse 2s ease-in-out infinite;
-        }
-        
-        .winner-item.show-place {
-            background: linear-gradient(135deg, rgba(205, 133, 63, 0.1), rgba(160, 82, 45, 0.1));
-            border-color: #CD853F;
-            box-shadow: 0 0 0 rgba(205, 133, 63, 0);
-            transition: all 0.3s ease;
-        }
-        
-        .winner-item.show-place.active {
-            background: linear-gradient(135deg, #CD853F, #A0522D);
-            color: white;
-            animation: bronze-pulse 2s ease-in-out infinite;
-        }
-        
-        .winner-label {
-            font-weight: 600;
-            font-size: 1.0em;
-        }
-        
-        .winner-number {
-            font-size: 1.8em;
-            font-weight: bold;
-            min-width: 50px;
-            text-align: center;
-            padding: 6px 12px;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2);
-        }
-        
-        .winner-item.active .winner-number {
-            background: rgba(255, 255, 255, 0.3);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-        }
-        
-        @keyframes gold-pulse {
-            0% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
-            50% { box-shadow: 0 0 25px rgba(255, 215, 0, 0.8); }
-            100% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
-        }
-        
-        @keyframes silver-pulse {
-            0% { box-shadow: 0 0 15px rgba(192, 192, 192, 0.5); }
-            50% { box-shadow: 0 0 25px rgba(192, 192, 192, 0.8); }
-            100% { box-shadow: 0 0 15px rgba(192, 192, 192, 0.5); }
-        }
-        
-        @keyframes bronze-pulse {
-            0% { box-shadow: 0 0 15px rgba(205, 133, 63, 0.5); }
-            50% { box-shadow: 0 0 25px rgba(205, 133, 63, 0.8); }
-            100% { box-shadow: 0 0 15px rgba(205, 133, 63, 0.5); }
-        }
-        
-        @keyframes gold-pulse {
-            0% { box-shadow: 0 0 20px rgba(218, 165, 32, 0.5); }
-            50% { box-shadow: 0 0 30px rgba(255, 215, 0, 0.8); }
-            100% { box-shadow: 0 0 20px rgba(218, 165, 32, 0.5); }
-        }
-        
-        @keyframes silver-pulse {
-            0% { box-shadow: 0 0 20px rgba(168, 168, 168, 0.5); }
-            50% { box-shadow: 0 0 30px rgba(211, 211, 211, 0.8); }
-            100% { box-shadow: 0 0 20px rgba(168, 168, 168, 0.5); }
-        }
-        
-        @keyframes bronze-pulse {
-            0% { box-shadow: 0 0 20px rgba(184, 134, 11, 0.5); }
-            50% { box-shadow: 0 0 30px rgba(205, 133, 63, 0.8); }
-            100% { box-shadow: 0 0 20px rgba(184, 134, 11, 0.5); }
-        }
-        
-        .feature-icon {
-            font-size: 48px;
-            margin-bottom: 20px;
-            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-        }
-        
-        .status-indicator {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            margin-right: 10px;
-            position: relative;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-        
-        .status-online {
-            background: linear-gradient(135deg, #28a745, #34ce57);
-            animation: statusPulse 2s ease-in-out infinite;
-        }
-        
-        .status-online::before {
-            content: '';
-            position: absolute;
-            top: -2px;
-            left: -2px;
-            right: -2px;
-            bottom: -2px;
-            background: linear-gradient(135deg, #28a745, #34ce57);
-            border-radius: 50%;
-            opacity: 0.3;
-            animation: statusGlow 2s ease-in-out infinite;
-        }
-        
-        .status-offline {
-            background: linear-gradient(135deg, #dc3545, #e74c3c);
-        }
-        
-        @keyframes statusPulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.1); opacity: 0.8; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-        
-        @keyframes statusGlow {
-            0% { transform: scale(1); opacity: 0.3; }
-            50% { transform: scale(1.5); opacity: 0.1; }
-            100% { transform: scale(1); opacity: 0.3; }
-        }
-        
-        /* Enhanced Form Controls */
-        .form-control, .form-select {
-            border-radius: var(--ddm-border-radius);
-            border: 2px solid rgba(19, 134, 139, 0.3);
-            transition: var(--ddm-transition);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        
-        .form-control:focus, .form-select:focus {
-            border-color: var(--ddm-teal);
-            box-shadow: 0 0 0 0.2rem rgba(19, 134, 139, 0.25);
-        }
-        
-        .form-check-input:checked {
-            background-color: var(--ddm-teal);
-            border-color: var(--ddm-teal);
-        }
-        
-        .form-check-input:focus {
-            box-shadow: 0 0 0 0.2rem rgba(19, 134, 139, 0.25);
-        }
-        
-        /* Enhanced Input Groups */
-        .input-group .form-control {
-            border-right: none;
-        }
-        
-        .input-group .btn {
-            border-left: none;
-        }
-        
-        /* Responsive Modal Sizing */
-        .responsive-modal {
-            max-width: 90vw;
-            height: 80vh;
-        }
-        
-        @media (max-width: 991px) {
-            .responsive-modal {
-                max-width: 95vw;
-                height: 90vh;
-            }
-        }
-        
-        @media (max-width: 767px) {
-            .responsive-modal {
-                max-width: 98vw;
-                height: 95vh;
-                margin: 0.5rem auto;
-            }
-        }
-        
-        @media (orientation: portrait) {
-            .responsive-modal {
-                height: 85vh;
-            }
-        }
-        
-        @media (orientation: landscape) and (max-height: 600px) {
-            .responsive-modal {
-                height: 95vh;
-            }
-        }
-        
-        /* Responsive Button Sizing */
-        @media (max-width: 767px) {
-            .btn {
-                padding: 0.75rem 1.5rem;
-                font-size: 1.1rem;
-                min-height: 48px; /* Touch target size */
-            }
-            
-            .btn-lg {
-                padding: 1rem 2rem;
-                font-size: 1.3rem;
-                min-height: 54px;
-            }
-            
-            .feature-card {
-                padding: 1.5rem;
-                min-height: 120px;
-            }
-            
-            .feature-icon {
-                font-size: 3rem;
-            }
-        }
-        
-        @media (max-width: 575px) {
-            .btn {
-                padding: 1rem 1.5rem;
-                font-size: 1.2rem;
-                min-height: 52px;
-            }
-            
-            .btn-lg {
-                padding: 1.25rem 2rem;
-                font-size: 1.4rem;
-                min-height: 58px;
-            }
-            
-            .feature-card {
-                padding: 2rem;
-                min-height: 140px;
-            }
-            
-            .feature-icon {
-                font-size: 3.5rem;
-            }
-        }
-        
-        /* Responsive Typography */
-        @media (max-width: 767px) {
-            h1 {
-                font-size: 2rem;
-            }
-            
-            h2 {
-                font-size: 1.5rem;
-            }
-            
-            h4 {
-                font-size: 1.2rem;
-            }
-            
-            .modal-title {
-                font-size: 1.5rem;
-            }
-            
-            .result-number {
-                font-size: 2rem;
-            }
-            
-            .result-label {
-                font-size: 1rem;
-            }
-        }
-        
-        @media (max-width: 575px) {
-            h1 {
-                font-size: 1.75rem;
-            }
-            
-            h2 {
-                font-size: 1.35rem;
-            }
-            
-            .modal-title {
-                font-size: 1.35rem;
-            }
-            
-            .result-number {
-                font-size: 1.75rem;
-            }
-        }
-    </style>
+    <link href="{{ url_for('static', filename='css/ddm_style.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/admin-dashboard-complete.css') }}" rel="stylesheet">
 </head>
 <body>
     <!-- Background Animation Mirror -->
@@ -1239,12 +23,13 @@
     <!-- Header -->
     <div class="dashboard-header">
         <div class="container">
-            <div class="row">
-                <div class="col-12 col-md-8">
+            <!-- Enhanced DDM Header with CSS Grid -->
+            <div class="ddm-layout-header">
+                <div>
                     <h1 class="text-white mb-0">🏇 DDM Racing System</h1>
                     <p class="text-white-50 mb-0">Admin Dashboard - Voice-Activated LED Control</p>
                 </div>
-                <div class="col-12 col-md-4 text-md-end text-center mt-2 mt-md-0">
+                <div class="text-md-end text-center">
                     <div class="text-white">
                         <span class="status-indicator status-online"></span>
                         System Online
@@ -1256,88 +41,219 @@
 
     <!-- Main Content -->
     <div class="container">
-        <!-- UI Mode Selection -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <h2 class="section-title">🎮 Racing Mode Control</h2>
-            </div>
+        <!-- Enhanced Racing Mode Control with CSS Grid -->
+        <div class="mb-4">
+            <h2 class="section-title">🎮 Racing Mode Control</h2>
             
-            <!-- Pre-Race Mode -->
-            <div class="col-lg-3 col-md-6 mb-3">
-                <div class="card feature-card mode-card" onclick="openModeModal('pre_race')">
-                    <div class="feature-icon">🏁</div>
-                    <h4>Pre-Race</h4>
+            <div class="ddm-layout-modes">
+                <!-- Pre-Race Mode -->
+                <div class="ddm-mode-card pre-race" onclick="openModeModal('pre_race')">
+                    <div class="ddm-mode-header">
+                        <div class="ddm-mode-icon">🏁</div>
+                        <h4 class="ddm-mode-title">Pre-Race</h4>
+                    </div>
                 </div>
-            </div>
-            
-            <!-- Betting Open Mode -->
-            <div class="col-lg-3 col-md-6 mb-3">
-                <div class="card feature-card mode-card" onclick="openModeModal('betting_open')">
-                    <div class="feature-icon">💰</div>
-                    <h4>Betting Open</h4>
+
+                <!-- Betting Open Mode -->
+                <div class="ddm-mode-card betting-open" onclick="openModeModal('betting_open')">
+                    <div class="ddm-mode-header">
+                        <div class="ddm-mode-icon">💰</div>
+                        <h4 class="ddm-mode-title">Betting Open</h4>
+                    </div>
                 </div>
-            </div>
-            
-            <!-- During Race Mode -->
-            <div class="col-lg-3 col-md-6 mb-3">
-                <div class="card feature-card mode-card" onclick="openModeModal('during_race')">
-                    <div class="feature-icon">🏇</div>
-                    <h4>During Race</h4>
+
+                <!-- During Race Mode -->
+                <div class="ddm-mode-card during-race" onclick="openModeModal('during_race')">
+                    <div class="ddm-mode-header">
+                        <div class="ddm-mode-icon">🏇</div>
+                        <h4 class="ddm-mode-title">During Race</h4>
+                    </div>
                 </div>
-            </div>
-            
-            <!-- Results Mode -->
-            <div class="col-lg-3 col-md-6 mb-3">
-                <div class="card feature-card mode-card" onclick="openModeModal('results')">
-                    <div class="feature-icon">🏆</div>
-                    <h4>Results</h4>
+
+                <!-- Results Mode -->
+                <div class="ddm-mode-card results" onclick="openModeModal('results')">
+                    <div class="ddm-mode-header">
+                        <div class="ddm-mode-icon">🏆</div>
+                        <h4 class="ddm-mode-title">Results</h4>
+                    </div>
                 </div>
             </div>
         </div>
         
-        <!-- Voice & Manual Control (Collapsed) -->
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <button class="btn btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#voiceControls">
-                                🎤 Voice & Manual Controls
-                            </button>
-                        </h5>
+        <!-- Enhanced Voice & Manual Control (Collapsed) -->
+        <div class="mb-4">
+            <div class="ddm-collapse-card">
+                <div class="ddm-collapse-header" data-bs-toggle="collapse" data-bs-target="#voiceControls">
+                    <div class="ddm-collapse-title">
+                        <div class="ddm-collapse-icon">🎤</div>
+                        Voice & Manual Controls
                     </div>
-                    <div id="voiceControls" class="collapse">
-                        <div class="card-body">
-                            <div class="row">
-                                <!-- Voice Control -->
-                                <div class="col-lg-6 col-md-12">
-                                    <div class="text-center">
-                                        <div class="feature-icon">🎤</div>
-                                        <h5>Voice Animation Control</h5>
-                                        <p class="text-muted">Speak your LED animation ideas and watch them come to life!</p>
-                                        <button class="btn btn-primary btn-lg" onclick="voicePrompt.startListening()">
-                                            🎤 Start Voice Prompt
-                                        </button>
-                                        <p class="small text-muted mt-2">
-                                            <span id="voice-support-status">Checking voice support...</span>
-                                        </p>
+                    <button class="ddm-collapse-toggle" type="button" aria-expanded="false">
+                        ↓
+                    </button>
+                </div>
+                <div id="voiceControls" class="collapse">
+                    <div class="ddm-collapse-body">
+                        <div class="ddm-layout-controls">
+                            <!-- Voice Control Section -->
+                            <div class="ddm-control-section">
+                                <h6 class="ddm-control-title">🎤 Voice Animation Control</h6>
+                                <div class="text-center">
+                                    <div class="feature-icon mb-3">🎤</div>
+                                    <h5>Voice Animation Control</h5>
+                                    <p class="text-muted">Speak your LED animation ideas and watch them come to life!</p>
+                                    <button class="ddm-mode-button" onclick="voicePrompt.startListening()">
+                                        🎤 Start Voice Prompt
+                                    </button>
+                                    <p class="small text-muted mt-2">
+                                        <span id="voice-support-status">Checking voice support...</span>
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <!-- Manual Control Section -->
+                            <div class="ddm-control-section">
+                                <h6 class="ddm-control-title">⚙️ Manual Animation Control</h6>
+                                <div class="text-center">
+                                    <div class="feature-icon mb-3">⚙️</div>
+                                    <h5>Manual Animation Control</h5>
+                                    <p class="text-muted">Create custom animations with precise control</p>
+                                    <div class="ddm-control-group">
+                                        <input type="text" class="ddm-control-input" placeholder="Animation Name" id="animationName">
+                                        <input type="number" class="ddm-control-input" placeholder="Speed (1-10)" id="animationSpeed" min="1" max="10">
+                                        <select class="ddm-control-input" id="animationPattern">
+                                            <option value="">Select Pattern</option>
+                                            <option value="chase">Chase</option>
+                                            <option value="fade">Fade</option>
+                                            <option value="strobe">Strobe</option>
+                                            <option value="rainbow">Rainbow</option>
+                                        </select>
+                                    </div>
+                                    <button class="ddm-mode-button mt-3" onclick="sendManualAnimation()">
+                                        ⚡ Send Animation
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Enhanced System Status & Race Results with CSS Grid -->
+        <div class="ddm-layout-main mb-4">
+            <!-- LEFT SIDEBAR: Compact System Status -->
+            <div class="ddm-sidebar">
+                <!-- System Status -->
+                <div class="ddm-sidebar-card">
+                    <div class="ddm-sidebar-title">
+                        🔧 System Status
+                    </div>
+                    <div class="ddm-sidebar-content">
+                        <div class="ddm-status-item">
+                            <div class="ddm-status-dot online"></div>
+                            <span>Flask Server: Online</span>
+                        </div>
+                        <div class="ddm-status-item">
+                            <div class="ddm-status-dot warning" id="openai-status-dot"></div>
+                            <span>OpenAI: <span id="openai-text">Ready</span></span>
+                        </div>
+                        <div class="ddm-status-item">
+                            <div class="ddm-status-dot offline"></div>
+                            <span>ESP32: 0 Found</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- AI Usage -->
+                <div class="ddm-sidebar-card">
+                    <div class="ddm-sidebar-title">
+                        📊 AI Usage
+                    </div>
+                    <div class="ddm-sidebar-content">
+                        <div class="ddm-status-item">
+                            <span><strong>Hourly:</strong> <span id="hourly-usage">0/50</span></span>
+                        </div>
+                        <div class="ddm-status-item">
+                            <span><strong>Daily:</strong> <span id="daily-usage">0/200</span></span>
+                        </div>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="openaiToggle" checked>
+                            <label class="form-check-label" for="openaiToggle">
+                                Enable OpenAI
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- RIGHT MAIN: Race Results & Quick Actions -->
+            <div class="ddm-main-content">
+                <div class="ddm-layout-results">
+                    <!-- Enhanced Race Results -->
+                    <div class="ddm-results-section">
+                        <div class="ddm-results-header">
+                            🏆 Race Results
+                        </div>
+                        <div class="ddm-results-body">
+                            <!-- WIN/PLACE/SHOW Results - Clean Layout -->
+                            <div class="ddm-race-results-simple">
+                                <div class="ddm-result-row win">
+                                    <div class="ddm-result-left">
+                                        🥇 <strong>WIN</strong>
+                                    </div>
+                                    <div class="ddm-result-right">
+                                        Horse #<span id="winner-win-number">--</span>
                                     </div>
                                 </div>
                                 
-                                <!-- Manual Control -->
-                                <div class="col-lg-6 col-md-12">
-                                    <div class="text-center">
-                                        <div class="feature-icon">⌨️</div>
-                                        <h5>Manual Animation Control</h5>
-                                        <p class="text-muted">Type your animation description for precise control.</p>
-                                        <div class="input-group">
-                                            <input type="text" class="form-control" id="manualPrompt" placeholder="e.g., red lightning storm" maxlength="100">
-                                            <button class="btn btn-primary" onclick="sendManualPrompt()">
-                                                ✨ Generate
-                                            </button>
-                                        </div>
+                                <div class="ddm-result-row place">
+                                    <div class="ddm-result-left">
+                                        🥈 <strong>PLACE</strong>
+                                    </div>
+                                    <div class="ddm-result-right">
+                                        Horse #<span id="winner-place-number">--</span>
                                     </div>
                                 </div>
+                                
+                                <div class="ddm-result-row show">
+                                    <div class="ddm-result-left">
+                                        🥉 <strong>SHOW</strong>
+                                    </div>
+                                    <div class="ddm-result-right">
+                                        Horse #<span id="winner-show-number">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="ddm-results-footer">
+                                <small class="text-muted" id="results-timestamp">No race results yet</small>
+                                <button class="ddm-btn ddm-btn-warning btn-sm" id="reset-results-btn" onclick="resetRaceResults()" disabled>
+                                    🔄 Reset Selections
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Enhanced Quick Actions -->
+                    <div class="ddm-results-section">
+                        <div class="ddm-results-header">
+                            ⚡ Quick Actions
+                        </div>
+                        <div class="ddm-results-body">
+                            <div class="d-grid gap-3">
+                                <button id="test-animation-btn" class="ddm-btn ddm-btn-success" onclick="testAnimation()">
+                                    🧪 Test Animation
+                                </button>
+                                <button class="ddm-btn ddm-btn-primary" onclick="refreshStatus()">
+                                    🔄 Refresh Status
+                                </button>
+                                <button id="clear-logs-btn" class="ddm-btn ddm-btn-danger" onclick="clearLogs()">
+                                    🧹 Clear Logs
+                                </button>
+                                <button class="ddm-btn ddm-btn-warning" onclick="openModeModal('pre_race')">
+                                    🏁 Pre-Race Setup
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1345,120 +261,15 @@
             </div>
         </div>
         
-        <div class="row">
-            <!-- LEFT COLUMN: System Status & AI Usage -->
-            <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
-                <div class="row">
-                    <!-- System Status -->
-                    <div class="col-12">
-                        <div class="card">
-                            <div class="card-body">
-                                <h5 class="card-title">🔧 System Status</h5>
-                                <div class="mb-2">
-                                    <span class="status-indicator status-online"></span>
-                                    Flask Server: Online
-                                </div>
-                                <div class="mb-2">
-                                    <span class="status-indicator" id="openai-status"></span>
-                                    OpenAI Integration: <span id="openai-text">Checking...</span>
-                                </div>
-                                <div class="mb-2">
-                                    <span class="status-indicator status-offline"></span>
-                                    ESP32 Devices: 0 Found
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- AI Usage -->
-                    <div class="col-12 mt-3">
-                        <div class="card">
-                            <div class="card-body">
-                                <h5 class="card-title">📊 AI Usage</h5>
-                                <div class="mb-2">
-                                    <strong>Hourly:</strong> <span id="hourly-usage">0/50</span>
-                                </div>
-                                <div class="mb-2">
-                                    <strong>Daily:</strong> <span id="daily-usage">0/200</span>
-                                </div>
-                                <div class="form-check form-switch mt-3">
-                                    <input class="form-check-input" type="checkbox" id="openaiToggle" checked>
-                                    <label class="form-check-label" for="openaiToggle">
-                                        Enable OpenAI
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <!-- Enhanced Animation History -->
+        <div class="ddm-card mb-4">
+            <div class="ddm-card-header">
+                <h5 class="card-title">🎨 Recent Animations</h5>
             </div>
-            
-            <!-- RIGHT COLUMN: Race Results & Quick Actions -->
-            <div class="col-xl-9 col-lg-8 col-md-6 mb-4">
-                <div class="row h-100">
-                    <!-- Race Results -->
-                    <div class="col-lg-6 col-md-12 mb-3 mb-lg-0">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">🏆 Race Results</h5>
-                                <div class="winners-panel">
-                                    <div class="winner-item win-place" id="winner-win">
-                                        <div class="winner-label">🥇 WIN</div>
-                                        <div class="winner-number" id="winner-win-number">--</div>
-                                    </div>
-                                    <div class="winner-item place-place" id="winner-place">
-                                        <div class="winner-label">🥈 PLACE</div>
-                                        <div class="winner-number" id="winner-place-number">--</div>
-                                    </div>
-                                    <div class="winner-item show-place" id="winner-show">
-                                        <div class="winner-label">🥉 SHOW</div>
-                                        <div class="winner-number" id="winner-show-number">--</div>
-                                    </div>
-                                </div>
-                                <div class="text-center" style="margin-top: 8px;">
-                                    <small class="text-muted" id="results-timestamp">No race results yet</small>
-                                    <div class="mt-2">
-                                        <button class="btn btn-warning btn-sm" id="reset-results-btn" onclick="resetRaceResults()" disabled>
-                                            🔄 Reset Selections
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Quick Actions -->
-                    <div class="col-lg-6 col-md-12">
-                        <div class="card h-100">
-                            <div class="card-body">
-                                <h5 class="card-title">⚡ Quick Actions</h5>
-                                <div class="quick-actions-grid">
-                                    <button id="test-animation-btn" class="quick-action-btn btn-test" onclick="testAnimation()">
-                                        🧪 Test Animation
-                                    </button>
-                                    <button class="quick-action-btn" onclick="refreshStatus()">
-                                        🔄 Refresh Status
-                                    </button>
-                                    <button id="clear-logs-btn" class="quick-action-btn btn-clear" onclick="clearLogs()">
-                                        🧹 Clear Logs
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Animation History -->
-        <div class="row">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">🎨 Recent Animations</h5>
-                        <div id="animation-history">
-                            <p class="text-muted">No animations generated yet. Try the voice prompt above!</p>
-                        </div>
+            <div class="ddm-card-body">
+                <div id="animation-history">
+                    <div class="ddm-results-empty">
+                        No animations generated yet. Try the voice prompt above!
                     </div>
                 </div>
             </div>
@@ -1476,7 +287,7 @@
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body" id="animationModalBody">
                     <p class="text-muted mb-4">Select an animation to run for this mode:</p>
                     <div id="animation-buttons" class="text-center">
                         <!-- Animation buttons will be populated here -->
@@ -1503,10 +314,10 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="row">
+                    <div class="row h-100 g-2">
                         <!-- Horse Number Grid - LEFT SIDE -->
-                        <div class="col-12 col-lg-8">
-                            <div class="horse-grid-container">
+                        <div class="col-12 col-lg-7 d-flex align-items-stretch">
+                            <div class="horse-grid-container w-100">
                                 <div class="horse-grid">
                                     <!-- Grid will be populated with numbers 1-20 -->
                                 </div>
@@ -1514,8 +325,8 @@
                         </div>
                         
                         <!-- Selected Results Display - RIGHT SIDE -->
-                        <div class="col-12 col-lg-4">
-                            <div class="results-display-vertical">
+                        <div class="col-12 col-lg-5 d-flex align-items-stretch">
+                            <div class="results-display-vertical w-100 d-flex flex-column justify-content-center">
                                 <div class="result-box win-box">
                                     <div class="result-label">🥇 WIN</div>
                                     <div class="result-number" id="win-number">?</div>
@@ -1532,14 +343,18 @@
                         </div>
                     </div>
                 </div>
-                <div class="modal-footer d-flex flex-column flex-sm-row">
-                    <button type="button" class="btn btn-secondary mb-2 mb-sm-0 me-sm-2" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-warning mb-2 mb-sm-0 me-sm-2" id="reset-selections-btn" onclick="resetSelections()">
-                        🔄 Reset Selections
-                    </button>
-                    <button type="button" class="btn btn-success btn-lg flex-sm-grow-1" id="finalize-results-btn" onclick="finalizeResults()" disabled>
-                        🎉 Finalize Results
-                    </button>
+                <div class="modal-footer">
+                    <div class="d-flex gap-3 w-100">
+                        <button type="button" class="btn btn-secondary flex-fill" data-bs-dismiss="modal">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-warning flex-fill" id="reset-selections-btn" onclick="resetSelections()">
+                            🔄 Reset Selections
+                        </button>
+                        <button type="button" class="btn btn-success flex-fill" id="finalize-results-btn" onclick="finalizeResults()" disabled>
+                            🎉 Finalize Results
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1553,776 +368,10 @@
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='js/voice-prompt.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/dashboard-core.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/horse-selection.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/race-results.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/responsive.js') }}"></script>
     
-    <script>
-        // Initialize dashboard
-        document.addEventListener('DOMContentLoaded', function() {
-            checkVoiceSupport();
-            loadSystemStatus();
-            loadOpenAIUsage();
-            
-            // Set up OpenAI toggle
-            document.getElementById('openaiToggle').addEventListener('change', toggleOpenAI);
-            
-            // Set up enter key for manual prompt
-            document.getElementById('manualPrompt').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    sendManualPrompt();
-                }
-            });
-            
-            // Initialize reset button state
-            updateResetButtonState();
-        });
-        
-        // Check voice support
-        function checkVoiceSupport() {
-            const statusElement = document.getElementById('voice-support-status');
-            if (voicePrompt.isSupported()) {
-                statusElement.textContent = '✅ Voice recognition supported';
-                statusElement.className = 'small text-success mt-2';
-            } else {
-                statusElement.textContent = '❌ Voice recognition not supported in this browser';
-                statusElement.className = 'small text-warning mt-2';
-            }
-        }
-        
-        // Load system status
-        async function loadSystemStatus() {
-            try {
-                const response = await fetch('/api/openai/status');
-                const data = await response.json();
-                
-                const statusElement = document.getElementById('openai-status');
-                const textElement = document.getElementById('openai-text');
-                
-                if (data.configured) {
-                    statusElement.className = 'status-indicator status-online';
-                    textElement.textContent = 'Ready';
-                } else {
-                    statusElement.className = 'status-indicator status-offline';
-                    textElement.textContent = 'Not configured';
-                }
-            } catch (error) {
-                console.error('Error loading system status:', error);
-            }
-        }
-        
-        // Load OpenAI usage
-        async function loadOpenAIUsage() {
-            try {
-                const response = await fetch('/api/openai/usage');
-                const data = await response.json();
-                
-                if (data.success) {
-                    const usage = data.usage;
-                    document.getElementById('hourly-usage').textContent = `${usage.hourly_usage}/${usage.hourly_limit}`;
-                    document.getElementById('daily-usage').textContent = `${usage.daily_usage}/${usage.daily_limit}`;
-                }
-            } catch (error) {
-                console.error('Error loading usage:', error);
-            }
-        }
-        
-        // Toggle OpenAI
-        async function toggleOpenAI() {
-            const enabled = document.getElementById('openaiToggle').checked;
-            
-            try {
-                const response = await fetch('/api/openai/toggle', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({enabled: enabled})
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showNotification(`OpenAI ${enabled ? 'enabled' : 'disabled'}`, 'success');
-                } else {
-                    showNotification('Failed to toggle OpenAI', 'error');
-                }
-            } catch (error) {
-                console.error('Error toggling OpenAI:', error);
-                showNotification('Error toggling OpenAI', 'error');
-            }
-        }
-        
-        // Send manual prompt
-        async function sendManualPrompt() {
-            const prompt = document.getElementById('manualPrompt').value.trim();
-            
-            if (!prompt) {
-                showNotification('Please enter a prompt', 'warning');
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/openai/generate-led-sequence', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({description: prompt})
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    addToHistory(prompt, data.sequence, 'manual');
-                    showNotification('Animation generated successfully!', 'success');
-                    document.getElementById('manualPrompt').value = '';
-                } else {
-                    showNotification(data.error || 'Failed to generate animation', 'error');
-                }
-            } catch (error) {
-                console.error('Error sending manual prompt:', error);
-                showNotification('Network error', 'error');
-            }
-        }
-        
-        // Add to animation history
-        function addToHistory(prompt, sequence, source) {
-            const historyContainer = document.getElementById('animation-history');
-            
-            // Remove "no animations" message
-            if (historyContainer.textContent.includes('No animations')) {
-                historyContainer.innerHTML = '';
-            }
-            
-            const historyItem = document.createElement('div');
-            historyItem.className = 'card mb-2';
-            historyItem.innerHTML = `
-                <div class="card-body">
-                    <div class="d-flex justify-content-between">
-                        <div>
-                            <strong>${source === 'voice' ? '🎤' : '⌨️'} "${prompt}"</strong>
-                            <small class="text-muted d-block">${new Date().toLocaleTimeString()}</small>
-                        </div>
-                        <button class="btn btn-sm btn-outline-primary" onclick="applyAnimation(this)">
-                            Apply
-                        </button>
-                    </div>
-                    <pre class="small mt-2 mb-0">${JSON.stringify(sequence, null, 2)}</pre>
-                </div>
-            `;
-            
-            historyContainer.insertBefore(historyItem, historyContainer.firstChild);
-            
-            // Store sequence data
-            historyItem.sequenceData = sequence;
-        }
-        
-        // Apply animation
-        function applyAnimation(button) {
-            const sequence = button.closest('.card').sequenceData;
-            
-            // Here you would send the sequence to your LED controller
-            console.log('Applying animation:', sequence);
-            showNotification('Animation applied to LEDs!', 'success');
-        }
-        
-        // Utility functions
-        function showNotification(message, type = 'info') {
-            // Simple notification - you could use a toast library here
-            const alertClass = type === 'error' ? 'alert-danger' : 
-                              type === 'warning' ? 'alert-warning' :
-                              type === 'success' ? 'alert-success' : 'alert-info';
-            
-            const notification = document.createElement('div');
-            notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
-            notification.style.top = '20px';
-            notification.style.right = '20px';
-            notification.style.zIndex = '9999';
-            notification.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            
-            document.body.appendChild(notification);
-            
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                notification.remove();
-            }, 5000);
-        }
-        
-        function refreshStatus() {
-            loadSystemStatus();
-            loadOpenAIUsage();
-            showNotification('Status refreshed', 'success');
-        }
-        
-        function testAnimation() {
-            // Activate the test animation button
-            const testBtn = document.getElementById('test-animation-btn');
-            testBtn.classList.add('active');
-            
-            // Remove active state from clear logs button
-            const clearBtn = document.getElementById('clear-logs-btn');
-            clearBtn.classList.remove('active');
-            
-            // For testing purposes, simulate some race results
-            const testResults = { win: 7, place: 3, show: 12 };
-            
-            // Update selection state to match test results
-            if (typeof selectionState !== 'undefined') {
-                selectionState.selections = testResults;
-                selectionState.step = 2; // Set to final step
-            }
-            
-            updateWinnersPanel(testResults);
-            
-            showNotification('Test animation activated - LEDs will show test pattern', 'success');
-        }
-        
-        function clearLogs() {
-            // Remove active state from both buttons
-            const testBtn = document.getElementById('test-animation-btn');
-            const clearBtn = document.getElementById('clear-logs-btn');
-            
-            testBtn.classList.remove('active');
-            clearBtn.classList.remove('active');
-            
-            showNotification('Logs cleared and animations reset', 'success');
-        }
-        
-        // Reset Race Results Function
-        function resetRaceResults() {
-            // Clear the displayed values
-            document.getElementById('winner-win-number').textContent = '--';
-            document.getElementById('winner-place-number').textContent = '--';
-            document.getElementById('winner-show-number').textContent = '--';
-            
-            // Remove active states
-            document.getElementById('winner-win').classList.remove('active');
-            document.getElementById('winner-place').classList.remove('active');
-            document.getElementById('winner-show').classList.remove('active');
-            
-            // Update timestamp
-            document.getElementById('results-timestamp').textContent = 'No race results yet';
-            
-            // Disable reset button
-            document.getElementById('reset-results-btn').disabled = true;
-            
-            // Reset the selection state for the modal
-            if (typeof selectionState !== 'undefined') {
-                selectionState = {
-                    step: 0,
-                    selections: { win: null, place: null, show: null },
-                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
-                };
-            }
-            
-            // Reset modal display elements if they exist
-            const winNumber = document.getElementById('win-number');
-            const placeNumber = document.getElementById('place-number');
-            const showNumber = document.getElementById('show-number');
-            
-            if (winNumber) winNumber.textContent = '?';
-            if (placeNumber) placeNumber.textContent = '?';
-            if (showNumber) showNumber.textContent = '?';
-            
-            // Remove selected classes from result boxes
-            const winBox = document.querySelector('.win-box');
-            const placeBox = document.querySelector('.place-box');
-            const showBox = document.querySelector('.show-box');
-            
-            if (winBox) winBox.classList.remove('selected');
-            if (placeBox) placeBox.classList.remove('selected');
-            if (showBox) showBox.classList.remove('selected');
-            
-            // Reset horse grid if it exists
-            const horseButtons = document.querySelectorAll('.horse-number');
-            if (horseButtons.length > 0) {
-                horseButtons.forEach(button => {
-                    button.classList.remove('selected', 'disabled', 'win', 'place', 'show');
-                });
-            }
-            
-            // Disable finalize button if it exists
-            const finalizeBtn = document.getElementById('finalize-results-btn');
-            if (finalizeBtn) {
-                finalizeBtn.disabled = true;
-            }
-            
-            // Update selection step display if modal elements exist
-            const selectionStep = document.getElementById('selection-step');
-            if (selectionStep) {
-                selectionStep.textContent = 'SELECT WINNING HORSE';
-            }
-            
-            showNotification('Race results reset successfully', 'success');
-        }
-        
-        // Function to update reset button state
-        function updateResetButtonState() {
-            const winNumber = document.getElementById('winner-win-number').textContent;
-            const placeNumber = document.getElementById('winner-place-number').textContent;
-            const showNumber = document.getElementById('winner-show-number').textContent;
-            
-            const hasResults = winNumber !== '--' || placeNumber !== '--' || showNumber !== '--';
-            document.getElementById('reset-results-btn').disabled = !hasResults;
-        }
-        
-        // Voice prompt callbacks
-        window.onVoiceAnimationGenerated = function(data) {
-            addToHistory(data.prompt, data.sequence, 'voice');
-            loadOpenAIUsage(); // Refresh usage stats
-        };
-        
-        window.onApplyVoiceAnimation = function(sequence) {
-            // Here you would send the sequence to your LED controller
-            console.log('Applying voice animation:', sequence);
-        };
-        
-        // Mode modal functions
-        const MODE_CONFIG = {
-            'pre_race': {
-                title: 'Pre-Race Animations',
-                icon: '🏁',
-                description: 'Setup and preparation animations'
-            },
-            'betting_open': {
-                title: 'Betting Open Animations',
-                icon: '💰',
-                description: 'Betting period animations'
-            },
-            'during_race': {
-                title: 'During Race Animations',
-                icon: '🏇',
-                description: 'Active race animations'
-            },
-            'results': {
-                title: 'Results Animations',
-                icon: '🏆',
-                description: 'Post-race celebration animations'
-            }
-        };
-        
-        async function openModeModal(mode) {
-            try {
-                // Special handling for results mode
-                if (mode === 'results') {
-                    openHorseSelectionModal();
-                    return;
-                }
-                
-                // Update modal title and icon
-                const config = MODE_CONFIG[mode];
-                document.getElementById('modal-mode-icon').textContent = config.icon;
-                document.getElementById('modal-mode-title').textContent = config.title;
-                
-                // Update modal description based on mode
-                const modalDescription = document.querySelector('.modal-body p');
-                if (mode === 'during_race') {
-                    modalDescription.textContent = 'Live race control - tap animations as the race progresses:';
-                    modalDescription.className = 'text-success mb-4 fw-bold';
-                } else {
-                    modalDescription.textContent = 'Select an animation to run for this mode:';
-                    modalDescription.className = 'text-muted mb-4';
-                }
-                
-                // Show/hide End Race button based on mode
-                const endRaceBtn = document.getElementById('modal-end-race-btn');
-                const cancelBtn = document.getElementById('modal-cancel-btn');
-                
-                if (mode === 'during_race') {
-                    endRaceBtn.style.display = 'inline-block';
-                    cancelBtn.textContent = 'Minimize';
-                } else {
-                    endRaceBtn.style.display = 'none';
-                    cancelBtn.textContent = 'Cancel';
-                }
-                
-                // Fetch available animations for this mode
-                const response = await fetch(`/api/display/mode-animations?mode=${mode}`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    populateAnimationButtons(data.animations, mode);
-                    
-                    // Show modal with special styling for during race
-                    const modalElement = document.getElementById('animationModal');
-                    if (mode === 'during_race') {
-                        modalElement.classList.add('during-race-modal');
-                    } else {
-                        modalElement.classList.remove('during-race-modal');
-                    }
-                    
-                    const modal = new bootstrap.Modal(modalElement);
-                    modal.show();
-                } else {
-                    showNotification(data.error || 'Failed to load animations', 'error');
-                }
-            } catch (error) {
-                console.error('Error opening mode modal:', error);
-                showNotification('Error loading animations', 'error');
-            }
-        }
-        
-        // Horse Selection Modal Logic
-        let selectionState = {
-            step: 0, // 0=win, 1=place, 2=show
-            selections: { win: null, place: null, show: null },
-            stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
-        };
-        
-        function openHorseSelectionModal() {
-            // Check if there are existing results from the main dashboard
-            const existingWin = document.getElementById('winner-win-number').textContent;
-            const existingPlace = document.getElementById('winner-place-number').textContent;
-            const existingShow = document.getElementById('winner-show-number').textContent;
-            
-            // Initialize selection state based on existing results
-            if (existingWin !== '--' || existingPlace !== '--' || existingShow !== '--') {
-                // Load existing results into selection state
-                selectionState = {
-                    step: 2, // Set to final step since we have results
-                    selections: { 
-                        win: existingWin !== '--' ? parseInt(existingWin) : null,
-                        place: existingPlace !== '--' ? parseInt(existingPlace) : null,
-                        show: existingShow !== '--' ? parseInt(existingShow) : null
-                    },
-                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
-                };
-            } else {
-                // Reset state for new selection
-                selectionState = {
-                    step: 0,
-                    selections: { win: null, place: null, show: null },
-                    stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
-                };
-            }
-            
-            // Create horse grid
-            createHorseGrid();
-            updateSelectionStep();
-            updateResultsDisplay();
-            
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('horseSelectionModal'));
-            modal.show();
-        }
-        
-        function createHorseGrid() {
-            const gridContainer = document.querySelector('.horse-grid');
-            gridContainer.innerHTML = '';
-            
-            // Create 20 horse number buttons
-            for (let i = 1; i <= 20; i++) {
-                const button = document.createElement('button');
-                button.className = 'horse-number';
-                button.textContent = i;
-                button.onclick = () => selectHorse(i);
-                gridContainer.appendChild(button);
-            }
-        }
-        
-        function selectHorse(number) {
-            const stepKeys = ['win', 'place', 'show'];
-            const currentStep = stepKeys[selectionState.step];
-            
-            // Don't allow selecting the same horse twice
-            if (Object.values(selectionState.selections).includes(number)) {
-                showNotification(`Horse #${number} already selected!`, 'warning');
-                return;
-            }
-            
-            // Record selection
-            selectionState.selections[currentStep] = number;
-            
-            // Update display
-            updateResultsDisplay();
-            updateHorseGrid();
-            
-            // Move to next step or finish
-            if (selectionState.step < 2) {
-                selectionState.step++;
-                updateSelectionStep();
-            } else {
-                // All selections made
-                document.getElementById('finalize-results-btn').disabled = false;
-                document.getElementById('selection-step').textContent = 'RESULTS COMPLETE - READY TO FINALIZE';
-            }
-        }
-        
-        function updateSelectionStep() {
-            const stepLabel = document.getElementById('selection-step');
-            stepLabel.textContent = selectionState.stepLabels[selectionState.step];
-            
-            // Update finalize button state
-            const finalizeBtn = document.getElementById('finalize-results-btn');
-            if (finalizeBtn) {
-                const hasAllSelections = selectionState.selections.win && 
-                                       selectionState.selections.place && 
-                                       selectionState.selections.show;
-                finalizeBtn.disabled = !hasAllSelections;
-            }
-        }
-        
-        function updateResultsDisplay() {
-            const winElement = document.getElementById('win-number');
-            const placeElement = document.getElementById('place-number');
-            const showElement = document.getElementById('show-number');
-            
-            // Get current step info - step hasn't been incremented yet when this is called
-            const stepKeys = ['win', 'place', 'show'];
-            const currentStep = stepKeys[selectionState.step];
-            
-            // Update all numbers without animation first
-            winElement.textContent = selectionState.selections.win || '?';
-            placeElement.textContent = selectionState.selections.place || '?';
-            showElement.textContent = selectionState.selections.show || '?';
-            
-            // Only animate the current selection
-            if (currentStep === 'win' && selectionState.selections.win) {
-                winElement.classList.add('reveal');
-                setTimeout(() => winElement.classList.remove('reveal'), 1500);
-            } else if (currentStep === 'place' && selectionState.selections.place) {
-                placeElement.classList.add('reveal');
-                setTimeout(() => placeElement.classList.remove('reveal'), 1500);
-            } else if (currentStep === 'show' && selectionState.selections.show) {
-                showElement.classList.add('reveal');
-                setTimeout(() => showElement.classList.remove('reveal'), 1500);
-            }
-            
-            // Update box states
-            const winBox = document.querySelector('.win-box');
-            const placeBox = document.querySelector('.place-box');
-            const showBox = document.querySelector('.show-box');
-            
-            // Update selected states without removing existing ones
-            if (selectionState.selections.win && !winBox.classList.contains('selected')) {
-                winBox.classList.add('selected');
-            }
-            if (selectionState.selections.place && !placeBox.classList.contains('selected')) {
-                placeBox.classList.add('selected');
-            }
-            if (selectionState.selections.show && !showBox.classList.contains('selected')) {
-                showBox.classList.add('selected');
-            }
-        }
-        
-        function updateHorseGrid() {
-            const horseButtons = document.querySelectorAll('.horse-number');
-            
-            horseButtons.forEach(button => {
-                const number = parseInt(button.textContent);
-                
-                // Remove all classes
-                button.classList.remove('selected', 'disabled', 'win', 'place', 'show');
-                
-                // Mark selected horses with medal colors
-                if (selectionState.selections.win === number) {
-                    button.classList.add('selected', 'win');
-                } else if (selectionState.selections.place === number) {
-                    button.classList.add('selected', 'place');
-                } else if (selectionState.selections.show === number) {
-                    button.classList.add('selected', 'show');
-                }
-                
-                // Disable already selected horses for future selections
-                if (selectionState.step < 2 && Object.values(selectionState.selections).includes(number)) {
-                    button.classList.add('disabled');
-                }
-            });
-        }
-        
-        async function finalizeResults() {
-            try {
-                // Send results to backend
-                const response = await fetch('/api/display/command', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        animation: 'race_results',
-                        mode: 'results',
-                        results: selectionState.selections
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showNotification(`Results Finalized! Win: #${selectionState.selections.win}, Place: #${selectionState.selections.place}, Show: #${selectionState.selections.show}`, 'success');
-                    
-                    // Update Winners Panel
-                    updateWinnersPanel(selectionState.selections);
-                    
-                    // Close modal
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('horseSelectionModal'));
-                    modal.hide();
-                    
-                    // Update background with celebration
-                    updateBackgroundAnimation('race_results');
-                } else {
-                    showNotification(data.error || 'Failed to finalize results', 'error');
-                }
-            } catch (error) {
-                console.error('Error finalizing results:', error);
-                showNotification('Error finalizing results', 'error');
-            }
-        }
-        
-        // Update Winners Panel with live results
-        function updateWinnersPanel(results) {
-            // Update numbers
-            document.getElementById('winner-win-number').textContent = results.win || '--';
-            document.getElementById('winner-place-number').textContent = results.place || '--';
-            document.getElementById('winner-show-number').textContent = results.show || '--';
-            
-            // Add active animations
-            const winItem = document.getElementById('winner-win');
-            const placeItem = document.getElementById('winner-place');
-            const showItem = document.getElementById('winner-show');
-            
-            // Remove existing active classes
-            winItem.classList.remove('active');
-            placeItem.classList.remove('active');
-            showItem.classList.remove('active');
-            
-            // Add active classes with delay for animation effect
-            setTimeout(() => {
-                if (results.win) winItem.classList.add('active');
-            }, 100);
-            
-            setTimeout(() => {
-                if (results.place) placeItem.classList.add('active');
-            }, 300);
-            
-            setTimeout(() => {
-                if (results.show) showItem.classList.add('active');
-            }, 500);
-            
-            // Update timestamp
-            const now = new Date().toLocaleTimeString();
-            document.getElementById('results-timestamp').textContent = `Results updated at ${now}`;
-            
-            // Update reset button state
-            updateResetButtonState();
-        }
-        
-        function populateAnimationButtons(animations, mode) {
-            const buttonsContainer = document.getElementById('animation-buttons');
-            buttonsContainer.innerHTML = '';
-            
-            // Special descriptions for during race animations
-            const animationDescriptions = {
-                'theyre_off': "🏁 They're Off!\nBig green blast → racing energy",
-                'down_the_stretch': "🔥 Down The Stretch!\nFinal stretch intensity",
-                'finish_race': "🏁 Finish Race!\nCheckered flag celebration"
-            };
-            
-            animations.forEach(animation => {
-                const button = document.createElement('button');
-                button.className = 'btn btn-outline-primary animation-btn';
-                
-                // Use special descriptions for during race, otherwise format normally
-                if (mode === 'during_race' && animationDescriptions[animation]) {
-                    button.innerHTML = animationDescriptions[animation].replace('\n', '<br>');
-                } else {
-                    button.textContent = formatAnimationName(animation);
-                }
-                
-                button.onclick = () => runAnimation(animation, mode);
-                buttonsContainer.appendChild(button);
-            });
-        }
-        
-        function formatAnimationName(animation) {
-            // Convert snake_case to Title Case
-            return animation.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-        }
-        
-        async function runAnimation(animation, mode) {
-            try {
-                const response = await fetch('/api/display/command', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        animation: animation,
-                        mode: mode
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    showNotification(`Running "${formatAnimationName(animation)}" animation`, 'success');
-                    
-                    // Update background animation to mirror LED animation
-                    updateBackgroundAnimation(animation);
-                    
-                    // For during race mode, don't close modal - keep it open for live control
-                    if (mode !== 'during_race') {
-                        const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
-                        modal.hide();
-                    }
-                } else {
-                    showNotification(data.error || 'Failed to run animation', 'error');
-                }
-            } catch (error) {
-                console.error('Error running animation:', error);
-                showNotification('Error running animation', 'error');
-            }
-        }
-        
-        function updateBackgroundAnimation(animation) {
-            const bgElement = document.getElementById('bg-animation');
-            
-            // Remove all animation classes
-            bgElement.classList.remove('theyre-off', 'down-the-stretch', 'finish-race', 'race-results');
-            
-            // Add the appropriate animation class
-            if (animation === 'theyre_off') {
-                bgElement.classList.add('theyre-off');
-            } else if (animation === 'down_the_stretch') {
-                bgElement.classList.add('down-the-stretch');
-            } else if (animation === 'finish_race') {
-                bgElement.classList.add('finish-race');
-            } else if (animation === 'race_results') {
-                bgElement.classList.add('race-results');
-            }
-        }
-        
-        function endRace() {
-            // Clear background animation
-            const bgElement = document.getElementById('bg-animation');
-            bgElement.classList.remove('theyre-off', 'down-the-stretch', 'finish-race', 'race-results');
-            
-            // Close the modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('animationModal'));
-            modal.hide();
-            
-            // Show notification
-            showNotification('Race ended - returning to main dashboard', 'info');
-        }
-        
-        function resetSelections() {
-            // Reset selection state
-            selectionState.step = 0;
-            selectionState.selections = { win: null, place: null, show: null };
-            
-            // Reset display
-            document.getElementById('win-number').textContent = '?';
-            document.getElementById('place-number').textContent = '?';
-            document.getElementById('show-number').textContent = '?';
-            
-            // Remove selected classes
-            document.querySelector('.win-box').classList.remove('selected');
-            document.querySelector('.place-box').classList.remove('selected');
-            document.querySelector('.show-box').classList.remove('selected');
-            
-            // Update step label
-            updateSelectionStep();
-            
-            // Disable finalize button
-            document.getElementById('finalize-results-btn').disabled = true;
-            
-            // Reset horse grid
-            updateHorseGrid();
-            
-            showNotification('Selections reset - ready to select winning horse', 'info');
-        }
-    </script>
 </body>
 </html>

@@ -1,0 +1,39 @@
+<div class="card h-100">
+    <div class="card-body">
+        <h5 class="card-title">
+            🎤 Voice Commands
+        </h5>
+        
+        <!-- Voice Status -->
+        <div class="mb-3">
+            <div id="voice-support-status" class="small text-muted">
+                Checking voice support...
+            </div>
+        </div>
+        
+        <!-- Voice Controls -->
+        <div class="d-grid gap-2">
+            <button class="btn btn-success" id="start-voice-btn" onclick="startVoicePrompt()">
+                🎙️ Start Voice Command
+            </button>
+            <button class="btn btn-danger" id="stop-voice-btn" onclick="stopVoicePrompt()" disabled>
+                ⏹️ Stop Listening
+            </button>
+        </div>
+        
+        <!-- Voice Feedback -->
+        <div class="mt-3">
+            <div id="voice-feedback" class="alert alert-info d-none">
+                <small id="voice-text">Ready for voice commands...</small>
+            </div>
+        </div>
+        
+        <!-- Voice Commands Help -->
+        <div class="mt-3">
+            <small class="text-muted">
+                <strong>Sample commands:</strong><br>
+                "Show rainbow", "Clear display", "Test animation", "Set horse 5 as winner"
+            </small>
+        </div>
+    </div>
+</div>

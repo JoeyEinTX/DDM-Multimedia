@@ -1,0 +1,277 @@
+/* =============================================================================
+   DDM Racing System - Horse Selection Modal
+   ============================================================================= */
+
+/* =============================================================================
+   Modal Styling
+   ============================================================================= */
+
+.horse-selection-modal {
+    max-width: 90vw;
+    background: transparent !important;
+}
+
+.horse-selection-modal .modal-content {
+    background: linear-gradient(135deg, rgba(26, 35, 50, 0.95) 0%, rgba(10, 22, 40, 0.98) 100%) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 16px !important;
+}
+
+.horse-selection-modal .modal-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
+    padding: 25px 30px !important;
+}
+
+.horse-selection-modal .modal-body {
+    padding: 30px !important;
+}
+
+.horse-selection-modal .modal-footer {
+    padding: 20px 30px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.horse-selection-modal .modal-footer .btn {
+    padding: 12px 20px !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+    font-size: 1rem !important;
+}
+
+/* =============================================================================
+   Horse Grid Layout
+   ============================================================================= */
+
+.horse-grid-container {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 100% !important;
+    background: transparent !important;
+    padding: 5px !important;
+}
+
+.horse-grid {
+    display: grid !important;
+    grid-template-columns: repeat(5, 1fr) !important;
+    gap: 8px !important;
+    max-width: 480px !important;
+    width: 100% !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+/* Responsive grid adjustments */
+@media (max-width: 991px) {
+    .horse-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+    }
+}
+
+@media (max-width: 767px) {
+    .horse-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+    }
+}
+
+@media (max-width: 575px) {
+    .horse-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
+    }
+}
+
+/* =============================================================================
+   Horse Number Buttons
+   ============================================================================= */
+
+.horse-number {
+    background: linear-gradient(135deg, var(--ddm-teal) 0%, var(--ddm-teal-dark) 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 15px 10px;
+    font-size: 1.2em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    min-height: 55px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.horse-number:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4);
+}
+
+.horse-number.selected {
+    background: linear-gradient(135deg, var(--ddm-yellow) 0%, var(--ddm-red) 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(244, 163, 0, 0.6);
+}
+
+.horse-number.disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.horse-number.disabled:hover {
+    transform: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* =============================================================================
+   Gold/Silver/Bronze Selection States
+   ============================================================================= */
+
+.horse-number.selected.win {
+    background: linear-gradient(135deg, #DAA520 0%, #FFD700 50%, #B8860B 100%);
+    box-shadow: 0 8px 20px rgba(218, 165, 32, 0.6);
+}
+
+.horse-number.selected.place {
+    background: linear-gradient(135deg, #A8A8A8 0%, #D3D3D3 50%, #C0C0C0 100%);
+    box-shadow: 0 8px 20px rgba(168, 168, 168, 0.6);
+}
+
+.horse-number.selected.show {
+    background: linear-gradient(135deg, #B8860B 0%, #CD853F 50%, #A0522D 100%);
+    box-shadow: 0 8px 20px rgba(184, 134, 11, 0.6);
+}
+
+/* =============================================================================
+   Enhanced Modal Button Styling
+   ============================================================================= */
+
+body .horse-grid .horse-number {
+    width: 88px !important;
+    height: 100px !important;
+    border: 2px solid #13868B !important;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%) !important;
+    color: #e2e8f0 !important;
+    font-size: 2rem !important;
+    font-weight: 800 !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+body .horse-grid .horse-number:hover {
+    background: #13868B !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 15px rgba(19, 134, 139, 0.4) !important;
+}
+
+body .horse-grid .horse-number.selected {
+    color: #000 !important;
+    font-weight: 900 !important;
+    transform: translateY(-2px) scale(1.05) !important;
+}
+
+body .horse-grid .horse-number.selected.win {
+    background: linear-gradient(135deg, #FFD700 0%, #DAA520 100%) !important;
+    border-color: #FFD700 !important;
+    box-shadow: 0 6px 20px rgba(255, 215, 0, 0.5) !important;
+}
+
+body .horse-grid .horse-number.selected.place {
+    background: linear-gradient(135deg, #C0C0C0 0%, #A9A9A9 100%) !important;
+    border-color: #C0C0C0 !important;
+    box-shadow: 0 6px 20px rgba(192, 192, 192, 0.5) !important;
+}
+
+body .horse-grid .horse-number.selected.show {
+    background: linear-gradient(135deg, #CD7F32 0%, #A0522D 100%) !important;
+    border-color: #CD7F32 !important;
+    box-shadow: 0 6px 20px rgba(205, 127, 50, 0.5) !important;
+}
+
+/* =============================================================================
+   Result Display in Modal
+   ============================================================================= */
+
+body .results-display-vertical {
+    gap: 20px !important;
+    background: transparent !important;
+}
+
+body .modal .result-box {
+    background: transparent !important;
+    border: 2px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
+    text-align: center !important;
+    transition: all 0.3s ease !important;
+    min-height: 100px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+
+body .modal .result-box.win-box {
+    border: 3px solid #FFD700 !important;
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(218, 165, 32, 0.1) 100%) !important;
+}
+
+body .modal .result-box.place-box {
+    border: 3px solid #C0C0C0 !important;
+    background: linear-gradient(135deg, rgba(192, 192, 192, 0.15) 0%, rgba(169, 169, 169, 0.1) 100%) !important;
+}
+
+body .modal .result-box.show-box {
+    border: 3px solid #CD7F32 !important;
+    background: linear-gradient(135deg, rgba(205, 127, 50, 0.15) 0%, rgba(184, 134, 11, 0.1) 100%) !important;
+}
+
+body .result-label {
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    color: #e2e8f0 !important;
+    margin-bottom: 8px !important;
+}
+
+body .result-number {
+    font-size: 2rem !important;
+    font-weight: 700 !important;
+    color: #e2e8f0 !important;
+}
+
+/* =============================================================================
+   Mobile Responsive Adjustments
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    body .horse-selection-modal .modal-body {
+        padding: 15px !important;
+        min-height: 350px !important;
+    }
+    
+    body .horse-grid {
+        max-width: 320px !important;
+        gap: 6px !important;
+    }
+    
+    body .horse-grid .horse-number {
+        width: 65px !important;
+        height: 75px !important;
+        font-size: 1.4rem !important;
+    }
+    
+    body .results-display-vertical {
+        margin-top: 20px !important;
+    }
+    
+    body .modal-footer .btn {
+        padding: 10px 16px !important;
+        font-size: 0.9rem !important;
+    }
+}

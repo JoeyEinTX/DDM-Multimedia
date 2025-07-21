@@ -1,0 +1,56 @@
+<!-- Horse Selection Modal (Results Mode) -->
+<div class="modal fade" id="horseSelectionModal" tabindex="-1" aria-labelledby="horseSelectionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content horse-selection-modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="horseSelectionModalLabel">
+                    🏆 <span id="selection-step">SELECT WINNING HORSE</span>
+                </h3>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row h-100 g-2">
+                    <!-- Horse Number Grid - LEFT SIDE -->
+                    <div class="col-12 col-lg-7 d-flex align-items-stretch">
+                        <div class="horse-grid-container w-100">
+                            <div class="horse-grid">
+                                <!-- Grid will be populated with numbers 1-20 -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Selected Results Display - RIGHT SIDE -->
+                    <div class="col-12 col-lg-5 d-flex align-items-stretch">
+                        <div class="results-display-vertical w-100 d-flex flex-column justify-content-center">
+                            <div class="result-box win-box">
+                                <div class="result-label">🥇 WIN</div>
+                                <div class="result-number" id="win-number">?</div>
+                            </div>
+                            <div class="result-box place-box">
+                                <div class="result-label">🥈 PLACE</div>
+                                <div class="result-number" id="place-number">?</div>
+                            </div>
+                            <div class="result-box show-box">
+                                <div class="result-label">🥉 SHOW</div>
+                                <div class="result-number" id="show-number">?</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="d-flex gap-3 w-100">
+                    <button type="button" class="btn btn-secondary flex-fill" data-bs-dismiss="modal">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-warning flex-fill" id="reset-selections-btn" onclick="resetSelections()">
+                        🔄 Reset Selections
+                    </button>
+                    <button type="button" class="btn btn-success flex-fill" id="finalize-results-btn" onclick="finalizeResults()" disabled>
+                        🎉 Finalize Results
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

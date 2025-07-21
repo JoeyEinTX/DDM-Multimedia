@@ -1,0 +1,295 @@
+/* =============================================================================
+   DDM Racing System - Race Results Styling
+   ============================================================================= */
+
+/* =============================================================================
+   Result Display Components
+   ============================================================================= */
+
+.results-display-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.result-box {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+    text-align: center;
+    min-height: 70px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex-grow: 1;
+    margin-bottom: 0;
+}
+
+.win-box {
+    border: 3px solid #DAA520;
+}
+
+.place-box {
+    border: 3px solid #A8A8A8;
+}
+
+.show-box {
+    border: 3px solid #B8860B;
+}
+
+.result-label {
+    font-size: 1.1em;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.result-number {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: #333;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    transition: all 0.8s ease;
+}
+
+.result-box.selected {
+    transform: scale(1.05);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.3);
+}
+
+.win-box.selected {
+    background: linear-gradient(135deg, #DAA520 0%, #FFD700 50%, #B8860B 100%);
+    animation: gold-pulse 2s ease-in-out infinite;
+    border-color: #FFD700;
+}
+
+.place-box.selected {
+    background: linear-gradient(135deg, #A8A8A8 0%, #D3D3D3 50%, #C0C0C0 100%);
+    animation: silver-pulse 2s ease-in-out infinite;
+    border-color: #D3D3D3;
+}
+
+.show-box.selected {
+    background: linear-gradient(135deg, #B8860B 0%, #CD853F 50%, #A0522D 100%);
+    animation: bronze-pulse 2s ease-in-out infinite;
+    border-color: #CD853F;
+}
+
+.result-number.reveal {
+    animation: pixelate-in 1.5s ease-out forwards;
+}
+
+/* =============================================================================
+   Winner Item Styling (Main Dashboard Sidebar)
+   ============================================================================= */
+
+.winner-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+    background: rgba(0, 0, 0, 0.05);
+    border: 2px solid transparent;
+    margin-bottom: 0;
+    min-height: 60px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.winner-item.win-place {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(218, 165, 32, 0.1));
+    border-color: #FFD700;
+    box-shadow: 0 0 0 rgba(255, 215, 0, 0);
+    transition: all 0.3s ease;
+}
+
+.winner-item.win-place.active {
+    background: linear-gradient(135deg, #FFD700, #DAA520);
+    color: white;
+    animation: gold-pulse 2s ease-in-out infinite;
+}
+
+.winner-item.place-place {
+    background: linear-gradient(135deg, rgba(192, 192, 192, 0.1), rgba(169, 169, 169, 0.1));
+    border-color: #C0C0C0;
+    box-shadow: 0 0 0 rgba(192, 192, 192, 0);
+    transition: all 0.3s ease;
+}
+
+.winner-item.place-place.active {
+    background: linear-gradient(135deg, #C0C0C0, #A9A9A9);
+    color: white;
+    animation: silver-pulse 2s ease-in-out infinite;
+}
+
+.winner-item.show-place {
+    background: linear-gradient(135deg, rgba(205, 133, 63, 0.1), rgba(160, 82, 45, 0.1));
+    border-color: #CD853F;
+    box-shadow: 0 0 0 rgba(205, 133, 63, 0);
+    transition: all 0.3s ease;
+}
+
+.winner-item.show-place.active {
+    background: linear-gradient(135deg, #CD853F, #A0522D);
+    color: white;
+    animation: bronze-pulse 2s ease-in-out infinite;
+}
+
+.winner-label {
+    font-weight: 600;
+    font-size: 1.0em;
+}
+
+.winner-number {
+    font-size: 1.8em;
+    font-weight: bold;
+}
+
+.winner-item.active .winner-number {
+    animation: number-bounce 1s ease-out;
+}
+
+/* =============================================================================
+   DDM Race Results - Simplified Layout
+   ============================================================================= */
+
+.ddm-race-results-simple {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.ddm-result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 4px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.ddm-result-row.win {
+    border-left-color: #FFD700;
+}
+
+.ddm-result-row.place {
+    border-left-color: #C0C0C0;
+}
+
+.ddm-result-row.show {
+    border-left-color: #CD7F32;
+}
+
+.ddm-result-left {
+    font-weight: 600;
+    color: var(--ddm-dark-text);
+}
+
+.ddm-result-right {
+    font-weight: 700;
+    color: var(--ddm-cream);
+}
+
+/* =============================================================================
+   Pulse Animations
+   ============================================================================= */
+
+@keyframes gold-pulse {
+    0% { 
+        box-shadow: 0 0 20px rgba(218, 165, 32, 0.6); 
+        transform: scale(1.05);
+    }
+    50% { 
+        box-shadow: 0 0 40px rgba(255, 215, 0, 0.9); 
+        transform: scale(1.08);
+    }
+    100% { 
+        box-shadow: 0 0 20px rgba(218, 165, 32, 0.6); 
+        transform: scale(1.05);
+    }
+}
+
+@keyframes silver-pulse {
+    0% { 
+        box-shadow: 0 0 20px rgba(168, 168, 168, 0.6); 
+        transform: scale(1.05);
+    }
+    50% { 
+        box-shadow: 0 0 40px rgba(211, 211, 211, 0.9); 
+        transform: scale(1.08);
+    }
+    100% { 
+        box-shadow: 0 0 20px rgba(168, 168, 168, 0.6); 
+        transform: scale(1.05);
+    }
+}
+
+@keyframes bronze-pulse {
+    0% { 
+        box-shadow: 0 0 20px rgba(184, 134, 11, 0.6); 
+        transform: scale(1.05);
+    }
+    50% { 
+        box-shadow: 0 0 40px rgba(205, 133, 63, 0.9); 
+        transform: scale(1.08);
+    }
+    100% { 
+        box-shadow: 0 0 20px rgba(184, 134, 11, 0.6); 
+        transform: scale(1.05);
+    }
+}
+
+@keyframes number-bounce {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); }
+}
+
+/* =============================================================================
+   Responsive Design
+   ============================================================================= */
+
+@media (max-width: 1199px) {
+    .winner-item {
+        gap: 1px;
+    }
+    
+    .winner-item {
+        padding: 4px 8px;
+    }
+}
+
+@media (max-width: 991px) {
+    .winner-item {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        gap: 2px;
+    }
+    
+    .winner-item {
+        flex: 1;
+        text-align: center;
+        padding: 3px 6px;
+    }
+    
+    .winner-label {
+        font-size: 0.8em;
+    }
+    
+    .winner-number {
+        font-size: 1.2em;
+    }
+}
+
+@media (max-width: 767px) {
+    .winner-item {
+        flex-direction: column;
+        gap: 1px;
+    }
+}

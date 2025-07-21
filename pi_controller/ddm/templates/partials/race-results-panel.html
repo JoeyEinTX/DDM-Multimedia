@@ -1,0 +1,46 @@
+<div class="card h-100">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            🏆 Race Results
+        </h5>
+        <button class="btn btn-outline-danger btn-sm" id="reset-results-btn" onclick="resetRaceResults()" disabled>
+            🔄 Reset
+        </button>
+    </div>
+    <div class="card-body">
+        <!-- Race Results Display -->
+        <div class="ddm-race-results-simple">
+            <div class="ddm-result-row win" id="winner-win">
+                <div class="ddm-result-left">
+                    🥇 <strong>WIN</strong>
+                </div>
+                <div class="ddm-result-right">
+                    Horse #<span id="winner-win-number">--</span>
+                </div>
+            </div>
+            
+            <div class="ddm-result-row place" id="winner-place">
+                <div class="ddm-result-left">
+                    🥈 <strong>PLACE</strong>
+                </div>
+                <div class="ddm-result-right">
+                    Horse #<span id="winner-place-number">--</span>
+                </div>
+            </div>
+            
+            <div class="ddm-result-row show" id="winner-show">
+                <div class="ddm-result-left">
+                    🥉 <strong>SHOW</strong>
+                </div>
+                <div class="ddm-result-right">
+                    Horse #<span id="winner-show-number">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Results Footer -->
+        <div class="mt-3 pt-3 border-top">
+            <small class="text-muted" id="results-timestamp">No race results yet</small>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,264 @@
+/* =============================================================================
+   DDM Racing System - Animations & Keyframes
+   ============================================================================= */
+
+/* =============================================================================
+   Pixelate & Reveal Animations
+   ============================================================================= */
+
+@keyframes pixelate-in {
+    0% {
+        filter: blur(20px);
+        transform: scale(0.5);
+        opacity: 0;
+    }
+    25% {
+        filter: blur(15px);
+        transform: scale(0.7);
+        opacity: 0.3;
+    }
+    50% {
+        filter: blur(10px);
+        transform: scale(0.9);
+        opacity: 0.6;
+    }
+    75% {
+        filter: blur(5px);
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+    100% {
+        filter: blur(0px);
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes pixelateIn {
+    0% {
+        filter: blur(10px);
+        transform: scale(0.8);
+        opacity: 0;
+    }
+    50% {
+        filter: blur(5px);
+        transform: scale(1.1);
+        opacity: 0.7;
+    }
+    100% {
+        filter: blur(0px);
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+body .modal .result-box.pixelate-in {
+    animation: pixelateIn 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards !important;
+}
+
+body .modal .result-box.win-box.pixelate-in {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.25) 0%, rgba(218, 165, 32, 0.15) 100%) !important;
+    border-color: #FFD700 !important;
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.4) !important;
+}
+
+body .modal .result-box.place-box.pixelate-in {
+    background: linear-gradient(135deg, rgba(192, 192, 192, 0.25) 0%, rgba(169, 169, 169, 0.15) 100%) !important;
+    border-color: #C0C0C0 !important;
+    box-shadow: 0 0 20px rgba(192, 192, 192, 0.4) !important;
+}
+
+body .modal .result-box.show-box.pixelate-in {
+    background: linear-gradient(135deg, rgba(205, 127, 50, 0.25) 0%, rgba(184, 134, 11, 0.15) 100%) !important;
+    border-color: #CD7F32 !important;
+    box-shadow: 0 0 20px rgba(205, 127, 50, 0.4) !important;
+}
+
+/* =============================================================================
+   Racing Animations
+   ============================================================================= */
+
+@keyframes race-start {
+    0% { transform: translateX(-100%); opacity: 0; }
+    100% { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes race-finish {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+@keyframes horse-gallop {
+    0% { transform: translateY(0px); }
+    25% { transform: translateY(-2px); }
+    50% { transform: translateY(0px); }
+    75% { transform: translateY(-1px); }
+    100% { transform: translateY(0px); }
+}
+
+/* =============================================================================
+   Status Animations
+   ============================================================================= */
+
+@keyframes statusPulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes statusGlow {
+    0% { transform: scale(1); opacity: 0.3; }
+    50% { transform: scale(1.5); opacity: 0.1; }
+    100% { transform: scale(1); opacity: 0.3; }
+}
+
+/* =============================================================================
+   Background Animations
+   ============================================================================= */
+
+@keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0px); }
+}
+
+@keyframes glow {
+    0% { box-shadow: 0 0 20px rgba(19, 134, 139, 0.3); }
+    50% { box-shadow: 0 0 30px rgba(19, 134, 139, 0.6); }
+    100% { box-shadow: 0 0 20px rgba(19, 134, 139, 0.3); }
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* =============================================================================
+   Notification Animations
+   ============================================================================= */
+
+@keyframes slideInDown {
+    0% {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    100% {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutUp {
+    0% {
+        transform: translateY(0);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+}
+
+@keyframes bounce {
+    0%, 20%, 53%, 80%, 100% {
+        transform: translate3d(0,0,0);
+    }
+    40%, 43% {
+        transform: translate3d(0, -30px, 0);
+    }
+    70% {
+        transform: translate3d(0, -15px, 0);
+    }
+    90% {
+        transform: translate3d(0, -4px, 0);
+    }
+}
+
+/* =============================================================================
+   Loading Animations
+   ============================================================================= */
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+@keyframes heartbeat {
+    0% { transform: scale(1); }
+    14% { transform: scale(1.05); }
+    28% { transform: scale(1); }
+    42% { transform: scale(1.05); }
+    70% { transform: scale(1); }
+}
+
+/* =============================================================================
+   Color Transition Animations
+   ============================================================================= */
+
+@keyframes colorCycle {
+    0% { color: var(--ddm-teal); }
+    25% { color: var(--ddm-green); }
+    50% { color: var(--ddm-yellow); }
+    75% { color: var(--ddm-orange); }
+    100% { color: var(--ddm-teal); }
+}
+
+@keyframes backgroundCycle {
+    0% { background-color: var(--ddm-teal); }
+    25% { background-color: var(--ddm-green); }
+    50% { background-color: var(--ddm-yellow); }
+    75% { background-color: var(--ddm-orange); }
+    100% { background-color: var(--ddm-teal); }
+}
+
+/* =============================================================================
+   Utility Animation Classes
+   ============================================================================= */
+
+.animate-float {
+    animation: float 3s ease-in-out infinite;
+}
+
+.animate-glow {
+    animation: glow 2s ease-in-out infinite;
+}
+
+.animate-pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-heartbeat {
+    animation: heartbeat 1.5s ease-in-out infinite;
+}
+
+.animate-bounce {
+    animation: bounce 2s infinite;
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* =============================================================================
+   Performance Optimizations
+   ============================================================================= */
+
+.will-change-transform {
+    will-change: transform;
+}
+
+.will-change-opacity {
+    will-change: opacity;
+}
+
+.hardware-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
