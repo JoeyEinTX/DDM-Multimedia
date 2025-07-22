@@ -18,68 +18,33 @@ const DDMDashboard = {
         let bodyHtml = '';
         switch (mode) {
             case 'pre_race':
-                title = 'Pre-Race Animations';
-                icon = '🏁';
-                bodyHtml = `
-                    <p class="text-muted mb-4">Select an animation to run for this mode:</p>
-                    <div id="animation-buttons" class="text-center mb-3">
-                        <button class="btn btn-success mx-2" onclick="testAnimation()">Test Pre-Race Animation</button>
-                        <button class="btn btn-secondary mx-2" onclick="clearLogs()">Clear Logs</button>
-                    </div>
-                `;
-                if (modalTitle) modalTitle.textContent = title;
-                if (modalIcon) modalIcon.textContent = icon;
-                if (modalBody) modalBody.innerHTML = bodyHtml;
-                const modalEl = document.getElementById('animationModal');
-                if (modalEl) {
-                    const modal = new bootstrap.Modal(modalEl);
+                // Open the dedicated pre-race modal
+                const preRaceModalEl = document.getElementById('preRaceModal');
+                if (preRaceModalEl) {
+                    const modal = new bootstrap.Modal(preRaceModalEl);
                     modal.show();
                 } else {
-                    alert('Modal element not found!');
+                    alert('Pre-Race modal element not found!');
                 }
                 break;
             case 'betting_open':
-                title = 'Betting Open';
-                icon = '💸';
-                bodyHtml = `
-                    <p class="text-muted mb-4">Display the LED sequence for the betting window. Announce that bets are now open!</p>
-                    <div id="animation-buttons" class="text-center mb-3">
-                        <button class="btn btn-primary mx-2" onclick="testAnimation()">Test Betting Animation</button>
-                    </div>
-                `;
-                if (modalTitle) modalTitle.textContent = title;
-                if (modalIcon) modalIcon.textContent = icon;
-                if (modalBody) modalBody.innerHTML = bodyHtml;
-                {
-                    const modalEl = document.getElementById('animationModal');
-                    if (modalEl) {
-                        const modal = new bootstrap.Modal(modalEl);
-                        modal.show();
-                    } else {
-                        alert('Modal element not found!');
-                    }
+                // Open the dedicated betting open modal
+                const bettingOpenModalEl = document.getElementById('bettingOpenModal');
+                if (bettingOpenModalEl) {
+                    const modal = new bootstrap.Modal(bettingOpenModalEl);
+                    modal.show();
+                } else {
+                    alert('Betting Open modal element not found!');
                 }
                 break;
             case 'during_race':
-                title = 'During Race';
-                icon = '🏇';
-                bodyHtml = `
-                    <p class="text-muted mb-4">Show the animation that plays while the race is in progress.</p>
-                    <div id="animation-buttons" class="text-center mb-3">
-                        <button class="btn btn-warning mx-2" onclick="testAnimation()">Test Race Animation</button>
-                    </div>
-                `;
-                if (modalTitle) modalTitle.textContent = title;
-                if (modalIcon) modalIcon.textContent = icon;
-                if (modalBody) modalBody.innerHTML = bodyHtml;
-                {
-                    const modalEl = document.getElementById('animationModal');
-                    if (modalEl) {
-                        const modal = new bootstrap.Modal(modalEl);
-                        modal.show();
-                    } else {
-                        alert('Modal element not found!');
-                    }
+                // Open the dedicated during race modal
+                const duringRaceModalEl = document.getElementById('duringRaceModal');
+                if (duringRaceModalEl) {
+                    const modal = new bootstrap.Modal(duringRaceModalEl);
+                    modal.show();
+                } else {
+                    alert('During Race modal element not found!');
                 }
                 break;
             case 'results':
@@ -378,8 +343,26 @@ const DDMDashboard = {
 };
 
 // Initialize when DOM is loaded
+
 document.addEventListener('DOMContentLoaded', () => {
     DDMDashboard.init();
+
+    // Attach shown.bs.modal event to animationModal for dynamic content setup
+    const animationModal = document.getElementById('animationModal');
+    if (animationModal) {
+        animationModal.addEventListener('shown.bs.modal', function () {
+            console.log('[Bootstrap Event] shown.bs.modal fired for animationModal');
+            // Place any dynamic setup logic here if needed, e.g.:
+            // - Re-initialize animation buttons
+            // - Focus a default button
+            // - Run layout adjustments
+            // Example: focus the first button if present
+            const firstBtn = animationModal.querySelector('button');
+            if (firstBtn) firstBtn.focus();
+        });
+    } else {
+        console.error('animationModal element not found in DOM when attaching shown.bs.modal event!');
+    }
 });
 
 // Make DDMDashboard globally available
@@ -472,14 +455,7 @@ function sendManualAnimation() {
 }
 
 // Horse selection functions
-function resetSelections() {
-    if (HorseSelection && HorseSelection.resetSelections) {
-        HorseSelection.resetSelections();
-    } else {
-        console.log('Reset selections called');
-        // Add reset logic here
-    }
-}
+// resetSelections removed
 
 function finalizeResults() {
     if (HorseSelection && HorseSelection.finalizeResults) {

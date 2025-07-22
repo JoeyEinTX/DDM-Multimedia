@@ -1,3 +1,4 @@
+console.log('horse-selection.js loaded');
 /**
  * DDM Racing System - Horse Selection Modal
  * Handles horse selection logic, modal interactions, and results finalization
@@ -25,22 +26,40 @@ const HorseSelection = {
             resetBtn.addEventListener('click', this.resetSelections.bind(this));
         }
     },
-    
+    // Reset all selections
+    resetSelections() {
+        console.log('Resetting selections...');
+
+        // Reset selection state
+        this.state.step = 0;
+        this.state.selections = { win: null, place: null, show: null };
+
+        // UI will be rendered on modal show; if modal is open, force render now
+        const modalEl = document.getElementById('horseSelectionModal');
+        if (modalEl && modalEl.classList.contains('show')) {
+            this.renderModalUIFromState();
+            // Also update the horse grid to clear button states
+            this.updateHorseGrid();
+        }
+
+        DDMDashboard?.showNotification('Selections reset', 'info');
+    },
+
     // Open horse selection modal
     openModal() {
         console.log('Opening horse selection modal...');
-        
+
         // Check if there are existing results from the main dashboard
         const existingWin = document.getElementById('winner-win-number')?.textContent;
         const existingPlace = document.getElementById('winner-place-number')?.textContent;
         const existingShow = document.getElementById('winner-show-number')?.textContent;
-        
+
         // Initialize selection state based on existing results
         if (existingWin !== '--' || existingPlace !== '--' || existingShow !== '--') {
             // Load existing results into selection state
             this.state = {
                 step: 2, // Set to final step since we have results
-                selections: { 
+                selections: {
                     win: existingWin !== '--' ? parseInt(existingWin) : null,
                     place: existingPlace !== '--' ? parseInt(existingPlace) : null,
                     show: existingShow !== '--' ? parseInt(existingShow) : null
@@ -55,39 +74,79 @@ const HorseSelection = {
                 stepLabels: ['SELECT WINNING HORSE', 'SELECT PLACE HORSE', 'SELECT SHOW HORSE']
             };
         }
-        
-        // Create horse grid
-        this.createHorseGrid();
-        this.updateSelectionStep();
+
+        // Show modal (Bootstrap 5)
+        const modalEl = document.getElementById('horseSelectionModal');
+        if (modalEl) {
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        } else {
+            console.error('horseSelectionModal element not found in DOM!');
+        }
+        // No direct UI update here; UI will be rendered on modal show
+    },
+    
+    // Render all modal UI from current state
+    renderModalUIFromState() {
+        // Only update UI state here; grid is built in shown.bs.modal
+
+        // Update results display
         this.updateResultsDisplay();
-        
-        // Ensure finalize button state is correct on modal open
+        // Update selection step
+        this.updateSelectionStep();
+
+        // Remove selected and animation classes from modal result boxes if not selected
+        ['win-box','place-box','show-box'].forEach(cls => {
+            const box = document.querySelector('.' + cls);
+            if (box && !this.state.selections[cls.replace('-box','')]) {
+                box.classList.remove('selected','pixelate-in');
+            }
+        });
+
+        // Remove reveal classes if not selected
+        const winNumber = document.getElementById('win-number');
+        const placeNumber = document.getElementById('place-number');
+        const showNumber = document.getElementById('show-number');
+        if (!this.state.selections.win) winNumber?.classList.remove('reveal');
+        if (!this.state.selections.place) placeNumber?.classList.remove('reveal');
+        if (!this.state.selections.show) showNumber?.classList.remove('reveal');
+
+        // Disable finalize button if not all selections
         const finalizeBtn = document.getElementById('finalize-results-btn');
         if (finalizeBtn) {
             const hasAllSelections = this.state.selections.win !== null && 
                                    this.state.selections.place !== null && 
                                    this.state.selections.show !== null;
             finalizeBtn.disabled = !hasAllSelections;
-            console.log('Modal opened - button state set:', {
-                selections: this.state.selections,
-                hasAllSelections,
-                buttonDisabled: finalizeBtn.disabled
-            });
         }
-        
-        // Show modal
-        const modal = new bootstrap.Modal(document.getElementById('horseSelectionModal'));
-        modal.show();
     },
     
     // Create the grid of horse number buttons
-    createHorseGrid() {
-        const gridContainer = document.querySelector('.horse-grid');
-        if (!gridContainer) return;
-        
+    createHorseGrid(modalEl) {
+        // Scope the search to the modal element
+        console.log('[DEBUG] createHorseGrid called. modalEl:', modalEl);
+        const gridContainer = modalEl.querySelector('.horse-grid');
+        if (!gridContainer) {
+            console.error('No .horse-grid found in DOM! Modal HTML:', modalEl.innerHTML);
+            // Try to show a visible error in the modal if possible
+            const modalBody = modalEl.querySelector('.modal-body');
+            if (modalBody) {
+                const errorDiv = document.createElement('div');
+                errorDiv.textContent = 'ERROR: .horse-grid container NOT FOUND! Please check the modal HTML.';
+                errorDiv.style.background = 'red';
+                errorDiv.style.color = 'white';
+                errorDiv.style.padding = '2em';
+                errorDiv.style.fontWeight = 'bold';
+                errorDiv.style.fontSize = '1.5em';
+                errorDiv.style.textAlign = 'center';
+                errorDiv.style.margin = '2em 0';
+                modalBody.appendChild(errorDiv);
+            }
+            return;
+        }
+
         gridContainer.innerHTML = '';
-        
-        // Create 20 horse number buttons
+        gridContainer.style.minHeight = '200px';
         for (let i = 1; i <= 20; i++) {
             const button = document.createElement('button');
             button.className = 'horse-number';
@@ -95,7 +154,7 @@ const HorseSelection = {
             button.onclick = () => this.selectHorse(i);
             gridContainer.appendChild(button);
         }
-        
+        console.log('Horse grid HTML:', gridContainer.innerHTML);
         this.updateHorseGrid();
     },
     
@@ -259,22 +318,27 @@ const HorseSelection = {
         
         // Close modal immediately
         try {
-            const modal = bootstrap.Modal.getInstance(document.getElementById('horseSelectionModal'));
+            const modalElement = document.getElementById('horseSelectionModal');
+            let modal = null;
+            if (window.bootstrap && window.bootstrap.Modal && modalElement) {
+                modal = window.bootstrap.Modal.getInstance(modalElement) || new window.bootstrap.Modal(modalElement);
+            }
             if (modal) {
-                console.log('Closing modal...');
+                console.log('Closing modal with Bootstrap instance...');
                 modal.hide();
+            } else if (modalElement) {
+                console.warn('Bootstrap modal instance not found, forcibly hiding modal.');
+                modalElement.classList.remove('show');
+                modalElement.style.display = 'none';
+                document.body.classList.remove('modal-open');
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) backdrop.remove();
             } else {
-                console.log('Modal instance not found, trying alternative close...');
-                const modalElement = document.getElementById('horseSelectionModal');
-                if (modalElement) {
-                    modalElement.style.display = 'none';
-                    document.body.classList.remove('modal-open');
-                    const backdrop = document.querySelector('.modal-backdrop');
-                    if (backdrop) backdrop.remove();
-                }
+                console.error('Modal element not found, cannot close modal.');
             }
         } catch (modalError) {
             console.error('Error closing modal:', modalError);
+            DDMDashboard?.showNotification('Error closing modal', 'error');
         }
         
         // Update reset button state
@@ -337,61 +401,35 @@ const HorseSelection = {
         if (results.show && showItem) {
             showItem.classList.add('active');
         }
-        
-        // Update timestamp
-        const timestamp = document.getElementById('results-timestamp');
-        if (timestamp) {
-            timestamp.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-        }
-    },
-    
-    // Reset all selections
-    resetSelections() {
-        console.log('Resetting selections...');
-        
-        // Reset selection state
-        this.state.step = 0;
-        this.state.selections = { win: null, place: null, show: null };
-        
-        // Reset display
-        const winNumber = document.getElementById('win-number');
-        const placeNumber = document.getElementById('place-number');
-        const showNumber = document.getElementById('show-number');
-        
-        if (winNumber) winNumber.textContent = '?';
-        if (placeNumber) placeNumber.textContent = '?';
-        if (showNumber) showNumber.textContent = '?';
-        
-        // Remove selected classes
-        document.querySelector('.win-box')?.classList.remove('selected');
-        document.querySelector('.place-box')?.classList.remove('selected');
-        document.querySelector('.show-box')?.classList.remove('selected');
-        
-        // Update step label
-        this.updateSelectionStep();
-        
-        // Update horse grid
-        this.updateHorseGrid();
-        
-        // Disable finalize button
-        const finalizeBtn = document.getElementById('finalize-results-btn');
-        if (finalizeBtn) {
-            finalizeBtn.disabled = true;
-        }
-        
-        DDMDashboard?.showNotification('Selections reset', 'info');
     }
 };
 
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    HorseSelection.init();
-});
-
-// Make globally available
-window.HorseSelection = HorseSelection;
-
-// Global functions for backward compatibility
-window.openHorseSelectionModal = () => HorseSelection.openModal();
-window.finalizeResults = () => HorseSelection.finalizeResults();
+// Make resetSelections globally available
 window.resetSelections = () => HorseSelection.resetSelections();
+
+document.addEventListener('DOMContentLoaded', function () {
+    HorseSelection.init();
+
+    // Attach show.bs.modal event to always render UI from state before modal is shown
+    const modalEl = document.getElementById('horseSelectionModal');
+    if (modalEl) {
+        modalEl.addEventListener('show.bs.modal', function (event) {
+            console.log('[Bootstrap Event] show.bs.modal fired, rendering modal UI from state...');
+            HorseSelection.renderModalUIFromState();
+        });
+        modalEl.addEventListener('shown.bs.modal', function (event) {
+            console.log('[Bootstrap Event] shown.bs.modal fired, building horse grid...');
+            HorseSelection.createHorseGrid(modalEl);
+            // After grid is built, update UI state
+            HorseSelection.renderModalUIFromState();
+        });
+    } else {
+        console.error('horseSelectionModal element not found in DOM when attaching modal events!');
+    }
+
+    // Make globally available
+    window.HorseSelection = HorseSelection;
+    window.openHorseSelectionModal = () => HorseSelection.openModal();
+    window.finalizeResults = () => HorseSelection.finalizeResults();
+    // window.resetSelections removed
+});

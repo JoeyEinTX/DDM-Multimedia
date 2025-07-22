@@ -1,3 +1,6 @@
+                    <button type="button" class="btn btn-warning flex-fill" id="reset-selections-btn" onclick="resetSelections()">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset Selections
+                    </button>
 <!-- Horse Selection Modal (Results Mode) -->
 <div class="modal fade" id="horseSelectionModal" tabindex="-1" aria-labelledby="horseSelectionModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
@@ -9,28 +12,25 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div class="row h-100 g-2">
-                    <!-- Horse Number Grid - LEFT SIDE -->
-                    <div class="col-12 col-lg-7 d-flex align-items-stretch">
-                        <div class="horse-grid-container w-100">
-                            <div class="horse-grid">
-                                <!-- Grid will be populated with numbers 1-20 -->
-                            </div>
+                <div class="row g-3 align-items-stretch" style="min-height: 420px;">
+                    <!-- Horse number grid LEFT -->
+                    <div class="col-12 col-md-7 col-lg-8 d-flex align-items-stretch">
+                        <div class="horse-grid-container flex-grow-1 d-flex align-items-stretch" style="height: 100%;">
+                            <div class="horse-grid h-100"></div>
                         </div>
                     </div>
-                    
-                    <!-- Selected Results Display - RIGHT SIDE -->
-                    <div class="col-12 col-lg-5 d-flex align-items-stretch">
-                        <div class="results-display-vertical w-100 d-flex flex-column justify-content-center">
-                            <div class="result-box win-box">
+                    <!-- Win/Place/Show panel RIGHT -->
+                    <div class="col-12 col-md-5 col-lg-4 d-flex align-items-stretch">
+                        <div class="results-row d-flex flex-column gap-3 justify-content-between w-100" style="height: 100%;">
+                            <div class="result-box win-box flex-fill">
                                 <div class="result-label">🥇 WIN</div>
                                 <div class="result-number" id="win-number">?</div>
                             </div>
-                            <div class="result-box place-box">
+                            <div class="result-box place-box flex-fill">
                                 <div class="result-label">🥈 PLACE</div>
                                 <div class="result-number" id="place-number">?</div>
                             </div>
-                            <div class="result-box show-box">
+                            <div class="result-box show-box flex-fill">
                                 <div class="result-label">🥉 SHOW</div>
                                 <div class="result-number" id="show-number">?</div>
                             </div>
@@ -40,11 +40,11 @@
             </div>
             <div class="modal-footer">
                 <div class="d-flex gap-3 w-100">
-                    <button type="button" class="btn btn-secondary flex-fill" data-bs-dismiss="modal">
+                    <button type="button" class="btn btn-danger flex-fill" data-bs-dismiss="modal">
                         Cancel
                     </button>
                     <button type="button" class="btn btn-warning flex-fill" id="reset-selections-btn" onclick="resetSelections()">
-                        🔄 Reset Selections
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset Selections
                     </button>
                     <button type="button" class="btn btn-success flex-fill" id="finalize-results-btn" onclick="finalizeResults()" disabled>
                         🎉 Finalize Results
