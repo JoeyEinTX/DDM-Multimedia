@@ -123,6 +123,7 @@ def register_blueprints(app):
     from ddm.api.openai_api import openai_api
     from ddm.api.display import display_bp
     from ddm.api.race import race_api
+    from ddm.api.weather import weather_bp
     
     # Add root route - redirect to admin for development
     from flask import redirect, url_for
@@ -143,6 +144,7 @@ def register_blueprints(app):
     app.register_blueprint(openai_api, url_prefix='/api/openai')
     app.register_blueprint(display_bp, url_prefix='/api/display')
     app.register_blueprint(race_api, url_prefix='/api/race')
+    app.register_blueprint(weather_bp, url_prefix='/api/weather')
     
     # Register WebSocket events
     from ddm.websocket import events

@@ -193,7 +193,12 @@
                     <!-- Enhanced Race Results -->
                     <div class="ddm-results-section">
                         <div class="ddm-results-header">
-                            🏆 Race Results
+                            <div class="ddm-results-title">
+                                🏆 Race Results
+                            </div>
+                            <div class="ddm-results-status" id="race-results-status">
+                                <span class="pending-indicator">⏳ Pending Results</span>
+                            </div>
                         </div>
                         <div class="ddm-results-body">
                             <!-- WIN/PLACE/SHOW Results - Clean Layout -->
@@ -231,7 +236,9 @@
                     <!-- Enhanced Quick Actions -->
                     <div class="ddm-results-section">
                         <div class="ddm-results-header">
-                            ⚡ Quick Actions
+                            <div class="ddm-results-title">
+                                ⚡ Quick Actions
+                            </div>
                         </div>
                         <div class="ddm-results-body">
                             <div class="d-grid gap-3">
@@ -249,6 +256,20 @@
                                 </button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Event Weather (Horizontal Layout) -->
+        <div class="ddm-card mb-4">
+            <div class="ddm-card-header">
+                <h5 class="card-title">🌤️ Event Weather - Dallas, TX</h5>
+            </div>
+            <div class="ddm-card-body">
+                <div id="weather-content">
+                    <div class="ddm-status-item">
+                        <span id="weather-status">Loading weather...</span>
                     </div>
                 </div>
             </div>
@@ -321,6 +342,7 @@
 <script src="{{ url_for('static', filename='js/horse-selection.js') }}"></script>
 <script src="{{ url_for('static', filename='js/race-results.js') }}"></script>
 <script src="{{ url_for('static', filename='js/responsive.js') }}"></script>
+<script src="{{ url_for('static', filename='js/weather.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pre-race-modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/betting-open-modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/during-race-modal.js') }}"></script>

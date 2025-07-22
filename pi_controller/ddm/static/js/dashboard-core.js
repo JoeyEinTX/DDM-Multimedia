@@ -318,6 +318,21 @@ const DDMDashboard = {
                           (showNumber && showNumber.textContent !== '--');
         
         resetBtn.disabled = !hasResults;
+        
+        // Update pending status indicator
+        this.updatePendingStatus(hasResults);
+    },
+    
+    // Update the pending status indicator
+    updatePendingStatus(hasResults) {
+        const pendingStatus = document.querySelector('.ddm-results-status');
+        if (pendingStatus) {
+            if (hasResults) {
+                pendingStatus.style.display = 'none';
+            } else {
+                pendingStatus.style.display = 'block';
+            }
+        }
     },
     
     // Show notification
