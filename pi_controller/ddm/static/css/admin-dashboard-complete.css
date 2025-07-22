@@ -690,27 +690,40 @@
             0% { 
                 opacity: 0;
                 transform: scale(0.1);
-                filter: blur(10px);
+                filter: contrast(10) brightness(3) blur(20px);
+                image-rendering: pixelated;
+                image-rendering: -moz-crisp-edges;
+                image-rendering: crisp-edges;
             }
-            25% { 
+            15% { 
                 opacity: 0.3;
-                transform: scale(0.5);
-                filter: blur(8px);
+                transform: scale(0.4);
+                filter: contrast(8) brightness(2.5) blur(15px);
+                image-rendering: pixelated;
+            }
+            30% { 
+                opacity: 0.5;
+                transform: scale(0.6);
+                filter: contrast(6) brightness(2) blur(10px);
+                image-rendering: pixelated;
             }
             50% { 
-                opacity: 0.6;
+                opacity: 0.7;
                 transform: scale(0.8);
-                filter: blur(4px);
+                filter: contrast(4) brightness(1.5) blur(5px);
+                image-rendering: pixelated;
             }
             75% { 
                 opacity: 0.9;
                 transform: scale(1.1);
-                filter: blur(1px);
+                filter: contrast(2) brightness(1.2) blur(2px);
+                image-rendering: pixelated;
             }
             100% { 
                 opacity: 1;
                 transform: scale(1);
-                filter: blur(0);
+                filter: contrast(1) brightness(1) blur(0);
+                image-rendering: auto;
             }
         }
         /* Horse Selection Modal Styling */
@@ -1445,17 +1458,29 @@
         
         body .modal .result-box.win-box {
             border: 3px solid #FFD700 !important;
-            background: linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(218, 165, 32, 0.1) 100%) !important;
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%) !important;
+            box-shadow: 
+                0 0 20px rgba(255, 215, 0, 0.6),
+                inset 0 2px 15px rgba(255, 255, 255, 0.3) !important;
+            color: #000 !important;
         }
         
         body .modal .result-box.place-box {
             border: 3px solid #C0C0C0 !important;
-            background: linear-gradient(135deg, rgba(192, 192, 192, 0.15) 0%, rgba(169, 169, 169, 0.1) 100%) !important;
+            background: linear-gradient(135deg, #E6E6FA 0%, #C0C0C0 50%, #A9A9A9 100%) !important;
+            box-shadow: 
+                0 0 20px rgba(192, 192, 192, 0.6),
+                inset 0 2px 15px rgba(255, 255, 255, 0.4) !important;
+            color: #000 !important;
         }
         
         body .modal .result-box.show-box {
             border: 3px solid #CD7F32 !important;
-            background: linear-gradient(135deg, rgba(205, 127, 50, 0.15) 0%, rgba(184, 134, 11, 0.1) 100%) !important;
+            background: linear-gradient(135deg, #DAA520 0%, #CD853F 50%, #A0522D 100%) !important;
+            box-shadow: 
+                0 0 20px rgba(205, 127, 50, 0.6),
+                inset 0 2px 15px rgba(255, 255, 255, 0.3) !important;
+            color: #000 !important;
         }
         
         /* Pixelate Animation for Result Boxes */
@@ -1482,34 +1507,45 @@
         }
         
         body .modal .result-box.win-box.pixelate-in {
-            background: linear-gradient(135deg, rgba(255, 215, 0, 0.25) 0%, rgba(218, 165, 32, 0.15) 100%) !important;
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%) !important;
             border-color: #FFD700 !important;
-            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4) !important;
+            box-shadow: 
+                0 0 30px rgba(255, 215, 0, 0.8),
+                inset 0 2px 20px rgba(255, 255, 255, 0.4) !important;
+            transform: scale(1.05) !important;
         }
         
         body .modal .result-box.place-box.pixelate-in {
-            background: linear-gradient(135deg, rgba(192, 192, 192, 0.25) 0%, rgba(169, 169, 169, 0.15) 100%) !important;
+            background: linear-gradient(135deg, #E6E6FA 0%, #C0C0C0 50%, #A9A9A9 100%) !important;
             border-color: #C0C0C0 !important;
-            box-shadow: 0 0 20px rgba(192, 192, 192, 0.4) !important;
+            box-shadow: 
+                0 0 30px rgba(192, 192, 192, 0.8),
+                inset 0 2px 20px rgba(255, 255, 255, 0.5) !important;
+            transform: scale(1.05) !important;
         }
         
         body .modal .result-box.show-box.pixelate-in {
-            background: linear-gradient(135deg, rgba(205, 127, 50, 0.25) 0%, rgba(184, 134, 11, 0.15) 100%) !important;
+            background: linear-gradient(135deg, #DAA520 0%, #CD853F 50%, #A0522D 100%) !important;
             border-color: #CD7F32 !important;
-            box-shadow: 0 0 20px rgba(205, 127, 50, 0.4) !important;
+            box-shadow: 
+                0 0 30px rgba(205, 127, 50, 0.8),
+                inset 0 2px 20px rgba(255, 255, 255, 0.4) !important;
+            transform: scale(1.05) !important;
         }
         
         body .result-label {
             font-size: 1rem !important;
-            font-weight: 600 !important;
-            color: #e2e8f0 !important;
+            font-weight: 700 !important;
+            color: #000 !important;
             margin-bottom: 8px !important;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8) !important;
         }
         
         body .result-number {
-            font-size: 2rem !important;
-            font-weight: 700 !important;
-            color: #e2e8f0 !important;
+            font-size: 3rem !important;
+            font-weight: 900 !important;
+            color: #000 !important;
+            text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.8) !important;
         }
         
         body .modal-footer {
