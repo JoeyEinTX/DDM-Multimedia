@@ -294,6 +294,57 @@ window.onclick = function(event) {
     }
 }
 
+// Get weather icon from condition code
+function getWeatherIcon(code) {
+    // OpenWeatherMap weather condition codes to emoji
+    if (code >= 200 && code < 300) return '⛈️'; // Thunderstorm
+    if (code >= 300 && code < 400) return '🌦️'; // Drizzle
+    if (code >= 500 && code < 600) return '🌧️'; // Rain
+    if (code >= 600 && code < 700) return '🌨️'; // Snow
+    if (code >= 700 && code < 800) return '🌫️'; // Atmosphere
+    if (code === 800) return '☀️'; // Clear
+    if (code > 800) return '☁️'; // Clouds
+    return '🌤️'; // Default
+}
+
+// Fetch and display weather forecast
+async function getWeather() {
+    try {
+        const response = await fetch('/api/weather');
+        const data = await response.json();
+        
+        if (data.success && data.forecast) {
+            const weatherScroll = document.getElementById('weather-scroll');
+            weatherScroll.innerHTML = '';
+            
+            // Display next 12 hours (4 data points, 3-hour intervals)
+            const forecasts = data.forecast.slice(0, 4);
+            
+            forecasts.forEach(item => {
+                const time = new Date(item.dt * 1000);
+                const hours = time.getHours();
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                const displayHour = hours % 12 || 12;
+                
+                const weatherItem = document.createElement('div');
+                weatherItem.className = 'weather-item';
+                weatherItem.innerHTML = `
+                    <div class="weather-time">${displayHour} ${ampm}</div>
+                    <div class="weather-icon">${getWeatherIcon(item.weather[0].id)}</div>
+                    <div class="weather-temp">${Math.round(item.main.temp)}°F</div>
+                    <div class="weather-desc">${item.weather[0].description}</div>
+                `;
+                
+                weatherScroll.appendChild(weatherItem);
+            });
+        }
+    } catch (error) {
+        console.error('Error fetching weather:', error);
+        // Hide weather forecast on error
+        document.getElementById('weather-forecast').style.display = 'none';
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
@@ -308,4 +359,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Get system status
     getSystemStatus();
+    
+    // Get weather forecast immediately and every 30 minutes
+    getWeather();
+    setInterval(getWeather, 30 * 60 * 1000);
 });

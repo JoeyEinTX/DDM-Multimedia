@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ system_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}">
+    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
 </head>
 <body>
     <div class="container">
@@ -34,6 +35,13 @@
                 <div class="status-item">
                     <span class="icon">💡</span> <span id="led-count">{{ total_leds }}</span> LEDs
                 </div>
+            </div>
+        </div>
+
+        <!-- Weather Forecast -->
+        <div id="weather-forecast" class="weather-forecast">
+            <div class="weather-scroll" id="weather-scroll">
+                <!-- Weather items will be inserted here by JavaScript -->
             </div>
         </div>
 
@@ -155,24 +163,14 @@
     <div id="loader" class="loader">
         <div class="loader-backdrop"></div>
         <div class="loader-content">
-            <div class="horse-container">
-                <svg class="horse-silhouette" viewBox="0 0 100 80" xmlns="http://www.w3.org/2000/svg">
-                    <!-- Horse body -->
-                    <ellipse cx="50" cy="45" rx="25" ry="18" fill="#2a2a2a"/>
-                    <!-- Horse head/neck -->
-                    <path d="M 25 45 Q 15 35, 18 25 Q 20 20, 25 22 L 28 30 Z" fill="#2a2a2a"/>
-                    <!-- Front leg 1 -->
-                    <rect class="leg leg1" x="35" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
-                    <!-- Front leg 2 -->
-                    <rect class="leg leg2" x="42" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
-                    <!-- Back leg 1 -->
-                    <rect class="leg leg3" x="60" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
-                    <!-- Back leg 2 -->
-                    <rect class="leg leg4" x="67" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
-                    <!-- Tail -->
-                    <path d="M 75 40 Q 85 35, 82 48" stroke="#2a2a2a" stroke-width="3" fill="none"/>
-                </svg>
-            </div>
+            <lottie-player
+                src="https://lottie.host/4c8e1a57-27e4-4ed3-8de4-f3c6b6f217db/Pb4iFKZuQ6.json"
+                background="transparent"
+                speed="1"
+                style="width: 80px; height: 80px;"
+                loop
+                autoplay>
+            </lottie-player>
         </div>
     </div>
 

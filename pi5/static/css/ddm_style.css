@@ -94,6 +94,85 @@ body {
     color: #ef4444 !important;
 }
 
+/* Weather Forecast */
+.weather-forecast {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    padding: 16px 0;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+}
+
+.weather-scroll {
+    display: flex;
+    gap: 12px;
+    padding: 0 20px;
+    overflow-x: auto;
+    scroll-behavior: smooth;
+}
+
+.weather-scroll::-webkit-scrollbar {
+    height: 4px;
+}
+
+.weather-scroll::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 2px;
+}
+
+.weather-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+}
+
+.weather-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.weather-item {
+    min-width: 80px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 12px 8px;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+
+.weather-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+.weather-time {
+    font-size: 0.85em;
+    color: #888888;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.weather-icon {
+    font-size: 2em;
+    margin: 4px 0;
+}
+
+.weather-temp {
+    font-size: 1.1em;
+    color: #ffffff;
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.weather-desc {
+    font-size: 0.75em;
+    color: #666666;
+    margin-top: 4px;
+    text-transform: capitalize;
+}
+
 /* Results Banner */
 .results-banner {
     background: rgba(255, 255, 255, 0.08);
@@ -178,25 +257,25 @@ body {
     border-bottom: 1px solid #2a2a2a;
 }
 
-/* Buttons */
+/* Buttons - Ghost Style */
 .btn {
     width: 100%;
     padding: 14px 20px;
     margin: 10px 0;
     font-size: 0.95em;
     font-weight: 500;
-    border: none;
+    border: 2px solid #888888;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
-    background: #2a2a2a;
-    color: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s ease;
+    background: transparent;
+    color: #888888;
+    box-shadow: none;
 }
 
 .btn:hover {
-    background: #333333;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    background: rgba(136, 136, 136, 0.12);
+    box-shadow: none;
 }
 
 .btn:active {
@@ -204,30 +283,33 @@ body {
 }
 
 .btn-success {
-    background: #22c55e;
-    color: #ffffff;
+    background: transparent;
+    color: #22c55e;
+    border-color: #22c55e;
 }
 
 .btn-success:hover {
-    background: #16a34a;
+    background: rgba(34, 197, 94, 0.12);
 }
 
 .btn-warning {
-    background: #f59e0b;
-    color: #ffffff;
+    background: transparent;
+    color: #f59e0b;
+    border-color: #f59e0b;
 }
 
 .btn-warning:hover {
-    background: #d97706;
+    background: rgba(245, 158, 11, 0.12);
 }
 
 .btn-danger {
-    background: #ef4444;
-    color: #ffffff;
+    background: transparent;
+    color: #ef4444;
+    border-color: #ef4444;
 }
 
 .btn-danger:hover {
-    background: #dc2626;
+    background: rgba(239, 68, 68, 0.12);
 }
 
 /* Footer Section */
