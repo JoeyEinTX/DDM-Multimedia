@@ -22,11 +22,13 @@ body {
 
 /* Header */
 .header {
-    background: #1a3a1a;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(10px);
     padding: 24px 32px;
     border-radius: 8px;
     margin-bottom: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -57,14 +59,16 @@ body {
 
 /* Status Bar */
 .status-bar {
-    background: #1a3a1a;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
     padding: 16px 24px;
     border-radius: 8px;
     margin-bottom: 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .status-left, .status-right {
@@ -92,11 +96,13 @@ body {
 
 /* Results Banner */
 .results-banner {
-    background: #1a3a1a;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(10px);
     padding: 24px;
     border-radius: 8px;
     margin-bottom: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     animation: bannerSlideIn 0.3s ease-out;
 }
 
@@ -152,10 +158,12 @@ body {
 }
 
 .panel {
-    background: #1a1a1a;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
     border-radius: 8px;
     padding: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .panel h2 {
@@ -224,10 +232,12 @@ body {
 
 /* Footer Section */
 .footer-section {
-    background: #1a3a1a;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
     padding: 20px 24px;
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     justify-content: space-between;
     align-items: center;
