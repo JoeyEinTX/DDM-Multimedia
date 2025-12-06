@@ -101,10 +101,10 @@ class ESP32Client:
     
     def set_cup(self, cup_number, hex_color):
         """
-        Set a specific cup to a color
-        
+        Set a specific horse to a color
+
         Args:
-            cup_number: Cup number (1-20)
+            cup_number: Horse number (1-20)
             hex_color: Hex color string
         """
         hex_color = hex_color.lstrip('#')
@@ -124,9 +124,9 @@ class ESP32Client:
         Set race results
         
         Args:
-            win_cup: Cup number for Win position (1-20)
-            place_cup: Cup number for Place position (1-20)
-            show_cup: Cup number for Show position (1-20)
+            win_cup: Horse number for Win position (1-20)
+            place_cup: Horse number for Place position (1-20)
+            show_cup: Horse number for Show position (1-20)
         """
         command = f"RESULTS:W:{win_cup}:P:{place_cup}:S:{show_cup}"
         return self.send_command(command)

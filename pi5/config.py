@@ -1,4 +1,4 @@
-# config.py - Configuration settings for DDM Cup Dashboard (Raspberry Pi 5)
+# config.py - Configuration settings for DDM Horse Dashboard (Raspberry Pi 5)
 
 # ESP32 Connection Settings
 ESP32_IP = "192.168.1.100"  # Replace with your ESP32's IP address

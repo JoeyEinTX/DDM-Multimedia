@@ -118,6 +118,8 @@ async function sendReset() {
             if (data.success) {
                 showNotification('System reset', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
+                // Hide results banner on reset
+                hideResultsBanner();
             } else {
                 showNotification(`Error: ${data.response}`, 'error');
             }
@@ -127,6 +129,20 @@ async function sendReset() {
             console.error('Error resetting:', error);
             showNotification('Connection error', 'error');
         }
+    }
+}
+
+// Toggle emergency stop expansion
+function toggleEmergencyStop() {
+    const expanded = document.getElementById('emergency-expanded');
+    const icon = document.getElementById('emergency-icon');
+    
+    if (expanded.classList.contains('active')) {
+        expanded.classList.remove('active');
+        icon.style.display = 'flex';
+    } else {
+        expanded.classList.add('active');
+        icon.style.display = 'none';
     }
 }
 
@@ -143,6 +159,11 @@ async function emergencyStop() {
             if (data.success) {
                 showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
                 document.getElementById('current-mode').textContent = 'STOPPED';
+                // Collapse emergency stop after use
+                const expanded = document.getElementById('emergency-expanded');
+                const icon = document.getElementById('emergency-icon');
+                expanded.classList.remove('active');
+                icon.style.display = 'flex';
             } else {
                 showNotification(`Error: ${data.response}`, 'error');
             }
@@ -167,15 +188,30 @@ function closeResultsModal() {
     modal.classList.remove('active');
 }
 
+// Show results banner
+function showResultsBanner(win, place, show) {
+    const banner = document.getElementById('results-banner');
+    document.getElementById('banner-win').textContent = win;
+    document.getElementById('banner-place').textContent = place;
+    document.getElementById('banner-show').textContent = show;
+    banner.style.display = 'block';
+}
+
+// Hide results banner
+function hideResultsBanner() {
+    const banner = document.getElementById('results-banner');
+    banner.style.display = 'none';
+}
+
 // Apply results
 async function applyResults() {
-    const winCup = parseInt(document.getElementById('win-cup').value);
-    const placeCup = parseInt(document.getElementById('place-cup').value);
-    const showCup = parseInt(document.getElementById('show-cup').value);
+    const winHorse = parseInt(document.getElementById('win-horse').value);
+    const placeHorse = parseInt(document.getElementById('place-horse').value);
+    const showHorse = parseInt(document.getElementById('show-horse').value);
     
     // Validate unique selections
-    if (winCup === placeCup || winCup === showCup || placeCup === showCup) {
-        showNotification('Win, Place, and Show must be different cups!', 'error');
+    if (winHorse === placeHorse || winHorse === showHorse || placeHorse === showHorse) {
+        showNotification('Win, Place, and Show must be different horses!', 'error');
         return;
     }
     
@@ -186,17 +222,19 @@ async function applyResults() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                win: winCup,
-                place: placeCup,
-                show: showCup
+                win: winHorse,
+                place: placeHorse,
+                show: showHorse
             })
         });
         
         const data = await response.json();
         
         if (data.success) {
-            showNotification(`Results set: Win=${winCup}, Place=${placeCup}, Show=${showCup}`, 'success');
+            showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
             document.getElementById('current-mode').textContent = 'RESULTS';
+            // Show results banner
+            showResultsBanner(winHorse, placeHorse, showHorse);
             closeResultsModal();
         } else {
             showNotification(`Error: ${data.response || data.error}`, 'error');
@@ -212,14 +250,26 @@ async function applyResults() {
 // Close modal when clicking outside
 window.onclick = function(event) {
     const modal = document.getElementById('results-modal');
+    const emergencyExpanded = document.getElementById('emergency-expanded');
+    const emergencyIcon = document.getElementById('emergency-icon');
+    
+    // Close results modal if clicking outside
     if (event.target === modal) {
         closeResultsModal();
+    }
+    
+    // Collapse emergency stop if clicking outside
+    if (emergencyExpanded.classList.contains('active')) {
+        if (!emergencyExpanded.contains(event.target) && event.target !== emergencyIcon) {
+            emergencyExpanded.classList.remove('active');
+            emergencyIcon.style.display = 'flex';
+        }
     }
 }
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DDM Cup Dashboard initialized');
+    console.log('DDM Horse Dashboard initialized');
     
     // Update clock immediately and every second
     updateClock();

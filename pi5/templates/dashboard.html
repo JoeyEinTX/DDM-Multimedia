@@ -37,6 +37,20 @@
             </div>
         </div>
 
+        <!-- Results Banner (shown after winners are set) -->
+        <div id="results-banner" class="results-banner" style="display: none;">
+            <div class="results-banner-content">
+                <span class="banner-title">RACE RESULTS</span>
+                <div class="banner-results">
+                    <span class="banner-result">🥇 Horse <span id="banner-win">-</span></span>
+                    <span class="banner-divider">|</span>
+                    <span class="banner-result">🥈 Horse <span id="banner-place">-</span></span>
+                    <span class="banner-divider">|</span>
+                    <span class="banner-result">🥉 Horse <span id="banner-show">-</span></span>
+                </div>
+            </div>
+        </div>
+
         <!-- Main Control Panels -->
         <div class="panels">
             <!-- Pre-Race Panel -->
@@ -72,46 +86,57 @@
             </div>
         </div>
 
-        <!-- Emergency Stop -->
-        <div class="emergency-section">
-            <button class="btn btn-emergency" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
+        <!-- Footer Info -->
+        <div class="footer-section">
             <div class="footer-info">
                 <span>MODE: <span id="current-mode">STANDBY</span></span>
                 <span>{{ version }}</span>
                 <span>ESP32: <span id="esp32-ip">---.---.---.---</span></span>
             </div>
+            <div class="powered-by">
+                <span class="powered-text">Powered by</span>
+                <span class="joey-ai">JoeyAI</span>
+            </div>
         </div>
+    </div>
+
+    <!-- Emergency Stop Icon (collapsible) -->
+    <div id="emergency-icon" class="emergency-icon" onclick="toggleEmergencyStop()">
+        🛑
+    </div>
+    <div id="emergency-expanded" class="emergency-expanded">
+        <button class="btn-emergency" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
     </div>
 
     <!-- Results Modal -->
     <div id="results-modal" class="modal">
         <div class="modal-content">
             <h2>Set Race Results</h2>
-            <p>Select the winning cups:</p>
+            <p>Select the winning horses:</p>
             
             <div class="result-selection">
                 <label>🥇 Win (Gold):</label>
-                <select id="win-cup" class="cup-select">
+                <select id="win-horse" class="horse-select">
                     {% for i in range(1, num_cups + 1) %}
-                    <option value="{{ i }}">Cup {{ i }}</option>
+                    <option value="{{ i }}">Horse {{ i }}</option>
                     {% endfor %}
                 </select>
             </div>
 
             <div class="result-selection">
                 <label>🥈 Place (Silver):</label>
-                <select id="place-cup" class="cup-select">
+                <select id="place-horse" class="horse-select">
                     {% for i in range(1, num_cups + 1) %}
-                    <option value="{{ i }}" {% if i == 2 %}selected{% endif %}>Cup {{ i }}</option>
+                    <option value="{{ i }}" {% if i == 2 %}selected{% endif %}>Horse {{ i }}</option>
                     {% endfor %}
                 </select>
             </div>
 
             <div class="result-selection">
                 <label>🥉 Show (Bronze):</label>
-                <select id="show-cup" class="cup-select">
+                <select id="show-horse" class="horse-select">
                     {% for i in range(1, num_cups + 1) %}
-                    <option value="{{ i }}" {% if i == 3 %}selected{% endif %}>Cup {{ i }}</option>
+                    <option value="{{ i }}" {% if i == 3 %}selected{% endif %}>Horse {{ i }}</option>
                     {% endfor %}
                 </select>
             </div>

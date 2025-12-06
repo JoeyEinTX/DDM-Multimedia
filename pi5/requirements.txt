@@ -1,4 +1,4 @@
-# Python dependencies for DDM Cup Dashboard (Raspberry Pi 5)
+# Python dependencies for DDM Horse Dashboard (Raspberry Pi 5)
 
 Flask==3.0.0
 Werkzeug==3.0.1

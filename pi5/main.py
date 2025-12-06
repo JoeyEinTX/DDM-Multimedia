@@ -1,4 +1,4 @@
-# main.py - Flask app entry point for DDM Cup Dashboard
+# main.py - Flask app entry point for DDM Horse Dashboard
 
 from flask import Flask, render_template, jsonify, request
 import sys
@@ -12,7 +12,7 @@ from communication.esp32_client import esp32, check_esp32_connection
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ddm-cup-controller-2025'
+app.config['SECRET_KEY'] = 'ddm-horse-controller-2025'
 
 
 @app.route('/')
@@ -108,7 +108,7 @@ def api_led_color():
 
 @app.route('/api/led/cup', methods=['POST'])
 def api_led_cup():
-    """Set a specific cup to a color"""
+    """Set a specific horse to a color"""
     data = request.get_json()
     cup_number = data.get('cup', 1)
     color = data.get('color', 'FFFFFF')
@@ -116,7 +116,7 @@ def api_led_cup():
     response = esp32.set_cup(cup_number, color)
     return jsonify({
         'success': not response.startswith('ERROR'),
-        'cup': cup_number,
+        'horse': cup_number,
         'color': color,
         'response': response
     })
