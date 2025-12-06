@@ -64,32 +64,32 @@
             <!-- Pre-Race Panel -->
             <div class="panel">
                 <h2>PRE-RACE</h2>
-                <button class="btn" onclick="sendAnimation('WELCOME')">Welcome</button>
+                <button class="btn" onclick="sendAnimation('WELCOME', this)">Welcome</button>
                 <button class="btn" onclick="sendCommand('LED:ALL_ON')">Test</button>
-                <button class="btn" onclick="sendAnimation('IDLE')">Standby</button>
+                <button class="btn" onclick="sendAnimation('IDLE', this)">Standby</button>
             </div>
 
             <!-- Betting Panel -->
             <div class="panel">
                 <h2>BETTING OPEN</h2>
-                <button class="btn" onclick="sendAnimation('BETTING_60')">60 Min</button>
-                <button class="btn" onclick="sendAnimation('BETTING_30')">30 Min</button>
-                <button class="btn btn-warning" onclick="sendAnimation('FINAL_CALL')">FINAL CALL</button>
+                <button class="btn" onclick="sendAnimation('BETTING_60', this)">60 Min</button>
+                <button class="btn" onclick="sendAnimation('BETTING_30', this)">30 Min</button>
+                <button class="btn" onclick="sendAnimation('FINAL_CALL', this)">Final Call</button>
             </div>
 
             <!-- During Race Panel -->
             <div class="panel">
                 <h2>DURING RACE</h2>
-                <button class="btn btn-success" onclick="sendAnimation('RACE_START')">THEY'RE OFF!</button>
-                <button class="btn btn-danger" onclick="sendAnimation('CHAOS')">CHAOS</button>
-                <button class="btn" onclick="sendAnimation('FINISH')">FINISH</button>
+                <button class="btn" onclick="sendAnimation('RACE_START', this)">They're Off!</button>
+                <button class="btn" onclick="sendAnimation('CHAOS', this)">Chaos</button>
+                <button class="btn" onclick="sendAnimation('FINISH', this)">Finish</button>
             </div>
 
             <!-- Results Panel -->
             <div class="panel">
                 <h2>RESULTS</h2>
                 <button class="btn" onclick="showResultsModal()">Set Winners</button>
-                <button class="btn" onclick="sendAnimation('HEARTBEAT')">Heartbeat</button>
+                <button class="btn" onclick="sendAnimation('HEARTBEAT', this)">Heartbeat</button>
                 <button class="btn" onclick="sendReset()">Reset</button>
             </div>
         </div>

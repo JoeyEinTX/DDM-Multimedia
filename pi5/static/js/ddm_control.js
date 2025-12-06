@@ -1,5 +1,8 @@
 // ddm_control.js - Dashboard control JavaScript
 
+// Track active button
+let activeButton = null;
+
 // Show loading indicator
 function showLoader() {
     const loader = document.getElementById('loader');
@@ -10,6 +13,30 @@ function showLoader() {
 function hideLoader() {
     const loader = document.getElementById('loader');
     loader.classList.remove('show');
+}
+
+// Set active button
+function setActiveButton(button) {
+    // Remove active class from previous button
+    if (activeButton) {
+        activeButton.classList.remove('active');
+    }
+    
+    // Set new active button
+    if (button) {
+        button.classList.add('active');
+        activeButton = button;
+    } else {
+        activeButton = null;
+    }
+}
+
+// Clear active button
+function clearActiveButton() {
+    if (activeButton) {
+        activeButton.classList.remove('active');
+        activeButton = null;
+    }
 }
 
 // Update clock
@@ -97,8 +124,38 @@ async function sendCommand(command) {
     }
 }
 
-// Send animation command
-async function sendAnimation(animName) {
+// Send animation command with toggle functionality
+async function sendAnimation(animName, buttonElement) {
+    // Check if this button is already active (toggle off)
+    if (activeButton === buttonElement) {
+        showLoader();
+        try {
+            // Send IDLE command to stop the animation
+            const response = await fetch('/api/animation/IDLE', {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification('Animation stopped', 'success');
+                document.getElementById('current-mode').textContent = 'IDLE';
+                clearActiveButton();
+            } else {
+                showNotification(`Error: ${data.response}`, 'error');
+            }
+            
+            await checkESP32Status();
+        } catch (error) {
+            console.error('Error stopping animation:', error);
+            showNotification('Connection error', 'error');
+        } finally {
+            hideLoader();
+        }
+        return;
+    }
+    
+    // Start new animation
     showLoader();
     try {
         const response = await fetch(`/api/animation/${animName}`, {
@@ -110,6 +167,7 @@ async function sendAnimation(animName) {
         if (data.success) {
             showNotification(`Animation: ${animName}`, 'success');
             document.getElementById('current-mode').textContent = animName;
+            setActiveButton(buttonElement);
         } else {
             showNotification(`Error: ${data.response}`, 'error');
         }
@@ -139,6 +197,8 @@ async function sendReset() {
                 document.getElementById('current-mode').textContent = 'IDLE';
                 // Hide results banner on reset
                 hideResultsBanner();
+                // Clear active button state
+                clearActiveButton();
             } else {
                 showNotification(`Error: ${data.response}`, 'error');
             }
