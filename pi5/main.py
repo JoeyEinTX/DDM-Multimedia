@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
-                   OPENWEATHER_API_KEY, WEATHER_LOCATION, WEATHER_UNITS, WEATHER_CACHE_MINUTES)
+                   WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES)
 from communication.esp32_client import esp32, check_esp32_connection
 
 # Initialize Flask app
@@ -200,7 +200,7 @@ def api_weather():
     global weather_cache
     
     # Check if API key is configured
-    if not OPENWEATHER_API_KEY:
+    if not WEATHER_API_KEY:
         return jsonify({
             'success': False,
             'error': 'Weather API key not configured'
@@ -213,35 +213,35 @@ def api_weather():
         if cache_age < WEATHER_CACHE_MINUTES:
             return jsonify({
                 'success': True,
-                'forecast': weather_cache['data'],
+                'hourly': weather_cache['data'],
                 'cached': True
             })
     
-    # Fetch fresh data from OpenWeatherMap
+    # Fetch fresh data from WeatherAPI.com
     try:
-        url = f"https://api.openweathermap.org/data/2.5/forecast"
+        url = "http://api.weatherapi.com/v1/forecast.json"
         params = {
+            'key': WEATHER_API_KEY,
             'q': WEATHER_LOCATION,
-            'appid': OPENWEATHER_API_KEY,
-            'units': WEATHER_UNITS,
-            'cnt': 4  # Get 4 data points (12 hours in 3-hour intervals)
+            'hours': 24
         }
         
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
-        forecast_list = data.get('list', [])
+        # Get hourly data from the forecast
+        hourly_data = data.get('forecast', {}).get('forecastday', [{}])[0].get('hour', [])
         
         # Cache the results
-        weather_cache['data'] = forecast_list
+        weather_cache['data'] = hourly_data
         weather_cache['timestamp'] = now
         
         return jsonify({
             'success': True,
-            'forecast': forecast_list,
+            'hourly': hourly_data,
             'cached': False,
-            'location': data.get('city', {}).get('name', WEATHER_LOCATION)
+            'location': data.get('location', {}).get('name', WEATHER_LOCATION)
         })
         
     except requests.RequestException as e:
@@ -250,7 +250,7 @@ def api_weather():
         if weather_cache['data']:
             return jsonify({
                 'success': True,
-                'forecast': weather_cache['data'],
+                'hourly': weather_cache['data'],
                 'cached': True,
                 'stale': True
             })

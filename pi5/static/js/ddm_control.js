@@ -440,34 +440,30 @@ window.onclick = function(event) {
     }
 }
 
-// Get weather icon from condition code
-function getWeatherIcon(code) {
-    // OpenWeatherMap weather condition codes to emoji
-    if (code >= 200 && code < 300) return '⛈️'; // Thunderstorm
-    if (code >= 300 && code < 400) return '🌦️'; // Drizzle
-    if (code >= 500 && code < 600) return '🌧️'; // Rain
-    if (code >= 600 && code < 700) return '🌨️'; // Snow
-    if (code >= 700 && code < 800) return '🌫️'; // Atmosphere
-    if (code === 800) return '☀️'; // Clear
-    if (code > 800) return '☁️'; // Clouds
-    return '🌤️'; // Default
-}
-
 // Fetch and display weather forecast
 async function getWeather() {
     try {
         const response = await fetch('/api/weather');
         const data = await response.json();
         
-        if (data.success && data.forecast) {
+        if (data.success && data.hourly) {
             const weatherScroll = document.getElementById('weather-scroll');
             weatherScroll.innerHTML = '';
             
-            // Display next 12 hours (4 data points, 3-hour intervals)
-            const forecasts = data.forecast.slice(0, 4);
+            // Get current hour
+            const now = new Date();
+            const currentHour = now.getHours();
             
-            forecasts.forEach(item => {
-                const time = new Date(item.dt * 1000);
+            // Filter to get next 12 hours starting from current hour
+            const hourlyForecasts = data.hourly.filter(item => {
+                const forecastTime = new Date(item.time);
+                const forecastHour = forecastTime.getHours();
+                // Get forecasts for the next 12 hours
+                return forecastHour >= currentHour && forecastHour < currentHour + 12;
+            }).slice(0, 12);
+            
+            hourlyForecasts.forEach(item => {
+                const time = new Date(item.time);
                 const hours = time.getHours();
                 const ampm = hours >= 12 ? 'PM' : 'AM';
                 const displayHour = hours % 12 || 12;
@@ -476,9 +472,8 @@ async function getWeather() {
                 weatherItem.className = 'weather-item';
                 weatherItem.innerHTML = `
                     <div class="weather-time">${displayHour} ${ampm}</div>
-                    <div class="weather-icon">${getWeatherIcon(item.weather[0].id)}</div>
-                    <div class="weather-temp">${Math.round(item.main.temp)}°F</div>
-                    <div class="weather-desc">${item.weather[0].description}</div>
+                    <img src="https:${item.condition.icon}" alt="${item.condition.text}" class="weather-icon-img">
+                    <div class="weather-temp">${Math.round(item.temp_f)}°F</div>
                 `;
                 
                 weatherScroll.appendChild(weatherItem);

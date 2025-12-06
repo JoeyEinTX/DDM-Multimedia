@@ -27,8 +27,7 @@ VERSION = "3.0.0"
 NUM_CUPS = 20
 TOTAL_LEDS = 640
 
-# Weather API Settings (OpenWeatherMap)
-OPENWEATHER_API_KEY = ""  # Add your API key here
-WEATHER_LOCATION = "Dallas,TX,US"
-WEATHER_UNITS = "imperial"  # imperial = Fahrenheit, metric = Celsius
+# Weather API Settings (WeatherAPI.com)
+WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
+WEATHER_LOCATION = "Dallas,TX"
 WEATHER_CACHE_MINUTES = 30

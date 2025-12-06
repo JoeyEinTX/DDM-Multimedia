@@ -108,7 +108,9 @@ body {
 
 .weather-scroll {
     display: flex;
-    gap: 12px;
+    justify-content: space-evenly;
+    align-items: center;
+    gap: 8px;
     padding: 0 20px;
     overflow-x: auto;
     scroll-behavior: smooth;
@@ -133,7 +135,9 @@ body {
 }
 
 .weather-item {
-    min-width: 80px;
+    flex: 1;
+    min-width: 70px;
+    max-width: 100px;
     background: rgba(255, 255, 255, 0.05);
     padding: 12px 8px;
     border-radius: 6px;
@@ -154,9 +158,11 @@ body {
     font-weight: 500;
 }
 
-.weather-icon {
-    font-size: 2em;
-    margin: 4px 0;
+.weather-icon-img {
+    width: 48px;
+    height: 48px;
+    margin: 4px auto;
+    display: block;
 }
 
 .weather-temp {
@@ -164,13 +170,6 @@ body {
     color: #ffffff;
     font-weight: 600;
     margin-top: 8px;
-}
-
-.weather-desc {
-    font-size: 0.75em;
-    color: #666666;
-    margin-top: 4px;
-    text-transform: capitalize;
 }
 
 /* Results Banner */
