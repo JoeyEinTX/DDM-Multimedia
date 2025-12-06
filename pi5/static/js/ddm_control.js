@@ -94,9 +94,46 @@ async function getSystemStatus() {
     }
 }
 
-// Send command to ESP32 (one-shot action with flash)
-async function sendCommand(command, buttonElement) {
-    flashButton(buttonElement);
+// Send command to ESP32
+async function sendCommand(command, buttonElement, toggle = false) {
+    // If toggle mode and button is already active, turn it off
+    if (toggle && activeButton === buttonElement) {
+        showLoader();
+        try {
+            // Send command to stop (turn off LEDs)
+            const response = await fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ command: 'LED:ALL_OFF' })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification('Test stopped', 'success');
+                document.getElementById('current-mode').textContent = 'IDLE';
+                clearActiveButton();
+            } else {
+                showNotification(`Error: ${data.response}`, 'error');
+            }
+            
+            await checkESP32Status();
+        } catch (error) {
+            console.error('Error stopping command:', error);
+            showNotification('Connection error', 'error');
+        } finally {
+            hideLoader();
+        }
+        return;
+    }
+    
+    // One-shot mode: flash briefly
+    if (!toggle) {
+        flashButton(buttonElement);
+    }
+    
     showLoader();
     try {
         const response = await fetch('/api/command', {
@@ -112,6 +149,11 @@ async function sendCommand(command, buttonElement) {
         if (data.success) {
             showNotification(`Command sent: ${command}`, 'success');
             document.getElementById('current-mode').textContent = command.split(':')[0];
+            
+            // If toggle mode, set button as active
+            if (toggle) {
+                setActiveButton(buttonElement);
+            }
         } else {
             showNotification(`Error: ${data.response}`, 'error');
         }
