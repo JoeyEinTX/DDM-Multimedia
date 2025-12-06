@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ system_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-title">
+                <span class="icon">🏇</span>
+                <h1>DERBY DE MAYO CONTROL CENTER</h1>
+                <span class="icon">🏇</span>
+            </div>
+            <div class="header-info">
+                <span id="current-time">--:--:--</span>
+            </div>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-left">
+                <div class="status-item">
+                    <span class="icon">📶</span> WiFi: <span class="status-value">Connected</span>
+                </div>
+                <div class="status-item">
+                    <span class="icon">🔌</span> ESP32: <span id="esp32-status" class="status-value status-offline">OFFLINE</span>
+                </div>
+            </div>
+            <div class="status-right">
+                <div class="status-item">
+                    <span class="icon">💡</span> <span id="led-count">{{ total_leds }}</span> LEDs
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Control Panels -->
+        <div class="panels">
+            <!-- Pre-Race Panel -->
+            <div class="panel">
+                <h2>PRE-RACE</h2>
+                <button class="btn" onclick="sendAnimation('WELCOME')">Welcome</button>
+                <button class="btn" onclick="sendCommand('LED:ALL_ON')">Test</button>
+                <button class="btn" onclick="sendAnimation('IDLE')">Standby</button>
+            </div>
+
+            <!-- Betting Panel -->
+            <div class="panel">
+                <h2>BETTING OPEN</h2>
+                <button class="btn" onclick="sendAnimation('BETTING_60')">60 Min</button>
+                <button class="btn" onclick="sendAnimation('BETTING_30')">30 Min</button>
+                <button class="btn btn-warning" onclick="sendAnimation('FINAL_CALL')">FINAL CALL</button>
+            </div>
+
+            <!-- During Race Panel -->
+            <div class="panel">
+                <h2>DURING RACE</h2>
+                <button class="btn btn-success" onclick="sendAnimation('RACE_START')">THEY'RE OFF!</button>
+                <button class="btn btn-danger" onclick="sendAnimation('CHAOS')">CHAOS</button>
+                <button class="btn" onclick="sendAnimation('FINISH')">FINISH</button>
+            </div>
+
+            <!-- Results Panel -->
+            <div class="panel">
+                <h2>RESULTS</h2>
+                <button class="btn" onclick="showResultsModal()">Set Winners</button>
+                <button class="btn" onclick="sendAnimation('HEARTBEAT')">Heartbeat</button>
+                <button class="btn" onclick="sendReset()">Reset</button>
+            </div>
+        </div>
+
+        <!-- Emergency Stop -->
+        <div class="emergency-section">
+            <button class="btn btn-emergency" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
+            <div class="footer-info">
+                <span>MODE: <span id="current-mode">STANDBY</span></span>
+                <span>{{ version }}</span>
+                <span>ESP32: <span id="esp32-ip">---.---.---.---</span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Modal -->
+    <div id="results-modal" class="modal">
+        <div class="modal-content">
+            <h2>Set Race Results</h2>
+            <p>Select the winning cups:</p>
+            
+            <div class="result-selection">
+                <label>🥇 Win (Gold):</label>
+                <select id="win-cup" class="cup-select">
+                    {% for i in range(1, num_cups + 1) %}
+                    <option value="{{ i }}">Cup {{ i }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="result-selection">
+                <label>🥈 Place (Silver):</label>
+                <select id="place-cup" class="cup-select">
+                    {% for i in range(1, num_cups + 1) %}
+                    <option value="{{ i }}" {% if i == 2 %}selected{% endif %}>Cup {{ i }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="result-selection">
+                <label>🥉 Show (Bronze):</label>
+                <select id="show-cup" class="cup-select">
+                    {% for i in range(1, num_cups + 1) %}
+                    <option value="{{ i }}" {% if i == 3 %}selected{% endif %}>Cup {{ i }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="modal-buttons">
+                <button class="btn btn-success" onclick="applyResults()">Apply Results</button>
+                <button class="btn" onclick="closeResultsModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Area -->
+    <div id="notification" class="notification"></div>
+
+    <script src="{{ url_for('static', filename='js/ddm_control.js') }}"></script>
+</body>
+</html>
