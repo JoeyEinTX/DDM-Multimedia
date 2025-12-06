@@ -1,5 +1,17 @@
 // ddm_control.js - Dashboard control JavaScript
 
+// Show loading indicator
+function showLoader() {
+    const loader = document.getElementById('loader');
+    loader.classList.add('show');
+}
+
+// Hide loading indicator
+function hideLoader() {
+    const loader = document.getElementById('loader');
+    loader.classList.remove('show');
+}
+
 // Update clock
 function updateClock() {
     const now = new Date();
@@ -57,6 +69,7 @@ async function getSystemStatus() {
 
 // Send command to ESP32
 async function sendCommand(command) {
+    showLoader();
     try {
         const response = await fetch('/api/command', {
             method: 'POST',
@@ -79,11 +92,14 @@ async function sendCommand(command) {
     } catch (error) {
         console.error('Error sending command:', error);
         showNotification('Connection error', 'error');
+    } finally {
+        hideLoader();
     }
 }
 
 // Send animation command
 async function sendAnimation(animName) {
+    showLoader();
     try {
         const response = await fetch(`/api/animation/${animName}`, {
             method: 'POST'
@@ -102,12 +118,15 @@ async function sendAnimation(animName) {
     } catch (error) {
         console.error('Error sending animation:', error);
         showNotification('Connection error', 'error');
+    } finally {
+        hideLoader();
     }
 }
 
 // Reset system
 async function sendReset() {
     if (confirm('Reset all LEDs and return to idle?')) {
+        showLoader();
         try {
             const response = await fetch('/api/reset', {
                 method: 'POST'
@@ -128,6 +147,8 @@ async function sendReset() {
         } catch (error) {
             console.error('Error resetting:', error);
             showNotification('Connection error', 'error');
+        } finally {
+            hideLoader();
         }
     }
 }
@@ -149,6 +170,7 @@ function toggleEmergencyStop() {
 // Emergency stop
 async function emergencyStop() {
     if (confirm('EMERGENCY STOP: Turn off all LEDs?')) {
+        showLoader();
         try {
             const response = await fetch('/api/led/all_off', {
                 method: 'POST'
@@ -172,6 +194,8 @@ async function emergencyStop() {
         } catch (error) {
             console.error('Error with emergency stop:', error);
             showNotification('Connection error', 'error');
+        } finally {
+            hideLoader();
         }
     }
 }
@@ -215,6 +239,7 @@ async function applyResults() {
         return;
     }
     
+    showLoader();
     try {
         const response = await fetch('/api/results', {
             method: 'POST',
@@ -244,6 +269,8 @@ async function applyResults() {
     } catch (error) {
         console.error('Error setting results:', error);
         showNotification('Connection error', 'error');
+    } finally {
+        hideLoader();
     }
 }
 

@@ -151,6 +151,31 @@
     <!-- Notification Area -->
     <div id="notification" class="notification"></div>
 
+    <!-- Loading Indicator -->
+    <div id="loader" class="loader">
+        <div class="loader-backdrop"></div>
+        <div class="loader-content">
+            <div class="horse-container">
+                <svg class="horse-silhouette" viewBox="0 0 100 80" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Horse body -->
+                    <ellipse cx="50" cy="45" rx="25" ry="18" fill="#2a2a2a"/>
+                    <!-- Horse head/neck -->
+                    <path d="M 25 45 Q 15 35, 18 25 Q 20 20, 25 22 L 28 30 Z" fill="#2a2a2a"/>
+                    <!-- Front leg 1 -->
+                    <rect class="leg leg1" x="35" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
+                    <!-- Front leg 2 -->
+                    <rect class="leg leg2" x="42" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
+                    <!-- Back leg 1 -->
+                    <rect class="leg leg3" x="60" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
+                    <!-- Back leg 2 -->
+                    <rect class="leg leg4" x="67" y="58" width="4" height="18" rx="2" fill="#2a2a2a"/>
+                    <!-- Tail -->
+                    <path d="M 75 40 Q 85 35, 82 48" stroke="#2a2a2a" stroke-width="3" fill="none"/>
+                </svg>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/ddm_control.js') }}"></script>
 </body>
 </html>
