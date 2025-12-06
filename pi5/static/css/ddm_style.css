@@ -8,7 +8,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: #0d1f0d;
+    background: #0a1a24;
     color: #ffffff;
     min-height: 100vh;
     padding: 24px;
@@ -257,6 +257,27 @@ body {
     border-bottom: 1px solid #2a2a2a;
 }
 
+/* Panel-specific header colors */
+.panel:nth-child(1) h2 {
+    color: #4ECDC4;
+    border-bottom-color: rgba(78, 205, 196, 0.3);
+}
+
+.panel:nth-child(2) h2 {
+    color: #f59e0b;
+    border-bottom-color: rgba(245, 158, 11, 0.3);
+}
+
+.panel:nth-child(3) h2 {
+    color: #22c55e;
+    border-bottom-color: rgba(34, 197, 94, 0.3);
+}
+
+.panel:nth-child(4) h2 {
+    color: #E53935;
+    border-bottom-color: rgba(229, 57, 53, 0.3);
+}
+
 /* Buttons - Ghost Style with Panel Colors */
 .btn {
     width: 100%;
@@ -288,33 +309,36 @@ body {
     background: rgba(136, 136, 136, 0.15);
 }
 
-/* Panel-specific button colors */
+/* Panel-specific button colors - DDM Brand Palette */
+/* PRE-RACE: Teal/Cyan */
 .panel:nth-child(1) .btn {
-    border-color: #888888;
-    color: #888888;
+    border-color: #4ECDC4;
+    color: #4ECDC4;
 }
 
 .panel:nth-child(1) .btn:hover {
-    background: rgba(136, 136, 136, 0.12);
+    background: rgba(78, 205, 196, 0.12);
 }
 
 .panel:nth-child(1) .btn.active {
-    background: rgba(136, 136, 136, 0.15);
+    background: rgba(78, 205, 196, 0.15);
 }
 
+/* BETTING OPEN: Orange/Gold */
 .panel:nth-child(2) .btn {
-    border-color: #fbbf24;
-    color: #fbbf24;
+    border-color: #f59e0b;
+    color: #f59e0b;
 }
 
 .panel:nth-child(2) .btn:hover {
-    background: rgba(251, 191, 36, 0.12);
+    background: rgba(245, 158, 11, 0.12);
 }
 
 .panel:nth-child(2) .btn.active {
-    background: rgba(251, 191, 36, 0.15);
+    background: rgba(245, 158, 11, 0.15);
 }
 
+/* DURING RACE: Green */
 .panel:nth-child(3) .btn {
     border-color: #22c55e;
     color: #22c55e;
@@ -328,17 +352,18 @@ body {
     background: rgba(34, 197, 94, 0.15);
 }
 
+/* RESULTS: Red */
 .panel:nth-child(4) .btn {
-    border-color: #888888;
-    color: #888888;
+    border-color: #E53935;
+    color: #E53935;
 }
 
 .panel:nth-child(4) .btn:hover {
-    background: rgba(136, 136, 136, 0.12);
+    background: rgba(229, 57, 53, 0.12);
 }
 
 .panel:nth-child(4) .btn.active {
-    background: rgba(136, 136, 136, 0.15);
+    background: rgba(229, 57, 53, 0.15);
 }
 
 /* Footer Section */
