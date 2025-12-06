@@ -144,11 +144,42 @@ body {
     text-align: center;
     border: 1px solid rgba(255, 255, 255, 0.1);
     transition: all 0.2s ease;
+    position: relative;
 }
 
 .weather-item:hover {
     background: rgba(255, 255, 255, 0.08);
     transform: translateY(-2px);
+}
+
+/* NOW card - larger and prominent */
+.weather-item.now {
+    flex: 1.5;
+    min-width: 100px;
+    max-width: 140px;
+    background: rgba(78, 205, 196, 0.1);
+    border: 2px solid #4ECDC4;
+    box-shadow: 0 0 12px rgba(78, 205, 196, 0.3);
+}
+
+.weather-now-label {
+    font-size: 0.7em;
+    color: #4ECDC4;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.weather-item.now .weather-temp {
+    font-size: 1.4em;
+    font-weight: 700;
+}
+
+/* Current hour accent */
+.weather-item.current-hour {
+    border: 2px solid #4ECDC4;
+    box-shadow: 0 0 8px rgba(78, 205, 196, 0.4);
 }
 
 .weather-time {
@@ -170,6 +201,27 @@ body {
     color: #ffffff;
     font-weight: 600;
     margin-top: 8px;
+}
+
+/* Temperature color coding */
+.temp-cold {
+    color: #3b82f6 !important;
+}
+
+.temp-cool {
+    color: #4ECDC4 !important;
+}
+
+.temp-comfortable {
+    color: #22c55e !important;
+}
+
+.temp-warm {
+    color: #f59e0b !important;
+}
+
+.temp-hot {
+    color: #E53935 !important;
 }
 
 /* Results Banner */

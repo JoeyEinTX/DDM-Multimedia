@@ -440,6 +440,15 @@ window.onclick = function(event) {
     }
 }
 
+// Get temperature color class based on temperature
+function getTempColorClass(temp) {
+    if (temp < 40) return 'temp-cold';
+    if (temp < 60) return 'temp-cool';
+    if (temp < 75) return 'temp-comfortable';
+    if (temp < 90) return 'temp-warm';
+    return 'temp-hot';
+}
+
 // Fetch and display weather forecast
 async function getWeather() {
     try {
@@ -462,18 +471,35 @@ async function getWeather() {
                 return forecastHour >= currentHour && forecastHour < currentHour + 12;
             }).slice(0, 12);
             
-            hourlyForecasts.forEach(item => {
+            hourlyForecasts.forEach((item, index) => {
                 const time = new Date(item.time);
                 const hours = time.getHours();
                 const ampm = hours >= 12 ? 'PM' : 'AM';
                 const displayHour = hours % 12 || 12;
+                const temp = Math.round(item.temp_f);
                 
                 const weatherItem = document.createElement('div');
                 weatherItem.className = 'weather-item';
+                
+                // Add NOW class to first card
+                if (index === 0) {
+                    weatherItem.classList.add('now');
+                }
+                
+                // Add current-hour class to current hour
+                if (hours === currentHour) {
+                    weatherItem.classList.add('current-hour');
+                }
+                
+                // Get temperature color class
+                const tempColorClass = getTempColorClass(temp);
+                
+                // Build HTML with NOW label for first card
                 weatherItem.innerHTML = `
+                    ${index === 0 ? '<div class="weather-now-label">NOW</div>' : ''}
                     <div class="weather-time">${displayHour} ${ampm}</div>
                     <img src="https:${item.condition.icon}" alt="${item.condition.text}" class="weather-icon-img">
-                    <div class="weather-temp">${Math.round(item.temp_f)}°F</div>
+                    <div class="weather-temp ${tempColorClass}">${temp}°F</div>
                 `;
                 
                 weatherScroll.appendChild(weatherItem);
