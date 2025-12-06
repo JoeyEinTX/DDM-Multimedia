@@ -321,6 +321,11 @@ body {
 }
 
 .panel:nth-child(1) .btn.active {
+    background: #4ECDC4;
+    color: #0a1a24;
+}
+
+.panel:nth-child(1) .btn.flash {
     background: rgba(78, 205, 196, 0.15);
 }
 
@@ -335,6 +340,11 @@ body {
 }
 
 .panel:nth-child(2) .btn.active {
+    background: #f59e0b;
+    color: #0a1a24;
+}
+
+.panel:nth-child(2) .btn.flash {
     background: rgba(245, 158, 11, 0.15);
 }
 
@@ -349,6 +359,11 @@ body {
 }
 
 .panel:nth-child(3) .btn.active {
+    background: #22c55e;
+    color: #0a1a24;
+}
+
+.panel:nth-child(3) .btn.flash {
     background: rgba(34, 197, 94, 0.15);
 }
 
@@ -363,6 +378,11 @@ body {
 }
 
 .panel:nth-child(4) .btn.active {
+    background: #E53935;
+    color: #ffffff;
+}
+
+.panel:nth-child(4) .btn.flash {
     background: rgba(229, 57, 53, 0.15);
 }
 

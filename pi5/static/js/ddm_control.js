@@ -94,8 +94,9 @@ async function getSystemStatus() {
     }
 }
 
-// Send command to ESP32
-async function sendCommand(command) {
+// Send command to ESP32 (one-shot action with flash)
+async function sendCommand(command, buttonElement) {
+    flashButton(buttonElement);
     showLoader();
     try {
         const response = await fetch('/api/command', {
@@ -124,9 +125,52 @@ async function sendCommand(command) {
     }
 }
 
+// Flash button briefly (for one-shot actions)
+function flashButton(buttonElement) {
+    if (buttonElement) {
+        buttonElement.classList.add('flash');
+        setTimeout(() => {
+            buttonElement.classList.remove('flash');
+        }, 100);
+    }
+}
+
 // Send animation command with toggle functionality
 async function sendAnimation(animName, buttonElement) {
-    // Check if this button is already active (toggle off)
+    // One-shot animations that don't stay active
+    const oneShotAnimations = ['IDLE'];
+    
+    if (oneShotAnimations.includes(animName)) {
+        // Just flash the button and execute without toggle
+        flashButton(buttonElement);
+        showLoader();
+        try {
+            const response = await fetch(`/api/animation/${animName}`, {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification(`Animation: ${animName}`, 'success');
+                document.getElementById('current-mode').textContent = animName;
+                // Clear any active button
+                clearActiveButton();
+            } else {
+                showNotification(`Error: ${data.response}`, 'error');
+            }
+            
+            await checkESP32Status();
+        } catch (error) {
+            console.error('Error sending animation:', error);
+            showNotification('Connection error', 'error');
+        } finally {
+            hideLoader();
+        }
+        return;
+    }
+    
+    // Toggle animations (check if this button is already active)
     if (activeButton === buttonElement) {
         showLoader();
         try {
@@ -155,7 +199,7 @@ async function sendAnimation(animName, buttonElement) {
         return;
     }
     
-    // Start new animation
+    // Start new toggle animation
     showLoader();
     try {
         const response = await fetch(`/api/animation/${animName}`, {
