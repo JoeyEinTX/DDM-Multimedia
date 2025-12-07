@@ -456,41 +456,37 @@ void animBetting60() {
 }
 
 /**
- * ANIM:BETTING_30 - Amber STROBE effect (urgent 30-second warning)
+ * ANIM:BETTING_30 - Amber breathing (faster than 60, more urgent)
  */
 void animBetting30() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 75) return; // 75ms strobe interval
-    lastUpdate = millis();
+    unsigned long elapsed = millis() - animStartTime;
+    float breathe = (sin(elapsed / 500.0) + 1.0) / 2.0; // 0.5 sec cycle (faster)
     
-    // Toggle on/off for strobe effect
-    if (animStep % 2 == 0) {
-        fill_solid(leds, LED_COUNT, COLOR_AMBER);
-    } else {
-        FastLED.clear();
-    }
+    uint8_t brightness = 50 + (breathe * 205); // 50-255 range
+    CRGB color = COLOR_AMBER;
+    color.nscale8(brightness);
     
+    fill_solid(leds, LED_COUNT, color);
     FastLED.show();
-    animStep++;
+    
+    // Continuous animation
 }
 
 /**
- * ANIM:FINAL_CALL - Aggressive red STROBE (final call urgency)
+ * ANIM:FINAL_CALL - Red breathing (fastest, most urgent)
  */
 void animFinalCall() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 40) return; // 40ms aggressive strobe
-    lastUpdate = millis();
+    unsigned long elapsed = millis() - animStartTime;
+    float breathe = (sin(elapsed / 300.0) + 1.0) / 2.0; // 0.3 sec cycle (fastest)
     
-    // Rapid on/off toggle for intense strobe
-    if (animStep % 2 == 0) {
-        fill_solid(leds, LED_COUNT, COLOR_RED);
-    } else {
-        FastLED.clear();
-    }
+    uint8_t brightness = 50 + (breathe * 205); // 50-255 range
+    CRGB color = COLOR_RED;
+    color.nscale8(brightness);
     
+    fill_solid(leds, LED_COUNT, color);
     FastLED.show();
-    animStep++;
+    
+    // Continuous animation
 }
 
 /**
