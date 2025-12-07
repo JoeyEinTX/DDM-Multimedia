@@ -1,6 +1,6 @@
-// ddm_led_controller.ino - DDM Cup LED Controller STARTER CODE
-// ESP32 WROOM-32 with FastLED - Basic WiFi, Socket Server, Simple LED Control
-// Version 3.0 - Starter (Full animations to be added later)
+// ddm_led_controller.ino - DDM Cup LED Controller with ANIMATIONS
+// ESP32 WROOM-32 with FastLED - WiFi, Socket Server, Full Animation Suite
+// Version 3.1 - Complete Animation System
 
 #include <WiFi.h>
 #include <FastLED.h>
@@ -13,12 +13,57 @@
 #define LED_PIN 18
 #define LED_COUNT 640
 #define STATUS_LED_PIN 2
+#define NUM_CUPS 20
+#define LEDS_PER_CUP 32
+
+// ===== DDM COLORS =====
+const CRGB COLOR_GOLD = CRGB(255, 215, 0);
+const CRGB COLOR_GREEN = CRGB(34, 139, 34);
+const CRGB COLOR_AMBER = CRGB(255, 165, 0);
+const CRGB COLOR_RED = CRGB(220, 20, 60);
+const CRGB COLOR_SILVER = CRGB(192, 192, 192);
+const CRGB COLOR_BRONZE = CRGB(205, 127, 50);
+const CRGB COLOR_WHITE = CRGB(255, 255, 255);
+const CRGB COLOR_BLACK = CRGB(0, 0, 0);
 
 // ===== GLOBAL VARIABLES =====
 CRGB leds[LED_COUNT];
 WiFiServer server(SOCKET_PORT);
 String currentIP = "";
 uint8_t currentBrightness = 128;
+
+// Animation state
+bool animationRunning = false;
+String currentAnimation = "";
+unsigned long animStartTime = 0;
+int animStep = 0;
+
+// Results storage for RESULTS animation
+int winCup = 0;
+int placeCup = 0;
+int showCup = 0;
+
+// ===== FUNCTION DECLARATIONS =====
+void connectWiFi();
+String processCommand(String cmd);
+CRGB hexToRGB(String hex);
+void setCup(uint8_t cupNumber, CRGB color);
+void blinkStatus(int times);
+void printBanner();
+
+// Animation functions
+void runAnimation();
+void stopAnimation();
+void animWelcome();
+void animTest();
+void animBetting60();
+void animBetting30();
+void animFinalCall();
+void animRaceStart();
+void animChaos();
+void animFinish();
+void animHeartbeat();
+void animResults();
 
 /**
  * SETUP - Runs once at startup
@@ -59,6 +104,11 @@ void setup() {
  * MAIN LOOP - Runs continuously
  */
 void loop() {
+    // Run animation if active
+    if (animationRunning) {
+        runAnimation();
+    }
+    
     // Handle incoming socket connections
     WiFiClient client = server.available();
     
@@ -140,6 +190,7 @@ String processCommand(String cmd) {
     
     // LED:ALL_ON - Turn all LEDs white
     else if (cmd == "LED:ALL_ON") {
+        stopAnimation();
         fill_solid(leds, LED_COUNT, CRGB::White);
         FastLED.show();
         return "OK:ALL_ON";
@@ -147,6 +198,7 @@ String processCommand(String cmd) {
     
     // LED:ALL_OFF - Turn all LEDs off
     else if (cmd == "LED:ALL_OFF") {
+        stopAnimation();
         FastLED.clear();
         FastLED.show();
         return "OK:ALL_OFF";
@@ -164,6 +216,7 @@ String processCommand(String cmd) {
     
     // LED:COLOR:RRGGBB - Set all LEDs to hex color
     else if (cmd.startsWith("LED:COLOR:")) {
+        stopAnimation();
         String hexColor = cmd.substring(10);
         CRGB color = hexToRGB(hexColor);
         fill_solid(leds, LED_COUNT, color);
@@ -173,6 +226,7 @@ String processCommand(String cmd) {
     
     // LED:CUP:N:RRGGBB - Set specific cup to color
     else if (cmd.startsWith("LED:CUP:")) {
+        stopAnimation();
         // Parse: LED:CUP:5:FFD700
         int firstColon = cmd.indexOf(':', 8);
         if (firstColon > 0) {
@@ -189,14 +243,385 @@ String processCommand(String cmd) {
         return "ERROR:INVALID_CUP";
     }
     
-    // RESET - Clear all
+    // ANIM:WELCOME - Gold wave left to right
+    else if (cmd == "ANIM:WELCOME") {
+        currentAnimation = "WELCOME";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:WELCOME";
+    }
+    
+    // ANIM:TEST - Sequential cup test
+    else if (cmd == "ANIM:TEST") {
+        currentAnimation = "TEST";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:TEST";
+    }
+    
+    // ANIM:BETTING_60 - Slow green breathing
+    else if (cmd == "ANIM:BETTING_60") {
+        currentAnimation = "BETTING_60";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:BETTING_60";
+    }
+    
+    // ANIM:BETTING_30 - Center-out amber pulse
+    else if (cmd == "ANIM:BETTING_30") {
+        currentAnimation = "BETTING_30";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:BETTING_30";
+    }
+    
+    // ANIM:FINAL_CALL - Edges-in red urgency
+    else if (cmd == "ANIM:FINAL_CALL") {
+        currentAnimation = "FINAL_CALL";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:FINAL_CALL";
+    }
+    
+    // ANIM:RACE_START - Fast white chase
+    else if (cmd == "ANIM:RACE_START") {
+        currentAnimation = "RACE_START";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:RACE_START";
+    }
+    
+    // ANIM:CHAOS - Random madness
+    else if (cmd == "ANIM:CHAOS") {
+        currentAnimation = "CHAOS";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:CHAOS";
+    }
+    
+    // ANIM:FINISH - Checkered flag pattern
+    else if (cmd == "ANIM:FINISH") {
+        currentAnimation = "FINISH";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:FINISH";
+    }
+    
+    // ANIM:HEARTBEAT - Red breathing
+    else if (cmd == "ANIM:HEARTBEAT") {
+        currentAnimation = "HEARTBEAT";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:HEARTBEAT";
+    }
+    
+    // ANIM:RESULTS:W:P:S - Winner spotlight (e.g., ANIM:RESULTS:7:12:3)
+    else if (cmd.startsWith("ANIM:RESULTS:")) {
+        // Parse: ANIM:RESULTS:7:12:3
+        int firstColon = cmd.indexOf(':', 13);
+        int secondColon = cmd.indexOf(':', firstColon + 1);
+        
+        if (firstColon > 0 && secondColon > 0) {
+            winCup = cmd.substring(13, firstColon).toInt();
+            placeCup = cmd.substring(firstColon + 1, secondColon).toInt();
+            showCup = cmd.substring(secondColon + 1).toInt();
+            
+            if (winCup >= 1 && winCup <= 20 && 
+                placeCup >= 1 && placeCup <= 20 && 
+                showCup >= 1 && showCup <= 20) {
+                currentAnimation = "RESULTS";
+                animationRunning = true;
+                animStartTime = millis();
+                animStep = 0;
+                return "OK:ANIM:RESULTS:" + String(winCup) + ":" + String(placeCup) + ":" + String(showCup);
+            }
+        }
+        return "ERROR:INVALID_RESULTS";
+    }
+    
+    // RESET - Clear all and stop animations
     else if (cmd == "RESET") {
+        stopAnimation();
         FastLED.clear();
         FastLED.show();
         return "OK:RESET";
     }
     
     return "ERROR:UNKNOWN_COMMAND";
+}
+
+/**
+ * Stop any running animation
+ */
+void stopAnimation() {
+    animationRunning = false;
+    currentAnimation = "";
+    animStep = 0;
+}
+
+/**
+ * Run the current animation (called from loop)
+ */
+void runAnimation() {
+    if (!animationRunning) return;
+    
+    if (currentAnimation == "WELCOME") {
+        animWelcome();
+    } else if (currentAnimation == "TEST") {
+        animTest();
+    } else if (currentAnimation == "BETTING_60") {
+        animBetting60();
+    } else if (currentAnimation == "BETTING_30") {
+        animBetting30();
+    } else if (currentAnimation == "FINAL_CALL") {
+        animFinalCall();
+    } else if (currentAnimation == "RACE_START") {
+        animRaceStart();
+    } else if (currentAnimation == "CHAOS") {
+        animChaos();
+    } else if (currentAnimation == "FINISH") {
+        animFinish();
+    } else if (currentAnimation == "HEARTBEAT") {
+        animHeartbeat();
+    } else if (currentAnimation == "RESULTS") {
+        animResults();
+    }
+}
+
+/**
+ * ANIM:WELCOME - Gold wave sweeps left to right
+ */
+void animWelcome() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 80) return; // ~80ms per cup
+    lastUpdate = millis();
+    
+    if (animStep < NUM_CUPS) {
+        setCup(animStep + 1, COLOR_GOLD);
+        FastLED.show();
+        animStep++;
+    } else {
+        // Wave complete, hold for a moment then clear
+        if (millis() - animStartTime > 3000) {
+            FastLED.clear();
+            FastLED.show();
+            stopAnimation();
+        }
+    }
+}
+
+/**
+ * ANIM:TEST - Sequential check, each cup lights 1→20
+ */
+void animTest() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 200) return; // 200ms per cup
+    lastUpdate = millis();
+    
+    if (animStep < NUM_CUPS) {
+        FastLED.clear();
+        setCup(animStep + 1, COLOR_WHITE);
+        FastLED.show();
+        animStep++;
+    } else {
+        FastLED.clear();
+        FastLED.show();
+        stopAnimation();
+    }
+}
+
+/**
+ * ANIM:BETTING_60 - Slow green breathing pulse (all cups together)
+ */
+void animBetting60() {
+    unsigned long elapsed = millis() - animStartTime;
+    float breathe = (sin(elapsed / 1000.0) + 1.0) / 2.0; // 0.0 to 1.0
+    
+    uint8_t brightness = 50 + (breathe * 205); // 50-255 range
+    CRGB color = COLOR_GREEN;
+    color.nscale8(brightness);
+    
+    fill_solid(leds, LED_COUNT, color);
+    FastLED.show();
+    
+    // Continuous animation
+}
+
+/**
+ * ANIM:BETTING_30 - Amber pulse starts at center, expands outward
+ */
+void animBetting30() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 150) return;
+    lastUpdate = millis();
+    
+    FastLED.clear();
+    
+    // Center cups are 10 and 11
+    int leftCup = 10 - animStep;
+    int rightCup = 11 + animStep;
+    
+    if (leftCup >= 1) setCup(leftCup, COLOR_AMBER);
+    if (rightCup <= 20) setCup(rightCup, COLOR_AMBER);
+    
+    FastLED.show();
+    
+    animStep++;
+    if (animStep > 10) {
+        animStep = 0; // Loop
+    }
+}
+
+/**
+ * ANIM:FINAL_CALL - Red urgent pulse, edges inward (1+20, 2+19, etc.)
+ */
+void animFinalCall() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 100) return; // Fast urgency
+    lastUpdate = millis();
+    
+    FastLED.clear();
+    
+    if (animStep < 10) {
+        setCup(1 + animStep, COLOR_RED);
+        setCup(20 - animStep, COLOR_RED);
+        FastLED.show();
+        animStep++;
+    } else {
+        animStep = 0; // Loop
+    }
+}
+
+/**
+ * ANIM:RACE_START - Quick white streak chasing 1→20 repeatedly
+ */
+void animRaceStart() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 50) return; // Fast chase
+    lastUpdate = millis();
+    
+    FastLED.clear();
+    
+    // Show streak of 3 cups
+    for (int i = 0; i < 3; i++) {
+        int cup = ((animStep - i) % NUM_CUPS) + 1;
+        if (cup >= 1 && cup <= 20) {
+            uint8_t brightness = 255 - (i * 85); // Fade trail
+            CRGB color = COLOR_WHITE;
+            color.nscale8(brightness);
+            setCup(cup, color);
+        }
+    }
+    
+    FastLED.show();
+    animStep = (animStep + 1) % NUM_CUPS;
+}
+
+/**
+ * ANIM:CHAOS - Random cups, random colors, fast chaotic energy
+ */
+void animChaos() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 60) return; // Very fast
+    lastUpdate = millis();
+    
+    // Random 5 cups each frame
+    FastLED.clear();
+    for (int i = 0; i < 5; i++) {
+        int cup = random(1, 21);
+        CRGB colors[] = {COLOR_GOLD, COLOR_RED, COLOR_AMBER, COLOR_GREEN, COLOR_WHITE};
+        CRGB color = colors[random(0, 5)];
+        setCup(cup, color);
+    }
+    
+    FastLED.show();
+}
+
+/**
+ * ANIM:FINISH - Checkered flag pattern (odd vs even cups alternate)
+ */
+void animFinish() {
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 500) return; // Alternate every 500ms
+    lastUpdate = millis();
+    
+    FastLED.clear();
+    
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (animStep % 2 == 0) {
+            // Even step: odd cups white, even cups black
+            if (cup % 2 == 1) {
+                setCup(cup, COLOR_WHITE);
+            }
+        } else {
+            // Odd step: even cups white, odd cups black
+            if (cup % 2 == 0) {
+                setCup(cup, COLOR_WHITE);
+            }
+        }
+    }
+    
+    FastLED.show();
+    animStep++;
+}
+
+/**
+ * ANIM:HEARTBEAT - Slow red throb (all cups breathe together)
+ */
+void animHeartbeat() {
+    unsigned long elapsed = millis() - animStartTime;
+    
+    // Double pulse pattern (heartbeat)
+    float beat = 0.0;
+    float phase = fmod(elapsed / 1000.0, 2.0); // 2-second cycle
+    
+    if (phase < 0.3) {
+        beat = sin(phase * 10.47) * 0.5 + 0.5; // First beat
+    } else if (phase < 0.6) {
+        beat = sin((phase - 0.3) * 10.47) * 0.3 + 0.3; // Second beat (softer)
+    } else {
+        beat = 0.1; // Rest
+    }
+    
+    uint8_t brightness = 25 + (beat * 230);
+    CRGB color = COLOR_RED;
+    color.nscale8(brightness);
+    
+    fill_solid(leds, LED_COUNT, color);
+    FastLED.show();
+}
+
+/**
+ * ANIM:RESULTS - Gold/Silver/Bronze on win/place/show, others dim
+ */
+void animResults() {
+    FastLED.clear();
+    
+    // Spotlight on winners
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (cup == winCup) {
+            setCup(cup, COLOR_GOLD);
+        } else if (cup == placeCup) {
+            setCup(cup, COLOR_SILVER);
+        } else if (cup == showCup) {
+            setCup(cup, COLOR_BRONZE);
+        } else {
+            // Others very dim
+            setCup(cup, CRGB(10, 10, 10));
+        }
+    }
+    
+    FastLED.show();
+    // Static display - stays until changed
 }
 
 /**
@@ -248,7 +673,7 @@ void blinkStatus(int times) {
  */
 void printBanner() {
     Serial.println("\n==================================================");
-    Serial.println("   DDM Cup LED Controller - ESP32 STARTER");
-    Serial.println("   Version 3.0 - Basic Commands Only");
+    Serial.println("   DDM Cup LED Controller - ESP32 FULL");
+    Serial.println("   Version 3.1 - Complete Animation System");
     Serial.println("==================================================\n");
 }
