@@ -96,11 +96,41 @@ body {
     gap: 16px;
 }
 
-.header-title h1 {
-    font-size: 1.75em;
-    font-weight: 600;
-    color: #ffffff;
-    letter-spacing: -0.5px;
+.logo-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.main-title {
+    font-family: Impact, 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    font-size: 2.5em;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 2px;
+}
+
+.main-title .letter {
+    text-shadow: 
+        2px 2px 0px rgba(0, 0, 0, 0.3),
+        3px 3px 8px rgba(0, 0, 0, 0.2);
+}
+
+.main-title .space {
+    display: inline-block;
+    width: 0.3em;
+}
+
+.sub-title {
+    font-family: Impact, 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    font-size: 1em;
+    font-weight: 700;
+    letter-spacing: 4px;
+    background: linear-gradient(90deg, #4ECDC4, #E53935, #22c55e, #f59e0b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    opacity: 0.9;
 }
 
 .header-info {
