@@ -13,7 +13,7 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: #0a1a24;
+    background: #0c1820;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -26,7 +26,7 @@
 }
 
 .splash-logo {
-    width: 350px;
+    width: 500px;
     max-width: 90%;
     height: auto;
     opacity: 0;
@@ -64,7 +64,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: #0a1a24;
+    background: #0c1820;
     color: #ffffff;
     min-height: 100vh;
     padding: 24px;
@@ -815,7 +815,8 @@ body {
 }
 
 .loader-logo {
-    width: 120px;
+    width: 500px;
+    max-width: 90%;
     height: auto;
     animation: logoPulse 1.5s ease-in-out infinite;
     filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
