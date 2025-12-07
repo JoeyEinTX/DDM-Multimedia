@@ -42,7 +42,7 @@ function clearActiveButton() {
 // Update clock
 function updateClock() {
     const now = new Date();
-    const timeString = now.toLocaleTimeString('en-US', { hour12: false });
+    const timeString = now.toLocaleTimeString('en-US', { hour12: true });
     document.getElementById('current-time').textContent = timeString;
 }
 
