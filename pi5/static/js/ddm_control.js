@@ -403,6 +403,8 @@ async function emergencyStop() {
             if (data.success) {
                 showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
                 document.getElementById('current-mode').textContent = 'STOPPED';
+                // Clear all active button states
+                clearActiveButton();
                 // Collapse emergency stop after use
                 const expanded = document.getElementById('emergency-expanded');
                 const icon = document.getElementById('emergency-icon');
