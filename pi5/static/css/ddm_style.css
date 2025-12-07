@@ -163,6 +163,12 @@ body {
     width: 45px;
 }
 
+.flip-unit-ampm .flip-card-upper-inner,
+.flip-unit-ampm .flip-card-lower-inner,
+.flip-unit-ampm .flip-card-flipping-inner {
+    font-size: 1.4em;
+}
+
 .flip-card {
     position: relative;
     width: 100%;
