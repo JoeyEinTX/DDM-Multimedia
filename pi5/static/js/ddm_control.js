@@ -39,38 +39,32 @@ function clearActiveButton() {
     }
 }
 
-// Flip clock animation
+// Flip clock animation - simple fade effect
 function flipCard(cardId, newValue) {
     const card = document.getElementById(cardId);
-    const currentValue = card.querySelector('.flip-card-top').textContent;
+    const numberElement = card.querySelector('.flip-number');
+    const currentValue = numberElement.textContent;
     
-    // Only flip if value changed
+    // Only animate if value changed
     if (currentValue !== newValue) {
-        const top = card.querySelector('.flip-card-top');
-        const bottom = card.querySelector('.flip-card-bottom');
-        const face = card.querySelector('.flip-card-face');
+        // Add changing class for animation
+        card.classList.add('changing');
         
-        // Set new value on bottom half
-        bottom.textContent = newValue;
+        // Update the number
+        numberElement.textContent = newValue;
         
-        // Trigger flip animation
-        card.classList.add('flipping');
-        
-        // After animation completes, update top half and reset
+        // Remove animation class after it completes
         setTimeout(() => {
-            top.textContent = newValue;
-            face.textContent = newValue;
-            card.classList.remove('flipping');
-        }, 600);
+            card.classList.remove('changing');
+        }, 300);
     }
 }
 
-// Update flip clock
+// Update flip clock (hours and minutes only)
 function updateClock() {
     const now = new Date();
     let hours = now.getHours();
     const minutes = now.getMinutes();
-    const seconds = now.getSeconds();
     
     // Determine AM/PM
     const ampm = hours >= 12 ? 'PM' : 'AM';
@@ -82,15 +76,12 @@ function updateClock() {
     // Pad with zeros
     const hoursStr = String(hours).padStart(2, '0');
     const minutesStr = String(minutes).padStart(2, '0');
-    const secondsStr = String(seconds).padStart(2, '0');
     
     // Update each digit
     flipCard('flip-hour1', hoursStr[0]);
     flipCard('flip-hour2', hoursStr[1]);
     flipCard('flip-min1', minutesStr[0]);
     flipCard('flip-min2', minutesStr[1]);
-    flipCard('flip-sec1', secondsStr[0]);
-    flipCard('flip-sec2', secondsStr[1]);
     
     // Update AM/PM
     document.getElementById('flip-ampm').textContent = ampm;

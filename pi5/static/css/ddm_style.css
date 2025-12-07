@@ -143,86 +143,67 @@ body {
 .flip-clock {
     display: flex;
     align-items: center;
-    gap: 4px;
-    perspective: 1000px;
+    gap: 6px;
 }
 
 .flip-unit {
     position: relative;
-    width: 36px;
-    height: 52px;
+    width: 40px;
+    height: 56px;
 }
 
 .flip-card {
     position: relative;
     width: 100%;
     height: 100%;
-    transform-style: preserve-3d;
-}
-
-.flip-card-top,
-.flip-card-bottom,
-.flip-card-face {
-    position: absolute;
-    width: 100%;
-    height: 50%;
-    overflow: hidden;
     background: linear-gradient(to bottom, #1a1a1a 0%, #0d0d0d 100%);
-    border: 1px solid #FFD700;
+    border: 2px solid #FFD700;
+    border-radius: 6px;
     box-shadow: 
-        0 2px 4px rgba(0, 0, 0, 0.3),
-        inset 0 1px 0 rgba(255, 215, 0, 0.2);
+        0 3px 6px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 215, 0, 0.15);
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+}
+
+.flip-card::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: #000;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.flip-number {
     font-family: 'Courier New', monospace;
-    font-size: 1.8em;
+    font-size: 2em;
     font-weight: bold;
     color: #ffffff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+    transition: opacity 0.2s ease;
 }
 
-.flip-card-top {
-    top: 0;
-    border-radius: 4px 4px 0 0;
-    border-bottom: 0.5px solid #000;
-    align-items: flex-end;
-    padding-bottom: 2px;
+.flip-card.changing .flip-number {
+    animation: numberChange 0.3s ease;
 }
 
-.flip-card-bottom {
-    bottom: 0;
-    border-radius: 0 0 4px 4px;
-    border-top: 0.5px solid #333;
-    align-items: flex-start;
-    padding-top: 2px;
-}
-
-.flip-card-face {
-    top: 0;
-    border-radius: 4px 4px 0 0;
-    border-bottom: 0.5px solid #000;
-    transform-origin: bottom;
-    transform: rotateX(0deg);
-    backface-visibility: hidden;
-    z-index: 2;
-    align-items: flex-end;
-    padding-bottom: 2px;
-}
-
-.flip-card.flipping .flip-card-face {
-    animation: flipDown 0.6s ease-in-out;
-}
-
-@keyframes flipDown {
+@keyframes numberChange {
     0% {
-        transform: rotateX(0deg);
+        opacity: 1;
+        transform: scale(1);
     }
     50% {
-        transform: rotateX(-90deg);
+        opacity: 0.3;
+        transform: scale(0.95);
     }
     100% {
-        transform: rotateX(-180deg);
+        opacity: 1;
+        transform: scale(1);
     }
 }
 
