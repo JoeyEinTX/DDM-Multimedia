@@ -15,12 +15,13 @@ function showLoader() {
 }
 
 // Hide loading indicator (with minimum display time)
-function hideLoader() {
+function hideLoader(immediate = false) {
     const loader = document.getElementById('loader');
     
-    if (loaderStartTime === null) {
-        // Loader wasn't shown, just hide immediately
+    // If immediate flag is set (e.g., for errors), skip minimum time
+    if (immediate || loaderStartTime === null) {
         loader.classList.remove('show');
+        loaderStartTime = null;
         return;
     }
     
@@ -189,16 +190,16 @@ async function sendCommand(command, buttonElement, toggle = false) {
                 showNotification('Test stopped', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
                 clearActiveButton();
+                await checkESP32Status();
+                hideLoader();
             } else {
+                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
-            
-            await checkESP32Status();
         } catch (error) {
+            hideLoader(true); // Hide immediately on error
             console.error('Error stopping command:', error);
             showNotification('Connection error', 'error');
-        } finally {
-            hideLoader();
         }
         return;
     }
@@ -228,16 +229,16 @@ async function sendCommand(command, buttonElement, toggle = false) {
             if (toggle) {
                 setActiveButton(buttonElement);
             }
+            await checkESP32Status();
+            hideLoader();
         } else {
+            hideLoader(true); // Hide immediately on error
             showNotification(`Error: ${data.response}`, 'error');
         }
-        
-        await checkESP32Status();
     } catch (error) {
+        hideLoader(true); // Hide immediately on error
         console.error('Error sending command:', error);
         showNotification('Connection error', 'error');
-    } finally {
-        hideLoader();
     }
 }
 
@@ -272,16 +273,16 @@ async function sendAnimation(animName, buttonElement) {
                 document.getElementById('current-mode').textContent = animName;
                 // Clear any active button
                 clearActiveButton();
+                await checkESP32Status();
+                hideLoader();
             } else {
+                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
-            
-            await checkESP32Status();
         } catch (error) {
+            hideLoader(true); // Hide immediately on error
             console.error('Error sending animation:', error);
             showNotification('Connection error', 'error');
-        } finally {
-            hideLoader();
         }
         return;
     }
@@ -301,16 +302,16 @@ async function sendAnimation(animName, buttonElement) {
                 showNotification('Animation stopped', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
                 clearActiveButton();
+                await checkESP32Status();
+                hideLoader();
             } else {
+                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
-            
-            await checkESP32Status();
         } catch (error) {
+            hideLoader(true); // Hide immediately on error
             console.error('Error stopping animation:', error);
             showNotification('Connection error', 'error');
-        } finally {
-            hideLoader();
         }
         return;
     }
@@ -328,16 +329,16 @@ async function sendAnimation(animName, buttonElement) {
             showNotification(`Animation: ${animName}`, 'success');
             document.getElementById('current-mode').textContent = animName;
             setActiveButton(buttonElement);
+            await checkESP32Status();
+            hideLoader();
         } else {
+            hideLoader(true); // Hide immediately on error
             showNotification(`Error: ${data.response}`, 'error');
         }
-        
-        await checkESP32Status();
     } catch (error) {
+        hideLoader(true); // Hide immediately on error
         console.error('Error sending animation:', error);
         showNotification('Connection error', 'error');
-    } finally {
-        hideLoader();
     }
 }
 
@@ -360,16 +361,16 @@ async function sendReset() {
                 hideResultsBanner();
                 // Clear active button state
                 clearActiveButton();
+                await checkESP32Status();
+                hideLoader();
             } else {
+                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
-            
-            await checkESP32Status();
         } catch (error) {
+            hideLoader(true); // Hide immediately on error
             console.error('Error resetting:', error);
             showNotification('Connection error', 'error');
-        } finally {
-            hideLoader();
         }
     }
 }
@@ -407,16 +408,16 @@ async function emergencyStop() {
                 const icon = document.getElementById('emergency-icon');
                 expanded.classList.remove('active');
                 icon.style.display = 'flex';
+                await checkESP32Status();
+                hideLoader();
             } else {
+                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
-            
-            await checkESP32Status();
         } catch (error) {
+            hideLoader(true); // Hide immediately on error
             console.error('Error with emergency stop:', error);
             showNotification('Connection error', 'error');
-        } finally {
-            hideLoader();
         }
     }
 }
@@ -508,16 +509,16 @@ async function applyResults() {
             // Show results banner
             showResultsBanner(winHorse, placeHorse, showHorse);
             closeResultsModal();
+            await checkESP32Status();
+            hideLoader();
         } else {
+            hideLoader(true); // Hide immediately on error
             showNotification(`Error: ${data.response || data.error}`, 'error');
         }
-        
-        await checkESP32Status();
     } catch (error) {
+        hideLoader(true); // Hide immediately on error
         console.error('Error setting results:', error);
         showNotification('Connection error', 'error');
-    } finally {
-        hideLoader();
     }
 }
 
