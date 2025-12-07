@@ -39,11 +39,61 @@ function clearActiveButton() {
     }
 }
 
-// Update clock
+// Flip clock animation
+function flipCard(cardId, newValue) {
+    const card = document.getElementById(cardId);
+    const currentValue = card.querySelector('.flip-card-top').textContent;
+    
+    // Only flip if value changed
+    if (currentValue !== newValue) {
+        const top = card.querySelector('.flip-card-top');
+        const bottom = card.querySelector('.flip-card-bottom');
+        const face = card.querySelector('.flip-card-face');
+        
+        // Set new value on bottom half
+        bottom.textContent = newValue;
+        
+        // Trigger flip animation
+        card.classList.add('flipping');
+        
+        // After animation completes, update top half and reset
+        setTimeout(() => {
+            top.textContent = newValue;
+            face.textContent = newValue;
+            card.classList.remove('flipping');
+        }, 600);
+    }
+}
+
+// Update flip clock
 function updateClock() {
     const now = new Date();
-    const timeString = now.toLocaleTimeString('en-US', { hour12: true });
-    document.getElementById('current-time').textContent = timeString;
+    let hours = now.getHours();
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+    
+    // Determine AM/PM
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    
+    // Convert to 12-hour format
+    hours = hours % 12;
+    hours = hours ? hours : 12; // 0 should be 12
+    
+    // Pad with zeros
+    const hoursStr = String(hours).padStart(2, '0');
+    const minutesStr = String(minutes).padStart(2, '0');
+    const secondsStr = String(seconds).padStart(2, '0');
+    
+    // Update each digit
+    flipCard('flip-hour1', hoursStr[0]);
+    flipCard('flip-hour2', hoursStr[1]);
+    flipCard('flip-min1', minutesStr[0]);
+    flipCard('flip-min2', minutesStr[1]);
+    flipCard('flip-sec1', secondsStr[0]);
+    flipCard('flip-sec2', secondsStr[1]);
+    
+    // Update AM/PM
+    document.getElementById('flip-ampm').textContent = ampm;
 }
 
 // Show notification
