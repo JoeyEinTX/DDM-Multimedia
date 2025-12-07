@@ -512,9 +512,26 @@ async function getWeather() {
     }
 }
 
+// Handle splash screen fade-out
+function hideSplashScreen() {
+    const splash = document.getElementById('splash-screen');
+    if (splash) {
+        // Add fade-out class to trigger CSS animation
+        splash.classList.add('fade-out');
+        
+        // Remove from DOM after animation completes
+        setTimeout(() => {
+            splash.style.display = 'none';
+        }, 500); // Match CSS animation duration
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
+    
+    // Hide splash screen after 2 seconds
+    setTimeout(hideSplashScreen, 2000);
     
     // Update clock immediately and every second
     updateClock();
