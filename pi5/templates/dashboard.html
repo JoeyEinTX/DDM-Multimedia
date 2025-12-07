@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ system_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}">
-    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
 </head>
 <body>
     <!-- Splash Screen -->
@@ -68,6 +67,7 @@
                     <span class="banner-divider">|</span>
                     <span class="banner-result">🥉 Horse <span id="banner-show">-</span></span>
                 </div>
+                <button class="btn-clear-results" onclick="clearResults()">Clear Results</button>
             </div>
         </div>
 
@@ -175,14 +175,7 @@
     <div id="loader" class="loader">
         <div class="loader-backdrop"></div>
         <div class="loader-content">
-            <lottie-player
-                src="https://lottie.host/4c8e1a57-27e4-4ed3-8de4-f3c6b6f217db/Pb4iFKZuQ6.json"
-                background="transparent"
-                speed="1"
-                style="width: 80px; height: 80px;"
-                loop
-                autoplay>
-            </lottie-player>
+            <img src="{{ url_for('static', filename='css/ddm_logo.png') }}" alt="Loading" class="loader-logo">
         </div>
     </div>
 

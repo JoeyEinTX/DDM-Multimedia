@@ -365,6 +365,31 @@ body {
     font-size: 1em;
 }
 
+.btn-clear-results {
+    margin-top: 12px;
+    padding: 8px 20px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 2px solid #666666;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: transparent;
+    color: #666666;
+}
+
+.btn-clear-results:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #888888;
+    color: #888888;
+}
+
+.btn-clear-results:active {
+    transform: scale(0.98);
+}
+
 /* Control Panels */
 .panels {
     display: grid;
@@ -789,62 +814,22 @@ body {
     transform: translate(-50%, -50%);
 }
 
-.horse-container {
-    width: 50px;
-    height: 40px;
-    animation: horseBob 0.6s ease-in-out infinite;
+.loader-logo {
+    width: 120px;
+    height: auto;
+    animation: logoPulse 1.5s ease-in-out infinite;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
 }
 
-.horse-silhouette {
-    width: 100%;
-    height: 100%;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
-}
-
-/* Galloping animation for legs */
-.leg1 {
-    animation: gallop1 0.6s ease-in-out infinite;
-    transform-origin: center top;
-}
-
-.leg2 {
-    animation: gallop2 0.6s ease-in-out infinite;
-    transform-origin: center top;
-}
-
-.leg3 {
-    animation: gallop3 0.6s ease-in-out infinite;
-    transform-origin: center top;
-}
-
-.leg4 {
-    animation: gallop4 0.6s ease-in-out infinite;
-    transform-origin: center top;
-}
-
-@keyframes horseBob {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-3px); }
-}
-
-@keyframes gallop1 {
-    0%, 100% { transform: rotate(-15deg); }
-    50% { transform: rotate(15deg); }
-}
-
-@keyframes gallop2 {
-    0%, 100% { transform: rotate(15deg); }
-    50% { transform: rotate(-15deg); }
-}
-
-@keyframes gallop3 {
-    0%, 100% { transform: rotate(15deg); }
-    50% { transform: rotate(-15deg); }
-}
-
-@keyframes gallop4 {
-    0%, 100% { transform: rotate(-15deg); }
-    50% { transform: rotate(15deg); }
+@keyframes logoPulse {
+    0%, 100% {
+        opacity: 0.6;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
 }
 
 /* Notification */

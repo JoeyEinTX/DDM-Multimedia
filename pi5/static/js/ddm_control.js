@@ -281,7 +281,8 @@ async function sendReset() {
             if (data.success) {
                 showNotification('System reset', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
-                // Hide results banner on reset
+                // Clear results from localStorage and hide banner
+                localStorage.removeItem('raceResults');
                 hideResultsBanner();
                 // Clear active button state
                 clearActiveButton();
@@ -373,6 +374,26 @@ function hideResultsBanner() {
     banner.style.display = 'none';
 }
 
+// Clear results (remove from localStorage and hide banner)
+function clearResults() {
+    localStorage.removeItem('raceResults');
+    hideResultsBanner();
+    showNotification('Results cleared', 'success');
+}
+
+// Load results from localStorage
+function loadResultsFromStorage() {
+    const stored = localStorage.getItem('raceResults');
+    if (stored) {
+        try {
+            const results = JSON.parse(stored);
+            showResultsBanner(results.win, results.place, results.show);
+        } catch (error) {
+            console.error('Error loading results from storage:', error);
+        }
+    }
+}
+
 // Apply results
 async function applyResults() {
     const winHorse = parseInt(document.getElementById('win-horse').value);
@@ -404,6 +425,12 @@ async function applyResults() {
         if (data.success) {
             showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
             document.getElementById('current-mode').textContent = 'RESULTS';
+            // Save results to localStorage
+            localStorage.setItem('raceResults', JSON.stringify({
+                win: winHorse,
+                place: placeHorse,
+                show: showHorse
+            }));
             // Show results banner
             showResultsBanner(winHorse, placeHorse, showHorse);
             closeResultsModal();
@@ -543,6 +570,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Get system status
     getSystemStatus();
+    
+    // Load saved results from localStorage
+    loadResultsFromStorage();
     
     // Get weather forecast immediately and every 30 minutes
     getWeather();
