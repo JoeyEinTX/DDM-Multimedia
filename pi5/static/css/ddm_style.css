@@ -123,14 +123,10 @@ body {
 
 .sub-title {
     font-family: Impact, 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
-    font-size: 1em;
+    font-size: 1.3em;
     font-weight: 700;
     letter-spacing: 4px;
-    background: linear-gradient(90deg, #4ECDC4, #E53935, #22c55e, #f59e0b);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    opacity: 0.9;
+    color: #22c55e;
 }
 
 .header-info {
