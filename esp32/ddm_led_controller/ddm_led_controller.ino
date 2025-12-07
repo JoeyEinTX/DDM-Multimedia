@@ -94,8 +94,7 @@ void setup() {
     server.begin();
     Serial.println("[Socket] Server started on port " + String(SOCKET_PORT));
     Serial.println("[Socket] Ready to receive commands");
-    Serial.println("="*50 + "\n");
-    
+    Serial.println("==================================================\n");    
     // Startup blink
     blinkStatus(3);
 }
@@ -457,48 +456,41 @@ void animBetting60() {
 }
 
 /**
- * ANIM:BETTING_30 - Amber pulse starts at center, expands outward
+ * ANIM:BETTING_30 - Amber STROBE effect (urgent 30-second warning)
  */
 void animBetting30() {
     static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 150) return;
+    if (millis() - lastUpdate < 75) return; // 75ms strobe interval
     lastUpdate = millis();
     
-    FastLED.clear();
-    
-    // Center cups are 10 and 11
-    int leftCup = 10 - animStep;
-    int rightCup = 11 + animStep;
-    
-    if (leftCup >= 1) setCup(leftCup, COLOR_AMBER);
-    if (rightCup <= 20) setCup(rightCup, COLOR_AMBER);
+    // Toggle on/off for strobe effect
+    if (animStep % 2 == 0) {
+        fill_solid(leds, LED_COUNT, COLOR_AMBER);
+    } else {
+        FastLED.clear();
+    }
     
     FastLED.show();
-    
     animStep++;
-    if (animStep > 10) {
-        animStep = 0; // Loop
-    }
 }
 
 /**
- * ANIM:FINAL_CALL - Red urgent pulse, edges inward (1+20, 2+19, etc.)
+ * ANIM:FINAL_CALL - Aggressive red STROBE (final call urgency)
  */
 void animFinalCall() {
     static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 100) return; // Fast urgency
+    if (millis() - lastUpdate < 40) return; // 40ms aggressive strobe
     lastUpdate = millis();
     
-    FastLED.clear();
-    
-    if (animStep < 10) {
-        setCup(1 + animStep, COLOR_RED);
-        setCup(20 - animStep, COLOR_RED);
-        FastLED.show();
-        animStep++;
+    // Rapid on/off toggle for intense strobe
+    if (animStep % 2 == 0) {
+        fill_solid(leds, LED_COUNT, COLOR_RED);
     } else {
-        animStep = 0; // Loop
+        FastLED.clear();
     }
+    
+    FastLED.show();
+    animStep++;
 }
 
 /**
@@ -547,7 +539,7 @@ void animChaos() {
 }
 
 /**
- * ANIM:FINISH - Checkered flag pattern (odd vs even cups alternate)
+ * ANIM:FINISH - Green checkered flag pattern (celebration!)
  */
 void animFinish() {
     static unsigned long lastUpdate = 0;
@@ -558,14 +550,14 @@ void animFinish() {
     
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (animStep % 2 == 0) {
-            // Even step: odd cups white, even cups black
+            // Even step: odd cups green, even cups black
             if (cup % 2 == 1) {
-                setCup(cup, COLOR_WHITE);
+                setCup(cup, COLOR_GREEN);
             }
         } else {
-            // Odd step: even cups white, odd cups black
+            // Odd step: even cups green, odd cups black
             if (cup % 2 == 0) {
-                setCup(cup, COLOR_WHITE);
+                setCup(cup, COLOR_GREEN);
             }
         }
     }
