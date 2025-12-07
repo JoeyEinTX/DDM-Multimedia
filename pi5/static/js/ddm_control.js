@@ -3,16 +3,41 @@
 // Track active button
 let activeButton = null;
 
+// Track loading start time
+let loaderStartTime = null;
+const MIN_LOADER_DISPLAY_TIME = 2000; // 2 seconds minimum
+
 // Show loading indicator
 function showLoader() {
     const loader = document.getElementById('loader');
     loader.classList.add('show');
+    loaderStartTime = Date.now(); // Record when loader started
 }
 
-// Hide loading indicator
+// Hide loading indicator (with minimum display time)
 function hideLoader() {
     const loader = document.getElementById('loader');
-    loader.classList.remove('show');
+    
+    if (loaderStartTime === null) {
+        // Loader wasn't shown, just hide immediately
+        loader.classList.remove('show');
+        return;
+    }
+    
+    const elapsed = Date.now() - loaderStartTime;
+    const remaining = MIN_LOADER_DISPLAY_TIME - elapsed;
+    
+    if (remaining > 0) {
+        // Not enough time has passed, delay hiding
+        setTimeout(() => {
+            loader.classList.remove('show');
+            loaderStartTime = null;
+        }, remaining);
+    } else {
+        // Minimum time has passed, hide immediately
+        loader.classList.remove('show');
+        loaderStartTime = null;
+    }
 }
 
 // Set active button
