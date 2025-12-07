@@ -344,9 +344,8 @@ body {
 
 .weather-scroll {
     display: flex;
-    justify-content: space-evenly;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     padding: 0 20px;
     overflow-x: auto;
     scroll-behavior: smooth;
@@ -371,9 +370,8 @@ body {
 }
 
 .weather-item {
-    flex: 1;
-    min-width: 70px;
-    max-width: 100px;
+    flex: 1 1 0;
+    min-width: 0;
     background: rgba(255, 255, 255, 0.05);
     padding: 12px 8px;
     border-radius: 6px;
@@ -388,11 +386,9 @@ body {
     transform: translateY(-2px);
 }
 
-/* NOW card - larger and prominent */
+/* NOW card - slightly larger and prominent */
 .weather-item.now {
-    flex: 1.5;
-    min-width: 100px;
-    max-width: 140px;
+    flex: 1.2 1 0;
     background: rgba(78, 205, 196, 0.1);
     border: 2px solid #4ECDC4;
     box-shadow: 0 0 12px rgba(78, 205, 196, 0.3);
@@ -410,12 +406,6 @@ body {
 .weather-item.now .weather-temp {
     font-size: 1.4em;
     font-weight: 700;
-}
-
-/* Current hour accent */
-.weather-item.current-hour {
-    border: 2px solid #4ECDC4;
-    box-shadow: 0 0 8px rgba(78, 205, 196, 0.4);
 }
 
 .weather-time {

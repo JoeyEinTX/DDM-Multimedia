@@ -534,17 +534,12 @@ async function getWeather() {
             const weatherScroll = document.getElementById('weather-scroll');
             weatherScroll.innerHTML = '';
             
-            // Get current hour
+            // Get current hour for highlighting
             const now = new Date();
             const currentHour = now.getHours();
             
-            // Filter to get next 12 hours starting from current hour
-            const hourlyForecasts = data.hourly.filter(item => {
-                const forecastTime = new Date(item.time);
-                const forecastHour = forecastTime.getHours();
-                // Get forecasts for the next 12 hours
-                return forecastHour >= currentHour && forecastHour < currentHour + 12;
-            }).slice(0, 12);
+            // Simply take the first 12 hours from the API (already sorted chronologically)
+            const hourlyForecasts = data.hourly.slice(0, 12);
             
             hourlyForecasts.forEach((item, index) => {
                 const time = new Date(item.time);
@@ -559,11 +554,6 @@ async function getWeather() {
                 // Add NOW class to first card
                 if (index === 0) {
                     weatherItem.classList.add('now');
-                }
-                
-                // Add current-hour class to current hour
-                if (hours === currentHour) {
-                    weatherItem.classList.add('current-hour');
                 }
                 
                 // Get temperature color class
