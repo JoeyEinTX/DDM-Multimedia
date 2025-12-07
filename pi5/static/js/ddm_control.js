@@ -35,6 +35,7 @@ function setActiveButton(button) {
 function clearActiveButton() {
     if (activeButton) {
         activeButton.classList.remove('active');
+        activeButton.blur(); // Remove focus to clear any lingering highlights
         activeButton = null;
     }
 }

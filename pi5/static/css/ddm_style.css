@@ -596,6 +596,7 @@ body {
     background: transparent;
     color: #888888;
     box-shadow: none;
+    outline: none;
 }
 
 .btn:hover {
@@ -603,11 +604,20 @@ body {
     box-shadow: none;
 }
 
+.btn:focus {
+    outline: none;
+    background: transparent;
+}
+
 .btn:active {
     transform: scale(0.98);
 }
 
 .btn.active {
+    background: rgba(136, 136, 136, 0.15);
+}
+
+.btn.active:focus {
     background: rgba(136, 136, 136, 0.15);
 }
 
