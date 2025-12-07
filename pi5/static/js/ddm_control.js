@@ -39,28 +39,35 @@ function clearActiveButton() {
     }
 }
 
-// Flip clock animation - simple fade effect
+// Flip clock animation - true 3D split-flap effect
 function flipCard(cardId, newValue) {
-    const card = document.getElementById(cardId);
-    const numberElement = card.querySelector('.flip-number');
-    const currentValue = numberElement.textContent;
+    const flipCard = document.getElementById(cardId);
+    const upperInner = flipCard.querySelector('.flip-card-upper-inner');
+    const lowerInner = flipCard.querySelector('.flip-card-lower-inner');
+    const flippingInner = flipCard.querySelector('.flip-card-flipping-inner');
     
-    // Only animate if value changed
+    const currentValue = upperInner.textContent;
+    
+    // Only flip if value changed
     if (currentValue !== newValue) {
-        // Add changing class for animation
-        card.classList.add('changing');
+        // Set flipping section to show current value
+        flippingInner.textContent = currentValue;
         
-        // Update the number
-        numberElement.textContent = newValue;
+        // Set lower section to show new value (will be revealed)
+        lowerInner.textContent = newValue;
         
-        // Remove animation class after it completes
+        // Start flip animation
+        flipCard.classList.add('flipping');
+        
+        // After flip completes, update upper section and reset
         setTimeout(() => {
-            card.classList.remove('changing');
-        }, 300);
+            upperInner.textContent = newValue;
+            flipCard.classList.remove('flipping');
+        }, 500);
     }
 }
 
-// Update flip clock (hours and minutes only)
+// Update flip clock (hours, minutes, and AM/PM)
 function updateClock() {
     const now = new Date();
     let hours = now.getHours();
@@ -84,7 +91,7 @@ function updateClock() {
     flipCard('flip-min2', minutesStr[1]);
     
     // Update AM/PM
-    document.getElementById('flip-ampm').textContent = ampm;
+    flipCard('flip-ampm', ampm);
 }
 
 // Show notification
