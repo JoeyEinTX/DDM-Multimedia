@@ -336,29 +336,46 @@ body {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.1);
     overflow: hidden;
+    position: relative;
+}
+
+/* Fade indicator on right edge */
+.weather-forecast::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 60px;
+    background: linear-gradient(to right, transparent, rgba(12, 24, 32, 0.8));
+    pointer-events: none;
+    z-index: 1;
 }
 
 .weather-scroll {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 12px;
     padding: 0 20px;
     overflow-x: auto;
     scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
 }
 
+/* Hide scrollbar for Webkit browsers but keep functionality */
 .weather-scroll::-webkit-scrollbar {
-    height: 4px;
+    height: 6px;
 }
 
 .weather-scroll::-webkit-scrollbar-track {
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 .weather-scroll::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.2);
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 .weather-scroll::-webkit-scrollbar-thumb:hover {
@@ -366,8 +383,10 @@ body {
 }
 
 .weather-item {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 0 0 auto;
+    width: calc((100% - 80px - 48px) / 5); /* 5 visible cards, accounting for padding and gaps */
+    min-width: 140px;
+    max-width: 180px;
     background: rgba(255, 255, 255, 0.05);
     padding: 12px 8px;
     border-radius: 6px;
@@ -384,7 +403,8 @@ body {
 
 /* NOW card - slightly larger and prominent */
 .weather-item.now {
-    flex: 1.2 1 0;
+    width: calc((100% - 80px - 48px) / 5 * 1.15); /* 15% larger than regular cards */
+    min-width: 160px;
     background: rgba(78, 205, 196, 0.1);
     border: 2px solid #4ECDC4;
     box-shadow: 0 0 12px rgba(78, 205, 196, 0.3);
