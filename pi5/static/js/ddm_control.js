@@ -93,7 +93,8 @@ function createDotDigit(char) {
         for (let col = 0; col < 5; col++) {
             const dot = document.createElement('div');
             dot.className = 'dot';
-            if (row < 5 && (pattern[col] & (1 << (4 - row)))) {
+            // Use bit 0 for top row (row 0), bit 4 for bottom data row (row 4)
+            if (row < 5 && (pattern[col] & (1 << row))) {
                 dot.classList.add('lit');
             }
             digit.appendChild(dot);
