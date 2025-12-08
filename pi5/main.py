@@ -196,7 +196,7 @@ def api_status():
 
 @app.route('/api/weather', methods=['GET'])
 def api_weather():
-    """Get weather forecast with caching"""
+    """Get weather forecast with caching - returns 12 hours starting from current hour"""
     global weather_cache
     
     # Check if API key is configured
@@ -223,15 +223,41 @@ def api_weather():
         params = {
             'key': WEATHER_API_KEY,
             'q': WEATHER_LOCATION,
-            'hours': 24
+            'days': 2  # Request 2 days to ensure we have tomorrow's hours
         }
         
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
-        # Get hourly data from the forecast
-        hourly_data = data.get('forecast', {}).get('forecastday', [{}])[0].get('hour', [])
+        
+        # Get current hour from API's location time
+        localtime = data.get('location', {}).get('localtime', '')  # Format: "2025-12-07 20:35"
+        current_hour = int(localtime.split(' ')[1].split(':')[0]) if localtime else datetime.now().hour
+        
+        # Get forecast days
+        forecast_days = data.get('forecast', {}).get('forecastday', [])
+        
+        # Collect hourly data starting from current hour
+        all_hours = []
+        
+        # Get today's hours (from current hour onwards)
+        if len(forecast_days) > 0:
+            today_hours = forecast_days[0].get('hour', [])
+            for hour_data in today_hours:
+                hour_time_str = hour_data.get('time', '')  # Format: "2025-12-07 20:00"
+                hour = int(hour_time_str.split(' ')[1].split(':')[0]) if hour_time_str else 0
+                if hour >= current_hour:
+                    all_hours.append(hour_data)
+        
+        # Get tomorrow's hours if we need more to reach 12 hours
+        if len(forecast_days) > 1 and len(all_hours) < 12:
+            tomorrow_hours = forecast_days[1].get('hour', [])
+            needed_hours = 12 - len(all_hours)
+            all_hours.extend(tomorrow_hours[:needed_hours])
+        
+        # Take exactly 12 hours
+        hourly_data = all_hours[:12]
         
         # Cache the results
         weather_cache['data'] = hourly_data
@@ -241,7 +267,8 @@ def api_weather():
             'success': True,
             'hourly': hourly_data,
             'cached': False,
-            'location': data.get('location', {}).get('name', WEATHER_LOCATION)
+            'location': data.get('location', {}).get('name', WEATHER_LOCATION),
+            'current_hour': current_hour
         })
         
     except requests.RequestException as e:
