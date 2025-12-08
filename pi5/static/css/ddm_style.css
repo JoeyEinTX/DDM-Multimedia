@@ -388,7 +388,7 @@ body {
     min-width: 140px;
     max-width: 180px;
     background: rgba(255, 255, 255, 0.05);
-    padding: 12px 8px;
+    padding: 16px 10px;
     border-radius: 6px;
     text-align: center;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -411,38 +411,38 @@ body {
 }
 
 .weather-now-label {
-    font-size: 0.7em;
+    font-size: 0.85em;
     color: #4ECDC4;
-    font-weight: 700;
-    letter-spacing: 1px;
-    margin-bottom: 4px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    margin-bottom: 6px;
     text-transform: uppercase;
 }
 
 .weather-item.now .weather-temp {
-    font-size: 1.4em;
-    font-weight: 700;
+    font-size: 1.8em;
+    font-weight: 800;
 }
 
 .weather-time {
-    font-size: 0.85em;
+    font-size: 1.1em;
     color: #888888;
-    margin-bottom: 8px;
-    font-weight: 500;
+    margin-bottom: 10px;
+    font-weight: 600;
 }
 
 .weather-icon-img {
-    width: 48px;
-    height: 48px;
-    margin: 4px auto;
+    width: 64px;
+    height: 64px;
+    margin: 8px auto;
     display: block;
 }
 
 .weather-temp {
-    font-size: 1.1em;
+    font-size: 1.5em;
     color: #ffffff;
-    font-weight: 600;
-    margin-top: 8px;
+    font-weight: 700;
+    margin-top: 10px;
 }
 
 /* Temperature color coding */
