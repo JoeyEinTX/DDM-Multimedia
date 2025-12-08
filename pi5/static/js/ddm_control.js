@@ -66,35 +66,7 @@ function clearActiveButton() {
     }
 }
 
-// Flip clock animation - true 3D split-flap effect
-function flipCard(cardId, newValue) {
-    const flipCard = document.getElementById(cardId);
-    const upperInner = flipCard.querySelector('.flip-card-upper-inner');
-    const lowerInner = flipCard.querySelector('.flip-card-lower-inner');
-    const flippingInner = flipCard.querySelector('.flip-card-flipping-inner');
-    
-    const currentValue = upperInner.textContent;
-    
-    // Only flip if value changed
-    if (currentValue !== newValue) {
-        // Set flipping section to show current value
-        flippingInner.textContent = currentValue;
-        
-        // Set lower section to show new value (will be revealed)
-        lowerInner.textContent = newValue;
-        
-        // Start flip animation
-        flipCard.classList.add('flipping');
-        
-        // After flip completes, update upper section and reset
-        setTimeout(() => {
-            upperInner.textContent = newValue;
-            flipCard.classList.remove('flipping');
-        }, 500);
-    }
-}
-
-// Update flip clock (hours, minutes, and AM/PM)
+// Update tote board clock - simple text update
 function updateClock() {
     const now = new Date();
     let hours = now.getHours();
@@ -107,18 +79,14 @@ function updateClock() {
     hours = hours % 12;
     hours = hours ? hours : 12; // 0 should be 12
     
-    // Pad with zeros
+    // Format time
     const hoursStr = String(hours).padStart(2, '0');
     const minutesStr = String(minutes).padStart(2, '0');
+    const timeStr = `${hoursStr}:${minutesStr}`;
     
-    // Update each digit
-    flipCard('flip-hour1', hoursStr[0]);
-    flipCard('flip-hour2', hoursStr[1]);
-    flipCard('flip-min1', minutesStr[0]);
-    flipCard('flip-min2', minutesStr[1]);
-    
-    // Update AM/PM
-    flipCard('flip-ampm', ampm);
+    // Update display
+    document.getElementById('tote-time').textContent = timeStr;
+    document.getElementById('tote-ampm').textContent = ampm;
 }
 
 // Show notification
