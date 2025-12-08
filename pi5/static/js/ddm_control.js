@@ -571,8 +571,10 @@ async function getWeather() {
             const hourlyForecasts = data.hourly.slice(0, 12);
             
             hourlyForecasts.forEach((item, index) => {
-                const time = new Date(item.time);
-                const hours = time.getHours();
+                // Parse hour directly from time string (already in local time)
+                // Format: "YYYY-MM-DD HH:MM" e.g., "2025-12-07 19:00"
+                const timeStr = item.time.split(' ')[1]; // Get "HH:MM"
+                const hours = parseInt(timeStr.split(':')[0]); // Get hour as integer
                 const ampm = hours >= 12 ? 'PM' : 'AM';
                 const displayHour = hours % 12 || 12;
                 const temp = Math.round(item.temp_f);
