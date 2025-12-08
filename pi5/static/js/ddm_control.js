@@ -591,10 +591,13 @@ async function getWeather() {
                 const tempColorClass = getTempColorClass(temp);
                 
                 // Build HTML with NOW label for first card
+                // Replace 64x64 with 128x128 in icon URL for larger icons
+                const iconUrl = item.condition.icon.replace('64x64', '128x128');
+                
                 weatherItem.innerHTML = `
                     ${index === 0 ? '<div class="weather-now-label">NOW</div>' : ''}
                     <div class="weather-time">${displayHour} ${ampm}</div>
-                    <img src="https:${item.condition.icon}" alt="${item.condition.text}" class="weather-icon-img">
+                    <img src="https:${iconUrl}" alt="${item.condition.text}" class="weather-icon-img">
                     <div class="weather-temp ${tempColorClass}">${temp}°F</div>
                 `;
                 
