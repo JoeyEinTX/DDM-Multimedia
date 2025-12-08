@@ -157,6 +157,9 @@ function showNotification(message, type = 'success') {
     }, 3000);
 }
 
+// Track ESP32 connection state
+let esp32WasOnline = false;
+
 // Check ESP32 status
 async function checkESP32Status() {
     try {
@@ -164,18 +167,37 @@ async function checkESP32Status() {
         const data = await response.json();
         
         const statusElement = document.getElementById('esp32-status');
-        if (data.success) {
+        const isOnline = data.success;
+        
+        if (isOnline) {
             statusElement.textContent = 'ONLINE';
             statusElement.className = 'status-value status-online';
+            esp32WasOnline = true;
         } else {
             statusElement.textContent = 'OFFLINE';
             statusElement.className = 'status-value status-offline';
+            
+            // If ESP32 just went offline, clear active buttons
+            if (esp32WasOnline) {
+                clearActiveButton();
+                document.getElementById('current-mode').textContent = 'DISCONNECTED';
+                showNotification('ESP32 disconnected - animation stopped', 'error');
+                esp32WasOnline = false;
+            }
         }
     } catch (error) {
         console.error('Error checking ESP32 status:', error);
         const statusElement = document.getElementById('esp32-status');
         statusElement.textContent = 'ERROR';
         statusElement.className = 'status-value status-offline';
+        
+        // If ESP32 just went offline, clear active buttons
+        if (esp32WasOnline) {
+            clearActiveButton();
+            document.getElementById('current-mode').textContent = 'DISCONNECTED';
+            showNotification('ESP32 disconnected - animation stopped', 'error');
+            esp32WasOnline = false;
+        }
     }
 }
 
