@@ -625,6 +625,37 @@ function hideSplashScreen() {
     }
 }
 
+// Toggle fullscreen mode
+function toggleFullscreen() {
+    const elem = document.documentElement;
+    
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        // Enter fullscreen
+        if (elem.requestFullscreen) {
+            elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) { // Safari
+            elem.webkitRequestFullscreen();
+        }
+    } else {
+        // Exit fullscreen
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) { // Safari
+            document.webkitExitFullscreen();
+        }
+    }
+}
+
+// Update fullscreen icon when fullscreen state changes
+function updateFullscreenIcon() {
+    const icon = document.getElementById('fullscreen-icon');
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        icon.textContent = '⛶'; // Exit fullscreen icon (same icon works for both)
+    } else {
+        icon.textContent = '⛶'; // Enter fullscreen icon
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
@@ -649,4 +680,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Get weather forecast immediately and every 30 minutes
     getWeather();
     setInterval(getWeather, 30 * 60 * 1000);
+    
+    // Listen for fullscreen changes
+    document.addEventListener('fullscreenchange', updateFullscreenIcon);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenIcon); // Safari
 });
