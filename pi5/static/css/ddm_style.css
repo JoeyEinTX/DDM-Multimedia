@@ -170,11 +170,11 @@ body {
     line-height: 1;
 }
 
-/* Tote Board Clock - Kentucky Derby LED Style */
+/* Tote Board Clock - Dot Matrix Light Bulb Style */
 .tote-clock-container {
     display: flex;
     align-items: center;
-    padding: 12px 20px;
+    padding: 16px 24px;
     background: #1a1a1a;
     border-radius: 8px;
     border: 2px solid #2a2a2a;
@@ -185,33 +185,68 @@ body {
 
 .tote-display {
     display: flex;
-    align-items: baseline;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Dot matrix digit container */
+.dot-digit {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(7, 1fr);
+    gap: 2px;
+    padding: 2px;
+}
+
+/* Individual dot/bulb */
+.dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #2a2a2a;
+    transition: all 0.1s ease;
+}
+
+/* Lit bulb */
+.dot.lit {
+    background: #FFB000;
+    box-shadow: 
+        0 0 4px rgba(255, 176, 0, 0.8),
+        0 0 8px rgba(255, 176, 0, 0.4),
+        inset 0 -1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Colon separator */
+.dot-colon {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
     gap: 8px;
+    padding: 0 4px;
 }
 
-.tote-time {
-    font-family: 'Courier New', 'Digital-7', monospace;
-    font-size: 2.8em;
-    font-weight: bold;
-    color: #FFB000;
-    letter-spacing: 4px;
-    text-shadow: 
-        0 0 8px rgba(255, 176, 0, 0.8),
-        0 0 16px rgba(255, 176, 0, 0.4),
-        0 2px 4px rgba(0, 0, 0, 0.8);
-    line-height: 1;
+.dot-colon .dot {
+    width: 5px;
+    height: 5px;
 }
 
-.tote-ampm {
-    font-family: 'Courier New', monospace;
-    font-size: 1.2em;
-    font-weight: bold;
-    color: #FFB000;
-    letter-spacing: 1px;
-    text-shadow: 
-        0 0 6px rgba(255, 176, 0, 0.6),
-        0 0 12px rgba(255, 176, 0, 0.3);
-    opacity: 0.9;
+/* AM/PM indicator */
+.dot-ampm {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.dot-ampm .dot-letter {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: 2px;
+}
+
+.dot-ampm .dot {
+    width: 4px;
+    height: 4px;
 }
 
 .icon {

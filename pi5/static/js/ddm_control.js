@@ -66,27 +66,82 @@ function clearActiveButton() {
     }
 }
 
-// Update tote board clock - simple text update
+// Dot matrix patterns (5x7 grid) - 1 = lit, 0 = unlit
+const dotPatterns = {
+    '0': [0x1F, 0x11, 0x11, 0x11, 0x1F],
+    '1': [0x00, 0x12, 0x1F, 0x10, 0x00],
+    '2': [0x1D, 0x15, 0x15, 0x15, 0x17],
+    '3': [0x11, 0x15, 0x15, 0x15, 0x0E],
+    '4': [0x07, 0x04, 0x04, 0x1F, 0x04],
+    '5': [0x17, 0x15, 0x15, 0x15, 0x1D],
+    '6': [0x1E, 0x15, 0x15, 0x15, 0x1C],
+    '7': [0x01, 0x01, 0x01, 0x1D, 0x03],
+    '8': [0x1F, 0x15, 0x15, 0x15, 0x1F],
+    '9': [0x07, 0x15, 0x15, 0x15, 0x0F],
+    'A': [0x1E, 0x05, 0x05, 0x05, 0x1E],
+    'P': [0x1F, 0x05, 0x05, 0x05, 0x02],
+    'M': [0x1F, 0x02, 0x04, 0x02, 0x1F]
+};
+
+// Create a digit element with dot matrix
+function createDotDigit(char) {
+    const digit = document.createElement('div');
+    digit.className = 'dot-digit';
+    const pattern = dotPatterns[char] || [0,0,0,0,0];
+    
+    for (let row = 0; row < 7; row++) {
+        for (let col = 0; col < 5; col++) {
+            const dot = document.createElement('div');
+            dot.className = 'dot';
+            if (row < 5 && (pattern[col] & (1 << (4 - row)))) {
+                dot.classList.add('lit');
+            }
+            digit.appendChild(dot);
+        }
+    }
+    return digit;
+}
+
+// Create colon separator
+function createColon() {
+    const colon = document.createElement('div');
+    colon.className = 'dot-colon';
+    const dot1 = document.createElement('div');
+    const dot2 = document.createElement('div');
+    dot1.className = 'dot lit';
+    dot2.className = 'dot lit';
+    colon.appendChild(dot1);
+    colon.appendChild(dot2);
+    return colon;
+}
+
+// Update dot matrix tote board clock
 function updateClock() {
     const now = new Date();
     let hours = now.getHours();
     const minutes = now.getMinutes();
-    
-    // Determine AM/PM
     const ampm = hours >= 12 ? 'PM' : 'AM';
     
-    // Convert to 12-hour format
     hours = hours % 12;
-    hours = hours ? hours : 12; // 0 should be 12
+    hours = hours ? hours : 12;
     
-    // Format time
-    const hoursStr = String(hours).padStart(2, '0');
-    const minutesStr = String(minutes).padStart(2, '0');
-    const timeStr = `${hoursStr}:${minutesStr}`;
+    const timeStr = String(hours).padStart(2, '0') + String(minutes).padStart(2, '0');
+    const display = document.getElementById('tote-display');
+    display.innerHTML = '';
     
-    // Update display
-    document.getElementById('tote-time').textContent = timeStr;
-    document.getElementById('tote-ampm').textContent = ampm;
+    // Add digits
+    display.appendChild(createDotDigit(timeStr[0]));
+    display.appendChild(createDotDigit(timeStr[1]));
+    display.appendChild(createColon());
+    display.appendChild(createDotDigit(timeStr[2]));
+    display.appendChild(createDotDigit(timeStr[3]));
+    
+    // Add AM/PM
+    const ampmDiv = document.createElement('div');
+    ampmDiv.className = 'dot-ampm';
+    ampmDiv.appendChild(createDotDigit(ampm[0]));
+    ampmDiv.appendChild(createDotDigit(ampm[1]));
+    display.appendChild(ampmDiv);
 }
 
 // Show notification
