@@ -432,10 +432,13 @@ body {
 }
 
 .weather-icon-img {
-    width: 64px;
-    height: 64px;
+    width: 64px !important;
+    height: 64px !important;
+    min-width: 64px;
+    min-height: 64px;
     margin: 8px auto;
     display: block;
+    object-fit: contain;
 }
 
 .weather-temp {
