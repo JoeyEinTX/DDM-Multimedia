@@ -66,9 +66,10 @@ function clearActiveButton() {
     }
 }
 
-// Dot matrix patterns (5x7 grid) - 1 = lit, 0 = unlit
+// Dot matrix patterns (5x5 grid) - 1 = lit, 0 = unlit
+// Slashed zero distinguishes 0 from O (authentic tote board style)
 const dotPatterns = {
-    '0': [0x1F, 0x11, 0x11, 0x11, 0x1F],
+    '0': [0x1F, 0x19, 0x15, 0x13, 0x1F],  // Slashed zero with diagonal
     '1': [0x00, 0x12, 0x1F, 0x10, 0x00],
     '2': [0x1D, 0x15, 0x15, 0x15, 0x17],
     '3': [0x11, 0x15, 0x15, 0x15, 0x0E],
