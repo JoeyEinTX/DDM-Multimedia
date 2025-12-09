@@ -599,62 +599,85 @@ function getTempColorClass(temp) {
     return 'temp-hot';
 }
 
-// Fetch and display weather forecast
+// Store weather data globally for modal
+let weatherData = null;
+
+// Fetch and display weather summary/modal
 async function getWeather() {
     try {
         const response = await fetch('/api/weather');
         const data = await response.json();
         
-        if (data.success && data.hourly) {
-            const weatherScroll = document.getElementById('weather-scroll');
-            weatherScroll.innerHTML = '';
+        if (data.success && data.current && data.hourly) {
+            weatherData = data;
             
-            // Get current hour for highlighting
+            // Update header summary
+            const summary = document.getElementById('weather-summary');
+            const current = data.current;
+            const temp = Math.round(current.temp_f);
+            const condition = current.condition.text;
+            const location = data.location || 'Dallas, TX';
+            
+            // Format: "Mon, Dec 8 • Dallas, TX • 49°F • Clear"
             const now = new Date();
-            const currentHour = now.getHours();
+            const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
             
-            // Simply take the first 12 hours from the API (already sorted chronologically)
-            const hourlyForecasts = data.hourly.slice(0, 12);
-            
-            hourlyForecasts.forEach((item, index) => {
-                // Parse hour directly from time string (already in local time)
-                // Format: "YYYY-MM-DD HH:MM" e.g., "2025-12-07 19:00"
-                const timeStr = item.time.split(' ')[1]; // Get "HH:MM"
-                const hours = parseInt(timeStr.split(':')[0]); // Get hour as integer
-                const ampm = hours >= 12 ? 'PM' : 'AM';
-                const displayHour = hours % 12 || 12;
-                const temp = Math.round(item.temp_f);
-                
-                const weatherItem = document.createElement('div');
-                weatherItem.className = 'weather-item';
-                
-                // Add NOW class to first card
-                if (index === 0) {
-                    weatherItem.classList.add('now');
-                }
-                
-                // Get temperature color class
-                const tempColorClass = getTempColorClass(temp);
-                
-                // Build HTML with NOW label for first card
-                // Replace 64x64 with 128x128 in icon URL for larger icons
-                const iconUrl = item.condition.icon.replace('64x64', '128x128');
-                
-                weatherItem.innerHTML = `
-                    ${index === 0 ? '<div class="weather-now-label">NOW</div>' : ''}
-                    <div class="weather-time">${displayHour} ${ampm}</div>
-                    <img src="https:${iconUrl}" alt="${item.condition.text}" class="weather-icon-img">
-                    <div class="weather-temp ${tempColorClass}">${temp}°F</div>
-                `;
-                
-                weatherScroll.appendChild(weatherItem);
-            });
+            summary.innerHTML = `${dateStr} • ${location} • ${temp}°F • ${condition}`;
+            summary.style.display = 'block';
         }
     } catch (error) {
         console.error('Error fetching weather:', error);
-        // Hide weather forecast on error
-        document.getElementById('weather-forecast').style.display = 'none';
+        // Hide weather summary on error
+        document.getElementById('weather-summary').style.display = 'none';
     }
+}
+
+// Open weather modal
+function openWeatherModal() {
+    if (!weatherData) return;
+    
+    const modal = document.getElementById('weather-modal');
+    const grid = document.getElementById('weather-modal-grid');
+    const title = document.getElementById('weather-modal-title');
+    
+    // Set title
+    const location = weatherData.location || 'Dallas, TX';
+    title.textContent = `Weather Forecast - ${location}`;
+    
+    // Clear grid
+    grid.innerHTML = '';
+    
+    // Populate with hourly forecasts
+    const hourlyForecasts = weatherData.hourly.slice(0, 12);
+    hourlyForecasts.forEach((item, index) => {
+        const timeStr = item.time.split(' ')[1];
+        const hours = parseInt(timeStr.split(':')[0]);
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const displayHour = hours % 12 || 12;
+        const temp = Math.round(item.temp_f);
+        const tempColorClass = getTempColorClass(temp);
+        const iconUrl = item.condition.icon.replace('64x64', '128x128');
+        
+        const weatherItem = document.createElement('div');
+        weatherItem.className = 'weather-modal-item';
+        if (index === 0) weatherItem.classList.add('current');
+        
+        weatherItem.innerHTML = `
+            <div class="weather-modal-time">${index === 0 ? 'NOW' : `${displayHour} ${ampm}`}</div>
+            <img src="https:${iconUrl}" alt="${item.condition.text}" class="weather-modal-icon">
+            <div class="weather-modal-temp ${tempColorClass}">${temp}°F</div>
+        `;
+        
+        grid.appendChild(weatherItem);
+    });
+    
+    modal.classList.add('active');
+}
+
+// Close weather modal
+function closeWeatherModal() {
+    const modal = document.getElementById('weather-modal');
+    modal.classList.remove('active');
 }
 
 // Handle splash screen fade-out

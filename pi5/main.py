@@ -211,9 +211,12 @@ def api_weather():
     if weather_cache['data'] and weather_cache['timestamp']:
         cache_age = (now - weather_cache['timestamp']).total_seconds() / 60
         if cache_age < WEATHER_CACHE_MINUTES:
+            cached_data = weather_cache['data']
             return jsonify({
                 'success': True,
-                'hourly': weather_cache['data'],
+                'hourly': cached_data.get('hourly', []),
+                'current': cached_data.get('current', {}),
+                'location': cached_data.get('location', 'Dallas, TX'),
                 'cached': True
             })
     
@@ -259,16 +262,23 @@ def api_weather():
         # Take exactly 12 hours
         hourly_data = all_hours[:12]
         
+        # Extract current conditions
+        current_data = data.get('current', {})
+        
         # Cache the results
-        weather_cache['data'] = hourly_data
+        weather_cache['data'] = {
+            'hourly': hourly_data,
+            'current': current_data,
+            'location': data.get('location', {}).get('name', WEATHER_LOCATION)
+        }
         weather_cache['timestamp'] = now
         
         return jsonify({
             'success': True,
             'hourly': hourly_data,
-            'cached': False,
+            'current': current_data,
             'location': data.get('location', {}).get('name', WEATHER_LOCATION),
-            'current_hour': current_hour
+            'cached': False
         })
         
     except requests.RequestException as e:

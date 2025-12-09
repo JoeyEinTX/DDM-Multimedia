@@ -290,126 +290,86 @@ body {
     color: #ef4444 !important;
 }
 
-/* Weather Forecast */
-.weather-forecast {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
-    padding: 10px 0;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    overflow: hidden;
-    position: relative;
+/* Weather Summary in Header */
+.weather-summary {
+    margin-top: 8px;
+    font-size: 0.85em;
+    color: #888888;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    font-weight: 500;
 }
 
-/* Fade indicator on right edge */
-.weather-forecast::after {
-    content: '';
+.weather-summary:hover {
+    color: #ffffff;
+}
+
+/* Weather Modal */
+.modal-weather {
+    min-width: 600px;
+    max-width: 800px;
+}
+
+.modal-close {
     position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 60px;
-    background: linear-gradient(to right, transparent, rgba(12, 24, 32, 0.8));
-    pointer-events: none;
-    z-index: 1;
-}
-
-.weather-scroll {
+    top: 16px;
+    right: 16px;
+    background: transparent;
+    border: none;
+    font-size: 2em;
+    color: #888888;
+    cursor: pointer;
+    transition: color 0.2s ease;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: #ffffff;
+}
+
+.weather-modal-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
-    padding: 0 20px;
-    overflow-x: auto;
-    scroll-behavior: smooth;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+    margin-top: 20px;
 }
 
-/* Hide scrollbar for Webkit browsers but keep functionality */
-.weather-scroll::-webkit-scrollbar {
-    height: 6px;
-}
-
-.weather-scroll::-webkit-scrollbar-track {
+.weather-modal-item {
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 3px;
-}
-
-.weather-scroll::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 3px;
-}
-
-.weather-scroll::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
-}
-
-.weather-item {
-    flex: 0 0 auto;
-    width: calc((100% - 80px - 48px) / 5); /* 5 visible cards, accounting for padding and gaps */
-    min-width: 140px;
-    max-width: 180px;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 16px 10px;
+    padding: 12px;
     border-radius: 6px;
     text-align: center;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.2s ease;
-    position: relative;
 }
 
-.weather-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-    transform: translateY(-2px);
-}
-
-/* NOW card - slightly larger and prominent */
-.weather-item.now {
-    width: calc((100% - 80px - 48px) / 5 * 1.15); /* 15% larger than regular cards */
-    min-width: 160px;
+.weather-modal-item.current {
     background: rgba(78, 205, 196, 0.1);
     border: 2px solid #4ECDC4;
-    box-shadow: 0 0 12px rgba(78, 205, 196, 0.3);
 }
 
-.weather-now-label {
-    font-size: 0.85em;
-    color: #4ECDC4;
-    font-weight: 800;
-    letter-spacing: 1.5px;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-}
-
-.weather-item.now .weather-temp {
-    font-size: 1.8em;
-    font-weight: 800;
-}
-
-.weather-time {
-    font-size: 1.1em;
+.weather-modal-time {
+    font-size: 0.95em;
     color: #888888;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     font-weight: 600;
 }
 
-.weather-icon-img {
-    width: 64px !important;
-    height: 64px !important;
-    min-width: 64px;
-    min-height: 64px;
-    margin: 8px auto;
-    display: block;
-    object-fit: contain;
+.weather-modal-icon {
+    width: 48px;
+    height: 48px;
+    margin: 4px auto;
 }
 
-.weather-temp {
-    font-size: 1.5em;
+.weather-modal-temp {
+    font-size: 1.3em;
     color: #ffffff;
     font-weight: 700;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
 /* Temperature color coding */
