@@ -162,6 +162,12 @@ function showNotification(message, type = 'success') {
 // Track ESP32 connection state
 let esp32WasOnline = false;
 
+// Track ESP32 connection info
+let esp32Info = {
+    online: false,
+    ip: null
+};
+
 // Check ESP32 status
 async function checkESP32Status() {
     try {
@@ -169,16 +175,11 @@ async function checkESP32Status() {
         const data = await response.json();
         
         const isOnline = data.success;
-        const modalStatus = document.getElementById('esp32-status-modal');
+        esp32Info.online = isOnline;
         
         if (isOnline) {
-            modalStatus.textContent = 'ONLINE';
-            modalStatus.className = 'device-status-value connected';
             esp32WasOnline = true;
         } else {
-            modalStatus.textContent = 'OFFLINE';
-            modalStatus.className = 'device-status-value offline';
-            
             // If ESP32 just went offline, clear active buttons
             if (esp32WasOnline) {
                 clearActiveButton();
@@ -188,16 +189,17 @@ async function checkESP32Status() {
             }
         }
         
-        // Update device count (WiFi always connected + ESP32 if online)
-        const deviceCount = 1 + (isOnline ? 1 : 0);
+        // Update device count (ESP32 devices only - 0 or 1)
+        const deviceCount = isOnline ? 1 : 0;
         document.getElementById('device-count').textContent = deviceCount;
         document.getElementById('device-plural').textContent = deviceCount === 1 ? '' : 's';
         
+        // Update device modal list
+        updateDeviceList();
+        
     } catch (error) {
         console.error('Error checking ESP32 status:', error);
-        const modalStatus = document.getElementById('esp32-status-modal');
-        modalStatus.textContent = 'ERROR';
-        modalStatus.className = 'device-status-value offline';
+        esp32Info.online = false;
         
         // If ESP32 just went offline, clear active buttons
         if (esp32WasOnline) {
@@ -208,30 +210,62 @@ async function checkESP32Status() {
         }
         
         // Update device count
-        document.getElementById('device-count').textContent = '1';
-        document.getElementById('device-plural').textContent = '';
+        document.getElementById('device-count').textContent = '0';
+        document.getElementById('device-plural').textContent = 's';
+        
+        // Update device modal list
+        updateDeviceList();
     }
 }
 
-// Get system status
+// Get system status (ESP32 IP)
 async function getSystemStatus() {
     try {
         const response = await fetch('/api/status');
         const data = await response.json();
         
         if (data.esp32_ip) {
-            const ipModal = document.getElementById('esp32-ip-modal');
-            if (ipModal) {
-                ipModal.textContent = data.esp32_ip;
-            }
+            esp32Info.ip = data.esp32_ip;
+            updateDeviceList();
         }
     } catch (error) {
         console.error('Error getting system status:', error);
     }
 }
 
+// Update device list in modal
+function updateDeviceList() {
+    const deviceList = document.getElementById('device-list');
+    const noDevices = document.getElementById('no-devices');
+    
+    if (esp32Info.online) {
+        // Show device, hide "no devices" message
+        deviceList.style.display = 'flex';
+        noDevices.style.display = 'none';
+        
+        // Build device item
+        deviceList.innerHTML = `
+            <div class="device-item">
+                <span class="device-icon">🔌</span>
+                <span class="device-name">ESP32 LED Controller</span>
+                <span class="device-status-value connected">ONLINE</span>
+            </div>
+            <div class="device-item">
+                <span class="device-icon">💡</span>
+                <span class="device-name">IP Address</span>
+                <span class="device-status-value">${esp32Info.ip || '---'}</span>
+            </div>
+        `;
+    } else {
+        // Hide device list, show "no devices" message
+        deviceList.style.display = 'none';
+        noDevices.style.display = 'block';
+    }
+}
+
 // Toggle device status modal
 function toggleDeviceModal() {
+    updateDeviceList(); // Refresh before showing
     const modal = document.getElementById('device-modal');
     modal.classList.add('active');
 }

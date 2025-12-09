@@ -763,6 +763,27 @@ body {
     background: rgba(239, 68, 68, 0.15);
 }
 
+/* No Devices Message */
+.no-devices {
+    text-align: center;
+    padding: 32px 20px;
+    color: #888888;
+}
+
+.no-devices p {
+    margin: 8px 0;
+}
+
+.device-note {
+    font-size: 0.85em;
+    color: #666666;
+}
+
+/* Small Icon in Footer */
+.icon-small {
+    font-size: 1em;
+}
+
 /* Emergency Stop - Collapsible Icon */
 .emergency-icon {
     position: fixed;

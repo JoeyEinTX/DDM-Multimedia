@@ -85,9 +85,10 @@
             </div>
         </div>
 
-        <!-- Footer: Mode + Device Status (left), Powered by JoeyAI (right) -->
+        <!-- Footer: WiFi + Mode + Device Count (left), Powered by JoeyAI (right) -->
         <div class="footer-section">
             <div class="footer-info">
+                <span><span class="icon-small">📶</span> Connected</span>
                 <span>MODE: <span id="current-mode">STANDBY</span></span>
                 <span id="device-status" class="device-status" onclick="toggleDeviceModal()">
                     <span id="device-count">0</span> device<span id="device-plural">s</span> connected
@@ -118,27 +119,17 @@
         <button class="btn-emergency" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
     </div>
 
-    <!-- Device Status Modal -->
+    <!-- Device Status Modal - ESP32 Controllers Only -->
     <div id="device-modal" class="modal">
         <div class="modal-content">
             <button class="modal-close" onclick="closeDeviceModal()">×</button>
-            <h2>Device Status</h2>
-            <div class="device-list">
-                <div class="device-item">
-                    <span class="device-icon">📶</span>
-                    <span class="device-name">WiFi</span>
-                    <span class="device-status-value connected">Connected</span>
-                </div>
-                <div class="device-item">
-                    <span class="device-icon">🔌</span>
-                    <span class="device-name">ESP32</span>
-                    <span id="esp32-status-modal" class="device-status-value offline">OFFLINE</span>
-                </div>
-                <div class="device-item">
-                    <span class="device-icon">💡</span>
-                    <span class="device-name">ESP32 IP</span>
-                    <span id="esp32-ip-modal" class="device-status-value">---.---.---.---</span>
-                </div>
+            <h2>Connected Devices</h2>
+            <div id="device-list" class="device-list">
+                <!-- Device list will be populated by JavaScript -->
+            </div>
+            <div id="no-devices" class="no-devices" style="display: none;">
+                <p>No devices connected</p>
+                <p class="device-note">Waiting for ESP32 controllers...</p>
             </div>
         </div>
     </div>
