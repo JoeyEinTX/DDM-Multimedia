@@ -621,9 +621,11 @@ async function getWeather() {
             const location = data.location || 'Dallas, TX';
             const iconUrl = current.condition.icon.replace('64x64', '128x128');
             
-            // Build graphical weather widget
+            // Build graphical weather widget with forced icon size
             summary.innerHTML = `
-                <img src="https:${iconUrl}" alt="${condition}" class="weather-icon">
+                <img src="https:${iconUrl}" alt="${condition}" class="weather-icon" 
+                     width="36" height="36"
+                     style="width: 36px !important; height: 36px !important; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; flex-shrink: 0;">
                 <div class="weather-info">
                     <div class="weather-temp-large ${tempColorClass}">${temp}°F</div>
                     <div class="weather-condition">${condition}</div>

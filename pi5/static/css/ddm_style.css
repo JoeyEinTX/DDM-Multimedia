@@ -175,12 +175,19 @@ body {
     line-height: 1;
 }
 
-/* Tote Board Clock - Dot Matrix Light Bulb Style */
+/* Tote Board Clock - Dot Matrix Light Bulb Style with Diagonal Hash Pattern */
 .tote-clock-container {
     display: flex;
     align-items: center;
     padding: 8px 10px;
-    background: #1a1a1a;
+    background: 
+        repeating-linear-gradient(
+            45deg,
+            #1a1a1a,
+            #1a1a1a 2px,
+            #222 2px,
+            #222 4px
+        );
     border-radius: 8px;
     border: 2px solid #2a2a2a;
     box-shadow: 
