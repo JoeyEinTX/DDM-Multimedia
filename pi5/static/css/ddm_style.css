@@ -296,50 +296,50 @@ body {
     color: #ef4444 !important;
 }
 
-/* Weather Summary - Graphical (Header Right) */
-.weather-summary-graphical {
+/* Weather Summary - Status Bar (Compact) */
+.weather-summary-statusbar {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
+    gap: 10px;
+    padding: 6px 12px;
     background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
+    border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
-.weather-summary-graphical:hover {
+.weather-summary-statusbar:hover {
     background: rgba(255, 255, 255, 0.08);
     border-color: rgba(255, 255, 255, 0.15);
 }
 
 .weather-icon {
-    width: 48px;
-    height: 48px;
+    width: 36px;
+    height: 36px;
 }
 
 .weather-info {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
 }
 
 .weather-temp-large {
-    font-size: 1.8em;
+    font-size: 1.3em;
     font-weight: 700;
     color: #ffffff;
     line-height: 1;
 }
 
 .weather-condition {
-    font-size: 0.85em;
+    font-size: 0.75em;
     color: #888888;
     font-weight: 500;
 }
 
 .weather-location {
-    font-size: 0.75em;
+    font-size: 0.7em;
     color: #666666;
 }
 

@@ -24,9 +24,6 @@
                 </div>
             </div>
             <div class="header-info">
-                <div id="weather-summary" class="weather-summary-graphical" onclick="openWeatherModal()" style="display: none;">
-                    <!-- Weather summary will be inserted here -->
-                </div>
                 <div class="tote-clock-container">
                     <div id="tote-display" class="tote-display">
                         <!-- Dot matrix digits will be inserted here by JavaScript -->
@@ -46,8 +43,8 @@
                 </div>
             </div>
             <div class="status-right">
-                <div class="status-item">
-                    <span class="icon">💡</span> <span id="led-count">{{ total_leds }}</span> LEDs
+                <div id="weather-summary" class="weather-summary-statusbar" onclick="openWeatherModal()" style="display: none;">
+                    <!-- Weather summary will be inserted here -->
                 </div>
             </div>
         </div>
