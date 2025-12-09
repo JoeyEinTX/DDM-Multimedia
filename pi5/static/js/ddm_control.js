@@ -168,16 +168,16 @@ async function checkESP32Status() {
         const response = await fetch('/api/ping');
         const data = await response.json();
         
-        const statusElement = document.getElementById('esp32-status');
         const isOnline = data.success;
+        const modalStatus = document.getElementById('esp32-status-modal');
         
         if (isOnline) {
-            statusElement.textContent = 'ONLINE';
-            statusElement.className = 'status-value status-online';
+            modalStatus.textContent = 'ONLINE';
+            modalStatus.className = 'device-status-value connected';
             esp32WasOnline = true;
         } else {
-            statusElement.textContent = 'OFFLINE';
-            statusElement.className = 'status-value status-offline';
+            modalStatus.textContent = 'OFFLINE';
+            modalStatus.className = 'device-status-value offline';
             
             // If ESP32 just went offline, clear active buttons
             if (esp32WasOnline) {
@@ -187,11 +187,17 @@ async function checkESP32Status() {
                 esp32WasOnline = false;
             }
         }
+        
+        // Update device count (WiFi always connected + ESP32 if online)
+        const deviceCount = 1 + (isOnline ? 1 : 0);
+        document.getElementById('device-count').textContent = deviceCount;
+        document.getElementById('device-plural').textContent = deviceCount === 1 ? '' : 's';
+        
     } catch (error) {
         console.error('Error checking ESP32 status:', error);
-        const statusElement = document.getElementById('esp32-status');
-        statusElement.textContent = 'ERROR';
-        statusElement.className = 'status-value status-offline';
+        const modalStatus = document.getElementById('esp32-status-modal');
+        modalStatus.textContent = 'ERROR';
+        modalStatus.className = 'device-status-value offline';
         
         // If ESP32 just went offline, clear active buttons
         if (esp32WasOnline) {
@@ -200,6 +206,10 @@ async function checkESP32Status() {
             showNotification('ESP32 disconnected - animation stopped', 'error');
             esp32WasOnline = false;
         }
+        
+        // Update device count
+        document.getElementById('device-count').textContent = '1';
+        document.getElementById('device-plural').textContent = '';
     }
 }
 
@@ -210,11 +220,26 @@ async function getSystemStatus() {
         const data = await response.json();
         
         if (data.esp32_ip) {
-            document.getElementById('esp32-ip').textContent = data.esp32_ip;
+            const ipModal = document.getElementById('esp32-ip-modal');
+            if (ipModal) {
+                ipModal.textContent = data.esp32_ip;
+            }
         }
     } catch (error) {
         console.error('Error getting system status:', error);
     }
+}
+
+// Toggle device status modal
+function toggleDeviceModal() {
+    const modal = document.getElementById('device-modal');
+    modal.classList.add('active');
+}
+
+// Close device status modal
+function closeDeviceModal() {
+    const modal = document.getElementById('device-modal');
+    modal.classList.remove('active');
 }
 
 // Send command to ESP32

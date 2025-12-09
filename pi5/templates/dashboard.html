@@ -13,7 +13,7 @@
     </div>
 
     <div class="container">
-        <!-- Header -->
+        <!-- Header: Logo/Title (left), Weather + Clock (right) -->
         <header class="header">
             <div class="header-title">
                 <div class="logo-text">
@@ -24,6 +24,9 @@
                 </div>
             </div>
             <div class="header-info">
+                <div id="weather-summary" class="weather-summary-header" onclick="openWeatherModal()" style="display: none;">
+                    <!-- Weather summary will be inserted here -->
+                </div>
                 <div class="tote-clock-container">
                     <div id="tote-display" class="tote-display">
                         <!-- Dot matrix digits will be inserted here by JavaScript -->
@@ -31,23 +34,6 @@
                 </div>
             </div>
         </header>
-
-        <!-- Status Bar -->
-        <div class="status-bar">
-            <div class="status-left">
-                <div class="status-item">
-                    <span class="icon">📶</span> WiFi: <span class="status-value">Connected</span>
-                </div>
-                <div class="status-item">
-                    <span class="icon">🔌</span> ESP32: <span id="esp32-status" class="status-value status-offline">OFFLINE</span>
-                </div>
-            </div>
-            <div class="status-right">
-                <div id="weather-summary" class="weather-summary-statusbar" onclick="openWeatherModal()" style="display: none;">
-                    <!-- Weather summary will be inserted here -->
-                </div>
-            </div>
-        </div>
 
         <!-- Results Banner (shown after winners are set) -->
         <div id="results-banner" class="results-banner" style="display: none;">
@@ -99,17 +85,23 @@
             </div>
         </div>
 
-        <!-- Footer Info -->
+        <!-- Footer: Mode + Device Status (left), Powered by JoeyAI (right) -->
         <div class="footer-section">
             <div class="footer-info">
                 <span>MODE: <span id="current-mode">STANDBY</span></span>
-                <span>{{ version }}</span>
-                <span>ESP32: <span id="esp32-ip">---.---.---.---</span></span>
+                <span id="device-status" class="device-status" onclick="toggleDeviceModal()">
+                    <span id="device-count">0</span> device<span id="device-plural">s</span> connected
+                </span>
             </div>
             <div class="powered-by">
                 <span class="powered-text">Powered by</span>
                 <span class="joey-ai">JoeyAI</span>
             </div>
+        </div>
+
+        <!-- Copyright Bar -->
+        <div class="copyright-bar">
+            © 2025 Derby de Mayo Multimedia | {{ version }}
         </div>
     </div>
 
@@ -124,6 +116,31 @@
     </div>
     <div id="emergency-expanded" class="emergency-expanded">
         <button class="btn-emergency" onclick="emergencyStop()">🛑 EMERGENCY STOP</button>
+    </div>
+
+    <!-- Device Status Modal -->
+    <div id="device-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeDeviceModal()">×</button>
+            <h2>Device Status</h2>
+            <div class="device-list">
+                <div class="device-item">
+                    <span class="device-icon">📶</span>
+                    <span class="device-name">WiFi</span>
+                    <span class="device-status-value connected">Connected</span>
+                </div>
+                <div class="device-item">
+                    <span class="device-icon">🔌</span>
+                    <span class="device-name">ESP32</span>
+                    <span id="esp32-status-modal" class="device-status-value offline">OFFLINE</span>
+                </div>
+                <div class="device-item">
+                    <span class="device-icon">💡</span>
+                    <span class="device-name">ESP32 IP</span>
+                    <span id="esp32-ip-modal" class="device-status-value">---.---.---.---</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Results Modal -->
