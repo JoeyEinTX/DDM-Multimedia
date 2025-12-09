@@ -21,15 +21,12 @@
                         <span class="letter" style="color: #4ECDC4;">D</span><span class="letter" style="color: #E53935;">E</span><span class="letter" style="color: #22c55e;">R</span><span class="letter" style="color: #4ECDC4;">B</span><span class="letter" style="color: #f59e0b;">Y</span><span class="word-space"></span><span class="letter" style="color: #E53935;">D</span><span class="letter" style="color: #22c55e;">E</span><span class="word-space"></span><span class="letter" style="color: #f59e0b;">M</span><span class="letter" style="color: #4ECDC4;">A</span><span class="letter" style="color: #22c55e;">Y</span><span class="letter" style="color: #f59e0b;">O</span>
                     </div>
                     <div class="sub-title">MULTIMEDIA</div>
-                    <div id="weather-summary" class="weather-summary" onclick="openWeatherModal()" style="display: none;">
-                        <!-- Weather summary will be inserted here -->
-                    </div>
                 </div>
             </div>
             <div class="header-info">
-                <button id="fullscreen-toggle" class="btn-fullscreen" onclick="toggleFullscreen()" title="Toggle Fullscreen">
-                    <span id="fullscreen-icon">⛶</span>
-                </button>
+                <div id="weather-summary" class="weather-summary-graphical" onclick="openWeatherModal()" style="display: none;">
+                    <!-- Weather summary will be inserted here -->
+                </div>
                 <div class="tote-clock-container">
                     <div id="tote-display" class="tote-display">
                         <!-- Dot matrix digits will be inserted here by JavaScript -->
@@ -118,6 +115,11 @@
             </div>
         </div>
     </div>
+
+    <!-- Fullscreen Toggle (bottom left) -->
+    <button id="fullscreen-toggle" class="btn-fullscreen-corner" onclick="toggleFullscreen()" title="Toggle Fullscreen">
+        <span id="fullscreen-icon">⛶</span>
+    </button>
 
     <!-- Emergency Stop Icon (collapsible) -->
     <div id="emergency-icon" class="emergency-icon" onclick="toggleEmergencyStop()">

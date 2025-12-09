@@ -83,18 +83,19 @@ const dotPatterns = {
     'M': [0x1F, 0x02, 0x04, 0x02, 0x1F]
 };
 
-// Create a digit element with dot matrix
+// Create a digit element with dot matrix (5x5 grid)
 function createDotDigit(char) {
     const digit = document.createElement('div');
     digit.className = 'dot-digit';
     const pattern = dotPatterns[char] || [0,0,0,0,0];
     
-    for (let row = 0; row < 7; row++) {
+    // Generate 5 rows × 5 columns = 25 dots
+    for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 5; col++) {
             const dot = document.createElement('div');
             dot.className = 'dot';
-            // Use bit 0 for top row (row 0), bit 4 for bottom data row (row 4)
-            if (row < 5 && (pattern[col] & (1 << row))) {
+            // Check if this dot should be lit based on the pattern
+            if (pattern[col] & (1 << row)) {
                 dot.classList.add('lit');
             }
             digit.appendChild(dot);
@@ -611,19 +612,25 @@ async function getWeather() {
         if (data.success && data.current && data.hourly) {
             weatherData = data;
             
-            // Update header summary
+            // Update graphical header summary
             const summary = document.getElementById('weather-summary');
             const current = data.current;
             const temp = Math.round(current.temp_f);
+            const tempColorClass = getTempColorClass(temp);
             const condition = current.condition.text;
             const location = data.location || 'Dallas, TX';
+            const iconUrl = current.condition.icon.replace('64x64', '128x128');
             
-            // Format: "Mon, Dec 8 • Dallas, TX • 49°F • Clear"
-            const now = new Date();
-            const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            
-            summary.innerHTML = `${dateStr} • ${location} • ${temp}°F • ${condition}`;
-            summary.style.display = 'block';
+            // Build graphical weather widget
+            summary.innerHTML = `
+                <img src="https:${iconUrl}" alt="${condition}" class="weather-icon">
+                <div class="weather-info">
+                    <div class="weather-temp-large ${tempColorClass}">${temp}°F</div>
+                    <div class="weather-condition">${condition}</div>
+                    <div class="weather-location">${location}</div>
+                </div>
+            `;
+            summary.style.display = 'flex';
         }
     } catch (error) {
         console.error('Error fetching weather:', error);

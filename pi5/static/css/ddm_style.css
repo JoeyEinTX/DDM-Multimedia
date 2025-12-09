@@ -138,10 +138,13 @@ body {
     color: #888888;
 }
 
-/* Fullscreen Toggle Button */
-.btn-fullscreen {
-    width: 36px;
-    height: 36px;
+/* Fullscreen Toggle Button - Bottom Left Corner */
+.btn-fullscreen-corner {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -150,18 +153,20 @@ body {
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
-    font-size: 1.2em;
+    font-size: 1.3em;
     color: #888888;
     padding: 0;
+    z-index: 900;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.btn-fullscreen:hover {
+.btn-fullscreen-corner:hover {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.2);
     color: #ffffff;
 }
 
-.btn-fullscreen:active {
+.btn-fullscreen-corner:active {
     transform: scale(0.95);
 }
 
@@ -174,13 +179,14 @@ body {
 .tote-clock-container {
     display: flex;
     align-items: center;
-    padding: 10px 12px;
+    padding: 8px 10px;
     background: #1a1a1a;
     border-radius: 8px;
     border: 2px solid #2a2a2a;
     box-shadow: 
         0 4px 12px rgba(0, 0, 0, 0.5),
         inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+    width: fit-content;
 }
 
 .tote-display {
@@ -189,13 +195,13 @@ body {
     gap: 6px;
 }
 
-/* Dot matrix digit container */
+/* Dot matrix digit container - 5 columns x 5 rows (not 7!)  */
 .dot-digit {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    grid-template-rows: repeat(7, 1fr);
+    grid-template-rows: repeat(5, 1fr);
     gap: 2px;
-    padding: 2px;
+    padding: 0;
 }
 
 /* Individual dot/bulb */
@@ -290,18 +296,51 @@ body {
     color: #ef4444 !important;
 }
 
-/* Weather Summary in Header */
-.weather-summary {
-    margin-top: 8px;
+/* Weather Summary - Graphical (Header Right) */
+.weather-summary-graphical {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.weather-summary-graphical:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.weather-icon {
+    width: 48px;
+    height: 48px;
+}
+
+.weather-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.weather-temp-large {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1;
+}
+
+.weather-condition {
     font-size: 0.85em;
     color: #888888;
-    cursor: pointer;
-    transition: color 0.2s ease;
     font-weight: 500;
 }
 
-.weather-summary:hover {
-    color: #ffffff;
+.weather-location {
+    font-size: 0.75em;
+    color: #666666;
 }
 
 /* Weather Modal */
