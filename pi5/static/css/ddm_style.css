@@ -438,12 +438,10 @@ body {
 }
 
 .results-label {
-    font-size: 1.2em;
-    font-weight: 700;
-    color: #D4A000;
-    min-width: 80px;
-    text-align: right;
-    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    min-width: 120px;
+    justify-content: flex-end;
 }
 
 .results-number {
@@ -468,11 +466,15 @@ body {
 
 .results-horse-name {
     flex: 1;
-    font-size: 1.1em;
-    font-weight: 600;
-    color: #D4A000;
-    text-align: left;
-    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+}
+
+/* Dot matrix text container (for labels and horse names) */
+.dot-matrix-text {
+    display: flex;
+    align-items: center;
+    gap: 3px;
 }
 
 .btn-clear-results {

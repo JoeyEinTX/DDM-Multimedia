@@ -80,8 +80,19 @@ const dotPatterns = {
     '8': [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
     '9': [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
     'A': [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+    'C': [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
+    'E': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
+    'H': [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+    'I': [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
+    'L': [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
+    'M': [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
+    'N': [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+    'O': [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
     'P': [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-    'M': [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11]
+    'R': [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
+    'S': [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E],
+    'W': [0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A],
+    ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]  // Space
 };
 
 // Create a digit element with dot matrix (5×7 grid: 5 columns × 7 rows)
@@ -586,29 +597,64 @@ function createSaddleCloth(number) {
     return cloth;
 }
 
-// Show results banner with saddle cloths
+// Create dot matrix text (letters and numbers)
+function createDotMatrixText(text) {
+    const container = document.createElement('div');
+    container.className = 'dot-matrix-text';
+    
+    // Convert text to uppercase and split into characters
+    const chars = text.toUpperCase().split('');
+    
+    // Create dot digit for each character
+    chars.forEach(char => {
+        container.appendChild(createDotDigit(char));
+    });
+    
+    return container;
+}
+
+// Show results banner with saddle cloths and dot matrix text
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
     
-    // Update WIN row
+    // Update WIN row - label, saddle cloth, horse name
+    const winLabel = document.getElementById('banner-win-label');
+    winLabel.innerHTML = '';
+    winLabel.appendChild(createDotMatrixText('WIN'));
+    
     const winNumber = document.getElementById('banner-win-number');
     winNumber.innerHTML = '';
     winNumber.appendChild(createSaddleCloth(win));
     
-    // Update PLACE row
+    const winName = document.getElementById('banner-win-name');
+    winName.innerHTML = '';
+    winName.appendChild(createDotMatrixText(`HORSE ${win}`));
+    
+    // Update PLACE row - label, saddle cloth, horse name
+    const placeLabel = document.getElementById('banner-place-label');
+    placeLabel.innerHTML = '';
+    placeLabel.appendChild(createDotMatrixText('PLACE'));
+    
     const placeNumber = document.getElementById('banner-place-number');
     placeNumber.innerHTML = '';
     placeNumber.appendChild(createSaddleCloth(place));
     
-    // Update SHOW row
+    const placeName = document.getElementById('banner-place-name');
+    placeName.innerHTML = '';
+    placeName.appendChild(createDotMatrixText(`HORSE ${place}`));
+    
+    // Update SHOW row - label, saddle cloth, horse name
+    const showLabel = document.getElementById('banner-show-label');
+    showLabel.innerHTML = '';
+    showLabel.appendChild(createDotMatrixText('SHOW'));
+    
     const showNumber = document.getElementById('banner-show-number');
     showNumber.innerHTML = '';
     showNumber.appendChild(createSaddleCloth(show));
     
-    // Update horse names (placeholder for now)
-    document.getElementById('banner-win-name').textContent = `HORSE ${win}`;
-    document.getElementById('banner-place-name').textContent = `HORSE ${place}`;
-    document.getElementById('banner-show-name').textContent = `HORSE ${show}`;
+    const showName = document.getElementById('banner-show-name');
+    showName.innerHTML = '';
+    showName.appendChild(createDotMatrixText(`HORSE ${show}`));
     
     banner.style.display = 'block';
 }
