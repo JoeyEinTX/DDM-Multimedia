@@ -543,12 +543,45 @@ function closeResultsModal() {
     modal.classList.remove('active');
 }
 
-// Show results banner
+// Create dot matrix number display (2 digits, zero-padded)
+function createDotMatrixNumber(number) {
+    const container = document.createElement('div');
+    container.className = 'dot-matrix-number';
+    
+    // Zero-pad to 2 digits
+    const numStr = String(number).padStart(2, '0');
+    
+    // Create digit for each character
+    container.appendChild(createDotDigit(numStr[0]));
+    container.appendChild(createDotDigit(numStr[1]));
+    
+    return container;
+}
+
+// Show results banner with dot matrix display
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
-    document.getElementById('banner-win').textContent = win;
-    document.getElementById('banner-place').textContent = place;
-    document.getElementById('banner-show').textContent = show;
+    
+    // Update WIN row
+    const winNumber = document.getElementById('banner-win-number');
+    winNumber.innerHTML = '';
+    winNumber.appendChild(createDotMatrixNumber(win));
+    
+    // Update PLACE row
+    const placeNumber = document.getElementById('banner-place-number');
+    placeNumber.innerHTML = '';
+    placeNumber.appendChild(createDotMatrixNumber(place));
+    
+    // Update SHOW row
+    const showNumber = document.getElementById('banner-show-number');
+    showNumber.innerHTML = '';
+    showNumber.appendChild(createDotMatrixNumber(show));
+    
+    // Update horse names (placeholder for now)
+    document.getElementById('banner-win-name').textContent = `HORSE ${win}`;
+    document.getElementById('banner-place-name').textContent = `HORSE ${place}`;
+    document.getElementById('banner-show-name').textContent = `HORSE ${show}`;
+    
     banner.style.display = 'block';
 }
 

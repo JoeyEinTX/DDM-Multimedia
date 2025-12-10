@@ -397,15 +397,9 @@ body {
     color: #E53935 !important;
 }
 
-/* Results Banner */
+/* Results Banner - Dot Matrix Tote Board Style */
 .results-banner {
-    background: rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(10px);
-    padding: 24px;
-    border-radius: 8px;
     margin-bottom: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
     animation: bannerSlideIn 0.3s ease-out;
 }
 
@@ -420,45 +414,65 @@ body {
     }
 }
 
-.results-banner-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
+.results-tote-board {
+    background: #1a1a1a;
+    padding: 20px 24px;
+    border-radius: 8px;
+    border: 2px solid #2a2a2a;
+    box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.5),
+        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.banner-title {
+.results-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 0;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.results-row:last-of-type {
+    border-bottom: none;
+    margin-bottom: 16px;
+}
+
+.results-label {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: #D4A000;
+    min-width: 80px;
+    text-align: left;
+    letter-spacing: 1px;
+}
+
+.results-number {
+    display: flex;
+    gap: 4px;
+}
+
+.dot-matrix-number {
+    display: flex;
+    gap: 4px;
+}
+
+.results-horse-name {
+    flex: 1;
     font-size: 1.1em;
     font-weight: 600;
-    color: #888888;
+    color: #D4A000;
+    text-align: right;
     letter-spacing: 0.5px;
-    text-transform: uppercase;
-}
-
-.banner-results {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-    font-size: 1.3em;
-    font-weight: 500;
-}
-
-.banner-result {
-    color: #ffffff;
-}
-
-.banner-divider {
-    color: #333333;
-    font-size: 1em;
 }
 
 .btn-clear-results {
-    margin-top: 12px;
-    padding: 8px 20px;
-    font-size: 0.85em;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 20px;
+    font-size: 0.9em;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
     border: 2px solid #666666;
     border-radius: 6px;
     cursor: pointer;
@@ -468,7 +482,7 @@ body {
 }
 
 .btn-clear-results:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
     border-color: #888888;
     color: #888888;
 }

@@ -35,18 +35,25 @@
             </div>
         </header>
 
-        <!-- Results Banner (shown after winners are set) -->
+        <!-- Results Banner (shown after winners are set) - Dot Matrix Style -->
         <div id="results-banner" class="results-banner" style="display: none;">
-            <div class="results-banner-content">
-                <span class="banner-title">RACE RESULTS</span>
-                <div class="banner-results">
-                    <span class="banner-result">🥇 Horse <span id="banner-win">-</span></span>
-                    <span class="banner-divider">|</span>
-                    <span class="banner-result">🥈 Horse <span id="banner-place">-</span></span>
-                    <span class="banner-divider">|</span>
-                    <span class="banner-result">🥉 Horse <span id="banner-show">-</span></span>
+            <div class="results-tote-board">
+                <div class="results-row">
+                    <span class="results-label">WIN</span>
+                    <div id="banner-win-number" class="results-number"></div>
+                    <span id="banner-win-name" class="results-horse-name">HORSE 1</span>
                 </div>
-                <button class="btn-clear-results" onclick="clearResults()">Clear Results</button>
+                <div class="results-row">
+                    <span class="results-label">PLACE</span>
+                    <div id="banner-place-number" class="results-number"></div>
+                    <span id="banner-place-name" class="results-horse-name">HORSE 2</span>
+                </div>
+                <div class="results-row">
+                    <span class="results-label">SHOW</span>
+                    <div id="banner-show-number" class="results-number"></div>
+                    <span id="banner-show-name" class="results-horse-name">HORSE 3</span>
+                </div>
+                <button class="btn-clear-results" onclick="clearResults()">CLEAR RESULTS</button>
             </div>
         </div>
 
