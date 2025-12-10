@@ -543,28 +543,28 @@ function closeResultsModal() {
     modal.classList.remove('active');
 }
 
-// Saddle cloth colors and text colors for positions 1-20
+// Saddle cloth colors and text colors for positions 1-20 (Official Racing Colors)
 const SADDLE_CLOTHS = {
-    1: { bg: '#E31837', text: '#FFFFFF' },   // Red - white text
-    2: { bg: '#FFFFFF', text: '#000000' },   // White - black text
-    3: { bg: '#0033A0', text: '#FFFFFF' },   // Blue - white text
-    4: { bg: '#FFCD00', text: '#000000' },   // Yellow - black text
-    5: { bg: '#00843D', text: '#FFFFFF' },   // Green - white text
-    6: { bg: '#000000', text: '#FFFFFF' },   // Black - white text
-    7: { bg: '#FF6600', text: '#FFFFFF' },   // Orange - white text
-    8: { bg: '#FF69B4', text: '#FFFFFF' },   // Pink - white text
-    9: { bg: '#40E0D0', text: '#000000' },   // Turquoise - black text
-    10: { bg: '#663399', text: '#FFFFFF' },  // Purple - white text
-    11: { bg: '#808080', text: '#FFFFFF' },  // Gray - white text
-    12: { bg: '#32CD32', text: '#000000' },  // Lime - black text
-    13: { bg: '#8B4513', text: '#FFFFFF' },  // Brown - white text
-    14: { bg: '#800000', text: '#FFFFFF' },  // Maroon - white text
-    15: { bg: '#C4B7A6', text: '#000000' },  // Khaki - black text
-    16: { bg: '#50C878', text: '#FFFFFF' },  // Emerald - white text
-    17: { bg: '#E31837', text: '#FFFFFF' },  // Red - white text
-    18: { bg: '#0033A0', text: '#FFFFFF' },  // Blue - white text
-    19: { bg: '#FFCD00', text: '#000000' },  // Yellow - black text
-    20: { bg: '#FF69B4', text: '#FFFFFF' }   // Pink - white text
+    1:  { bg: '#E31837', text: '#FFFFFF' },  // Red, white
+    2:  { bg: '#FFFFFF', text: '#000000' },  // White, black
+    3:  { bg: '#0033A0', text: '#FFFFFF' },  // Blue, white
+    4:  { bg: '#FFCD00', text: '#000000' },  // Yellow, black
+    5:  { bg: '#00843D', text: '#FFFFFF' },  // Green, white
+    6:  { bg: '#000000', text: '#FFD700' },  // Black, gold
+    7:  { bg: '#FF6600', text: '#000000' },  // Orange, black
+    8:  { bg: '#FF69B4', text: '#000000' },  // Pink, black
+    9:  { bg: '#40E0D0', text: '#000000' },  // Turquoise, black
+    10: { bg: '#663399', text: '#FFFFFF' },  // Purple, white
+    11: { bg: '#808080', text: '#E31837' },  // Grey, red
+    12: { bg: '#32CD32', text: '#000000' },  // Lime, black
+    13: { bg: '#8B4513', text: '#FFFFFF' },  // Brown, white
+    14: { bg: '#800000', text: '#FFCD00' },  // Maroon, yellow
+    15: { bg: '#C4B7A6', text: '#000000' },  // Khaki, black
+    16: { bg: '#87CEEB', text: '#E31837' },  // Light blue, red
+    17: { bg: '#000080', text: '#FFFFFF' },  // Navy, white
+    18: { bg: '#228B22', text: '#FFCD00' },  // Forest green, yellow
+    19: { bg: '#00008B', text: '#E31837' },  // Dark royal blue, red
+    20: { bg: '#FF00FF', text: '#FFCD00' }   // Fuchsia, yellow
 };
 
 // Create saddle cloth with flat color and bold number
