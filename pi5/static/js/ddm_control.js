@@ -613,27 +613,43 @@ function createEmptyTile() {
     return tile;
 }
 
-// Create dot matrix text (letters and numbers) with optional padding
-function createDotMatrixText(text, padLeft = 0, padRight = 0) {
+// Create dot matrix text (letters and numbers) with optional padding and fixed length
+function createDotMatrixText(text, padLeft = 0, padRight = 0, fixedLength = null) {
     const container = document.createElement('div');
     container.className = 'dot-matrix-text';
     
-    // Add empty tiles on the left
-    for (let i = 0; i < padLeft; i++) {
-        container.appendChild(createEmptyTile());
-    }
-    
-    // Convert text to uppercase and split into characters
-    const chars = text.toUpperCase().split('');
-    
-    // Create dot digit for each character
-    chars.forEach(char => {
-        container.appendChild(createDotDigit(char));
-    });
-    
-    // Add empty tiles on the right
-    for (let i = 0; i < padRight; i++) {
-        container.appendChild(createEmptyTile());
+    // If fixedLength specified, pad or truncate text to exactly that many characters
+    let processedText = text.toUpperCase();
+    if (fixedLength !== null) {
+        // Pad with spaces or truncate to fixed length
+        if (processedText.length < fixedLength) {
+            processedText = processedText.padEnd(fixedLength, ' ');
+        } else if (processedText.length > fixedLength) {
+            processedText = processedText.substring(0, fixedLength);
+        }
+        // Split into fixed number of tiles
+        const chars = processedText.split('');
+        chars.forEach(char => {
+            container.appendChild(createDotDigit(char));
+        });
+    } else {
+        // Add empty tiles on the left
+        for (let i = 0; i < padLeft; i++) {
+            container.appendChild(createEmptyTile());
+        }
+        
+        // Convert text to uppercase and split into characters
+        const chars = processedText.split('');
+        
+        // Create dot digit for each character
+        chars.forEach(char => {
+            container.appendChild(createDotDigit(char));
+        });
+        
+        // Add empty tiles on the right
+        for (let i = 0; i < padRight; i++) {
+            container.appendChild(createEmptyTile());
+        }
     }
     
     return container;
@@ -643,10 +659,10 @@ function createDotMatrixText(text, padLeft = 0, padRight = 0) {
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
     
-    // Update WIN row - label (padded left), saddle cloth, horse name (padded right)
+    // Update WIN row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
     const winLabel = document.getElementById('banner-win-label');
     winLabel.innerHTML = '';
-    winLabel.appendChild(createDotMatrixText('WIN', 2, 0));  // 2 blank tiles left for alignment
+    winLabel.appendChild(createDotMatrixText('  WIN', 0, 0, 5));  // 5 tiles total (2 spaces + WIN)
     
     const winNumber = document.getElementById('banner-win-number');
     winNumber.innerHTML = '';
@@ -654,12 +670,12 @@ function showResultsBanner(win, place, show) {
     
     const winName = document.getElementById('banner-win-name');
     winName.innerHTML = '';
-    winName.appendChild(createDotMatrixText(`HORSE ${win}`, 0, 12));  // 12 blank tiles right
+    winName.appendChild(createDotMatrixText(`HORSE ${win}`, 0, 0, 15));  // 15 tiles total
     
-    // Update PLACE row - label (no padding), saddle cloth, horse name (padded right)
+    // Update PLACE row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
     const placeLabel = document.getElementById('banner-place-label');
     placeLabel.innerHTML = '';
-    placeLabel.appendChild(createDotMatrixText('PLACE', 0, 0));  // No padding (longest label)
+    placeLabel.appendChild(createDotMatrixText('PLACE', 0, 0, 5));  // 5 tiles total (PLACE fits exactly)
     
     const placeNumber = document.getElementById('banner-place-number');
     placeNumber.innerHTML = '';
@@ -667,12 +683,12 @@ function showResultsBanner(win, place, show) {
     
     const placeName = document.getElementById('banner-place-name');
     placeName.innerHTML = '';
-    placeName.appendChild(createDotMatrixText(`HORSE ${place}`, 0, 12));  // 12 blank tiles right
+    placeName.appendChild(createDotMatrixText(`HORSE ${place}`, 0, 0, 15));  // 15 tiles total
     
-    // Update SHOW row - label (padded left), saddle cloth, horse name (padded right)
+    // Update SHOW row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
     const showLabel = document.getElementById('banner-show-label');
     showLabel.innerHTML = '';
-    showLabel.appendChild(createDotMatrixText('SHOW', 1, 0));  // 1 blank tile left for alignment
+    showLabel.appendChild(createDotMatrixText(' SHOW', 0, 0, 5));  // 5 tiles total (1 space + SHOW)
     
     const showNumber = document.getElementById('banner-show-number');
     showNumber.innerHTML = '';
@@ -680,7 +696,7 @@ function showResultsBanner(win, place, show) {
     
     const showName = document.getElementById('banner-show-name');
     showName.innerHTML = '';
-    showName.appendChild(createDotMatrixText(`HORSE ${show}`, 0, 12));  // 12 blank tiles right
+    showName.appendChild(createDotMatrixText(`HORSE ${show}`, 0, 0, 15));  // 15 tiles total
     
     banner.style.display = 'block';
 }
