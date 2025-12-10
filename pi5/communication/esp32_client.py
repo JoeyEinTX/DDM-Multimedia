@@ -128,7 +128,7 @@ class ESP32Client:
             place_cup: Horse number for Place position (1-20)
             show_cup: Horse number for Show position (1-20)
         """
-        command = f"RESULTS:W:{win_cup}:P:{place_cup}:S:{show_cup}"
+        command = f"ANIM:RESULTS:{win_cup}:{place_cup}:{show_cup}"
         return self.send_command(command)
     
     def is_connected(self):
