@@ -597,10 +597,31 @@ function createSaddleCloth(number) {
     return cloth;
 }
 
-// Create dot matrix text (letters and numbers)
-function createDotMatrixText(text) {
+// Create empty tile (all dots unlit)
+function createEmptyTile() {
+    const tile = document.createElement('div');
+    tile.className = 'dot-digit';
+    
+    // Generate 7 rows × 5 columns = 35 unlit dots
+    for (let row = 0; row < 7; row++) {
+        for (let col = 0; col < 5; col++) {
+            const dot = document.createElement('div');
+            dot.className = 'dot';  // unlit
+            tile.appendChild(dot);
+        }
+    }
+    return tile;
+}
+
+// Create dot matrix text (letters and numbers) with optional padding
+function createDotMatrixText(text, padLeft = 0, padRight = 0) {
     const container = document.createElement('div');
     container.className = 'dot-matrix-text';
+    
+    // Add empty tiles on the left
+    for (let i = 0; i < padLeft; i++) {
+        container.appendChild(createEmptyTile());
+    }
     
     // Convert text to uppercase and split into characters
     const chars = text.toUpperCase().split('');
@@ -609,6 +630,11 @@ function createDotMatrixText(text) {
     chars.forEach(char => {
         container.appendChild(createDotDigit(char));
     });
+    
+    // Add empty tiles on the right
+    for (let i = 0; i < padRight; i++) {
+        container.appendChild(createEmptyTile());
+    }
     
     return container;
 }
