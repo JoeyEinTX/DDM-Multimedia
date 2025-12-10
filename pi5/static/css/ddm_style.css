@@ -427,7 +427,7 @@ body {
 .results-row {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 16px;
     padding: 12px 0;
     border-bottom: 1px solid #2a2a2a;
 }
@@ -442,7 +442,7 @@ body {
     font-weight: 700;
     color: #D4A000;
     min-width: 80px;
-    text-align: left;
+    text-align: right;
     letter-spacing: 1px;
 }
 
@@ -454,6 +454,9 @@ body {
 .dot-matrix-number {
     display: flex;
     gap: 4px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    /* Background color set via JavaScript (saddle cloth) */
 }
 
 .results-horse-name {
@@ -461,7 +464,7 @@ body {
     font-size: 1.1em;
     font-weight: 600;
     color: #D4A000;
-    text-align: right;
+    text-align: left;
     letter-spacing: 0.5px;
 }
 

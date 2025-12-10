@@ -543,10 +543,38 @@ function closeResultsModal() {
     modal.classList.remove('active');
 }
 
-// Create dot matrix number display (2 digits, zero-padded)
+// Saddle cloth colors for positions 1-20
+const SADDLE_COLORS = {
+    1: '#E31837',   // Red
+    2: '#FFFFFF',   // White
+    3: '#0033A0',   // Blue
+    4: '#FFCD00',   // Yellow
+    5: '#00843D',   // Green
+    6: '#000000',   // Black
+    7: '#FF6600',   // Orange
+    8: '#FF69B4',   // Pink
+    9: '#40E0D0',   // Turquoise
+    10: '#663399',  // Purple
+    11: '#808080',  // Gray
+    12: '#32CD32',  // Lime
+    13: '#8B4513',  // Brown
+    14: '#800000',  // Maroon
+    15: '#C4B7A6',  // Khaki
+    16: '#50C878',  // Emerald
+    17: '#E31837',  // Red
+    18: '#0033A0',  // Blue
+    19: '#FFCD00',  // Yellow
+    20: '#FF69B4'   // Pink
+};
+
+// Create dot matrix number display with saddle cloth color (2 digits, zero-padded)
 function createDotMatrixNumber(number) {
     const container = document.createElement('div');
     container.className = 'dot-matrix-number';
+    
+    // Apply saddle cloth color as background
+    const saddleColor = SADDLE_COLORS[number] || '#808080';
+    container.style.backgroundColor = saddleColor;
     
     // Zero-pad to 2 digits
     const numStr = String(number).padStart(2, '0');
