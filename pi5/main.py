@@ -1,10 +1,14 @@
 # main.py - Flask app entry point for DDM Horse Dashboard
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response
 import sys
 import os
 import requests
+import json
+import queue
+import time
 from datetime import datetime, timedelta
+from threading import Lock
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,11 +21,22 @@ from communication.esp32_client import esp32, check_esp32_connection
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ddm-horse-controller-2025'
 
+# Data directory for persistence
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+RESULTS_FILE = os.path.join(DATA_DIR, 'results.json')
+
+# Ensure data directory exists
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # Weather cache
 weather_cache = {
     'data': None,
     'timestamp': None
 }
+
+# SSE (Server-Sent Events) for real-time results push
+sse_clients = []
+sse_lock = Lock()
 
 
 @app.route('/')
@@ -142,31 +157,144 @@ def api_animation(anim_name):
     })
 
 
-@app.route('/api/results', methods=['POST'])
+def save_results(win, place, show):
+    """Save results to file"""
+    results = {
+        'win': win,
+        'place': place,
+        'show': show,
+        'timestamp': datetime.now().isoformat()
+    }
+    try:
+        with open(RESULTS_FILE, 'w') as f:
+            json.dump(results, f)
+        return True
+    except Exception as e:
+        print(f"Error saving results: {e}")
+        return False
+
+
+def load_results():
+    """Load results from file"""
+    try:
+        if os.path.exists(RESULTS_FILE):
+            with open(RESULTS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading results: {e}")
+    return None
+
+
+def broadcast_sse(event, data):
+    """Broadcast SSE message to all connected clients"""
+    with sse_lock:
+        dead_clients = []
+        for client_queue in sse_clients:
+            try:
+                client_queue.put({'event': event, 'data': data}, block=False)
+            except queue.Full:
+                dead_clients.append(client_queue)
+        
+        # Remove dead clients
+        for dead_client in dead_clients:
+            sse_clients.remove(dead_client)
+
+
+@app.route('/api/results', methods=['GET', 'POST'])
 def api_results():
-    """Set race results"""
-    data = request.get_json()
-    win = data.get('win', 1)
-    place = data.get('place', 2)
-    show = data.get('show', 3)
+    """Get or set race results"""
+    if request.method == 'GET':
+        # GET - return current results
+        results = load_results()
+        if results:
+            return jsonify({
+                'success': True,
+                'results': {
+                    'win': results.get('win'),
+                    'place': results.get('place'),
+                    'show': results.get('show'),
+                    'timestamp': results.get('timestamp')
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'No results available'
+            })
     
-    # Validate unique cups
-    if len(set([win, place, show])) != 3:
+    else:
+        # POST - set new results
+        data = request.get_json()
+        win = data.get('win', 1)
+        place = data.get('place', 2)
+        show = data.get('show', 3)
+        
+        # Validate unique cups
+        if len(set([win, place, show])) != 3:
+            return jsonify({
+                'success': False,
+                'error': 'Win, Place, and Show must be different cups'
+            }), 400
+        
+        # Send to ESP32
+        response = esp32.set_results(win, place, show)
+        success = not response.startswith('ERROR')
+        
+        if success:
+            # Save to file
+            save_results(win, place, show)
+            
+            # Broadcast to all connected clients via SSE
+            broadcast_sse('results', {
+                'win': win,
+                'place': place,
+                'show': show
+            })
+        
         return jsonify({
-            'success': False,
-            'error': 'Win, Place, and Show must be different cups'
-        }), 400
+            'success': success,
+            'results': {
+                'win': win,
+                'place': place,
+                'show': show
+            },
+            'response': response
+        })
+
+
+@app.route('/api/results/stream')
+def results_stream():
+    """SSE endpoint for real-time results notifications"""
+    def event_stream():
+        # Create a queue for this client
+        client_queue = queue.Queue(maxsize=10)
+        
+        # Add client to list
+        with sse_lock:
+            sse_clients.append(client_queue)
+        
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'type': 'connected'})}\n\n"
+            
+            # Keep connection alive and send events
+            while True:
+                try:
+                    # Wait for messages (with timeout for keep-alive)
+                    message = client_queue.get(timeout=30)
+                    event = message.get('event', 'message')
+                    data = message.get('data', {})
+                    yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
+                except queue.Empty:
+                    # Send keep-alive comment
+                    yield ": keep-alive\n\n"
+        finally:
+            # Remove client on disconnect
+            with sse_lock:
+                if client_queue in sse_clients:
+                    sse_clients.remove(client_queue)
     
-    response = esp32.set_results(win, place, show)
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'results': {
-            'win': win,
-            'place': place,
-            'show': show
-        },
-        'response': response
-    })
+    return Response(event_stream(), mimetype='text/event-stream')
 
 
 @app.route('/api/reset', methods=['POST'])

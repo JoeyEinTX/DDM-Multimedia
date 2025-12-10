@@ -565,16 +565,64 @@ function clearResults() {
     showNotification('Results cleared', 'success');
 }
 
-// Load results from localStorage
-function loadResultsFromStorage() {
-    const stored = localStorage.getItem('raceResults');
-    if (stored) {
-        try {
-            const results = JSON.parse(stored);
-            showResultsBanner(results.win, results.place, results.show);
-        } catch (error) {
-            console.error('Error loading results from storage:', error);
+// SSE connection for real-time results
+let resultsEventSource = null;
+let pendingResults = null;
+
+// Connect to SSE stream for real-time results
+function connectResultsStream() {
+    if (resultsEventSource) {
+        resultsEventSource.close();
+    }
+    
+    resultsEventSource = new EventSource('/api/results/stream');
+    
+    resultsEventSource.onopen = function() {
+        console.log('[SSE] Connected to results stream');
+    };
+    
+    resultsEventSource.addEventListener('results', function(e) {
+        console.log('[SSE] Results received:', e.data);
+        const data = JSON.parse(e.data);
+        pendingResults = data;
+        showResultsRevealModal();
+    });
+    
+    resultsEventSource.onerror = function(e) {
+        console.error('[SSE] Error:', e);
+        // Reconnect after 5 seconds
+        setTimeout(connectResultsStream, 5000);
+    };
+}
+
+// Load results from server
+async function loadResultsFromServer() {
+    try {
+        const response = await fetch('/api/results');
+        const data = await response.json();
+        
+        if (data.success && data.results) {
+            showResultsBanner(data.results.win, data.results.place, data.results.show);
         }
+    } catch (error) {
+        console.error('Error loading results from server:', error);
+    }
+}
+
+// Show results reveal modal
+function showResultsRevealModal() {
+    const modal = document.getElementById('results-reveal-modal');
+    modal.classList.add('active');
+}
+
+// Reveal winners - close modal and show banner
+function revealWinners() {
+    const modal = document.getElementById('results-reveal-modal');
+    modal.classList.remove('active');
+    
+    if (pendingResults) {
+        showResultsBanner(pendingResults.win, pendingResults.place, pendingResults.show);
+        pendingResults = null;
     }
 }
 
@@ -812,8 +860,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Get system status
     getSystemStatus();
     
-    // Load saved results from localStorage
-    loadResultsFromStorage();
+    // Connect to SSE stream for real-time results
+    connectResultsStream();
+    
+    // Load initial results from server
+    loadResultsFromServer();
     
     // Get weather forecast immediately and every 30 minutes
     getWeather();

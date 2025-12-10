@@ -784,6 +784,137 @@ body {
     font-size: 1em;
 }
 
+/* Results Reveal Modal - Full Screen */
+.results-reveal-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 5000;
+    align-items: center;
+    justify-content: center;
+}
+
+.results-reveal-modal.active {
+    display: flex;
+    animation: revealFadeIn 0.5s ease-out;
+}
+
+@keyframes revealFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.results-reveal-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    animation: revealPulse 2s ease-in-out infinite;
+}
+
+@keyframes revealPulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.results-reveal-icon {
+    font-size: 8em;
+    animation: revealGlow 2s ease-in-out infinite;
+    filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+}
+
+@keyframes revealGlow {
+    0%, 100% {
+        filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.6));
+    }
+    50% {
+        filter: drop-shadow(0 0 40px rgba(255, 215, 0, 1));
+    }
+}
+
+.results-reveal-title {
+    font-size: 3.5em;
+    font-weight: 900;
+    color: #FFD700;
+    text-align: center;
+    text-shadow: 
+        0 0 20px rgba(255, 215, 0, 0.8),
+        0 0 40px rgba(255, 215, 0, 0.6),
+        2px 2px 4px rgba(0, 0, 0, 0.8);
+    letter-spacing: 4px;
+    animation: revealTextGlow 2s ease-in-out infinite;
+}
+
+@keyframes revealTextGlow {
+    0%, 100% {
+        text-shadow: 
+            0 0 20px rgba(255, 215, 0, 0.6),
+            0 0 40px rgba(255, 215, 0, 0.4),
+            2px 2px 4px rgba(0, 0, 0, 0.8);
+    }
+    50% {
+        text-shadow: 
+            0 0 30px rgba(255, 215, 0, 1),
+            0 0 60px rgba(255, 215, 0, 0.8),
+            2px 2px 4px rgba(0, 0, 0, 0.8);
+    }
+}
+
+.btn-reveal-winners {
+    padding: 20px 48px;
+    font-size: 1.5em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: linear-gradient(135deg, #FFD700, #FFA500);
+    color: #000;
+    border: 3px solid #FFD700;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 
+        0 4px 20px rgba(255, 215, 0, 0.6),
+        0 0 40px rgba(255, 215, 0, 0.4);
+    animation: revealButtonPulse 2s ease-in-out infinite;
+}
+
+@keyframes revealButtonPulse {
+    0%, 100% {
+        box-shadow: 
+            0 4px 20px rgba(255, 215, 0, 0.6),
+            0 0 40px rgba(255, 215, 0, 0.4);
+    }
+    50% {
+        box-shadow: 
+            0 6px 30px rgba(255, 215, 0, 0.8),
+            0 0 60px rgba(255, 215, 0, 0.6);
+    }
+}
+
+.btn-reveal-winners:hover {
+    background: linear-gradient(135deg, #FFA500, #FFD700);
+    transform: scale(1.1);
+    box-shadow: 
+        0 6px 30px rgba(255, 215, 0, 0.8),
+        0 0 60px rgba(255, 215, 0, 0.6);
+}
+
+.btn-reveal-winners:active {
+    transform: scale(1.05);
+}
+
 /* Emergency Stop - Collapsible Icon */
 .emergency-icon {
     position: fixed;
