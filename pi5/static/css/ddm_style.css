@@ -451,12 +451,19 @@ body {
     gap: 4px;
 }
 
-.dot-matrix-number {
+.saddle-cloth {
+    min-width: 50px;
+    height: 50px;
     display: flex;
-    gap: 4px;
-    padding: 6px 8px;
-    border-radius: 4px;
-    /* Background color set via JavaScript (saddle cloth) */
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 1.5em;
+    font-weight: 900;
+    font-family: 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    letter-spacing: -1px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    /* Background and text colors set via JavaScript */
 }
 
 .results-horse-name {

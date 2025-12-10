@@ -543,67 +543,67 @@ function closeResultsModal() {
     modal.classList.remove('active');
 }
 
-// Saddle cloth colors for positions 1-20
-const SADDLE_COLORS = {
-    1: '#E31837',   // Red
-    2: '#FFFFFF',   // White
-    3: '#0033A0',   // Blue
-    4: '#FFCD00',   // Yellow
-    5: '#00843D',   // Green
-    6: '#000000',   // Black
-    7: '#FF6600',   // Orange
-    8: '#FF69B4',   // Pink
-    9: '#40E0D0',   // Turquoise
-    10: '#663399',  // Purple
-    11: '#808080',  // Gray
-    12: '#32CD32',  // Lime
-    13: '#8B4513',  // Brown
-    14: '#800000',  // Maroon
-    15: '#C4B7A6',  // Khaki
-    16: '#50C878',  // Emerald
-    17: '#E31837',  // Red
-    18: '#0033A0',  // Blue
-    19: '#FFCD00',  // Yellow
-    20: '#FF69B4'   // Pink
+// Saddle cloth colors and text colors for positions 1-20
+const SADDLE_CLOTHS = {
+    1: { bg: '#E31837', text: '#FFFFFF' },   // Red - white text
+    2: { bg: '#FFFFFF', text: '#000000' },   // White - black text
+    3: { bg: '#0033A0', text: '#FFFFFF' },   // Blue - white text
+    4: { bg: '#FFCD00', text: '#000000' },   // Yellow - black text
+    5: { bg: '#00843D', text: '#FFFFFF' },   // Green - white text
+    6: { bg: '#000000', text: '#FFFFFF' },   // Black - white text
+    7: { bg: '#FF6600', text: '#FFFFFF' },   // Orange - white text
+    8: { bg: '#FF69B4', text: '#FFFFFF' },   // Pink - white text
+    9: { bg: '#40E0D0', text: '#000000' },   // Turquoise - black text
+    10: { bg: '#663399', text: '#FFFFFF' },  // Purple - white text
+    11: { bg: '#808080', text: '#FFFFFF' },  // Gray - white text
+    12: { bg: '#32CD32', text: '#000000' },  // Lime - black text
+    13: { bg: '#8B4513', text: '#FFFFFF' },  // Brown - white text
+    14: { bg: '#800000', text: '#FFFFFF' },  // Maroon - white text
+    15: { bg: '#C4B7A6', text: '#000000' },  // Khaki - black text
+    16: { bg: '#50C878', text: '#FFFFFF' },  // Emerald - white text
+    17: { bg: '#E31837', text: '#FFFFFF' },  // Red - white text
+    18: { bg: '#0033A0', text: '#FFFFFF' },  // Blue - white text
+    19: { bg: '#FFCD00', text: '#000000' },  // Yellow - black text
+    20: { bg: '#FF69B4', text: '#FFFFFF' }   // Pink - white text
 };
 
-// Create dot matrix number display with saddle cloth color (2 digits, zero-padded)
-function createDotMatrixNumber(number) {
-    const container = document.createElement('div');
-    container.className = 'dot-matrix-number';
+// Create saddle cloth with flat color and bold number
+function createSaddleCloth(number) {
+    const cloth = document.createElement('div');
+    cloth.className = 'saddle-cloth';
     
-    // Apply saddle cloth color as background
-    const saddleColor = SADDLE_COLORS[number] || '#808080';
-    container.style.backgroundColor = saddleColor;
+    // Get colors for this position
+    const colors = SADDLE_CLOTHS[number] || { bg: '#808080', text: '#FFFFFF' };
     
-    // Zero-pad to 2 digits
+    // Apply styling
+    cloth.style.backgroundColor = colors.bg;
+    cloth.style.color = colors.text;
+    
+    // Zero-pad to 2 digits and display
     const numStr = String(number).padStart(2, '0');
+    cloth.textContent = numStr;
     
-    // Create digit for each character
-    container.appendChild(createDotDigit(numStr[0]));
-    container.appendChild(createDotDigit(numStr[1]));
-    
-    return container;
+    return cloth;
 }
 
-// Show results banner with dot matrix display
+// Show results banner with saddle cloths
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
     
     // Update WIN row
     const winNumber = document.getElementById('banner-win-number');
     winNumber.innerHTML = '';
-    winNumber.appendChild(createDotMatrixNumber(win));
+    winNumber.appendChild(createSaddleCloth(win));
     
     // Update PLACE row
     const placeNumber = document.getElementById('banner-place-number');
     placeNumber.innerHTML = '';
-    placeNumber.appendChild(createDotMatrixNumber(place));
+    placeNumber.appendChild(createSaddleCloth(place));
     
     // Update SHOW row
     const showNumber = document.getElementById('banner-show-number');
     showNumber.innerHTML = '';
-    showNumber.appendChild(createDotMatrixNumber(show));
+    showNumber.appendChild(createSaddleCloth(show));
     
     // Update horse names (placeholder for now)
     document.getElementById('banner-win-name').textContent = `HORSE ${win}`;
