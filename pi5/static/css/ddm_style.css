@@ -179,7 +179,7 @@ body {
 .tote-clock-container {
     display: flex;
     align-items: center;
-    padding: 8px 10px;
+    padding: 10px 12px;
     background: #1a1a1a;
     border-radius: 8px;
     border: 2px solid #2a2a2a;
@@ -195,11 +195,11 @@ body {
     gap: 6px;
 }
 
-/* Dot matrix digit container - 5 columns x 5 rows */
+/* Dot matrix digit container - 5 columns × 7 rows */
 .dot-digit {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    grid-template-rows: repeat(5, 1fr);
+    grid-template-rows: repeat(7, 1fr);
     gap: 2px;
     padding: 0;
 }
@@ -228,7 +228,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 8px;
+    gap: 12px;
     padding: 0 4px;
 }
 
@@ -247,7 +247,7 @@ body {
 .dot-ampm .dot-letter {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(5, 1fr);
+    grid-template-rows: repeat(7, 1fr);
     gap: 2px;
 }
 
