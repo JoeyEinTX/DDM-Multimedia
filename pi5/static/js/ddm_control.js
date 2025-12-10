@@ -643,10 +643,10 @@ function createDotMatrixText(text, padLeft = 0, padRight = 0) {
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
     
-    // Update WIN row - label, saddle cloth, horse name
+    // Update WIN row - label (padded left), saddle cloth, horse name (padded right)
     const winLabel = document.getElementById('banner-win-label');
     winLabel.innerHTML = '';
-    winLabel.appendChild(createDotMatrixText('WIN'));
+    winLabel.appendChild(createDotMatrixText('WIN', 2, 0));  // 2 blank tiles left for alignment
     
     const winNumber = document.getElementById('banner-win-number');
     winNumber.innerHTML = '';
@@ -654,12 +654,12 @@ function showResultsBanner(win, place, show) {
     
     const winName = document.getElementById('banner-win-name');
     winName.innerHTML = '';
-    winName.appendChild(createDotMatrixText(`HORSE ${win}`));
+    winName.appendChild(createDotMatrixText(`HORSE ${win}`, 0, 12));  // 12 blank tiles right
     
-    // Update PLACE row - label, saddle cloth, horse name
+    // Update PLACE row - label (no padding), saddle cloth, horse name (padded right)
     const placeLabel = document.getElementById('banner-place-label');
     placeLabel.innerHTML = '';
-    placeLabel.appendChild(createDotMatrixText('PLACE'));
+    placeLabel.appendChild(createDotMatrixText('PLACE', 0, 0));  // No padding (longest label)
     
     const placeNumber = document.getElementById('banner-place-number');
     placeNumber.innerHTML = '';
@@ -667,12 +667,12 @@ function showResultsBanner(win, place, show) {
     
     const placeName = document.getElementById('banner-place-name');
     placeName.innerHTML = '';
-    placeName.appendChild(createDotMatrixText(`HORSE ${place}`));
+    placeName.appendChild(createDotMatrixText(`HORSE ${place}`, 0, 12));  // 12 blank tiles right
     
-    // Update SHOW row - label, saddle cloth, horse name
+    // Update SHOW row - label (padded left), saddle cloth, horse name (padded right)
     const showLabel = document.getElementById('banner-show-label');
     showLabel.innerHTML = '';
-    showLabel.appendChild(createDotMatrixText('SHOW'));
+    showLabel.appendChild(createDotMatrixText('SHOW', 1, 0));  // 1 blank tile left for alignment
     
     const showNumber = document.getElementById('banner-show-number');
     showNumber.innerHTML = '';
@@ -680,7 +680,7 @@ function showResultsBanner(win, place, show) {
     
     const showName = document.getElementById('banner-show-name');
     showName.innerHTML = '';
-    showName.appendChild(createDotMatrixText(`HORSE ${show}`));
+    showName.appendChild(createDotMatrixText(`HORSE ${show}`, 0, 12));  // 12 blank tiles right
     
     banner.style.display = 'block';
 }
