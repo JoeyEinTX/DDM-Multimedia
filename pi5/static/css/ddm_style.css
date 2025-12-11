@@ -67,12 +67,14 @@ body {
     background: #0c1820;
     color: #ffffff;
     min-height: 100vh;
+    min-width: 1000px;
     padding: 24px;
     line-height: 1.5;
 }
 
 .container {
     max-width: 1200px;
+    min-width: 1000px;
     margin: 0 auto;
 }
 
@@ -421,6 +423,8 @@ body {
 }
 
 .results-tote-board {
+    display: inline-block;
+    width: fit-content;
     background: #1a1a1a;
     padding: 16px 20px;
     border-radius: 8px;
@@ -456,7 +460,7 @@ body {
 }
 
 .saddle-cloth {
-    min-width: 50px;
+    width: 60px;
     height: 50px;
     display: flex;
     align-items: center;
@@ -473,18 +477,16 @@ body {
 .results-horse-name {
     display: flex;
     align-items: center;
-    overflow: hidden;
 }
 
 /* Dot matrix text container (for labels and horse names) */
 .dot-matrix-text {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 0;
 }
 
 .btn-clear-results {
-    width: 100%;
     margin-top: 8px;
     padding: 10px 20px;
     font-size: 0.9em;
