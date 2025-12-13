@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ system_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}">
+    <!-- iro.js Color Picker Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
 </head>
 <body>
     <!-- Splash Screen -->
@@ -63,7 +65,7 @@
             <div class="panel">
                 <h2>PRE-RACE</h2>
                 <button class="btn" onclick="sendAnimation('WELCOME', this)">Welcome</button>
-                <button class="btn" onclick="sendCommand('LED:ALL_ON', this, true)">Test</button>
+                <button class="btn" onclick="openTestModal()">Test</button>
                 <button class="btn" onclick="sendAnimation('IDLE', this)">Standby</button>
             </div>
 
@@ -158,7 +160,7 @@
             
             <div class="result-selection">
                 <label>🥇 Win (Gold):</label>
-                <select id="win-horse" class="horse-select">
+                <select id="win-horse" class="horse-select" onchange="previewWinner('win', this.value)">
                     {% for i in range(1, num_cups + 1) %}
                     <option value="{{ i }}">Horse {{ i }}</option>
                     {% endfor %}
@@ -167,7 +169,7 @@
 
             <div class="result-selection">
                 <label>🥈 Place (Silver):</label>
-                <select id="place-horse" class="horse-select">
+                <select id="place-horse" class="horse-select" onchange="previewWinner('place', this.value)">
                     {% for i in range(1, num_cups + 1) %}
                     <option value="{{ i }}" {% if i == 2 %}selected{% endif %}>Horse {{ i }}</option>
                     {% endfor %}
@@ -176,7 +178,7 @@
 
             <div class="result-selection">
                 <label>🥉 Show (Bronze):</label>
-                <select id="show-horse" class="horse-select">
+                <select id="show-horse" class="horse-select" onchange="previewWinner('show', this.value)">
                     {% for i in range(1, num_cups + 1) %}
                     <option value="{{ i }}" {% if i == 3 %}selected{% endif %}>Horse {{ i }}</option>
                     {% endfor %}
@@ -197,6 +199,41 @@
             <h2 id="weather-modal-title">Weather Forecast</h2>
             <div id="weather-modal-grid" class="weather-modal-grid">
                 <!-- Weather forecast items will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- RGB Test Modal -->
+    <div id="test-modal" class="modal">
+        <div class="modal-content test-modal-content">
+            <button class="modal-close" onclick="closeTestModal()">×</button>
+            <h2>LED TEST MODE</h2>
+            
+            <div class="color-wheel-container">
+                <div id="color-picker"></div>
+            </div>
+
+            <div class="brightness-control">
+                <label>Brightness: <span id="brightness-value">75</span>%</label>
+                <input type="range" id="brightness-slider" min="0" max="100" value="75" class="brightness-slider">
+            </div>
+
+            <div class="preset-section">
+                <h3 class="preset-title">DDM PRESETS</h3>
+                <div class="preset-grid">
+                    <button class="preset-btn" data-color="225,149,171" data-name="ROSE">ROSE</button>
+                    <button class="preset-btn" data-color="201,162,39" data-name="GOLD">GOLD</button>
+                    <button class="preset-btn" data-color="27,153,139" data-name="TEAL">TEAL</button>
+                    <button class="preset-btn" data-color="255,255,255" data-name="WHITE">WHITE</button>
+                    <button class="preset-btn" data-color="255,0,0" data-name="RED">RED</button>
+                    <button class="preset-btn" data-color="0,255,0" data-name="GREEN">GREEN</button>
+                    <button class="preset-btn" data-color="0,0,255" data-name="BLUE">BLUE</button>
+                    <button class="preset-btn preset-btn-off" data-name="OFF">OFF</button>
+                </div>
+            </div>
+
+            <div class="modal-buttons">
+                <button class="btn" onclick="closeTestModal()">CLOSE</button>
             </div>
         </div>
     </div>

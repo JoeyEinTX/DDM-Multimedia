@@ -223,23 +223,73 @@ String processCommand(String cmd) {
         return "OK:COLOR:" + hexColor;
     }
     
-    // LED:CUP:N:RRGGBB - Set specific cup to color
+    // LED:CUP:N:RRGGBB - Set specific cup to hex color
+    // LED:CUP:N:R,G,B - Set specific cup to RGB color
     else if (cmd.startsWith("LED:CUP:")) {
         stopAnimation();
-        // Parse: LED:CUP:5:FFD700
+        // Parse: LED:CUP:5:FFD700 or LED:CUP:5:255,215,0
         int firstColon = cmd.indexOf(':', 8);
         if (firstColon > 0) {
             int cupNum = cmd.substring(8, firstColon).toInt();
-            String hexColor = cmd.substring(firstColon + 1);
+            String colorStr = cmd.substring(firstColon + 1);
             
             if (cupNum >= 1 && cupNum <= 20) {
-                CRGB color = hexToRGB(hexColor);
+                CRGB color;
+                
+                // Check if RGB format (contains comma)
+                if (colorStr.indexOf(',') > 0) {
+                    // Parse RGB: "255,215,0"
+                    int firstComma = colorStr.indexOf(',');
+                    int secondComma = colorStr.indexOf(',', firstComma + 1);
+                    
+                    if (secondComma > 0) {
+                        int r = colorStr.substring(0, firstComma).toInt();
+                        int g = colorStr.substring(firstComma + 1, secondComma).toInt();
+                        int b = colorStr.substring(secondComma + 1).toInt();
+                        color = CRGB(r, g, b);
+                    }
+                } else {
+                    // Parse hex: "FFD700"
+                    color = hexToRGB(colorStr);
+                }
+                
                 setCup(cupNum, color);
                 FastLED.show();
-                return "OK:CUP:" + String(cupNum) + ":" + hexColor;
+                return "OK:CUP:" + String(cupNum) + ":" + colorStr;
             }
         }
         return "ERROR:INVALID_CUP";
+    }
+    
+    // LED:TEST:R,G,B,BRIGHTNESS - RGB test mode with brightness
+    else if (cmd.startsWith("LED:TEST:")) {
+        stopAnimation();
+        // Parse: LED:TEST:180,45,220,75
+        String params = cmd.substring(9);
+        
+        int firstComma = params.indexOf(',');
+        int secondComma = params.indexOf(',', firstComma + 1);
+        int thirdComma = params.indexOf(',', secondComma + 1);
+        
+        if (firstComma > 0 && secondComma > 0 && thirdComma > 0) {
+            int r = params.substring(0, firstComma).toInt();
+            int g = params.substring(firstComma + 1, secondComma).toInt();
+            int b = params.substring(secondComma + 1, thirdComma).toInt();
+            int brightness = params.substring(thirdComma + 1).toInt();
+            
+            // Set brightness
+            brightness = constrain(brightness, 0, 100);
+            currentBrightness = map(brightness, 0, 100, 0, 255);
+            FastLED.setBrightness(currentBrightness);
+            
+            // Set all LEDs to color
+            CRGB color = CRGB(r, g, b);
+            fill_solid(leds, LED_COUNT, color);
+            FastLED.show();
+            
+            return "OK:TEST:" + String(r) + "," + String(g) + "," + String(b) + "," + String(brightness);
+        }
+        return "ERROR:INVALID_TEST_PARAMS";
     }
     
     // ANIM:WELCOME - Gold wave left to right

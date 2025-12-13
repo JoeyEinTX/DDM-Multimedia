@@ -542,16 +542,183 @@ async function emergencyStop() {
     }
 }
 
+// RGB Test Modal - Color Wheel and Live Preview
+let colorPicker = null;
+let currentBrightness = 75;
+
+// Open test modal with color wheel
+function openTestModal() {
+    const modal = document.getElementById('test-modal');
+    modal.classList.add('active');
+    
+    // Initialize color picker if not already done
+    if (!colorPicker) {
+        colorPicker = new iro.ColorPicker('#color-picker', {
+            width: 200,
+            color: '#E195AB', // Default to ROSE
+            borderWidth: 2,
+            borderColor: '#1B998B',
+            layout: [
+                {
+                    component: iro.ui.Wheel,
+                    options: {}
+                }
+            ]
+        });
+        
+        // Listen to color changes
+        colorPicker.on('color:change', function(color) {
+            sendTestColor(color.rgb.r, color.rgb.g, color.rgb.b, currentBrightness);
+        });
+    }
+    
+    // Set up brightness slider
+    const brightnessSlider = document.getElementById('brightness-slider');
+    brightnessSlider.addEventListener('input', function() {
+        currentBrightness = parseInt(this.value);
+        document.getElementById('brightness-value').textContent = currentBrightness;
+        const color = colorPicker.color.rgb;
+        sendTestColor(color.r, color.g, color.b, currentBrightness);
+    });
+    
+    // Set up preset buttons
+    const presetButtons = document.querySelectorAll('.preset-btn');
+    presetButtons.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const colorStr = this.dataset.color;
+            const name = this.dataset.name;
+            
+            if (name === 'OFF') {
+                sendTestOff();
+            } else {
+                const [r, g, b] = colorStr.split(',').map(v => parseInt(v));
+                colorPicker.color.rgb = { r, g, b };
+                sendTestColor(r, g, b, currentBrightness);
+            }
+        });
+    });
+}
+
+// Close test modal and turn off LEDs
+async function closeTestModal() {
+    const modal = document.getElementById('test-modal');
+    modal.classList.remove('active');
+    
+    // Send LED:ALL_OFF command
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command: 'LED:ALL_OFF' })
+        });
+    } catch (error) {
+        console.error('Error turning off LEDs:', error);
+    }
+}
+
+// Send test color command
+async function sendTestColor(r, g, b, brightness) {
+    const command = `LED:TEST:${Math.round(r)},${Math.round(g)},${Math.round(b)},${brightness}`;
+    
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command: command })
+        });
+    } catch (error) {
+        console.error('Error sending test color:', error);
+    }
+}
+
+// Send test off command
+async function sendTestOff() {
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command: 'LED:ALL_OFF' })
+        });
+    } catch (error) {
+        console.error('Error turning off LEDs:', error);
+    }
+}
+
 // Show results modal
 function showResultsModal() {
     const modal = document.getElementById('results-modal');
     modal.classList.add('active');
 }
 
-// Close results modal
-function closeResultsModal() {
+// Close results modal and clear previews
+async function closeResultsModal() {
     const modal = document.getElementById('results-modal');
     modal.classList.remove('active');
+    
+    // Turn off preview LEDs
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command: 'LED:ALL_OFF' })
+        });
+    } catch (error) {
+        console.error('Error turning off preview LEDs:', error);
+    }
+}
+
+// Preview winner selection (live preview)
+let previousPreview = {
+    win: null,
+    place: null,
+    show: null
+};
+
+async function previewWinner(position, cupNumber) {
+    const colors = {
+        win: '255,215,0',    // Gold
+        place: '192,192,192', // Silver
+        show: '205,127,50'    // Bronze
+    };
+    
+    // Turn off previous cup for this position if it exists
+    if (previousPreview[position]) {
+        try {
+            await fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ command: `LED:CUP:${previousPreview[position]}:0,0,0` })
+            });
+        } catch (error) {
+            console.error('Error turning off previous preview:', error);
+        }
+    }
+    
+    // Light up new cup
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ command: `LED:CUP:${cupNumber}:${colors[position]}` })
+        });
+        
+        // Update tracking
+        previousPreview[position] = cupNumber;
+    } catch (error) {
+        console.error('Error sending preview command:', error);
+    }
 }
 
 // Saddle cloth colors and text colors for positions 1-20 (Official Racing Colors)
