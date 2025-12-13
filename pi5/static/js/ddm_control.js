@@ -548,11 +548,13 @@ let currentBrightness = 75;
 
 // Open test modal with color wheel
 function openTestModal() {
+    console.log('[TEST MODAL] Opening modal...');
     const modal = document.getElementById('test-modal');
     modal.classList.add('active');
     
     // Initialize color picker if not already done
     if (!colorPicker) {
+        console.log('[TEST MODAL] Initializing color picker and event handlers...');
         colorPicker = new iro.ColorPicker('#color-picker', {
             width: 200,
             color: '#E195AB', // Default to ROSE
@@ -568,35 +570,43 @@ function openTestModal() {
         
         // Listen to color changes
         colorPicker.on('color:change', function(color) {
+            console.log('[COLOR WHEEL] Color changed:', color.rgb);
             sendTestColor(color.rgb.r, color.rgb.g, color.rgb.b, currentBrightness);
         });
-    }
-    
-    // Set up brightness slider
-    const brightnessSlider = document.getElementById('brightness-slider');
-    brightnessSlider.addEventListener('input', function() {
-        currentBrightness = parseInt(this.value);
-        document.getElementById('brightness-value').textContent = currentBrightness;
-        const color = colorPicker.color.rgb;
-        sendTestColor(color.r, color.g, color.b, currentBrightness);
-    });
-    
-    // Set up preset buttons
-    const presetButtons = document.querySelectorAll('.preset-btn');
-    presetButtons.forEach(btn => {
-        btn.addEventListener('click', function() {
-            const colorStr = this.dataset.color;
-            const name = this.dataset.name;
-            
-            if (name === 'OFF') {
-                sendTestOff();
-            } else {
-                const [r, g, b] = colorStr.split(',').map(v => parseInt(v));
-                colorPicker.color.rgb = { r, g, b };
-                sendTestColor(r, g, b, currentBrightness);
-            }
+        
+        // Set up brightness slider (only once)
+        const brightnessSlider = document.getElementById('brightness-slider');
+        brightnessSlider.addEventListener('input', function() {
+            currentBrightness = parseInt(this.value);
+            document.getElementById('brightness-value').textContent = currentBrightness;
+            const color = colorPicker.color.rgb;
+            console.log('[BRIGHTNESS] Changed to:', currentBrightness);
+            sendTestColor(color.r, color.g, color.b, currentBrightness);
         });
-    });
+        
+        // Set up preset buttons (only once)
+        const presetButtons = document.querySelectorAll('.preset-btn');
+        console.log('[PRESET BUTTONS] Found', presetButtons.length, 'buttons');
+        presetButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const colorStr = this.dataset.color;
+                const name = this.dataset.name;
+                console.log('[PRESET] Button clicked:', name);
+                
+                if (name === 'OFF') {
+                    sendTestOff();
+                } else {
+                    const [r, g, b] = colorStr.split(',').map(v => parseInt(v));
+                    colorPicker.color.rgb = { r, g, b };
+                    sendTestColor(r, g, b, currentBrightness);
+                }
+            });
+        });
+        
+        console.log('[TEST MODAL] Initialization complete');
+    } else {
+        console.log('[TEST MODAL] Color picker already initialized');
+    }
 }
 
 // Close test modal and turn off LEDs
