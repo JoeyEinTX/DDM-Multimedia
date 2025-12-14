@@ -1141,8 +1141,17 @@ body {
 
 /* Results Modal Redesign - Saddle Cloth Grid */
 .results-modal-content {
-    max-width: 450px;
+    max-width: 650px;
     padding: 24px;
+}
+
+.results-modal-layout {
+    display: flex;
+    gap: 24px;
+}
+
+.results-main {
+    flex: 1;
 }
 
 #results-modal-header {
@@ -1296,6 +1305,74 @@ body {
 .btn-confirm:hover {
     transform: scale(1.05);
     box-shadow: 0 0 20px rgba(255,215,0,0.5);
+}
+
+/* Results Sidebar with Slots */
+.results-sidebar {
+    width: 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px 16px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+
+.result-slot {
+    text-align: center;
+}
+
+.slot-label {
+    font-size: 0.85em;
+    font-weight: bold;
+    color: #888;
+    margin-bottom: 8px;
+    display: block;
+    letter-spacing: 1px;
+}
+
+.slot-label.win { color: #FFD700; }
+.slot-label.place { color: #C0C0C0; }
+.slot-label.show { color: #CD7F32; }
+
+.slot-value {
+    height: 60px;
+    border: 2px dashed #333;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.2);
+}
+
+.slot-value.filled {
+    border-style: solid;
+    background: transparent;
+}
+
+.slot-saddle {
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4em;
+    font-weight: bold;
+    border-radius: 6px;
+    font-family: 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    animation: slotFadeIn 0.3s ease;
+}
+
+@keyframes slotFadeIn {
+    from { 
+        opacity: 0; 
+        transform: scale(0.8); 
+    }
+    to { 
+        opacity: 1; 
+        transform: scale(1); 
+    }
 }
 
 /* Loading Indicator */

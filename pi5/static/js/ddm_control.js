@@ -734,6 +734,8 @@ const BRONZE_RGB = { r: 205, g: 127, b: 50 };
 
 // Show results modal with saddle cloth grid
 async function showResultsModal() {
+    console.log('[RESULTS MODAL] Opening modal, starting heartbeat...');
+    
     // Clear finish timer if running
     if (finishTimer) {
         clearTimeout(finishTimer);
@@ -753,17 +755,21 @@ async function showResultsModal() {
     
     // Unlock all cups and start heartbeat animation
     try {
+        console.log('[RESULTS MODAL] Unlocking all cups...');
         await fetch('/api/cup/unlock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cup: 'ALL' })
         });
         
-        await fetch('/api/animation/HEARTBEAT', {
+        console.log('[RESULTS MODAL] Starting HEARTBEAT animation...');
+        const heartbeatResp = await fetch('/api/animation/HEARTBEAT', {
             method: 'POST'
         });
+        const heartbeatData = await heartbeatResp.json();
+        console.log('[RESULTS MODAL] Heartbeat response:', heartbeatData);
     } catch (error) {
-        console.error('Error starting heartbeat:', error);
+        console.error('[RESULTS MODAL] Error starting heartbeat:', error);
     }
     
     // Generate saddle cloth grid
@@ -775,6 +781,7 @@ async function showResultsModal() {
     // Show the modal
     const modal = document.getElementById('results-modal');
     modal.classList.add('active');
+    console.log('[RESULTS MODAL] Modal displayed');
 }
 
 // Generate saddle cloth grid (4 rows × 5 columns)
@@ -800,12 +807,30 @@ function generateSaddleClothGrid() {
     }
 }
 
+// Update slot with saddle cloth (animated)
+function updateSlot(slot, horseNum) {
+    const slotEl = document.getElementById(`slot-${slot}`);
+    if (horseNum) {
+        const colors = SADDLE_CLOTHS[horseNum];
+        slotEl.innerHTML = `<div class="slot-saddle" style="background:${colors.bg}; color:${colors.text}">${String(horseNum).padStart(2, '0')}</div>`;
+        slotEl.classList.add('filled');
+    } else {
+        slotEl.innerHTML = '';
+        slotEl.classList.remove('filled');
+    }
+}
+
 // Select a cup in current step
 async function selectCup(cupNumber) {
     const step = resultsState.step;
     
+    console.log(`[SELECT CUP] Selected cup ${cupNumber} for ${step}`);
+    
     // Set selection
     resultsState[step] = cupNumber;
+    
+    // Update sidebar slot with animation
+    updateSlot(step, cupNumber);
     
     // Lock cup to color (while heartbeat continues on others)
     const colorMap = {
@@ -814,8 +839,10 @@ async function selectCup(cupNumber) {
         show: BRONZE_RGB
     };
     
+    console.log(`[SELECT CUP] Locking cup ${cupNumber} to RGB(${colorMap[step].r}, ${colorMap[step].g}, ${colorMap[step].b})`);
+    
     try {
-        await fetch('/api/cup/lock', {
+        const lockResp = await fetch('/api/cup/lock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -825,15 +852,19 @@ async function selectCup(cupNumber) {
                 b: colorMap[step].b 
             })
         });
+        const lockData = await lockResp.json();
+        console.log(`[SELECT CUP] Lock response:`, lockData);
     } catch (error) {
-        console.error('Error locking cup:', error);
+        console.error('[SELECT CUP] Error locking cup:', error);
     }
     
     // Move to next step
     if (step === 'win') {
         resultsState.step = 'place';
+        console.log('[SELECT CUP] Moving to PLACE step');
     } else if (step === 'place') {
         resultsState.step = 'show';
+        console.log('[SELECT CUP] Moving to SHOW step');
     }
     
     // Update UI
@@ -935,6 +966,8 @@ async function resultsGoBack() {
 
 // Reset selection
 async function resultsReset() {
+    console.log('[RESULTS RESET] Resetting all selections');
+    
     // Unlock all selected cups
     try {
         await fetch('/api/cup/unlock', {
@@ -945,6 +978,11 @@ async function resultsReset() {
     } catch (error) {
         console.error('Error unlocking cups:', error);
     }
+    
+    // Clear all slots
+    updateSlot('win', null);
+    updateSlot('place', null);
+    updateSlot('show', null);
     
     resultsState = {
         step: 'win',
