@@ -875,36 +875,31 @@ async function selectCup(cupNumber) {
 function updateResultsModalUI() {
     const header = document.getElementById('results-modal-header');
     const subtext = document.getElementById('results-modal-subtext');
-    const backBtn = document.getElementById('results-back-btn');
     const confirmSection = document.getElementById('results-confirm-section');
     
-    // Update header and subtext based on step
-    if (resultsState.step === 'win') {
-        header.textContent = 'CHOOSE WINNER';
-        header.style.color = '#FFD700';  // Gold
-        subtext.textContent = 'Select the 1st place horse';
-        backBtn.style.display = 'none';
-    } else if (resultsState.step === 'place') {
-        header.textContent = 'CHOOSE PLACE';
-        header.style.color = '#C0C0C0';  // Silver
-        subtext.textContent = 'Select the 2nd place horse';
-        backBtn.style.display = 'inline-block';
-    } else if (resultsState.step === 'show') {
-        header.textContent = 'CHOOSE SHOW';
-        header.style.color = '#CD7F32';  // Bronze
-        subtext.textContent = 'Select the 3rd place horse';
-        backBtn.style.display = 'inline-block';
+    // Update header and subtext based on step (with null checks)
+    if (header) {
+        if (resultsState.step === 'win') {
+            header.textContent = 'CHOOSE WINNER';
+            header.style.color = '#FFD700';  // Gold
+        } else if (resultsState.step === 'place') {
+            header.textContent = 'CHOOSE PLACE';
+            header.style.color = '#C0C0C0';  // Silver
+        } else if (resultsState.step === 'show') {
+            header.textContent = 'CHOOSE SHOW';
+            header.style.color = '#CD7F32';  // Bronze
+        }
     }
     
-    // Update selection summary
-    document.getElementById('summary-win').textContent = resultsState.win ? `WIN: ${resultsState.win}` : '';
-    document.getElementById('summary-win').className = resultsState.win ? 'summary-item win' : 'summary-item';
-    
-    document.getElementById('summary-place').textContent = resultsState.place ? `PLACE: ${resultsState.place}` : '';
-    document.getElementById('summary-place').className = resultsState.place ? 'summary-item place' : 'summary-item';
-    
-    document.getElementById('summary-show').textContent = resultsState.show ? `SHOW: ${resultsState.show}` : '';
-    document.getElementById('summary-show').className = resultsState.show ? 'summary-item show' : 'summary-item';
+    if (subtext) {
+        if (resultsState.step === 'win') {
+            subtext.textContent = 'Select the 1st place horse';
+        } else if (resultsState.step === 'place') {
+            subtext.textContent = 'Select the 2nd place horse';
+        } else if (resultsState.step === 'show') {
+            subtext.textContent = 'Select the 3rd place horse';
+        }
+    }
     
     // Update button states in grid
     const buttons = document.querySelectorAll('.saddle-cloth-btn');
@@ -924,14 +919,17 @@ function updateResultsModalUI() {
             btn.disabled = true;
         } else if (cupNum === resultsState.show) {
             btn.classList.add('selected-show');
+            btn.disabled = true;
         }
     });
     
-    // Show confirm button if all selected
-    if (resultsState.win && resultsState.place && resultsState.show) {
-        confirmSection.style.display = 'block';
-    } else {
-        confirmSection.style.display = 'none';
+    // Show confirm button if all selected (with null check)
+    if (confirmSection) {
+        if (resultsState.win && resultsState.place && resultsState.show) {
+            confirmSection.style.display = 'block';
+        } else {
+            confirmSection.style.display = 'none';
+        }
     }
 }
 
