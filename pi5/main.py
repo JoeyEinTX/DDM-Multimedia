@@ -28,6 +28,11 @@ RESULTS_FILE = os.path.join(DATA_DIR, 'results.json')
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Clear any previous results on startup
+if os.path.exists(RESULTS_FILE):
+    os.remove(RESULTS_FILE)
+    print("Cleared previous results on startup")
+
 # Weather cache
 weather_cache = {
     'data': None,
