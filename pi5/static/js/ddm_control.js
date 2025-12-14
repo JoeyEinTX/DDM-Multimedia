@@ -721,14 +721,19 @@ async function triggerFinish() {
 
 // Results modal state
 let resultsState = {
-    step: 'win',  // 'win', 'place', 'show'
+    step: 'win',  // 'win', 'place', 'show', 'confirm'
     win: null,
     place: null,
     show: null
 };
 
+// Winner colors for cup locking
+const GOLD_RGB = { r: 255, g: 215, b: 0 };
+const SILVER_RGB = { r: 192, g: 192, b: 192 };
+const BRONZE_RGB = { r: 205, g: 127, b: 50 };
+
 // Show results modal with saddle cloth grid
-function showResultsModal() {
+async function showResultsModal() {
     // Clear finish timer if running
     if (finishTimer) {
         clearTimeout(finishTimer);
@@ -737,11 +742,6 @@ function showResultsModal() {
     
     // Stop any running animation first
     clearActiveButton();
-    fetch('/api/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'LED:ALL_OFF' })
-    });
     
     // Reset state
     resultsState = {
@@ -750,6 +750,21 @@ function showResultsModal() {
         place: null,
         show: null
     };
+    
+    // Unlock all cups and start heartbeat animation
+    try {
+        await fetch('/api/cup/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cup: 'ALL' })
+        });
+        
+        await fetch('/api/animation/HEARTBEAT', {
+            method: 'POST'
+        });
+    } catch (error) {
+        console.error('Error starting heartbeat:', error);
+    }
     
     // Generate saddle cloth grid
     generateSaddleClothGrid();
@@ -792,21 +807,26 @@ async function selectCup(cupNumber) {
     // Set selection
     resultsState[step] = cupNumber;
     
-    // Send LED preview
-    const colors = {
-        win: '255,215,0',    // Gold
-        place: '192,192,192', // Silver
-        show: '205,127,50'    // Bronze
+    // Lock cup to color (while heartbeat continues on others)
+    const colorMap = {
+        win: GOLD_RGB,
+        place: SILVER_RGB,
+        show: BRONZE_RGB
     };
     
     try {
-        await fetch('/api/command', {
+        await fetch('/api/cup/lock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: `LED:CUP:${cupNumber}:${colors[step]}` })
+            body: JSON.stringify({ 
+                cup: cupNumber, 
+                r: colorMap[step].r, 
+                g: colorMap[step].g, 
+                b: colorMap[step].b 
+            })
         });
     } catch (error) {
-        console.error('Error sending LED preview:', error);
+        console.error('Error locking cup:', error);
     }
     
     // Move to next step
@@ -885,40 +905,53 @@ function updateResultsModalUI() {
 }
 
 // Go back to previous step
-function resultsGoBack() {
+async function resultsGoBack() {
     if (resultsState.step === 'place') {
-        resultsState.step = 'win';
+        // Unlock win cup and go back
+        if (resultsState.win) {
+            await fetch('/api/cup/unlock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cup: resultsState.win })
+            });
+        }
         resultsState.win = null;
+        resultsState.step = 'win';
     } else if (resultsState.step === 'show') {
-        resultsState.step = 'place';
+        // Unlock place cup and go back
+        if (resultsState.place) {
+            await fetch('/api/cup/unlock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cup: resultsState.place })
+            });
+        }
         resultsState.place = null;
+        resultsState.step = 'place';
     }
-    
-    // Turn off LEDs
-    fetch('/api/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'LED:ALL_OFF' })
-    });
     
     updateResultsModalUI();
 }
 
 // Reset selection
-function resultsReset() {
+async function resultsReset() {
+    // Unlock all selected cups
+    try {
+        await fetch('/api/cup/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cup: 'ALL' })
+        });
+    } catch (error) {
+        console.error('Error unlocking cups:', error);
+    }
+    
     resultsState = {
         step: 'win',
         win: null,
         place: null,
         show: null
     };
-    
-    // Turn off LEDs
-    fetch('/api/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'LED:ALL_OFF' })
-    });
     
     updateResultsModalUI();
 }
@@ -928,15 +961,21 @@ async function closeResultsModal() {
     const modal = document.getElementById('results-modal');
     modal.classList.remove('active');
     
-    // Turn off LEDs
+    // Unlock all cups and stop animation
     try {
+        await fetch('/api/cup/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cup: 'ALL' })
+        });
+        
         await fetch('/api/command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: 'LED:ALL_OFF' })
         });
     } catch (error) {
-        console.error('Error turning off LEDs:', error);
+        console.error('Error stopping animation:', error);
     }
 }
 
