@@ -1306,11 +1306,11 @@ body {
 
 /* Results Sidebar with Slots */
 .results-sidebar {
-    width: 120px;
+    width: 135px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 20px 16px;
+    gap: 12px;
+    padding: 12px 10px;
     background: rgba(0,0,0,0.3);
     border-radius: 8px;
     border: 1px solid #333;
@@ -1334,7 +1334,7 @@ body {
 .slot-label.show { color: #CD7F32; }
 
 .slot-value {
-    height: 60px;
+    height: 65px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1345,16 +1345,18 @@ body {
 }
 
 .slot-saddle {
-    width: 50px;
+    width: 65px;
     height: 50px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.4em;
-    font-weight: bold;
+    font-size: 1.5em;
+    font-weight: 900;
     border-radius: 6px;
+    border: 3px solid #333;
     font-family: 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    letter-spacing: -1px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     animation: slotFadeIn 0.3s ease;
 }
 
@@ -1367,6 +1369,38 @@ body {
         opacity: 1; 
         transform: scale(1); 
     }
+}
+
+/* Confirm section in sidebar */
+.confirm-section-sidebar {
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid #333;
+}
+
+.btn-confirm-sidebar {
+    width: 100%;
+    background: linear-gradient(135deg, #FFD700, #FFA500);
+    border: none;
+    color: #000;
+    padding: 14px 8px;
+    font-size: 0.95em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(255, 215, 0, 0.4);
+}
+
+.btn-confirm-sidebar:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(255, 215, 0, 0.6);
+}
+
+.btn-confirm-sidebar:active {
+    transform: scale(0.98);
 }
 
 /* Loading Indicator */

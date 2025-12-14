@@ -171,11 +171,6 @@
                         <button id="results-reset-btn" class="modal-btn btn-reset" onclick="resultsReset()">RESET</button>
                         <button id="results-cancel-btn" class="modal-btn btn-cancel" onclick="closeResultsModal()">CANCEL</button>
                     </div>
-                    
-                    <!-- Final confirmation (shown after all 3 selected) -->
-                    <div id="results-confirm-section" class="confirm-section" style="display:none;">
-                        <button id="results-confirm-btn" class="modal-btn btn-confirm" onclick="resultsConfirm()">CONFIRM RESULTS</button>
-                    </div>
                 </div>
                 
                 <!-- Sidebar with result slots -->
@@ -191,6 +186,11 @@
                     <div class="result-slot">
                         <span class="slot-label show">SHOW</span>
                         <div class="slot-value" id="slot-show"></div>
+                    </div>
+                    
+                    <!-- Final confirmation (shown after all 3 selected) -->
+                    <div id="results-confirm-section" class="confirm-section-sidebar" style="display:none;">
+                        <button id="results-confirm-btn" class="modal-btn btn-confirm-sidebar" onclick="resultsConfirm()">CONFIRM RESULTS</button>
                     </div>
                 </div>
             </div>
