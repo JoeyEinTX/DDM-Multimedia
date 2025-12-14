@@ -405,13 +405,18 @@ async function sendAnimation(animName, buttonElement) {
         return;
     }
     
-    // Toggle animations (check if this button is already active)
+    // BUG FIX #2: Toggle animations (check if this button is already active)
+    // When clicking active animation button, turn OFF the LEDs
     if (activeButton === buttonElement) {
         showLoader();
         try {
-            // Send IDLE command to stop the animation
-            const response = await fetch('/api/animation/IDLE', {
-                method: 'POST'
+            // Send LED:ALL_OFF command to stop the animation and turn off LEDs
+            const response = await fetch('/api/command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ command: 'LED:ALL_OFF' })
             });
             
             const data = await response.json();
@@ -1191,6 +1196,9 @@ function updateFullscreenIcon() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
+    
+    // BUG FIX #1: Clear localStorage on page load to prevent persistence across server restarts
+    localStorage.removeItem('raceResults');
     
     // Hide splash screen after 2 seconds
     setTimeout(hideSplashScreen, 2000);
