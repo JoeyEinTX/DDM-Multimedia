@@ -436,13 +436,12 @@ String processCommand(String cmd) {
     
     // CUP:LOCK:num:r:g:b - Lock cup to specific color during animations
     else if (cmd.startsWith("CUP:LOCK:")) {
-        // Parse: CUP:LOCK:7:255:215:0
+        // CUP:LOCK:cupNum:r:g:b
         int firstColon = cmd.indexOf(':', 9);
         int secondColon = cmd.indexOf(':', firstColon + 1);
         int thirdColon = cmd.indexOf(':', secondColon + 1);
-        int fourthColon = cmd.indexOf(':', thirdColon + 1);
         
-        if (firstColon > 0 && secondColon > 0 && thirdColon > 0 && fourthColon > 0) {
+        if (firstColon > 0 && secondColon > 0 && thirdColon > 0) {
             int cupNum = cmd.substring(9, firstColon).toInt();
             int r = cmd.substring(firstColon + 1, secondColon).toInt();
             int g = cmd.substring(secondColon + 1, thirdColon).toInt();
