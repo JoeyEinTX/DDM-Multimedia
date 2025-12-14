@@ -632,31 +632,51 @@ async function closeTestModal() {
 async function sendTestColor(r, g, b, brightness) {
     const command = `LED:TEST:${Math.round(r)},${Math.round(g)},${Math.round(b)},${brightness}`;
     
+    console.log('[SEND TEST COLOR] Function called with:', { r, g, b, brightness });
+    console.log('[SEND TEST COLOR] Command:', command);
+    
     try {
-        await fetch('/api/command', {
+        console.log('[SEND TEST COLOR] Sending fetch request to /api/command...');
+        
+        const response = await fetch('/api/command', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ command: command })
         });
+        
+        console.log('[SEND TEST COLOR] Fetch completed, status:', response.status);
+        
+        const data = await response.json();
+        console.log('[SEND TEST COLOR] Response data:', data);
+        
+        if (!data.success) {
+            console.error('[SEND TEST COLOR] Command failed:', data);
+        }
     } catch (error) {
-        console.error('Error sending test color:', error);
+        console.error('[SEND TEST COLOR] ERROR:', error);
     }
 }
 
 // Send test off command
 async function sendTestOff() {
+    console.log('[SEND TEST OFF] Turning off LEDs...');
+    
     try {
-        await fetch('/api/command', {
+        const response = await fetch('/api/command', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ command: 'LED:ALL_OFF' })
         });
+        
+        console.log('[SEND TEST OFF] Response status:', response.status);
+        const data = await response.json();
+        console.log('[SEND TEST OFF] Response data:', data);
     } catch (error) {
-        console.error('Error turning off LEDs:', error);
+        console.error('[SEND TEST OFF] ERROR:', error);
     }
 }
 
