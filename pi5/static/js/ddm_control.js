@@ -687,6 +687,15 @@ async function sendTestOff() {
 
 // Show results modal
 function showResultsModal() {
+    // Stop any running animation first
+    clearActiveButton();
+    fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'LED:ALL_OFF' })
+    });
+    
+    // Then show the modal
     const modal = document.getElementById('results-modal');
     modal.classList.add('active');
 }
