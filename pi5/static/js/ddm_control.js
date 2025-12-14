@@ -7,6 +7,9 @@ let activeButton = null;
 let loaderStartTime = null;
 const MIN_LOADER_DISPLAY_TIME = 2000; // 2 seconds minimum
 
+// Track finish timer for automatic transition
+let finishTimer = null;
+
 // Show loading indicator
 function showLoader() {
     const loader = document.getElementById('loader');
@@ -685,8 +688,45 @@ async function sendTestOff() {
     }
 }
 
+// Trigger finish animation with timed transition to fast heartbeat
+async function triggerFinish() {
+    // Clear any existing timer
+    if (finishTimer) {
+        clearTimeout(finishTimer);
+        finishTimer = null;
+    }
+    
+    // Send checkered/finish animation
+    await sendAnimation('FINISH');
+    
+    // After 60 seconds, transition to fast heartbeat
+    finishTimer = setTimeout(async () => {
+        try {
+            const response = await fetch('/api/animation/HEARTBEAT_FAST', {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showNotification('Transitioning to fast heartbeat', 'success');
+                document.getElementById('current-mode').textContent = 'HEARTBEAT_FAST';
+            }
+        } catch (error) {
+            console.error('Error transitioning to fast heartbeat:', error);
+        }
+        finishTimer = null;
+    }, 60000);  // 60 seconds
+}
+
 // Show results modal
 function showResultsModal() {
+    // Clear finish timer if running
+    if (finishTimer) {
+        clearTimeout(finishTimer);
+        finishTimer = null;
+    }
+    
     // Stop any running animation first
     clearActiveButton();
     fetch('/api/command', {
@@ -1067,6 +1107,14 @@ async function applyResults() {
             // Show results banner
             showResultsBanner(winHorse, placeHorse, showHorse);
             closeResultsModal();
+            
+            // Send results display animation (winners + heartbeat on others)
+            await fetch('/api/animation/RESULTS_ACTIVE', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
+            });
+            
             await checkESP32Status();
             hideLoader();
         } else {

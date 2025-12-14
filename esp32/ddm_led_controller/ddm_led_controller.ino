@@ -373,6 +373,15 @@ String processCommand(String cmd) {
         return "OK:ANIM:HEARTBEAT";
     }
     
+    // ANIM:HEARTBEAT_FAST - Fast red breathing (more urgent)
+    else if (cmd == "ANIM:HEARTBEAT_FAST") {
+        currentAnimation = "HEARTBEAT_FAST";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:HEARTBEAT_FAST";
+    }
+    
     // ANIM:RESULTS:W:P:S - Winner spotlight (e.g., ANIM:RESULTS:7:12:3)
     else if (cmd.startsWith("ANIM:RESULTS:")) {
         // Parse: ANIM:RESULTS:7:12:3
@@ -395,6 +404,30 @@ String processCommand(String cmd) {
             }
         }
         return "ERROR:INVALID_RESULTS";
+    }
+    
+    // ANIM:RESULTS_ACTIVE:W:P:S - Winner colors + slow heartbeat on others
+    else if (cmd.startsWith("ANIM:RESULTS_ACTIVE:")) {
+        // Parse: ANIM:RESULTS_ACTIVE:7:12:3
+        int firstColon = cmd.indexOf(':', 20);
+        int secondColon = cmd.indexOf(':', firstColon + 1);
+        
+        if (firstColon > 0 && secondColon > 0) {
+            winCup = cmd.substring(20, firstColon).toInt();
+            placeCup = cmd.substring(firstColon + 1, secondColon).toInt();
+            showCup = cmd.substring(secondColon + 1).toInt();
+            
+            if (winCup >= 1 && winCup <= 20 && 
+                placeCup >= 1 && placeCup <= 20 && 
+                showCup >= 1 && showCup <= 20) {
+                currentAnimation = "RESULTS_ACTIVE";
+                animationRunning = true;
+                animStartTime = millis();
+                animStep = 0;
+                return "OK:ANIM:RESULTS_ACTIVE:" + String(winCup) + ":" + String(placeCup) + ":" + String(showCup);
+            }
+        }
+        return "ERROR:INVALID_RESULTS_ACTIVE";
     }
     
     // RESET - Clear all and stop animations
@@ -441,8 +474,12 @@ void runAnimation() {
         animFinish();
     } else if (currentAnimation == "HEARTBEAT") {
         animHeartbeat();
+    } else if (currentAnimation == "HEARTBEAT_FAST") {
+        animHeartbeatFast();
     } else if (currentAnimation == "RESULTS") {
         animResults();
+    } else if (currentAnimation == "RESULTS_ACTIVE") {
+        animResultsActive();
     }
 }
 
@@ -639,6 +676,23 @@ void animHeartbeat() {
 }
 
 /**
+ * ANIM:HEARTBEAT_FAST - Fast red throb (more urgent than regular heartbeat)
+ */
+void animHeartbeatFast() {
+    unsigned long elapsed = millis() - animStartTime;
+    
+    // Faster sine wave breathing (0.6 sec cycle instead of 2 sec)
+    float breathe = (sin(elapsed / 300.0) + 1.0) / 2.0; // 0.0 to 1.0
+    
+    uint8_t brightness = 50 + (breathe * 205); // 50-255 range
+    CRGB color = COLOR_RED;
+    color.nscale8(brightness);
+    
+    fill_solid(leds, LED_COUNT, color);
+    FastLED.show();
+}
+
+/**
  * ANIM:RESULTS - Gold/Silver/Bronze on win/place/show, others dim
  */
 void animResults() {
@@ -660,6 +714,35 @@ void animResults() {
     
     FastLED.show();
     // Static display - stays until changed
+}
+
+/**
+ * ANIM:RESULTS_ACTIVE - Winners in Gold/Silver/Bronze, others slow red heartbeat
+ */
+void animResultsActive() {
+    unsigned long elapsed = millis() - animStartTime;
+    
+    // Slow heartbeat for non-winners (2 sec cycle)
+    float breathe = (sin(elapsed / 1000.0) + 1.0) / 2.0; // 0.0 to 1.0
+    uint8_t heartbeatBrightness = 50 + (breathe * 150); // 50-200 range
+    
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (cup == winCup) {
+            // Win cup: Static gold
+            setCup(cup, COLOR_GOLD);
+        } else if (cup == placeCup) {
+            // Place cup: Static silver
+            setCup(cup, COLOR_SILVER);
+        } else if (cup == showCup) {
+            // Show cup: Static bronze
+            setCup(cup, COLOR_BRONZE);
+        } else {
+            // All others: Slow red heartbeat (cooldown)
+            setCup(cup, CRGB(heartbeatBrightness, 0, 0));
+        }
+    }
+    
+    FastLED.show();
 }
 
 /**

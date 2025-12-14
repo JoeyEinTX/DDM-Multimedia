@@ -149,6 +149,25 @@ def api_led_cup():
 @app.route('/api/animation/<anim_name>', methods=['POST'])
 def api_animation(anim_name):
     """Start an animation"""
+    # Check if this is RESULTS_ACTIVE with parameters
+    if anim_name == 'RESULTS_ACTIVE':
+        data = request.get_json()
+        if data and 'win' in data and 'place' in data and 'show' in data:
+            win = data.get('win', 1)
+            place = data.get('place', 2)
+            show = data.get('show', 3)
+            
+            # Send command directly to ESP32 with parameters
+            command = f"ANIM:RESULTS_ACTIVE:{win}:{place}:{show}"
+            response = esp32.send_command(command)
+            
+            return jsonify({
+                'success': not response.startswith('ERROR'),
+                'animation': anim_name,
+                'response': response
+            })
+    
+    # Regular animation (no parameters)
     response = esp32.start_animation(anim_name)
     return jsonify({
         'success': not response.startswith('ERROR'),
