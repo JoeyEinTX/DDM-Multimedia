@@ -1001,25 +1001,30 @@ async function resultsReset() {
 }
 
 // Close results modal
-async function closeResultsModal() {
+async function closeResultsModal(keepAnimation = false) {
     const modal = document.getElementById('results-modal');
     modal.classList.remove('active');
     
-    // Unlock all cups and stop animation
-    try {
-        await fetch('/api/cup/unlock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cup: 'ALL' })
-        });
-        
-        await fetch('/api/command', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: 'LED:ALL_OFF' })
-        });
-    } catch (error) {
-        console.error('Error stopping animation:', error);
+    // Only unlock cups and stop animation if NOT confirmed
+    if (!keepAnimation) {
+        try {
+            console.log('[CLOSE MODAL] Canceling - unlocking cups and turning off LEDs');
+            await fetch('/api/cup/unlock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cup: 'ALL' })
+            });
+            
+            await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: 'LED:ALL_OFF' })
+            });
+        } catch (error) {
+            console.error('[CLOSE MODAL] Error stopping animation:', error);
+        }
+    } else {
+        console.log('[CLOSE MODAL] Confirmed - keeping animation running');
     }
 }
 
@@ -1069,8 +1074,8 @@ async function resultsConfirm() {
             const resultsActiveData = await resultsActiveResponse.json();
             console.log('[CONFIRM] RESULTS_ACTIVE response:', resultsActiveData);
             
-            // Close modal AFTER animation is sent
-            closeResultsModal();
+            // Close modal AFTER animation is sent (keep animation running)
+            closeResultsModal(true);
             
             await checkESP32Status();
             hideLoader();
