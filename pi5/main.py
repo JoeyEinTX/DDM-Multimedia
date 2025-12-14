@@ -262,6 +262,28 @@ def api_results():
         })
 
 
+@app.route('/api/results/clear', methods=['DELETE', 'POST'])
+def api_results_clear():
+    """Clear race results"""
+    try:
+        # Delete the results file if it exists
+        if os.path.exists(RESULTS_FILE):
+            os.remove(RESULTS_FILE)
+        
+        # Turn off all LEDs
+        esp32.all_off()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Results cleared'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/results/stream')
 def results_stream():
     """SSE endpoint for real-time results notifications"""

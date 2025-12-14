@@ -909,11 +909,28 @@ function hideResultsBanner() {
     banner.style.display = 'none';
 }
 
-// Clear results (remove from localStorage and hide banner)
-function clearResults() {
-    localStorage.removeItem('raceResults');
-    hideResultsBanner();
-    showNotification('Results cleared', 'success');
+// Clear results (call backend API to delete results.json and turn off LEDs)
+async function clearResults() {
+    try {
+        const response = await fetch('/api/results/clear', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Remove from localStorage
+            localStorage.removeItem('raceResults');
+            // Hide banner
+            hideResultsBanner();
+            showNotification('Results cleared', 'success');
+        } else {
+            showNotification(`Error clearing results: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error clearing results:', error);
+        showNotification('Connection error', 'error');
+    }
 }
 
 // SSE connection for real-time results
