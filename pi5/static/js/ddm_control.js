@@ -857,6 +857,25 @@ function createDotMatrixText(text, padLeft = 0, padRight = 0, fixedLength = null
     return container;
 }
 
+// Enable or disable race-phase panels when results are set
+function setRaceComplete(isComplete) {
+    // Get all panels (first 3 are race phases, 4th is Results panel which stays enabled)
+    const allPanels = document.querySelectorAll('.panel');
+    const racePhasePanels = Array.from(allPanels).slice(0, 3); // PRE-RACE, BETTING, DURING
+    
+    racePhasePanels.forEach(panel => {
+        const buttons = panel.querySelectorAll('button.btn');
+        buttons.forEach(btn => {
+            btn.disabled = isComplete;
+            if (isComplete) {
+                btn.classList.add('disabled');
+            } else {
+                btn.classList.remove('disabled');
+            }
+        });
+    });
+}
+
 // Show results banner with saddle cloths and dot matrix text
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
@@ -901,6 +920,9 @@ function showResultsBanner(win, place, show) {
     showName.appendChild(createDotMatrixText(`HORSE ${show}`, 0, 0, 15));  // 15 tiles total
     
     banner.style.display = 'block';
+    
+    // Disable race-phase buttons once results are set
+    setRaceComplete(true);
 }
 
 // Hide results banner
@@ -923,6 +945,8 @@ async function clearResults() {
             localStorage.removeItem('raceResults');
             // Hide banner
             hideResultsBanner();
+            // Re-enable race-phase buttons
+            setRaceComplete(false);
             showNotification('Results cleared', 'success');
         } else {
             showNotification(`Error clearing results: ${data.error}`, 'error');
