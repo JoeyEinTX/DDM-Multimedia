@@ -1031,6 +1031,7 @@ async function resultsConfirm() {
     
     showLoader();
     try {
+        console.log('[CONFIRM] Sending results to server...');
         const response = await fetch('/api/results', {
             method: 'POST',
             headers: {
@@ -1044,6 +1045,7 @@ async function resultsConfirm() {
         });
         
         const data = await response.json();
+        console.log('[CONFIRM] Server response:', data);
         
         if (data.success) {
             showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
@@ -1056,14 +1058,19 @@ async function resultsConfirm() {
             }));
             // Show results banner
             showResultsBanner(winHorse, placeHorse, showHorse);
-            closeResultsModal();
             
-            // Send results display animation (winners + heartbeat on others)
-            await fetch('/api/animation/RESULTS_ACTIVE', {
+            // Send results display animation (winners + heartbeat on others) BEFORE closing modal
+            console.log('[CONFIRM] Sending RESULTS_ACTIVE animation...');
+            const resultsActiveResponse = await fetch('/api/animation/RESULTS_ACTIVE', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
             });
+            const resultsActiveData = await resultsActiveResponse.json();
+            console.log('[CONFIRM] RESULTS_ACTIVE response:', resultsActiveData);
+            
+            // Close modal AFTER animation is sent
+            closeResultsModal();
             
             await checkESP32Status();
             hideLoader();
@@ -1073,7 +1080,7 @@ async function resultsConfirm() {
         }
     } catch (error) {
         hideLoader(true); // Hide immediately on error
-        console.error('Error setting results:', error);
+        console.error('[CONFIRM] Error setting results:', error);
         showNotification('Connection error', 'error');
     }
 }
