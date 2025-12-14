@@ -1155,18 +1155,15 @@ body {
 }
 
 #results-modal-header {
-    font-size: 1.8em;
+    font-size: 2.2em;
     font-weight: bold;
     text-align: center;
-    margin-bottom: 8px;
+    margin-bottom: 20px;
     color: #FFD700;  /* Gold for winner step, changes per step */
 }
 
 .modal-subtext {
-    text-align: center;
-    color: #888;
-    margin-bottom: 20px;
-    font-size: 0.9em;
+    display: none;  /* Hide subtext - header is enough */
 }
 
 /* Saddle Cloth Grid */
@@ -1179,12 +1176,12 @@ body {
 }
 
 .saddle-cloth-btn {
-    width: 60px;
-    height: 60px;
+    width: 65px;
+    height: 50px;
     font-size: 1.5em;
     font-weight: bold;
     border: 3px solid #333;
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     transition: transform 0.15s, box-shadow 0.15s;
     display: flex;
