@@ -719,7 +719,15 @@ async function triggerFinish() {
     }, 60000);  // 60 seconds
 }
 
-// Show results modal
+// Results modal state
+let resultsState = {
+    step: 'win',  // 'win', 'place', 'show'
+    win: null,
+    place: null,
+    show: null
+};
+
+// Show results modal with saddle cloth grid
 function showResultsModal() {
     // Clear finish timer if running
     if (finishTimer) {
@@ -735,73 +743,255 @@ function showResultsModal() {
         body: JSON.stringify({ command: 'LED:ALL_OFF' })
     });
     
-    // Then show the modal
+    // Reset state
+    resultsState = {
+        step: 'win',
+        win: null,
+        place: null,
+        show: null
+    };
+    
+    // Generate saddle cloth grid
+    generateSaddleClothGrid();
+    
+    // Update modal UI
+    updateResultsModalUI();
+    
+    // Show the modal
     const modal = document.getElementById('results-modal');
     modal.classList.add('active');
 }
 
-// Close results modal and clear previews
-async function closeResultsModal() {
-    const modal = document.getElementById('results-modal');
-    modal.classList.remove('active');
+// Generate saddle cloth grid (4 rows × 5 columns)
+function generateSaddleClothGrid() {
+    const grid = document.getElementById('saddle-cloth-grid');
+    grid.innerHTML = '';
     
-    // Turn off preview LEDs
-    try {
-        await fetch('/api/command', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ command: 'LED:ALL_OFF' })
-        });
-    } catch (error) {
-        console.error('Error turning off preview LEDs:', error);
+    for (let i = 1; i <= 20; i++) {
+        const btn = document.createElement('button');
+        btn.className = 'saddle-cloth-btn';
+        btn.textContent = String(i).padStart(2, '0');
+        btn.dataset.cup = i;
+        
+        // Apply saddle cloth colors
+        const colors = SADDLE_CLOTHS[i] || { bg: '#808080', text: '#FFFFFF' };
+        btn.style.backgroundColor = colors.bg;
+        btn.style.color = colors.text;
+        
+        // Add click handler
+        btn.onclick = () => selectCup(i);
+        
+        grid.appendChild(btn);
     }
 }
 
-// Preview winner selection (live preview)
-let previousPreview = {
-    win: null,
-    place: null,
-    show: null
-};
-
-async function previewWinner(position, cupNumber) {
+// Select a cup in current step
+async function selectCup(cupNumber) {
+    const step = resultsState.step;
+    
+    // Set selection
+    resultsState[step] = cupNumber;
+    
+    // Send LED preview
     const colors = {
         win: '255,215,0',    // Gold
         place: '192,192,192', // Silver
         show: '205,127,50'    // Bronze
     };
     
-    // Turn off previous cup for this position if it exists
-    if (previousPreview[position]) {
-        try {
-            await fetch('/api/command', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ command: `LED:CUP:${previousPreview[position]}:0,0,0` })
-            });
-        } catch (error) {
-            console.error('Error turning off previous preview:', error);
-        }
-    }
-    
-    // Light up new cup
     try {
         await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: `LED:CUP:${cupNumber}:${colors[step]}` })
+        });
+    } catch (error) {
+        console.error('Error sending LED preview:', error);
+    }
+    
+    // Move to next step
+    if (step === 'win') {
+        resultsState.step = 'place';
+    } else if (step === 'place') {
+        resultsState.step = 'show';
+    }
+    
+    // Update UI
+    updateResultsModalUI();
+}
+
+// Update modal UI based on state
+function updateResultsModalUI() {
+    const header = document.getElementById('results-modal-header');
+    const subtext = document.getElementById('results-modal-subtext');
+    const backBtn = document.getElementById('results-back-btn');
+    const confirmSection = document.getElementById('results-confirm-section');
+    
+    // Update header and subtext based on step
+    if (resultsState.step === 'win') {
+        header.textContent = 'CHOOSE WINNER';
+        header.style.color = '#FFD700';  // Gold
+        subtext.textContent = 'Select the 1st place horse';
+        backBtn.style.display = 'none';
+    } else if (resultsState.step === 'place') {
+        header.textContent = 'CHOOSE PLACE';
+        header.style.color = '#C0C0C0';  // Silver
+        subtext.textContent = 'Select the 2nd place horse';
+        backBtn.style.display = 'inline-block';
+    } else if (resultsState.step === 'show') {
+        header.textContent = 'CHOOSE SHOW';
+        header.style.color = '#CD7F32';  // Bronze
+        subtext.textContent = 'Select the 3rd place horse';
+        backBtn.style.display = 'inline-block';
+    }
+    
+    // Update selection summary
+    document.getElementById('summary-win').textContent = resultsState.win ? `WIN: ${resultsState.win}` : '';
+    document.getElementById('summary-win').className = resultsState.win ? 'summary-item win' : 'summary-item';
+    
+    document.getElementById('summary-place').textContent = resultsState.place ? `PLACE: ${resultsState.place}` : '';
+    document.getElementById('summary-place').className = resultsState.place ? 'summary-item place' : 'summary-item';
+    
+    document.getElementById('summary-show').textContent = resultsState.show ? `SHOW: ${resultsState.show}` : '';
+    document.getElementById('summary-show').className = resultsState.show ? 'summary-item show' : 'summary-item';
+    
+    // Update button states in grid
+    const buttons = document.querySelectorAll('.saddle-cloth-btn');
+    buttons.forEach(btn => {
+        const cupNum = parseInt(btn.dataset.cup);
+        
+        // Remove all selection classes
+        btn.classList.remove('selected-win', 'selected-place', 'selected-show');
+        btn.disabled = false;
+        
+        // Mark selected cups
+        if (cupNum === resultsState.win) {
+            btn.classList.add('selected-win');
+            btn.disabled = true;
+        } else if (cupNum === resultsState.place) {
+            btn.classList.add('selected-place');
+            btn.disabled = true;
+        } else if (cupNum === resultsState.show) {
+            btn.classList.add('selected-show');
+        }
+    });
+    
+    // Show confirm button if all selected
+    if (resultsState.win && resultsState.place && resultsState.show) {
+        confirmSection.style.display = 'block';
+    } else {
+        confirmSection.style.display = 'none';
+    }
+}
+
+// Go back to previous step
+function resultsGoBack() {
+    if (resultsState.step === 'place') {
+        resultsState.step = 'win';
+        resultsState.win = null;
+    } else if (resultsState.step === 'show') {
+        resultsState.step = 'place';
+        resultsState.place = null;
+    }
+    
+    // Turn off LEDs
+    fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'LED:ALL_OFF' })
+    });
+    
+    updateResultsModalUI();
+}
+
+// Reset selection
+function resultsReset() {
+    resultsState = {
+        step: 'win',
+        win: null,
+        place: null,
+        show: null
+    };
+    
+    // Turn off LEDs
+    fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'LED:ALL_OFF' })
+    });
+    
+    updateResultsModalUI();
+}
+
+// Close results modal
+async function closeResultsModal() {
+    const modal = document.getElementById('results-modal');
+    modal.classList.remove('active');
+    
+    // Turn off LEDs
+    try {
+        await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: 'LED:ALL_OFF' })
+        });
+    } catch (error) {
+        console.error('Error turning off LEDs:', error);
+    }
+}
+
+// Confirm and apply results
+async function resultsConfirm() {
+    const winHorse = resultsState.win;
+    const placeHorse = resultsState.place;
+    const showHorse = resultsState.show;
+    
+    showLoader();
+    try {
+        const response = await fetch('/api/results', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ command: `LED:CUP:${cupNumber}:${colors[position]}` })
+            body: JSON.stringify({
+                win: winHorse,
+                place: placeHorse,
+                show: showHorse
+            })
         });
         
-        // Update tracking
-        previousPreview[position] = cupNumber;
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
+            document.getElementById('current-mode').textContent = 'RESULTS';
+            // Save results to localStorage
+            localStorage.setItem('raceResults', JSON.stringify({
+                win: winHorse,
+                place: placeHorse,
+                show: showHorse
+            }));
+            // Show results banner
+            showResultsBanner(winHorse, placeHorse, showHorse);
+            closeResultsModal();
+            
+            // Send results display animation (winners + heartbeat on others)
+            await fetch('/api/animation/RESULTS_ACTIVE', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
+            });
+            
+            await checkESP32Status();
+            hideLoader();
+        } else {
+            hideLoader(true); // Hide immediately on error
+            showNotification(`Error: ${data.response || data.error}`, 'error');
+        }
     } catch (error) {
-        console.error('Error sending preview command:', error);
+        hideLoader(true); // Hide immediately on error
+        console.error('Error setting results:', error);
+        showNotification('Connection error', 'error');
     }
 }
 
