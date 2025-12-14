@@ -43,6 +43,10 @@ int winCup = 0;
 int placeCup = 0;
 int showCup = 0;
 
+// Cup locking for custom colors during animations
+bool cupLocked[21] = {false};  // cups 1-20, index 0 unused
+CRGB cupLockedColor[21];       // color for locked cups
+
 // ===== FUNCTION DECLARATIONS =====
 void connectWiFi();
 String processCommand(String cmd);
@@ -430,6 +434,52 @@ String processCommand(String cmd) {
         return "ERROR:INVALID_RESULTS_ACTIVE";
     }
     
+    // CUP:LOCK:num:r:g:b - Lock cup to specific color during animations
+    else if (cmd.startsWith("CUP:LOCK:")) {
+        // Parse: CUP:LOCK:7:255:215:0
+        int firstColon = cmd.indexOf(':', 9);
+        int secondColon = cmd.indexOf(':', firstColon + 1);
+        int thirdColon = cmd.indexOf(':', secondColon + 1);
+        int fourthColon = cmd.indexOf(':', thirdColon + 1);
+        
+        if (firstColon > 0 && secondColon > 0 && thirdColon > 0 && fourthColon > 0) {
+            int cupNum = cmd.substring(9, firstColon).toInt();
+            int r = cmd.substring(firstColon + 1, secondColon).toInt();
+            int g = cmd.substring(secondColon + 1, thirdColon).toInt();
+            int b = cmd.substring(thirdColon + 1).toInt();
+            
+            if (cupNum >= 1 && cupNum <= 20) {
+                cupLocked[cupNum] = true;
+                cupLockedColor[cupNum] = CRGB(r, g, b);
+                setCup(cupNum, cupLockedColor[cupNum]);
+                FastLED.show();
+                return "OK:CUP:LOCKED:" + String(cupNum);
+            }
+        }
+        return "ERROR:INVALID_CUP";
+    }
+    
+    // CUP:UNLOCK:num - Return cup to heartbeat animation
+    else if (cmd.startsWith("CUP:UNLOCK:")) {
+        String param = cmd.substring(11);
+        
+        if (param == "ALL") {
+            // Unlock all cups
+            for (int i = 1; i <= 20; i++) {
+                cupLocked[i] = false;
+            }
+            return "OK:CUP:UNLOCKED:ALL";
+        } else {
+            // Unlock specific cup
+            int cupNum = param.toInt();
+            if (cupNum >= 1 && cupNum <= 20) {
+                cupLocked[cupNum] = false;
+                return "OK:CUP:UNLOCKED:" + String(cupNum);
+            }
+        }
+        return "ERROR:INVALID_CUP";
+    }
+    
     // RESET - Clear all and stop animations
     else if (cmd == "RESET") {
         stopAnimation();
@@ -668,10 +718,20 @@ void animHeartbeat() {
     }
     
     uint8_t brightness = 25 + (beat * 230);
-    CRGB color = COLOR_RED;
-    color.nscale8(brightness);
+    CRGB heartbeatColor = COLOR_RED;
+    heartbeatColor.nscale8(brightness);
     
-    fill_solid(leds, LED_COUNT, color);
+    // Apply heartbeat, respecting locked cups
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (cupLocked[cup]) {
+            // Keep locked color
+            setCup(cup, cupLockedColor[cup]);
+        } else {
+            // Apply heartbeat
+            setCup(cup, heartbeatColor);
+        }
+    }
+    
     FastLED.show();
 }
 
@@ -685,10 +745,20 @@ void animHeartbeatFast() {
     float breathe = (sin(elapsed / 300.0) + 1.0) / 2.0; // 0.0 to 1.0
     
     uint8_t brightness = 50 + (breathe * 205); // 50-255 range
-    CRGB color = COLOR_RED;
-    color.nscale8(brightness);
+    CRGB heartbeatColor = COLOR_RED;
+    heartbeatColor.nscale8(brightness);
     
-    fill_solid(leds, LED_COUNT, color);
+    // Apply heartbeat, respecting locked cups
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (cupLocked[cup]) {
+            // Keep locked color
+            setCup(cup, cupLockedColor[cup]);
+        } else {
+            // Apply heartbeat
+            setCup(cup, heartbeatColor);
+        }
+    }
+    
     FastLED.show();
 }
 

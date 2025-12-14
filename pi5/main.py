@@ -338,6 +338,52 @@ def results_stream():
     return Response(event_stream(), mimetype='text/event-stream')
 
 
+@app.route('/api/cup/lock', methods=['POST'])
+def api_cup_lock():
+    """Lock a cup to specific color during animations"""
+    data = request.get_json()
+    cup = data.get('cup')
+    r = data.get('r', 255)
+    g = data.get('g', 255)
+    b = data.get('b', 255)
+    
+    if not cup:
+        return jsonify({
+            'success': False,
+            'error': 'Cup number required'
+        }), 400
+    
+    command = f"CUP:LOCK:{cup}:{r}:{g}:{b}"
+    response = esp32.send_command(command)
+    
+    return jsonify({
+        'success': not response.startswith('ERROR'),
+        'cup': cup,
+        'color': {'r': r, 'g': g, 'b': b},
+        'response': response
+    })
+
+
+@app.route('/api/cup/unlock', methods=['POST'])
+def api_cup_unlock():
+    """Unlock cup(s) to return to animation"""
+    data = request.get_json()
+    cup = data.get('cup', 'ALL')
+    
+    if cup == 'ALL':
+        command = "CUP:UNLOCK:ALL"
+    else:
+        command = f"CUP:UNLOCK:{cup}"
+    
+    response = esp32.send_command(command)
+    
+    return jsonify({
+        'success': not response.startswith('ERROR'),
+        'cup': cup,
+        'response': response
+    })
+
+
 @app.route('/api/reset', methods=['POST'])
 def api_reset():
     """Reset to idle state"""
