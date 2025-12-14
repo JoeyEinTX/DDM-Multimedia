@@ -1335,17 +1335,13 @@ body {
 
 .slot-value {
     height: 60px;
-    border: 2px dashed #333;
-    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0,0,0,0.2);
 }
 
 .slot-value.filled {
-    border-style: solid;
-    background: transparent;
+    /* No styling change needed */
 }
 
 .slot-saddle {
@@ -1358,6 +1354,7 @@ body {
     font-weight: bold;
     border-radius: 6px;
     font-family: 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     animation: slotFadeIn 0.3s ease;
 }
 

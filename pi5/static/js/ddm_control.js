@@ -753,6 +753,14 @@ async function showResultsModal() {
         show: null
     };
     
+    // Clear sidebar slots
+    document.getElementById('slot-win').innerHTML = '';
+    document.getElementById('slot-win').classList.remove('filled');
+    document.getElementById('slot-place').innerHTML = '';
+    document.getElementById('slot-place').classList.remove('filled');
+    document.getElementById('slot-show').innerHTML = '';
+    document.getElementById('slot-show').classList.remove('filled');
+    
     // Unlock all cups and start heartbeat animation
     try {
         console.log('[RESULTS MODAL] Unlocking all cups...');
