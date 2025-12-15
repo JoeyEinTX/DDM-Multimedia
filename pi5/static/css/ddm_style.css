@@ -1,5 +1,11 @@
 /* DDM Horse Dashboard Styles - Modern Dark Minimal */
 
+/* CSS Variables - Easy Customization */
+:root {
+    --tote-board-bg: #0d4d40;  /* Dark teal - easy to change */
+    --tote-board-border: #1B998B;  /* DDM teal for border/accent */
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -177,14 +183,25 @@ body {
     line-height: 1;
 }
 
+/* Reusable Tote Board Housing - Dark Teal Background */
+.tote-board-housing {
+    background: var(--tote-board-bg);
+    border: 2px solid var(--tote-board-border);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.5),
+        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+}
+
 /* Tote Board Clock - Dot Matrix Light Bulb Style */
 .tote-clock-container {
     display: flex;
     align-items: center;
     padding: 10px 12px;
-    background: #1a1a1a;
+    background: var(--tote-board-bg);
     border-radius: 8px;
-    border: 2px solid #2a2a2a;
+    border: 2px solid var(--tote-board-border);
     box-shadow: 
         0 4px 12px rgba(0, 0, 0, 0.5),
         inset 0 -2px 8px rgba(0, 0, 0, 0.3);
@@ -425,10 +442,10 @@ body {
 .results-tote-board {
     display: inline-block;
     width: fit-content;
-    background: #1a1a1a;
+    background: var(--tote-board-bg);
     padding: 16px 20px;
     border-radius: 8px;
-    border: 2px solid #2a2a2a;
+    border: 2px solid var(--tote-board-border);
     box-shadow: 
         0 4px 12px rgba(0, 0, 0, 0.5),
         inset 0 -2px 8px rgba(0, 0, 0, 0.3);
