@@ -1143,11 +1143,14 @@ body {
 .results-modal-content {
     max-width: 650px;
     padding: 24px;
+    background: #1a1a1a;
+    border: 2px solid #2a2a2a;
 }
 
 .results-modal-layout {
     display: flex;
     gap: 24px;
+    min-height: 420px;
 }
 
 .results-main {
@@ -1158,12 +1161,17 @@ body {
     font-size: 2.2em;
     font-weight: bold;
     text-align: center;
-    margin-bottom: 20px;
+    margin-bottom: 8px;
     color: #FFD700;  /* Gold for winner step, changes per step */
 }
 
-.modal-subtext {
-    display: none;  /* Hide subtext - header is enough */
+.modal-subtitle {
+    font-size: 1em;
+    font-weight: 600;
+    text-align: center;
+    color: #888888;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
 }
 
 /* Saddle Cloth Grid */
@@ -1350,7 +1358,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5em;
+    font-size: 2em;
     font-weight: 900;
     border-radius: 6px;
     border: 3px solid #333;
