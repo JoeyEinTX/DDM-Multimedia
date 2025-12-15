@@ -599,14 +599,17 @@ function openTestModal() {
         colorPicker = new iro.ColorPicker('#color-picker', {
             width: 200,
             color: '#E195AB', // Default to ROSE
-            borderWidth: 2,
+            borderWidth: 0,  // Remove border to allow full edge access
             borderColor: '#1B998B',
             padding: 0,  // Remove padding to allow picker at edge for full saturation
             margin: 0,   // Remove margin
+            handleRadius: 8,  // Handle size
             layout: [
                 {
                     component: iro.ui.Wheel,
-                    options: {}
+                    options: {
+                        borderWidth: 0  // Remove wheel border constraint
+                    }
                 }
             ]
         });
