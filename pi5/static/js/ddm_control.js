@@ -601,6 +601,8 @@ function openTestModal() {
             color: '#E195AB', // Default to ROSE
             borderWidth: 2,
             borderColor: '#1B998B',
+            padding: 0,  // Remove padding to allow picker at edge for full saturation
+            margin: 0,   // Remove margin
             layout: [
                 {
                     component: iro.ui.Wheel,
