@@ -468,30 +468,63 @@ async function sendAnimation(animName, buttonElement) {
     }
 }
 
-// Reset system
+// Standby - turns off LEDs without clearing results
+async function sendStandby() {
+    showLoader();
+    try {
+        // Turn off all LEDs
+        const response = await fetch('/api/led/all_off', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Standby mode - LEDs off', 'success');
+            document.getElementById('current-mode').textContent = 'STANDBY';
+            // Clear active button state
+            clearActiveButton();
+            await checkESP32Status();
+            hideLoader();
+        } else {
+            hideLoader(true); // Hide immediately on error
+            showNotification(`Error: ${data.response}`, 'error');
+        }
+    } catch (error) {
+        hideLoader(true); // Hide immediately on error
+        console.error('Error going to standby:', error);
+        showNotification('Connection error', 'error');
+    }
+}
+
+// Reset system - clears results and re-enables all buttons
 async function sendReset() {
-    if (confirm('Reset all LEDs and return to idle?')) {
+    if (confirm('Reset race? This will clear results, turn off LEDs, and re-enable all buttons.')) {
         showLoader();
         try {
-            const response = await fetch('/api/reset', {
+            // Clear results on server (deletes results.json and turns off LEDs)
+            const response = await fetch('/api/results/clear', {
                 method: 'POST'
             });
             
             const data = await response.json();
             
             if (data.success) {
-                showNotification('System reset', 'success');
+                showNotification('Race reset - all systems cleared', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
-                // Clear results from localStorage and hide banner
+                // Clear results from localStorage
                 localStorage.removeItem('raceResults');
+                // Hide results banner
                 hideResultsBanner();
+                // Re-enable all race-phase buttons
+                setRaceComplete(false);
                 // Clear active button state
                 clearActiveButton();
                 await checkESP32Status();
                 hideLoader();
             } else {
                 hideLoader(true); // Hide immediately on error
-                showNotification(`Error: ${data.response}`, 'error');
+                showNotification(`Error: ${data.response || data.error}`, 'error');
             }
         } catch (error) {
             hideLoader(true); // Hide immediately on error
