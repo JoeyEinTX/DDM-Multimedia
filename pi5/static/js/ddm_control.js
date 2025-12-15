@@ -1,5 +1,8 @@
 // ddm_control.js - Dashboard control JavaScript
 
+// Track if this device just submitted results (to skip reveal popup)
+let justSubmittedResults = false;
+
 // Track active button
 let activeButton = null;
 
@@ -1072,6 +1075,9 @@ async function resultsConfirm() {
     const placeHorse = resultsState.place;
     const showHorse = resultsState.show;
     
+    // Set flag to skip reveal popup on this device
+    justSubmittedResults = true;
+    
     showLoader();
     try {
         console.log('[CONFIRM] Sending results to server...');
@@ -1348,6 +1354,15 @@ function connectResultsStream() {
     resultsEventSource.addEventListener('results', function(e) {
         console.log('[SSE] Results received:', e.data);
         const data = JSON.parse(e.data);
+        
+        if (justSubmittedResults) {
+            justSubmittedResults = false;  // Reset flag
+            console.log('[SSE] Skipping reveal popup - this device submitted results');
+            // Don't show reveal popup - banner already updated by resultsConfirm()
+            return;
+        }
+        
+        // Show dramatic reveal popup for other devices
         pendingResults = data;
         showResultsRevealModal();
     });
