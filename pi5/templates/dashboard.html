@@ -139,7 +139,7 @@
     <!-- Device Status Modal - ESP32 Controllers Only -->
     <div id="device-modal" class="modal">
         <div class="modal-content">
-            <button class="modal-close" onclick="closeDeviceModal()">×</button>
+            <span class="modal-close-tab" onclick="closeDeviceModal()">&times;</span>
             <h2>Connected Devices</h2>
             <div id="device-list" class="device-list">
                 <!-- Device list will be populated by JavaScript -->
@@ -154,6 +154,7 @@
     <!-- Results Modal -->
     <div id="results-modal" class="modal">
         <div class="modal-content results-modal-content">
+            <span class="modal-close-tab" onclick="closeResultsModal()">&times;</span>
             <div class="results-modal-layout">
                 <!-- Main content area -->
                 <div class="results-main">
@@ -199,7 +200,7 @@
     <!-- Weather Modal -->
     <div id="weather-modal" class="modal">
         <div class="modal-content modal-weather">
-            <button class="modal-close" onclick="closeWeatherModal()">×</button>
+            <span class="modal-close-tab" onclick="closeWeatherModal()">&times;</span>
             <h2 id="weather-modal-title">Weather Forecast</h2>
             <div id="weather-modal-grid" class="weather-modal-grid">
                 <!-- Weather forecast items will be inserted here -->
@@ -210,7 +211,7 @@
     <!-- RGB Test Modal -->
     <div id="test-modal" class="modal">
         <div class="modal-content test-modal-content">
-            <button class="modal-close" onclick="closeTestModal()">×</button>
+            <span class="modal-close-tab" onclick="closeTestModal()">&times;</span>
             <h2>LED TEST MODE</h2>
             
             <div class="color-wheel-container">

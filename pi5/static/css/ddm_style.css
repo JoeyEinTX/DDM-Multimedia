@@ -1076,12 +1076,39 @@ body {
 }
 
 .modal-content {
+    position: relative;  /* For absolute positioning of close tab */
     background: #1a1a1a;
     padding: 32px;
     border-radius: 8px;
     min-width: 400px;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
     animation: modalSlideIn 0.2s ease-out;
+}
+
+/* Modal close tab - small circular button at top-right corner */
+.modal-close-tab {
+    position: absolute;
+    top: -15px;
+    right: -15px;
+    width: 30px;
+    height: 30px;
+    background: #1a1a1a;
+    border: 2px solid #1B998B;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    color: #fff;
+    z-index: 1001;
+    transition: all 0.2s ease;
+}
+
+.modal-close-tab:hover {
+    background: #1B998B;
+    color: #000;
+    transform: scale(1.1);
 }
 
 @keyframes modalSlideIn {
@@ -1544,6 +1571,7 @@ body {
 #color-picker {
     display: flex;
     justify-content: center;
+    overflow: visible;  /* Allow handle to overflow edge for full saturation */
 }
 
 /* Brightness Control */

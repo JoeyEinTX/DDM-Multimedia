@@ -600,18 +600,19 @@ function openTestModal() {
     if (!colorPicker) {
         console.log('[TEST MODAL] Initializing color picker and event handlers...');
         colorPicker = new iro.ColorPicker('#color-picker', {
-            width: 200,
+            width: 210,  // Slightly larger wheel
             color: '#E195AB', // Default to ROSE
             borderWidth: 0,  // Remove border to allow full edge access
             borderColor: '#1B998B',
             padding: 0,  // Remove padding to allow picker at edge for full saturation
             margin: 0,   // Remove margin
-            handleRadius: 8,  // Handle size
+            handleRadius: 4,  // Smaller handle for better edge access
             layout: [
                 {
                     component: iro.ui.Wheel,
                     options: {
-                        borderWidth: 0  // Remove wheel border constraint
+                        borderWidth: 0,  // Remove wheel border constraint
+                        handleRadius: 4  // Smaller handle in wheel options too
                     }
                 }
             ]
