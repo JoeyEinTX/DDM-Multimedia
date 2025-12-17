@@ -5,6 +5,12 @@ ESP32_IP = "192.168.1.100"  # Replace with your ESP32's IP address
 ESP32_PORT = 5005
 SOCKET_TIMEOUT = 5.0  # Seconds
 
+# Tote Board Connection Settings (Interstate75 LED Display)
+TOTE_IP = "10.0.0.124"
+TOTE_PORT = 80
+TOTE_TIMEOUT = 2.0  # Seconds
+TOTE_ENABLED = True
+
 # Flask Settings
 FLASK_HOST = "0.0.0.0"  # Listen on all interfaces
 FLASK_PORT = 5000
@@ -23,7 +29,7 @@ DDM_COLORS = {
 
 # System Information
 SYSTEM_NAME = "Derby de Mayo Control Center"
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 NUM_CUPS = 20
 TOTAL_LEDS = 640
 

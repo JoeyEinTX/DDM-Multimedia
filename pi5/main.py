@@ -14,12 +14,20 @@ from threading import Lock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
-                   WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES)
+                   WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
+                   TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED)
 from communication.esp32_client import esp32, check_esp32_connection
+from communication.tote_client import init_tote_client, get_tote_client
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ddm-horse-controller-2025'
+
+# Initialize tote board client
+tote = None
+if TOTE_ENABLED:
+    tote = init_tote_client(TOTE_IP, TOTE_PORT, TOTE_TIMEOUT)
+    print(f"Tote board client initialized: {TOTE_IP}:{TOTE_PORT}")
 
 # Data directory for persistence
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
@@ -42,6 +50,34 @@ weather_cache = {
 # SSE (Server-Sent Events) for real-time results push
 sse_clients = []
 sse_lock = Lock()
+
+
+def tote_send(action, *args, **kwargs):
+    """
+    Safely send command to tote board
+    
+    Args:
+        action: Method name to call on tote client (e.g., 'welcome', 'official')
+        *args: Positional arguments to pass to the method
+        **kwargs: Keyword arguments to pass to the method
+    
+    Returns:
+        Response string or None if tote is disabled/offline
+    """
+    if not TOTE_ENABLED or not tote:
+        return None
+    
+    try:
+        method = getattr(tote, action, None)
+        if method and callable(method):
+            response = method(*args, **kwargs)
+            return response
+        else:
+            print(f"[TOTE] Invalid action: {action}")
+            return None
+    except Exception as e:
+        print(f"[TOTE] Error calling {action}: {e}")
+        return None
 
 
 @app.route('/')
@@ -101,6 +137,10 @@ def api_led_all_on():
 def api_led_all_off():
     """Turn all LEDs off"""
     response = esp32.all_off()
+    
+    # Stop tote board display
+    tote_send('stop')
+    
     return jsonify({
         'success': not response.startswith('ERROR'),
         'response': response
@@ -166,11 +206,32 @@ def api_animation(anim_name):
             command = f"ANIM:RESULTS_ACTIVE:{win}:{place}:{show}"
             response = esp32.send_command(command)
             
+            # Send official results to tote board
+            tote_send('official', win, place, show)
+            
             return jsonify({
                 'success': not response.startswith('ERROR'),
                 'animation': anim_name,
                 'response': response
             })
+    
+    # Map animations to tote board commands
+    tote_mapping = {
+        'WELCOME': ('welcome',),
+        'RACE_START': ('race_start',),
+        'BETTING_60': ('betting_open', 60),
+        'BETTING_30': ('betting_open', 30),
+        'BETTING_15': ('betting_open', 15),
+        'BETTING_5': ('final_call',),
+    }
+    
+    # Send to tote board if mapping exists
+    if anim_name in tote_mapping:
+        tote_action = tote_mapping[anim_name]
+        if len(tote_action) > 1:
+            tote_send(tote_action[0], tote_action[1])
+        else:
+            tote_send(tote_action[0])
     
     # Regular animation (no parameters)
     response = esp32.start_animation(anim_name)
@@ -268,6 +329,9 @@ def api_results():
             # Save to file
             save_results(win, place, show)
             
+            # Send official results to tote board
+            tote_send('official', win, place, show)
+            
             # Broadcast to all connected clients via SSE
             broadcast_sse('results', {
                 'win': win,
@@ -296,6 +360,9 @@ def api_results_clear():
         
         # Turn off all LEDs
         esp32.all_off()
+        
+        # Send welcome to tote board
+        tote_send('welcome')
         
         return jsonify({
             'success': True,
@@ -393,8 +460,59 @@ def api_cup_unlock():
 def api_reset():
     """Reset to idle state"""
     response = esp32.reset()
+    
+    # Send welcome to tote board
+    tote_send('welcome')
+    
     return jsonify({
         'success': not response.startswith('ERROR'),
+        'response': response
+    })
+
+
+@app.route('/api/tote/ping', methods=['GET'])
+def api_tote_ping():
+    """Test connection to tote board"""
+    if not TOTE_ENABLED or not tote:
+        return jsonify({
+            'success': False,
+            'status': 'DISABLED',
+            'message': 'Tote board is disabled'
+        })
+    
+    is_connected = tote.ping()
+    return jsonify({
+        'success': is_connected,
+        'status': 'ONLINE' if is_connected else 'OFFLINE',
+        'response': tote.get_last_response()
+    })
+
+
+@app.route('/api/tote/command', methods=['POST'])
+def api_tote_command():
+    """Send a command to tote board"""
+    if not TOTE_ENABLED or not tote:
+        return jsonify({
+            'success': False,
+            'error': 'Tote board is disabled'
+        }), 503
+    
+    data = request.get_json()
+    action = data.get('action', '')
+    params = data.get('params', {})
+    
+    if not action:
+        return jsonify({
+            'success': False,
+            'error': 'No action provided'
+        }), 400
+    
+    response = tote_send(action, **params)
+    success = response and not response.startswith('ERROR')
+    
+    return jsonify({
+        'success': success,
+        'action': action,
         'response': response
     })
 
@@ -404,14 +522,24 @@ def api_status():
     """Get system status"""
     is_connected = esp32.is_connected()
     
-    return jsonify({
+    status = {
         'esp32_connected': is_connected,
         'esp32_ip': esp32.ip,
         'esp32_port': esp32.port,
         'num_cups': NUM_CUPS,
         'total_leds': TOTAL_LEDS,
-        'version': VERSION
-    })
+        'version': VERSION,
+        'tote_enabled': TOTE_ENABLED
+    }
+    
+    if TOTE_ENABLED and tote:
+        status['tote_connected'] = tote.is_connected
+        status['tote_ip'] = tote.ip
+    else:
+        status['tote_connected'] = False
+        status['tote_ip'] = None
+    
+    return jsonify(status)
 
 
 @app.route('/api/weather', methods=['GET'])
@@ -525,7 +653,22 @@ if __name__ == '__main__':
     print("="*60)
     print(f"\n  Dashboard: http://{FLASK_HOST}:{FLASK_PORT}")
     print(f"  ESP32 Target: {esp32.ip}:{esp32.port}")
-    print(f"  Debug Mode: {FLASK_DEBUG}\n")
+    
+    # Tote board information and startup
+    if TOTE_ENABLED and tote:
+        print(f"  Tote Board: {tote.ip}:{tote.port}")
+        print("\n  Testing tote board connection...")
+        if tote.ping():
+            print("  ✓ Tote board ONLINE")
+            # Send welcome message on startup
+            tote.welcome()
+            print("  ✓ Welcome message sent to tote board")
+        else:
+            print("  ✗ Tote board OFFLINE")
+    else:
+        print("  Tote Board: DISABLED")
+    
+    print(f"\n  Debug Mode: {FLASK_DEBUG}\n")
     print("="*60 + "\n")
     
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
