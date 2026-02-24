@@ -53,6 +53,12 @@ A wireless LED display system for horse racing betting entertainment at an annua
 ddm_cup_v3/
 ├── README.md                    # This document
 │
+├── docs/                        # Documentation
+│   ├── API.md                   # REST API reference
+│   ├── DASHBOARD.md             # UI/UX documentation
+│   ├── HARDWARE.md              # Hardware guide & assembly
+│   └── archive/                 # Historical documentation
+│
 ├── pi5/                         # Raspberry Pi 5 code
 │   ├── requirements.txt         # Python dependencies
 │   ├── main.py                  # Flask app entry point
