@@ -1,5 +1,8 @@
 # Python dependencies for DDM Horse Dashboard (Raspberry Pi 5)
 
 Flask==3.0.0
+Flask-SocketIO==5.3.6
 Werkzeug==3.0.1
 requests==2.31.0
+python-socketio==5.10.0
+python-engineio==4.8.0

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Derby de Mayo — Tote Board</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0d1117;color:#e6edf3;font-family:'Oswald',system-ui,sans-serif}
+.hidden{display:none!important}
+
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;padding:8px 24px;background:linear-gradient(180deg,#121a12 0%,#0d1117 100%);border-bottom:2px solid #228B22}
+.header-left,.header-right{flex:0 0 auto}
+.header-center{flex:1;text-align:center}
+.title{font-size:2.2rem;font-weight:700;letter-spacing:3px;color:#fff}
+.title .gold{color:#FFD700}
+.state-banner{font-size:1.5rem;font-weight:700;letter-spacing:2px;color:#FFD700;text-transform:uppercase}
+.state-banner.pulse{animation:pulse 1.2s ease-in-out infinite}
+.state-banner.urgent{color:#DC143C;animation:pulse .7s ease-in-out infinite}
+.state-banner.celebrate{animation:celebrate 2s ease-in-out infinite}
+.countdown{font-family:'Roboto Mono',monospace;font-size:1.1rem;color:#aaa;margin-top:2px}
+.clock{font-family:'Roboto Mono',monospace;font-size:1.1rem;color:#888}
+
+/* RESULTS BANNER */
+.results-banner{display:flex;justify-content:center;gap:24px;padding:10px 24px;background:linear-gradient(90deg,rgba(34,139,34,.15),rgba(255,215,0,.12),rgba(34,139,34,.15));border-bottom:2px solid #FFD700;animation:fadeSlideDown .6s ease}
+.result-slot{display:flex;align-items:center;gap:10px;padding:6px 18px;border-radius:6px;font-size:1.1rem}
+.result-slot .label{font-weight:700;width:60px;text-align:center;padding:4px 8px;border-radius:4px;font-size:1rem}
+.result-slot.win .label{background:#FFD700;color:#000}
+.result-slot.place .label{background:#C0C0C0;color:#000}
+.result-slot.show .label{background:#CD7F32;color:#fff}
+.result-slot .post{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;color:#fff;flex-shrink:0}
+.result-slot .name{font-weight:600;font-size:1.15rem;min-width:140px}
+.result-slot .odds{font-family:'Roboto Mono',monospace;font-weight:700;font-size:1.1rem;color:#FFD700}
+
+/* HORSE GRID */
+.horse-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 16px;overflow-y:auto;flex:1;max-height:calc(100vh - 170px)}
+.horse-card{display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;transition:all .3s ease}
+.horse-card.winner{border-color:#FFD700;background:rgba(255,215,0,.08);box-shadow:0 0 12px rgba(255,215,0,.2)}
+.horse-card.placed{border-color:#C0C0C0;background:rgba(192,192,192,.06)}
+.horse-card.showed{border-color:#CD7F32;background:rgba(205,127,50,.06)}
+.horse-card.favorite{border-color:rgba(255,215,0,.3)}
+.post-circle{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.3rem;flex-shrink:0;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.horse-info{flex:1;min-width:0;overflow:hidden}
+.horse-name{font-size:1.15rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.horse-jockey{font-size:.75rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.horse-odds{font-family:'Roboto Mono',monospace;font-size:1.3rem;font-weight:700;color:#FFD700;min-width:55px;text-align:right;transition:color .3s}
+.horse-odds.up{color:#00c853}
+.horse-odds.down{color:#ff1744}
+
+/* OVERLAY */
+.overlay{position:fixed;inset:0;background:rgba(13,17,23,.95);display:flex;align-items:center;justify-content:center;z-index:50}
+.overlay-text{font-size:2.5rem;font-weight:700;color:#888;letter-spacing:4px;animation:pulse 2s ease-in-out infinite}
+
+/* FOOTER */
+footer{display:flex;justify-content:space-between;padding:6px 24px;font-size:.8rem;color:#555;border-top:1px solid #222}
+
+/* ADMIN PANEL */
+.admin-panel{position:fixed;bottom:20px;right:20px;background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:16px;z-index:100;min-width:220px;font-size:.85rem}
+.admin-panel h3{margin-bottom:8px;color:#FFD700}
+.admin-panel button{display:block;width:100%;margin:4px 0;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:.8rem}
+.admin-panel button:hover{background:#444}
+.admin-btns{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
+.admin-btns button{width:auto;flex:1 1 45%;font-size:.7rem}
+#ws-status{font-weight:700}
+.ws-on{color:#00c853}
+.ws-off{color:#ff1744}
+
+/* ANIMATIONS */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes celebrate{0%{text-shadow:0 0 8px #FFD700}50%{text-shadow:0 0 20px #FFD700,0 0 40px #FFD700}100%{text-shadow:0 0 8px #FFD700}}
+@keyframes fadeSlideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header id="header">
+  <div class="header-left">
+    <h1 class="title">DERBY <span class="gold">DE MAYO</span></h1>
+  </div>
+  <div class="header-center">
+    <div id="state-banner" class="state-banner">WAITING FOR ENTRIES…</div>
+    <div id="countdown" class="countdown"></div>
+  </div>
+  <div class="header-right">
+    <div id="clock" class="clock"></div>
+  </div>
+</header>
+
+<!-- RESULTS BANNER (shown in OFFICIAL state) -->
+<div id="results-banner" class="results-banner hidden">
+  <div class="result-slot win"><span class="label">WIN</span><span class="post" id="res-win-post"></span><span class="name" id="res-win-name"></span><span class="odds" id="res-win-odds"></span></div>
+  <div class="result-slot place"><span class="label">PLACE</span><span class="post" id="res-place-post"></span><span class="name" id="res-place-name"></span><span class="odds" id="res-place-odds"></span></div>
+  <div class="result-slot show"><span class="label">SHOW</span><span class="post" id="res-show-post"></span><span class="name" id="res-show-name"></span><span class="odds" id="res-show-odds"></span></div>
+</div>
+
+<!-- HORSE GRID -->
+<main id="horse-grid" class="horse-grid"></main>
+
+<!-- DORMANT OVERLAY -->
+<div id="dormant-overlay" class="overlay"><div class="overlay-text">WAITING FOR ENTRIES…</div></div>
+
+<!-- FOOTER -->
+<footer><span>OFFICIAL RACING DATA</span><span id="footer-clock"></span></footer>
+
+<!-- ADMIN PANEL (hidden, press A) -->
+<div id="admin-panel" class="admin-panel hidden">
+  <h3>Admin Panel</h3>
+  <p>WebSocket: <span id="ws-status">Disconnected</span></p>
+  <button onclick="manualRefresh()">Refresh State</button>
+  <div class="admin-btns" id="state-btns"></div>
+  <button onclick="toggleAdmin()">Close</button>
+</div>
+
+<script>
+/* ===== State ===== */
+let horses = [];
+let currentState = 'DORMANT';
+let stateRemaining = null;
+let stateDuration = null;
+let countdownInterval = null;
+let prevOdds = {};
+
+const STATE_LABELS = {
+  DORMANT:'WAITING FOR ENTRIES…',
+  ENTRIES_LOADED:'POST TIME APPROACHING',
+  BETTING_OPEN:'BETTING OPEN',
+  BETTING_CLOSING:'FINAL CALL',
+  AT_THE_POST:'HORSES AT THE POST',
+  RUNNING:'RACE IN PROGRESS ●',
+  FINISHED:'RACE COMPLETE — AWAITING OFFICIAL',
+  OFFICIAL:'OFFICIAL RESULTS'
+};
+
+/* ===== Text colour for saddle cloths ===== */
+const POST_TEXT = {
+  1:'#FFF',2:'#000',3:'#FFF',4:'#000',5:'#FFF',6:'#FFD700',7:'#000',8:'#000',
+  9:'#000',10:'#FFF',11:'#E31837',12:'#000',13:'#FFF',14:'#FFCD00',15:'#000',
+  16:'#E31837',17:'#FFF',18:'#FFCD00',19:'#E31837',20:'#FFCD00'
+};
+
+/* ===== Socket.IO ===== */
+const socket = io();
+
+socket.on('connect', () => {
+  setWsStatus(true);
+  socket.emit('request_racing_state');
+});
+socket.on('disconnect', () => setWsStatus(false));
+
+socket.on('race_state_change', (d) => {
+  if (d.horses) updateHorses(d.horses);
+  if (d.state_info) {
+    stateDuration = d.state_info.duration_seconds;
+    stateRemaining = d.state_info.remaining_seconds;
+  }
+  updateState(d.new_state || d.state_info?.state);
+});
+
+socket.on('odds_update', (d) => { if (d.horses) updateHorses(d.horses); });
+
+socket.on('race_results', (d) => {
+  if (d.win && d.place && d.show) showResults(d.win, d.place, d.show);
+});
+
+/* ===== Render horses ===== */
+function updateHorses(list) {
+  horses = list;
+  renderGrid();
+}
+
+function renderGrid() {
+  const grid = document.getElementById('horse-grid');
+  if (!horses.length) { grid.innerHTML = ''; return; }
+
+  // Find lowest odds for favorite highlight
+  const minOdds = Math.min(...horses.map(h => h.current_odds));
+
+  grid.innerHTML = horses.map(h => {
+    const pp = h.post_position;
+    const txt = POST_TEXT[pp] || '#FFF';
+    const prev = prevOdds[pp];
+    let oddsClass = '';
+    if (prev !== undefined) {
+      if (h.current_odds < prev) oddsClass = ' down';
+      else if (h.current_odds > prev) oddsClass = ' up';
+    }
+    prevOdds[pp] = h.current_odds;
+
+    let cardClass = 'horse-card';
+    if (h.finish_position === 1) cardClass += ' winner';
+    else if (h.finish_position === 2) cardClass += ' placed';
+    else if (h.finish_position === 3) cardClass += ' showed';
+    else if (h.current_odds === minOdds) cardClass += ' favorite';
+
+    return `<div class="${cardClass}" data-post="${pp}">
+      <div class="post-circle" style="background:${h.saddle_cloth_color};color:${txt}">${pp}</div>
+      <div class="horse-info">
+        <div class="horse-name">${h.horse_name}</div>
+        <div class="horse-jockey">${h.jockey}</div>
+      </div>
+      <div class="horse-odds${oddsClass}">${h.current_odds.toFixed(1)}</div>
+    </div>`;
+  }).join('');
+
+  // Clear odds direction class after brief flash
+  setTimeout(() => {
+    document.querySelectorAll('.horse-odds.up,.horse-odds.down').forEach(el => {
+      el.classList.remove('up','down');
+    });
+  }, 1200);
+}
+
+/* ===== State updates ===== */
+function updateState(state) {
+  if (!state) return;
+  currentState = state;
+  const banner = document.getElementById('state-banner');
+  const overlay = document.getElementById('dormant-overlay');
+  const resBanner = document.getElementById('results-banner');
+
+  banner.textContent = STATE_LABELS[state] || state;
+  banner.className = 'state-banner';
+
+  // Reset visibility
+  overlay.classList.add('hidden');
+  if (state !== 'OFFICIAL') resBanner.classList.add('hidden');
+
+  if (state === 'DORMANT') {
+    overlay.classList.remove('hidden');
+  } else if (state === 'BETTING_OPEN') {
+    banner.classList.add('pulse');
+  } else if (state === 'BETTING_CLOSING') {
+    banner.classList.add('urgent');
+  } else if (state === 'RUNNING') {
+    banner.classList.add('pulse');
+  } else if (state === 'OFFICIAL') {
+    banner.classList.add('celebrate');
+    resBanner.classList.remove('hidden');
+    // Fetch results if not already shown
+    fetchResults();
+  }
+
+  startCountdown();
+}
+
+/* ===== Countdown ===== */
+function startCountdown() {
+  clearInterval(countdownInterval);
+  const cd = document.getElementById('countdown');
+
+  if (stateRemaining == null || stateRemaining <= 0) {
+    cd.textContent = '';
+    return;
+  }
+
+  let remaining = stateRemaining;
+  cd.textContent = formatTime(remaining);
+
+  countdownInterval = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      cd.textContent = '';
+      clearInterval(countdownInterval);
+    } else {
+      cd.textContent = formatTime(remaining);
+    }
+  }, 1000);
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m > 0 ? `${m}:${String(sec).padStart(2,'0')}` : `${sec}s`;
+}
+
+/* ===== Results display ===== */
+function showResults(win, place, show) {
+  fillResultSlot('win', win);
+  fillResultSlot('place', place);
+  fillResultSlot('show', show);
+  document.getElementById('results-banner').classList.remove('hidden');
+  renderGrid(); // re-render to highlight winners
+}
+
+function fillResultSlot(type, horse) {
+  const pp = horse.post_position;
+  const txt = POST_TEXT[pp] || '#FFF';
+  const postEl = document.getElementById(`res-${type}-post`);
+  postEl.textContent = pp;
+  postEl.style.background = horse.saddle_cloth_color;
+  postEl.style.color = txt;
+  document.getElementById(`res-${type}-name`).textContent = horse.horse_name;
+  document.getElementById(`res-${type}-odds`).textContent = horse.current_odds.toFixed(1);
+}
+
+async function fetchResults() {
+  try {
+    const r = await fetch('/api/racing/results');
+    const d = await r.json();
+    if (d.success && d.results) {
+      showResults(d.results.win, d.results.place, d.results.show);
+    }
+  } catch(e) { console.error('fetchResults error', e); }
+}
+
+/* ===== Clock ===== */
+function tickClock() {
+  const now = new Date();
+  const t = now.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('clock').textContent = t;
+  document.getElementById('footer-clock').textContent = t;
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+/* ===== Admin panel ===== */
+const ADMIN_STATES = ['DORMANT','ENTRIES_LOADED','BETTING_OPEN','BETTING_CLOSING','AT_THE_POST','RUNNING','FINISHED','OFFICIAL'];
+
+function initAdmin() {
+  const cont = document.getElementById('state-btns');
+  ADMIN_STATES.forEach(s => {
+    const b = document.createElement('button');
+    b.textContent = s.replace(/_/g,' ');
+    b.onclick = () => adminSetState(s);
+    cont.appendChild(b);
+  });
+}
+
+function toggleAdmin() {
+  document.getElementById('admin-panel').classList.toggle('hidden');
+}
+
+function setWsStatus(on) {
+  const el = document.getElementById('ws-status');
+  el.textContent = on ? 'Connected' : 'Disconnected';
+  el.className = on ? 'ws-on' : 'ws-off';
+}
+
+function manualRefresh() { socket.emit('request_racing_state'); }
+
+async function adminSetState(state) {
+  try {
+    await fetch('/api/racing/state', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({state})
+    });
+    manualRefresh();
+  } catch(e) { console.error(e); }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'a' || e.key === 'A') toggleAdmin();
+});
+
+initAdmin();
+
+/* ===== Initial data fetch ===== */
+(async () => {
+  try {
+    const [hRes, sRes] = await Promise.all([
+      fetch('/api/racing/horses'), fetch('/api/racing/state')
+    ]);
+    const hData = await hRes.json();
+    const sData = await sRes.json();
+    if (hData.success) updateHorses(hData.horses);
+    if (sData.success) {
+      stateDuration = sData.duration_seconds;
+      stateRemaining = sData.remaining_seconds;
+      updateState(sData.state);
+    }
+  } catch(e) { console.error('Initial fetch error', e); }
+})();
+</script>
+</body>
+</html>

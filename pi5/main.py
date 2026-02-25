@@ -1,6 +1,7 @@
 # main.py - Flask app entry point for DDM Horse Dashboard
 
 from flask import Flask, render_template, jsonify, request, Response
+from flask_socketio import SocketIO, emit
 import sys
 import os
 import requests
@@ -18,10 +19,14 @@ from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, N
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED)
 from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client, get_tote_client
+from routes.racing_routes import racing_bp, init_racing_service
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ddm-horse-controller-2025'
+
+# Initialize Socket.IO
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize tote board client
 tote = None
@@ -88,6 +93,12 @@ def dashboard():
                          version=VERSION,
                          num_cups=NUM_CUPS,
                          total_leds=TOTAL_LEDS)
+
+
+@app.route('/spectator')
+def spectator():
+    """Full-screen tote board display for spectator TV"""
+    return render_template('spectator.html')
 
 
 @app.route('/api/ping', methods=['GET'])
@@ -646,6 +657,32 @@ def api_weather():
         }), 503
 
 
+# ---------------------------------------------------------------------------
+# Initialize Racing Data Service and register blueprint
+# ---------------------------------------------------------------------------
+racing_service = init_racing_service(socketio=socketio, use_mock=True)
+app.register_blueprint(racing_bp)
+print("Racing data service initialised (mock mode)")
+
+
+# ---------------------------------------------------------------------------
+# Socket.IO event handlers
+# ---------------------------------------------------------------------------
+
+@socketio.on('request_racing_state')
+def handle_request_racing_state():
+    """Emit current racing state to the requesting client."""
+    state_info = racing_service.get_state()
+    state_info['horses'] = racing_service.get_horses()
+    emit('race_state_change', {
+        'old_state': state_info['state'],
+        'new_state': state_info['state'],
+        'timestamp': time.time(),
+        'state_info': racing_service.get_state(),
+        'horses': racing_service.get_horses(),
+    })
+
+
 if __name__ == '__main__':
     print("\n" + "="*60)
     print(f"  {SYSTEM_NAME}")
@@ -668,7 +705,8 @@ if __name__ == '__main__':
     else:
         print("  Tote Board: DISABLED")
     
+    print(f"  Racing Service: READY (auto-progression via POST /api/racing/start)")
     print(f"\n  Debug Mode: {FLASK_DEBUG}\n")
     print("="*60 + "\n")
     
-    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
+    socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
