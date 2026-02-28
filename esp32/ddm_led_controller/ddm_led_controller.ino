@@ -43,6 +43,13 @@ int winCup = 0;
 int placeCup = 0;
 int showCup = 0;
 
+// RACE_START animation state
+int raceStartPhase = 0;                // 0 = green blast, 1 = galloping
+unsigned long raceStartPhase2Start = 0; // when phase 2 (galloping) began
+int raceStartCurrentCup = 1;           // current cup being pulsed (1-based)
+unsigned long raceStartLastCupTime = 0; // when current cup's white flash started
+bool raceStartFlashing = false;         // is a cup currently showing white?
+
 // Cup locking for custom colors during animations
 bool cupLocked[21] = {false};  // cups 1-20, index 0 unused
 CRGB cupLockedColor[21];       // color for locked cups
@@ -67,7 +74,9 @@ void animRaceStart();
 void animChaos();
 void animFinish();
 void animHeartbeat();
+void animHeartbeatFast();
 void animResults();
+void animResultsActive();
 
 /**
  * SETUP - Runs once at startup
@@ -341,12 +350,21 @@ String processCommand(String cmd) {
         return "OK:ANIM:FINAL_CALL";
     }
     
-    // ANIM:RACE_START - Fast white chase
+    // ANIM:RACE_START - "They're Off!" green blast then galloping white sweep
     else if (cmd == "ANIM:RACE_START") {
         currentAnimation = "RACE_START";
         animationRunning = true;
         animStartTime = millis();
         animStep = 0;
+        // Initialize race start state
+        raceStartPhase = 0;             // Phase 1: Green Blast
+        raceStartCurrentCup = 1;        // First cup to pulse in Phase 2
+        raceStartLastCupTime = 0;
+        raceStartFlashing = false;
+        raceStartPhase2Start = 0;
+        // Immediately set all LEDs to 100% bright green for Phase 1
+        fill_solid(leds, LED_COUNT, CRGB(0, 255, 0));
+        FastLED.show();
         return "OK:ANIM:RACE_START";
     }
     
@@ -626,28 +644,83 @@ void animFinalCall() {
 }
 
 /**
- * ANIM:RACE_START - Quick white streak chasing 1→20 repeatedly
+ * ANIM:RACE_START - "They're Off!" Two-phase race start animation
+ * 
+ * Phase 1 (Green Blast): All LEDs instantly go 100% bright green (#00FF00)
+ *   - Holds for 1000ms — sharp, dramatic start (gates are open!)
+ * 
+ * Phase 2 (Galloping on Green): Runs continuously until next command
+ *   - Background: All cups stay solid green (~40% brightness)
+ *   - A bright white pulse sweeps across cups sequentially (1→2→3→...→20→1...)
+ *   - Each cup's white flash is all 32 LEDs going full white for ~60ms
+ *   - After the flash, cup fades back to green background
+ *   - Tempo starts at 250ms between pulses and accelerates to 80ms over 45 seconds
+ *   - Non-blocking millis() timing throughout
  */
 void animRaceStart() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 50) return; // Fast chase
-    lastUpdate = millis();
+    unsigned long now = millis();
     
-    FastLED.clear();
-    
-    // Show streak of 3 cups
-    for (int i = 0; i < 3; i++) {
-        int cup = ((animStep - i) % NUM_CUPS) + 1;
-        if (cup >= 1 && cup <= 20) {
-            uint8_t brightness = 255 - (i * 85); // Fade trail
-            CRGB color = COLOR_WHITE;
-            color.nscale8(brightness);
-            setCup(cup, color);
+    // ===== PHASE 1: Green Blast (1 second hold) =====
+    if (raceStartPhase == 0) {
+        // All LEDs were set to bright green in the command handler
+        // Wait for 1 second to elapse
+        if (now - animStartTime >= 1000) {
+            // Transition to Phase 2: Galloping on Green
+            raceStartPhase = 1;
+            raceStartPhase2Start = now;
+            raceStartCurrentCup = 1;
+            raceStartFlashing = false;
+            raceStartLastCupTime = now;  // Start first pulse timing
+            
+            // Set all cups to green background (~40% brightness = ~102/255)
+            CRGB bgGreen = CRGB(0, 102, 0);
+            fill_solid(leds, LED_COUNT, bgGreen);
+            FastLED.show();
         }
+        return;
     }
     
-    FastLED.show();
-    animStep = (animStep + 1) % NUM_CUPS;
+    // ===== PHASE 2: Galloping on Green =====
+    
+    // Calculate current gap speed based on time elapsed in phase 2
+    // Starts at 250ms gap between cup pulses, accelerates to 80ms over 45 seconds
+    unsigned long phase2Elapsed = now - raceStartPhase2Start;
+    unsigned long currentGap;
+    if (phase2Elapsed >= 45000) {
+        currentGap = 80;  // Minimum gap (max speed) after 45 seconds
+    } else {
+        // Linear interpolation: 250ms → 80ms over 45 seconds
+        currentGap = 250 - (unsigned long)(170.0 * (float)phase2Elapsed / 45000.0);
+    }
+    
+    // White flash duration per cup (~60ms, snappy pulse)
+    const unsigned long FLASH_DURATION = 60;
+    
+    if (raceStartFlashing) {
+        // A cup is currently showing white — check if flash duration is over
+        if (now - raceStartLastCupTime >= FLASH_DURATION) {
+            // Flash complete — restore this cup to green background
+            setCup(raceStartCurrentCup, CRGB(0, 102, 0));
+            FastLED.show();
+            raceStartFlashing = false;
+            
+            // Advance to next cup (wrap around 1→20→1)
+            raceStartCurrentCup++;
+            if (raceStartCurrentCup > NUM_CUPS) {
+                raceStartCurrentCup = 1;
+            }
+            // raceStartLastCupTime stays as-is; gap timer starts from flash START
+        }
+    } else {
+        // Waiting for the gap to elapse before starting next cup's white flash
+        if (now - raceStartLastCupTime >= currentGap) {
+            // Time to flash the current cup white!
+            setCup(raceStartCurrentCup, CRGB(255, 255, 255));
+            FastLED.show();
+            raceStartFlashing = true;
+            raceStartLastCupTime = now;  // Record when this flash started
+        }
+    }
 }
 
 /**
