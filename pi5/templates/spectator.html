@@ -6,24 +6,25 @@
 <title>Derby de Mayo — Tote Board</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#0d1117;color:#e6edf3;font-family:'Oswald',system-ui,sans-serif}
+html,body{width:100%;height:100%;overflow:hidden;background:#1a1a2e;color:#e6edf3;font-family:'Oswald',system-ui,sans-serif}
 .hidden{display:none!important}
 
 /* HEADER */
-header{display:flex;align-items:center;justify-content:space-between;padding:8px 24px;background:linear-gradient(180deg,#121a12 0%,#0d1117 100%);border-bottom:2px solid #228B22}
+header{display:flex;align-items:center;justify-content:space-between;padding:8px 24px;background:linear-gradient(180deg,#16213e 0%,#1a1a2e 100%);border-bottom:2px solid #228B22}
 .header-left,.header-right{flex:0 0 auto}
 .header-center{flex:1;text-align:center}
-.title{font-size:2.2rem;font-weight:700;letter-spacing:3px;color:#fff}
+.title{font-size:2.2rem;font-weight:700;letter-spacing:3px;color:#228B22}
 .title .gold{color:#FFD700}
-.state-banner{font-size:1.5rem;font-weight:700;letter-spacing:2px;color:#FFD700;text-transform:uppercase}
-.state-banner.pulse{animation:pulse 1.2s ease-in-out infinite}
-.state-banner.urgent{color:#DC143C;animation:pulse .7s ease-in-out infinite}
-.state-banner.celebrate{animation:celebrate 2s ease-in-out infinite}
-.countdown{font-family:'Roboto Mono',monospace;font-size:1.1rem;color:#aaa;margin-top:2px}
-.clock{font-family:'Roboto Mono',monospace;font-size:1.1rem;color:#888}
+.state-badge{display:inline-block;padding:4px 18px;border-radius:4px;font-size:1.5rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)}
+.state-badge.pulse{animation:pulse 1.2s ease-in-out infinite}
+.state-badge.urgent{color:#DC143C;animation:pulse .7s ease-in-out infinite;border-color:#DC143C}
+.state-badge.celebrate{color:#FFD700;animation:celebrate 2s ease-in-out infinite;border-color:#FFD700}
+.state-badge.running{color:#00c853;border-color:#00c853}
+.countdown{font-family:'JetBrains Mono',monospace;font-size:1.1rem;color:#aaa;margin-top:2px}
+.clock{font-family:'JetBrains Mono',monospace;font-size:1.1rem;color:#888}
 
 /* RESULTS BANNER */
 .results-banner{display:flex;justify-content:center;gap:24px;padding:10px 24px;background:linear-gradient(90deg,rgba(34,139,34,.15),rgba(255,215,0,.12),rgba(34,139,34,.15));border-bottom:2px solid #FFD700;animation:fadeSlideDown .6s ease}
@@ -34,7 +35,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:8px
 .result-slot.show .label{background:#CD7F32;color:#fff}
 .result-slot .post{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;color:#fff;flex-shrink:0}
 .result-slot .name{font-weight:600;font-size:1.15rem;min-width:140px}
-.result-slot .odds{font-family:'Roboto Mono',monospace;font-weight:700;font-size:1.1rem;color:#FFD700}
+.result-slot .odds{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:1.1rem;color:#FFD700}
 
 /* HORSE GRID */
 .horse-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 16px;overflow-y:auto;flex:1;max-height:calc(100vh - 170px)}
@@ -47,27 +48,32 @@ header{display:flex;align-items:center;justify-content:space-between;padding:8px
 .horse-info{flex:1;min-width:0;overflow:hidden}
 .horse-name{font-size:1.15rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .horse-jockey{font-size:.75rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.horse-odds{font-family:'Roboto Mono',monospace;font-size:1.3rem;font-weight:700;color:#FFD700;min-width:55px;text-align:right;transition:color .3s}
+.horse-odds{font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:#FFD700;min-width:55px;text-align:right;transition:color .3s}
 .horse-odds.up{color:#00c853}
 .horse-odds.down{color:#ff1744}
 
 /* OVERLAY */
-.overlay{position:fixed;inset:0;background:rgba(13,17,23,.95);display:flex;align-items:center;justify-content:center;z-index:50}
+.overlay{position:fixed;inset:0;background:rgba(26,26,46,.95);display:flex;align-items:center;justify-content:center;z-index:50}
 .overlay-text{font-size:2.5rem;font-weight:700;color:#888;letter-spacing:4px;animation:pulse 2s ease-in-out infinite}
 
 /* FOOTER */
-footer{display:flex;justify-content:space-between;padding:6px 24px;font-size:.8rem;color:#555;border-top:1px solid #222}
+footer{display:flex;justify-content:space-between;padding:6px 24px;font-size:.8rem;color:#555;border-top:1px solid rgba(255,255,255,.08)}
 
 /* ADMIN PANEL */
-.admin-panel{position:fixed;bottom:20px;right:20px;background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:16px;z-index:100;min-width:220px;font-size:.85rem}
+.admin-panel{position:fixed;bottom:20px;right:20px;background:#16213e;border:1px solid #444;border-radius:8px;padding:16px;z-index:100;min-width:220px;font-size:.85rem}
 .admin-panel h3{margin-bottom:8px;color:#FFD700}
-.admin-panel button{display:block;width:100%;margin:4px 0;padding:6px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:.8rem}
-.admin-panel button:hover{background:#444}
+.admin-panel button{display:block;width:100%;margin:4px 0;padding:6px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:.8rem}
+.admin-panel button:hover{background:#2a2a4e}
 .admin-btns{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
 .admin-btns button{width:auto;flex:1 1 45%;font-size:.7rem}
 #ws-status{font-weight:700}
 .ws-on{color:#00c853}
 .ws-off{color:#ff1744}
+
+/* CELEBRATION CONFETTI (light, OFFICIAL state) */
+.celebrate-bg{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
+.celebrate-bg .spark{position:absolute;width:4px;height:4px;border-radius:50%;opacity:0;animation:sparkle 3s ease-in-out infinite}
+@keyframes sparkle{0%{opacity:0;transform:translateY(0) scale(0)}25%{opacity:.8;transform:translateY(-40px) scale(1)}100%{opacity:0;transform:translateY(-120px) scale(.5)}}
 
 /* ANIMATIONS */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
@@ -83,7 +89,7 @@ footer{display:flex;justify-content:space-between;padding:6px 24px;font-size:.8r
     <h1 class="title">DERBY <span class="gold">DE MAYO</span></h1>
   </div>
   <div class="header-center">
-    <div id="state-banner" class="state-banner">WAITING FOR ENTRIES…</div>
+    <div id="state-badge" class="state-badge">WAITING FOR ENTRIES…</div>
     <div id="countdown" class="countdown"></div>
   </div>
   <div class="header-right">
@@ -97,6 +103,9 @@ footer{display:flex;justify-content:space-between;padding:6px 24px;font-size:.8r
   <div class="result-slot place"><span class="label">PLACE</span><span class="post" id="res-place-post"></span><span class="name" id="res-place-name"></span><span class="odds" id="res-place-odds"></span></div>
   <div class="result-slot show"><span class="label">SHOW</span><span class="post" id="res-show-post"></span><span class="name" id="res-show-name"></span><span class="odds" id="res-show-odds"></span></div>
 </div>
+
+<!-- CELEBRATION BG (light sparkles in OFFICIAL) -->
+<div id="celebrate-bg" class="celebrate-bg hidden"></div>
 
 <!-- HORSE GRID -->
 <main id="horse-grid" class="horse-grid"></main>
@@ -162,9 +171,28 @@ socket.on('race_state_change', (d) => {
 });
 
 socket.on('odds_update', (d) => { if (d.horses) updateHorses(d.horses); });
+socket.on('odds_updated', (d) => {
+  // Support both event name variants from data contract
+  if (d.horses) {
+    // Array of {post_position, odds} — merge into local horses
+    d.horses.forEach(u => {
+      const h = horses.find(h => h.post_position === u.post_position);
+      if (h) h.current_odds = u.odds ?? u.current_odds ?? h.current_odds;
+    });
+    renderGrid();
+  } else if (d.post_position != null) {
+    const h = horses.find(h => h.post_position === d.post_position);
+    if (h) { h.current_odds = d.odds ?? d.current_odds ?? h.current_odds; renderGrid(); }
+  }
+});
 
 socket.on('race_results', (d) => {
-  if (d.win && d.place && d.show) showResults(d.win, d.place, d.show);
+  if (d.results) {
+    // Data contract shape: { results: { win, place, show } }
+    showResults(d.results.win, d.results.place, d.results.show);
+  } else if (d.win && d.place && d.show) {
+    showResults(d.win, d.place, d.show);
+  }
 });
 
 /* ===== Render horses ===== */
@@ -219,33 +247,55 @@ function renderGrid() {
 function updateState(state) {
   if (!state) return;
   currentState = state;
-  const banner = document.getElementById('state-banner');
+  const badge = document.getElementById('state-badge');
   const overlay = document.getElementById('dormant-overlay');
   const resBanner = document.getElementById('results-banner');
+  const celebBg = document.getElementById('celebrate-bg');
 
-  banner.textContent = STATE_LABELS[state] || state;
-  banner.className = 'state-banner';
+  badge.textContent = STATE_LABELS[state] || state;
+  badge.className = 'state-badge';
 
   // Reset visibility
   overlay.classList.add('hidden');
+  celebBg.classList.add('hidden');
   if (state !== 'OFFICIAL') resBanner.classList.add('hidden');
 
   if (state === 'DORMANT') {
     overlay.classList.remove('hidden');
   } else if (state === 'BETTING_OPEN') {
-    banner.classList.add('pulse');
+    badge.classList.add('pulse');
   } else if (state === 'BETTING_CLOSING') {
-    banner.classList.add('urgent');
+    badge.classList.add('urgent');
   } else if (state === 'RUNNING') {
-    banner.classList.add('pulse');
+    badge.classList.add('running');
+    badge.classList.add('pulse');
   } else if (state === 'OFFICIAL') {
-    banner.classList.add('celebrate');
+    badge.classList.add('celebrate');
     resBanner.classList.remove('hidden');
+    celebBg.classList.remove('hidden');
+    spawnSparkles();
     // Fetch results if not already shown
     fetchResults();
   }
 
   startCountdown();
+}
+
+/* ===== Light celebration sparkles ===== */
+function spawnSparkles() {
+  const container = document.getElementById('celebrate-bg');
+  container.innerHTML = '';
+  const colors = ['#FFD700','#228B22','#DC143C','#FFFFFF','#C0C0C0'];
+  for (let i = 0; i < 30; i++) {
+    const spark = document.createElement('div');
+    spark.className = 'spark';
+    spark.style.left = Math.random() * 100 + '%';
+    spark.style.bottom = Math.random() * 30 + '%';
+    spark.style.background = colors[Math.floor(Math.random() * colors.length)];
+    spark.style.animationDelay = (Math.random() * 3).toFixed(1) + 's';
+    spark.style.animationDuration = (2 + Math.random() * 2).toFixed(1) + 's';
+    container.appendChild(spark);
+  }
 }
 
 /* ===== Countdown ===== */
@@ -294,8 +344,8 @@ function fillResultSlot(type, horse) {
   postEl.textContent = pp;
   postEl.style.background = horse.saddle_cloth_color;
   postEl.style.color = txt;
-  document.getElementById(`res-${type}-name`).textContent = horse.horse_name;
-  document.getElementById(`res-${type}-odds`).textContent = horse.current_odds.toFixed(1);
+  document.getElementById(`res-${type}-name`).textContent = horse.horse_name || horse.name;
+  document.getElementById(`res-${type}-odds`).textContent = (horse.current_odds ?? horse.odds ?? 0).toFixed(1);
 }
 
 async function fetchResults() {
