@@ -1135,28 +1135,43 @@ void animResults() {
 }
 
 /**
- * ANIM:RESULTS_ACTIVE - Winners in Gold/Silver/Bronze, others slow red heartbeat
+ * ANIM:RESULTS_ACTIVE - Entire mantle breathes in unison
+ * Win/Place/Show: Pulsing gold/silver/bronze (80-100%), synced with others
+ * Other 17 cups: Red heartbeat (30-60%), brighter but subordinate to winners
+ * Same 2-second sine wave for all — cohesive, living display
  */
 void animResultsActive() {
     unsigned long elapsed = millis() - animStartTime;
     
-    // Slow heartbeat for non-winners (2 sec cycle)
-    float breathe = (sin(elapsed / 1000.0) + 1.0) / 2.0; // 0.0 to 1.0
-    uint8_t heartbeatBrightness = 50 + (breathe * 150); // 50-200 range
+    // Shared 2-second breathing cycle for all cups (sin 0→1→0 in 2 sec)
+    float breathe = (sin(elapsed * 3.14159f / 1000.0f - 1.5708f) + 1.0f) / 2.0f;
+    
+    // Winners: pulse 80%–100% (always prominent, never dim)
+    uint8_t winnerBrightness = 204 + (uint8_t)(breathe * 51);  // 204-255 = 80-100%
+    
+    // Others: pulse 30%–60% (75-153 of 255) — brighter, more visible, still subordinate
+    uint8_t otherBrightness = 76 + (uint8_t)(breathe * 77);   // 76-153 = ~30-60%
+    
+    CRGB winnerGold, winnerSilver, winnerBronze;
+    winnerGold   = COLOR_GOLD;
+    winnerSilver = COLOR_SILVER;
+    winnerBronze = COLOR_BRONZE;
+    winnerGold.nscale8(winnerBrightness);
+    winnerSilver.nscale8(winnerBrightness);
+    winnerBronze.nscale8(winnerBrightness);
+    
+    CRGB otherRed = COLOR_RED;
+    otherRed.nscale8(otherBrightness);
     
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (cup == winCup) {
-            // Win cup: Static gold
-            setCup(cup, COLOR_GOLD);
+            setCup(cup, winnerGold);
         } else if (cup == placeCup) {
-            // Place cup: Static silver
-            setCup(cup, COLOR_SILVER);
+            setCup(cup, winnerSilver);
         } else if (cup == showCup) {
-            // Show cup: Static bronze
-            setCup(cup, COLOR_BRONZE);
+            setCup(cup, winnerBronze);
         } else {
-            // All others: Slow red heartbeat (cooldown)
-            setCup(cup, CRGB(heartbeatBrightness, 0, 0));
+            setCup(cup, otherRed);
         }
     }
     
