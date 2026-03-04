@@ -102,9 +102,12 @@
                     <span id="device-count">0</span> device<span id="device-plural">s</span> connected
                 </span>
             </div>
-            <div class="powered-by">
-                <span class="powered-text">Powered by</span>
-                <span class="joey-ai">JoeyAI</span>
+            <div class="footer-right">
+                <button class="btn-animations" onclick="openAnimationsModal()">🎬 Animations</button>
+                <div class="powered-by">
+                    <span class="powered-text">Powered by</span>
+                    <span class="joey-ai">JoeyAI</span>
+                </div>
             </div>
         </div>
 
@@ -231,6 +234,29 @@
 
             <div class="modal-buttons">
                 <button class="btn" onclick="closeTestModal()">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Animations Modal -->
+    <div id="animations-modal" class="modal">
+        <div class="modal-content animations-modal-content">
+            <span class="modal-close-tab" onclick="closeAnimationsModal()">&times;</span>
+            <h2>LED Animations</h2>
+            <div class="animations-grid">
+                <button class="anim-btn" data-anim="ANIM:WELCOME" onclick="triggerAnimation('WELCOME', this)">Welcome</button>
+                <button class="anim-btn" data-anim="ANIM:TEST" onclick="triggerAnimation('TEST', this)">System Test</button>
+                <button class="anim-btn" data-anim="ANIM:IDLE" onclick="triggerAnimation('IDLE', this)">Standby/Idle</button>
+                <button class="anim-btn" data-anim="ANIM:BETTING_60" onclick="triggerAnimation('BETTING_60', this)">Betting 60 Min</button>
+                <button class="anim-btn" data-anim="ANIM:BETTING_30" onclick="triggerAnimation('BETTING_30', this)">Betting 30 Min</button>
+                <button class="anim-btn" data-anim="ANIM:FINAL_CALL" onclick="triggerAnimation('FINAL_CALL', this)">Final Call</button>
+                <button class="anim-btn" data-anim="ANIM:RACE_START" onclick="triggerAnimation('RACE_START', this)">They're Off!</button>
+                <button class="anim-btn" data-anim="ANIM:CHAOS" onclick="triggerAnimation('CHAOS', this)">Chaos Mode</button>
+                <button class="anim-btn" data-anim="ANIM:FINISH" onclick="triggerAnimation('FINISH', this)">Finish</button>
+                <button class="anim-btn" data-anim="ANIM:HEARTBEAT" onclick="triggerAnimation('HEARTBEAT', this)">Heartbeat</button>
+                <button class="anim-btn" data-anim="ANIM:HEARTBEAT_FAST" onclick="triggerAnimation('HEARTBEAT_FAST', this)">Heartbeat Fast</button>
+                <button class="anim-btn anim-btn-on" data-anim="LED:ALL_ON" onclick="triggerAnimCommand('LED:ALL_ON', this)">All On</button>
+                <button class="anim-btn anim-btn-off" data-anim="LED:ALL_OFF" onclick="triggerAnimCommand('LED:ALL_OFF', this)">All Off</button>
             </div>
         </div>
     </div>

@@ -4,6 +4,9 @@
 
 #include <WiFi.h>
 #include <FastLED.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
 // ===== CONFIGURATION =====
 #define WIFI_SSID "BMP_WIFI_MAIN"
@@ -15,6 +18,22 @@
 #define STATUS_LED_PIN 2
 #define NUM_CUPS 20
 #define LEDS_PER_CUP 32
+
+// ===== OLED DISPLAY =====
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 64
+#define OLED_RESET -1           // No reset pin (shared with ESP32 reset)
+#define OLED_ADDR 0x3C          // I2C address for SSD1306
+#define OLED_UPDATE_MS 500      // Display refresh interval (ms)
+#define OLED_SDA 21
+#define OLED_SCL 22
+
+Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
+
+bool oledReady = false;                // true after successful begin()
+unsigned long lastDisplayUpdate = 0;   // millis() timer for periodic refresh
+bool displayDirty = true;              // flag to force immediate redraw
+String currentMode = "IDLE";           // mode string shown on OLED
 
 // ===== DDM COLORS =====
 const CRGB COLOR_GOLD = CRGB(255, 215, 0);
@@ -54,6 +73,25 @@ bool raceStartFlashing = false;         // is a cup currently showing white?
 bool cupLocked[21] = {false};  // cups 1-20, index 0 unused
 CRGB cupLockedColor[21];       // color for locked cups
 
+// WELCOME animation state
+int welcomePhase = 0;                  // 0-4 for phases 1-5
+unsigned long welcomePhaseStart = 0;   // millis() when current phase began
+int welcomeCometPos = 0;               // comet head position for chase phase
+bool welcomeCometForward = true;       // comet direction for chase phase
+int welcomeCometSweeps = 0;            // number of completed sweeps
+CRGB welcomeMarchColors[NUM_CUPS];     // color assignment for march phase
+
+// DDM brand color palette (6 colors)
+const CRGB DDM_PALETTE[] = {
+    CRGB(34, 139, 34),    // Forest Green
+    CRGB(255, 215, 0),    // Gold
+    CRGB(220, 20, 60),    // Rose/Crimson
+    CRGB(78, 205, 196),   // Mint
+    CRGB(255, 165, 0),    // Orange
+    CRGB(65, 105, 225)    // Blue
+};
+const int DDM_PALETTE_SIZE = 6;
+
 // ===== FUNCTION DECLARATIONS =====
 void connectWiFi();
 String processCommand(String cmd);
@@ -61,6 +99,12 @@ CRGB hexToRGB(String hex);
 void setCup(uint8_t cupNumber, CRGB color);
 void blinkStatus(int times);
 void printBanner();
+
+// OLED display functions
+void initOLED();
+void showBootSplash();
+void updateDisplay();
+void updateDisplayNow();
 
 // Animation functions
 void runAnimation();
@@ -92,6 +136,10 @@ void setup() {
     pinMode(STATUS_LED_PIN, OUTPUT);
     digitalWrite(STATUS_LED_PIN, LOW);
     
+    // Initialize OLED display (before WiFi so we can show status)
+    initOLED();
+    showBootSplash();   // "DDM v3.1" for 2 seconds (blocking, startup only)
+    
     // Initialize LED strip
     Serial.println("[LED] Initializing 640 LEDs on GPIO 18...");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
@@ -100,8 +148,19 @@ void setup() {
     FastLED.show();
     Serial.println("[LED] LED strip initialized");
     
+    // Show "CONNECTING..." on OLED during WiFi setup
+    if (oledReady) {
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(16, 28);
+        display.println(F("CONNECTING..."));
+        display.display();
+    }
+    
     // Connect to WiFi
     connectWiFi();
+    currentMode = "IDLE";
     
     // Start socket server
     server.begin();
@@ -110,6 +169,9 @@ void setup() {
     Serial.println("==================================================\n");    
     // Startup blink
     blinkStatus(3);
+    
+    // Force initial display update after boot
+    displayDirty = true;
 }
 
 /**
@@ -139,10 +201,16 @@ void loop() {
                 // Send response
                 client.println(response);
                 Serial.println("[CMD] Response: " + response);
+                
+                // Immediate OLED update after command
+                displayDirty = true;
             }
         }
         client.stop();
     }
+    
+    // Update OLED display (non-blocking, every 500ms or when dirty)
+    updateDisplay();
     
     // Blink status LED (heartbeat)
     static unsigned long lastBlink = 0;
@@ -203,6 +271,7 @@ String processCommand(String cmd) {
     // LED:ALL_ON - Turn all LEDs white
     else if (cmd == "LED:ALL_ON") {
         stopAnimation();
+        currentMode = "ALL_ON";
         fill_solid(leds, LED_COUNT, CRGB::White);
         FastLED.show();
         return "OK:ALL_ON";
@@ -211,6 +280,7 @@ String processCommand(String cmd) {
     // LED:ALL_OFF - Turn all LEDs off
     else if (cmd == "LED:ALL_OFF") {
         stopAnimation();
+        currentMode = "ALL_OFF";
         FastLED.clear();
         FastLED.show();
         return "OK:ALL_OFF";
@@ -229,6 +299,7 @@ String processCommand(String cmd) {
     // LED:COLOR:RRGGBB - Set all LEDs to hex color
     else if (cmd.startsWith("LED:COLOR:")) {
         stopAnimation();
+        currentMode = "COLOR";
         String hexColor = cmd.substring(10);
         CRGB color = hexToRGB(hexColor);
         fill_solid(leds, LED_COUNT, color);
@@ -240,6 +311,7 @@ String processCommand(String cmd) {
     // LED:CUP:N:R,G,B - Set specific cup to RGB color
     else if (cmd.startsWith("LED:CUP:")) {
         stopAnimation();
+        currentMode = "CUP_SET";
         // Parse: LED:CUP:5:FFD700 or LED:CUP:5:255,215,0
         int firstColon = cmd.indexOf(':', 8);
         if (firstColon > 0) {
@@ -277,6 +349,7 @@ String processCommand(String cmd) {
     // LED:TEST:R,G,B,BRIGHTNESS - RGB test mode with brightness
     else if (cmd.startsWith("LED:TEST:")) {
         stopAnimation();
+        currentMode = "RGB_TEST";
         // Parse: LED:TEST:180,45,220,75
         String params = cmd.substring(9);
         
@@ -305,17 +378,27 @@ String processCommand(String cmd) {
         return "ERROR:INVALID_TEST_PARAMS";
     }
     
-    // ANIM:WELCOME - Gold wave left to right
+    // ANIM:WELCOME - 5-phase looping welcome playlist
     else if (cmd == "ANIM:WELCOME") {
+        currentMode = "WELCOME";
         currentAnimation = "WELCOME";
         animationRunning = true;
         animStartTime = millis();
         animStep = 0;
+        // Initialize welcome state
+        welcomePhase = 0;
+        welcomePhaseStart = millis();
+        welcomeCometPos = 0;
+        welcomeCometForward = true;
+        welcomeCometSweeps = 0;
+        FastLED.clear();
+        FastLED.show();
         return "OK:ANIM:WELCOME";
     }
     
     // ANIM:TEST - Sequential cup test
     else if (cmd == "ANIM:TEST") {
+        currentMode = "TEST";
         currentAnimation = "TEST";
         animationRunning = true;
         animStartTime = millis();
@@ -325,6 +408,7 @@ String processCommand(String cmd) {
     
     // ANIM:BETTING_60 - Slow green breathing
     else if (cmd == "ANIM:BETTING_60") {
+        currentMode = "BETTING_60";
         currentAnimation = "BETTING_60";
         animationRunning = true;
         animStartTime = millis();
@@ -334,6 +418,7 @@ String processCommand(String cmd) {
     
     // ANIM:BETTING_30 - Center-out amber pulse
     else if (cmd == "ANIM:BETTING_30") {
+        currentMode = "BETTING_30";
         currentAnimation = "BETTING_30";
         animationRunning = true;
         animStartTime = millis();
@@ -343,6 +428,7 @@ String processCommand(String cmd) {
     
     // ANIM:FINAL_CALL - Edges-in red urgency
     else if (cmd == "ANIM:FINAL_CALL") {
+        currentMode = "FINAL_CALL";
         currentAnimation = "FINAL_CALL";
         animationRunning = true;
         animStartTime = millis();
@@ -352,6 +438,7 @@ String processCommand(String cmd) {
     
     // ANIM:RACE_START - "They're Off!" green blast then galloping white sweep
     else if (cmd == "ANIM:RACE_START") {
+        currentMode = "RACE_START";
         currentAnimation = "RACE_START";
         animationRunning = true;
         animStartTime = millis();
@@ -370,6 +457,7 @@ String processCommand(String cmd) {
     
     // ANIM:CHAOS - Random madness
     else if (cmd == "ANIM:CHAOS") {
+        currentMode = "CHAOS";
         currentAnimation = "CHAOS";
         animationRunning = true;
         animStartTime = millis();
@@ -379,6 +467,7 @@ String processCommand(String cmd) {
     
     // ANIM:FINISH - Checkered flag pattern
     else if (cmd == "ANIM:FINISH") {
+        currentMode = "FINISH";
         currentAnimation = "FINISH";
         animationRunning = true;
         animStartTime = millis();
@@ -388,6 +477,7 @@ String processCommand(String cmd) {
     
     // ANIM:HEARTBEAT - Red breathing
     else if (cmd == "ANIM:HEARTBEAT") {
+        currentMode = "HEARTBEAT";
         currentAnimation = "HEARTBEAT";
         animationRunning = true;
         animStartTime = millis();
@@ -397,6 +487,7 @@ String processCommand(String cmd) {
     
     // ANIM:HEARTBEAT_FAST - Fast red breathing (more urgent)
     else if (cmd == "ANIM:HEARTBEAT_FAST") {
+        currentMode = "HEARTBEAT_FAST";
         currentAnimation = "HEARTBEAT_FAST";
         animationRunning = true;
         animStartTime = millis();
@@ -418,6 +509,7 @@ String processCommand(String cmd) {
             if (winCup >= 1 && winCup <= 20 && 
                 placeCup >= 1 && placeCup <= 20 && 
                 showCup >= 1 && showCup <= 20) {
+                currentMode = "RESULTS";
                 currentAnimation = "RESULTS";
                 animationRunning = true;
                 animStartTime = millis();
@@ -442,6 +534,7 @@ String processCommand(String cmd) {
             if (winCup >= 1 && winCup <= 20 && 
                 placeCup >= 1 && placeCup <= 20 && 
                 showCup >= 1 && showCup <= 20) {
+                currentMode = "RESULTS_ACTIVE";
                 currentAnimation = "RESULTS_ACTIVE";
                 animationRunning = true;
                 animStartTime = millis();
@@ -499,6 +592,7 @@ String processCommand(String cmd) {
     
     // RESET - Clear all and stop animations
     else if (cmd == "RESET") {
+        currentMode = "IDLE";
         stopAnimation();
         FastLED.clear();
         FastLED.show();
@@ -551,25 +645,207 @@ void runAnimation() {
 }
 
 /**
- * ANIM:WELCOME - Gold wave sweeps left to right
+ * ANIM:WELCOME - 5-phase looping welcome playlist
+ * Cycles through 5 distinct visual phases (~8-10 sec each), looping forever.
+ * Non-blocking millis() timing throughout. Interruptible by any command.
+ *
+ * Phase 0: DDM Color Cascade   (10 sec) - Sequential cup fill with DDM colors
+ * Phase 1: Breathing Wave      (10 sec) - All cups breathe, color shifts each cycle
+ * Phase 2: Chase Comet         ( 8 sec) - White comet with tail on dim green
+ * Phase 3: Gold Sparkle        ( 8 sec) - Random gold/white twinkles on dim green
+ * Phase 4: Color March         (10 sec) - Rotating barber-pole of DDM colors
  */
 void animWelcome() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 80) return; // ~80ms per cup
-    lastUpdate = millis();
-    
-    if (animStep < NUM_CUPS) {
-        setCup(animStep + 1, COLOR_GOLD);
+    unsigned long now = millis();
+    unsigned long phaseElapsed = now - welcomePhaseStart;
+
+    switch (welcomePhase) {
+
+    // ===== PHASE 0: DDM Color Cascade (10 seconds) =====
+    // Cups light 1→20 every 400ms with cycling DDM palette, then hold 2s
+    case 0: {
+        static unsigned long lastCascade = 0;
+        // Fill phase: 20 cups × 400ms = 8000ms, then 2000ms hold = 10000ms
+        if (animStep < NUM_CUPS) {
+            if (now - lastCascade >= 400) {
+                lastCascade = now;
+                setCup(animStep + 1, DDM_PALETTE[animStep % DDM_PALETTE_SIZE]);
+                FastLED.show();
+                animStep++;
+            }
+        } else {
+            // All lit — hold until 10s total
+            if (phaseElapsed >= 10000) {
+                // Advance to Phase 1
+                welcomePhase = 1;
+                welcomePhaseStart = now;
+                animStep = 0;
+            }
+        }
+        break;
+    }
+
+    // ===== PHASE 1: Breathing Wave (10 seconds) =====
+    // All cups breathe together (~2s cycle). Color shifts each full cycle.
+    case 1: {
+        // Each breath cycle = 2000ms (one full sin period)
+        float t = phaseElapsed / 1000.0;               // seconds elapsed
+        int breathCycle = (int)(t / 2.0);               // which breath we're on
+        float breathPhase = fmod(t, 2.0) / 2.0;        // 0.0→1.0 within cycle
+        float breathe = (sin(breathPhase * 6.2832 - 1.5708) + 1.0) / 2.0; // 0→1→0
+
+        uint8_t brightness = 30 + (uint8_t)(breathe * 225); // 30-255
+        CRGB color = DDM_PALETTE[breathCycle % DDM_PALETTE_SIZE];
+        color.nscale8(brightness);
+
+        fill_solid(leds, LED_COUNT, color);
         FastLED.show();
-        animStep++;
-    } else {
-        // Wave complete, hold for a moment then clear
-        if (millis() - animStartTime > 3000) {
+
+        if (phaseElapsed >= 10000) {
+            welcomePhase = 2;
+            welcomePhaseStart = now;
+            animStep = 0;
+            welcomeCometPos = 0;
+            welcomeCometForward = true;
+            welcomeCometSweeps = 0;
+        }
+        break;
+    }
+
+    // ===== PHASE 2: Chase Comet (8 seconds) =====
+    // White comet with 3-cup fading tail sweeps back and forth on dim green
+    case 2: {
+        static unsigned long lastComet = 0;
+        if (now - lastComet >= 100) {
+            lastComet = now;
+
+            // Set all cups to dim green background
+            CRGB bgDim = CRGB(0, 40, 0);
+            for (int c = 1; c <= NUM_CUPS; c++) {
+                setCup(c, bgDim);
+            }
+
+            // Draw tail (3 cups behind head, decreasing brightness)
+            uint8_t tailBright[] = {180, 100, 40};
+            for (int t = 1; t <= 3; t++) {
+                int tailPos;
+                if (welcomeCometForward) {
+                    tailPos = welcomeCometPos - t;
+                } else {
+                    tailPos = welcomeCometPos + t;
+                }
+                if (tailPos >= 0 && tailPos < NUM_CUPS) {
+                    CRGB tailColor = CRGB(tailBright[t - 1], tailBright[t - 1], tailBright[t - 1]);
+                    setCup(tailPos + 1, tailColor);
+                }
+            }
+
+            // Draw head (full white)
+            if (welcomeCometPos >= 0 && welcomeCometPos < NUM_CUPS) {
+                setCup(welcomeCometPos + 1, CRGB(255, 255, 255));
+            }
+
+            FastLED.show();
+
+            // Advance comet position
+            if (welcomeCometForward) {
+                welcomeCometPos++;
+                if (welcomeCometPos >= NUM_CUPS) {
+                    welcomeCometPos = NUM_CUPS - 1;
+                    welcomeCometForward = false;
+                    welcomeCometSweeps++;
+                }
+            } else {
+                welcomeCometPos--;
+                if (welcomeCometPos < 0) {
+                    welcomeCometPos = 0;
+                    welcomeCometForward = true;
+                    welcomeCometSweeps++;
+                }
+            }
+        }
+
+        if (phaseElapsed >= 8000) {
+            welcomePhase = 3;
+            welcomePhaseStart = now;
+            animStep = 0;
+        }
+        break;
+    }
+
+    // ===== PHASE 3: Gold Sparkle (8 seconds) =====
+    // Dim green background, 3-4 random cups flash gold or white each frame
+    case 3: {
+        static unsigned long lastSparkle = 0;
+        if (now - lastSparkle >= 100) {
+            lastSparkle = now;
+
+            // All cups to dim green background
+            CRGB bgDim = CRGB(0, 50, 0);
+            for (int c = 1; c <= NUM_CUPS; c++) {
+                setCup(c, bgDim);
+            }
+
+            // Pick 3-4 random cups to sparkle
+            int sparkleCount = 3 + random(0, 2); // 3 or 4
+            for (int i = 0; i < sparkleCount; i++) {
+                int cup = random(1, NUM_CUPS + 1);
+                if (random(0, 2) == 0) {
+                    setCup(cup, CRGB(255, 215, 0));   // Gold
+                } else {
+                    setCup(cup, CRGB(255, 255, 255));  // White
+                }
+            }
+
+            FastLED.show();
+        }
+
+        if (phaseElapsed >= 8000) {
+            welcomePhase = 4;
+            welcomePhaseStart = now;
+            animStep = 0;
+            // Initialize march colors
+            for (int c = 0; c < NUM_CUPS; c++) {
+                welcomeMarchColors[c] = DDM_PALETTE[c % DDM_PALETTE_SIZE];
+            }
+        }
+        break;
+    }
+
+    // ===== PHASE 4: Color March (10 seconds) =====
+    // DDM palette assigned to cups in order, shifts right every 300ms (barber-pole)
+    case 4: {
+        static unsigned long lastMarch = 0;
+        if (now - lastMarch >= 300) {
+            lastMarch = now;
+
+            // Rotate colors: save last cup's color, shift all right by 1
+            CRGB saved = welcomeMarchColors[NUM_CUPS - 1];
+            for (int c = NUM_CUPS - 1; c > 0; c--) {
+                welcomeMarchColors[c] = welcomeMarchColors[c - 1];
+            }
+            welcomeMarchColors[0] = saved;
+
+            // Apply colors to cups
+            for (int c = 0; c < NUM_CUPS; c++) {
+                setCup(c + 1, welcomeMarchColors[c]);
+            }
+
+            FastLED.show();
+        }
+
+        if (phaseElapsed >= 10000) {
+            // Loop back to Phase 0 — seamless restart
+            welcomePhase = 0;
+            welcomePhaseStart = now;
+            animStep = 0;
             FastLED.clear();
             FastLED.show();
-            stopAnimation();
         }
+        break;
     }
+
+    } // end switch
 }
 
 /**
@@ -939,4 +1215,128 @@ void printBanner() {
     Serial.println("   DDM Cup LED Controller - ESP32 FULL");
     Serial.println("   Version 3.1 - Complete Animation System");
     Serial.println("==================================================\n");
+}
+
+// =====================================================================
+// ===== OLED DISPLAY FUNCTIONS ========================================
+// =====================================================================
+
+/**
+ * Initialize SSD1306 OLED display over I2C
+ * SDA: GPIO 21, SCL: GPIO 22, Address: 0x3C
+ * Sets oledReady flag; all display calls check this before writing.
+ */
+void initOLED() {
+    Serial.println("[OLED] Initializing SSD1306 128x64...");
+    Wire.begin(OLED_SDA, OLED_SCL);
+
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+        Serial.println("[OLED] ERROR: SSD1306 not found — display disabled");
+        oledReady = false;
+        return;
+    }
+
+    oledReady = true;
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.display();
+    Serial.println("[OLED] Display ready");
+}
+
+/**
+ * Show boot splash screen — "DDM v3.1" centred for 2 seconds.
+ * This is the ONLY blocking delay used for the display (startup only).
+ */
+void showBootSplash() {
+    if (!oledReady) return;
+
+    display.clearDisplay();
+
+    // Large centred title
+    display.setTextSize(2);
+    display.setCursor(16, 12);
+    display.println(F("DDM v3.1"));
+
+    // Subtitle
+    display.setTextSize(1);
+    display.setCursor(16, 44);
+    display.println(F("Cup LED Controller"));
+
+    display.display();
+    delay(2000);  // Blocking — startup only
+}
+
+/**
+ * Non-blocking display refresh called every loop() iteration.
+ * Redraws only when:
+ *   - displayDirty flag is set (command just received), OR
+ *   - 500 ms have elapsed since last refresh (RSSI can change)
+ * Clears the dirty flag after each redraw.
+ */
+void updateDisplay() {
+    if (!oledReady) return;
+
+    unsigned long now = millis();
+
+    // Skip if not dirty and interval hasn't elapsed
+    if (!displayDirty && (now - lastDisplayUpdate < OLED_UPDATE_MS)) return;
+
+    lastDisplayUpdate = now;
+    displayDirty = false;
+
+    updateDisplayNow();
+}
+
+/**
+ * Actually render the five-line status screen:
+ *   Line 1: "DDM CUP CONTROLLER"  (header)
+ *   Line 2: MODE: <currentMode>
+ *   Line 3: WiFi: <IP> or "NO WIFI"
+ *   Line 4: RSSI: <value> dBm
+ *   Line 5: LEDs: <LED_COUNT>
+ */
+void updateDisplayNow() {
+    if (!oledReady) return;
+
+    display.clearDisplay();
+    display.setTextSize(1);       // 6x8 pixels per char — fits 21 chars × 8 lines
+    display.setTextColor(SSD1306_WHITE);
+
+    // ---- Line 1 (y=0): Header ----
+    display.setCursor(9, 0);
+    display.println(F("DDM CUP CONTROLLER"));
+
+    // Thin separator line at yellow/blue boundary
+    display.drawLine(0, 16, 127, 16, SSD1306_WHITE);
+
+    // ---- Line 2 (y=20): Current mode ----
+    display.setCursor(0, 20);
+    display.print(F("MODE: "));
+    display.println(currentMode);
+
+    // ---- Line 3 (y=32): WiFi + IP ----
+    display.setCursor(0, 32);
+    if (WiFi.status() == WL_CONNECTED) {
+        display.print(F("WiFi: "));
+        display.println(WiFi.localIP().toString());
+    } else {
+        display.println(F("WiFi: NO WIFI"));
+    }
+
+    // ---- Line 4 (y=42): Signal strength ----
+    display.setCursor(0, 42);
+    if (WiFi.status() == WL_CONNECTED) {
+        display.print(F("RSSI: "));
+        display.print(WiFi.RSSI());
+        display.println(F(" dBm"));
+    } else {
+        display.println(F("RSSI: --"));
+    }
+
+    // ---- Line 5 (y=52): LED count ----
+    display.setCursor(0, 52);
+    display.print(F("LEDs: "));
+    display.println(LED_COUNT);
+
+    display.display();
 }

@@ -1467,23 +1467,103 @@ async function applyResults() {
     }
 }
 
+// Animations Modal - Open
+function openAnimationsModal() {
+    const modal = document.getElementById('animations-modal');
+    // Clear any previous active state on anim buttons
+    document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
+    modal.classList.add('active');
+}
+
+// Animations Modal - Close
+function closeAnimationsModal() {
+    const modal = document.getElementById('animations-modal');
+    modal.classList.remove('active');
+}
+
+// Animations Modal - Trigger animation and close
+async function triggerAnimation(animName, buttonElement) {
+    // Highlight selected button
+    document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
+    buttonElement.classList.add('active');
+
+    // Use existing sendAnimation for animations (sends to /api/animation/...)
+    try {
+        showLoader();
+        const response = await fetch(`/api/animation/${animName}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(`Animation: ${animName}`, 'success');
+            document.getElementById('current-mode').textContent = animName;
+            // Also update main panel active button state
+            clearActiveButton();
+            await checkESP32Status();
+            hideLoader();
+        } else {
+            hideLoader(true);
+            showNotification(`Error: ${data.response}`, 'error');
+        }
+    } catch (error) {
+        hideLoader(true);
+        console.error('Error triggering animation:', error);
+        showNotification('Connection error', 'error');
+    }
+
+    // Close modal after selection
+    closeAnimationsModal();
+}
+
+// Animations Modal - Trigger LED command (ALL_ON / ALL_OFF) and close
+async function triggerAnimCommand(command, buttonElement) {
+    // Highlight selected button
+    document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
+    buttonElement.classList.add('active');
+
+    try {
+        showLoader();
+        const response = await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(`Command: ${command}`, 'success');
+            document.getElementById('current-mode').textContent = command.replace('LED:', '');
+            clearActiveButton();
+            await checkESP32Status();
+            hideLoader();
+        } else {
+            hideLoader(true);
+            showNotification(`Error: ${data.response}`, 'error');
+        }
+    } catch (error) {
+        hideLoader(true);
+        console.error('Error sending command:', error);
+        showNotification('Connection error', 'error');
+    }
+
+    // Close modal after selection
+    closeAnimationsModal();
+}
+
 // Close modal when clicking outside
 window.onclick = function(event) {
-    const modal = document.getElementById('results-modal');
-    const emergencyExpanded = document.getElementById('emergency-expanded');
-    const emergencyIcon = document.getElementById('emergency-icon');
-    
+    const resultsModal = document.getElementById('results-modal');
+    const animationsModal = document.getElementById('animations-modal');
+
     // Close results modal if clicking outside
-    if (event.target === modal) {
+    if (event.target === resultsModal) {
         closeResultsModal();
     }
-    
-    // Collapse emergency stop if clicking outside
-    if (emergencyExpanded.classList.contains('active')) {
-        if (!emergencyExpanded.contains(event.target) && event.target !== emergencyIcon) {
-            emergencyExpanded.classList.remove('active');
-            emergencyIcon.style.display = 'flex';
-        }
+
+    // Close animations modal if clicking outside
+    if (event.target === animationsModal) {
+        closeAnimationsModal();
     }
 }
 
