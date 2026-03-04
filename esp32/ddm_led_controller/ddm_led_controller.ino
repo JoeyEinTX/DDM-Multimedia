@@ -1136,8 +1136,8 @@ void animResults() {
 
 /**
  * ANIM:RESULTS_ACTIVE - Entire mantle breathes in unison
- * Win/Place/Show: Pulsing gold/silver/bronze (80-100%), synced with others
- * Other 17 cups: Red heartbeat (30-60%), brighter but subordinate to winners
+ * Win/Place/Show: Pulsing gold/silver/bronze (40-100%) — dramatic pulse
+ * Other 17 cups: Red heartbeat (15-60%) — visible throb, subordinate to winners
  * Same 2-second sine wave for all — cohesive, living display
  */
 void animResultsActive() {
@@ -1146,11 +1146,11 @@ void animResultsActive() {
     // Shared 2-second breathing cycle for all cups (sin 0→1→0 in 2 sec)
     float breathe = (sin(elapsed * 3.14159f / 1000.0f - 1.5708f) + 1.0f) / 2.0f;
     
-    // Winners: pulse 80%–100% (always prominent, never dim)
-    uint8_t winnerBrightness = 204 + (uint8_t)(breathe * 51);  // 204-255 = 80-100%
-    
-    // Others: pulse 30%–60% (75-153 of 255) — brighter, more visible, still subordinate
-    uint8_t otherBrightness = 76 + (uint8_t)(breathe * 77);   // 76-153 = ~30-60%
+    // Winners: pulse 40%–100% (102-255) — dramatic dim-to-bright pulse
+    uint8_t winnerBrightness = 102 + (uint8_t)(breathe * 153);  // 102-255 = 40-100%
+
+    // Others: pulse 15%–60% (38-153) — visible throb, clearly dimmer than winners
+    uint8_t otherBrightness = 38 + (uint8_t)(breathe * 115);    // 38-153 = 15-60%
     
     CRGB winnerGold, winnerSilver, winnerBronze;
     winnerGold   = COLOR_GOLD;

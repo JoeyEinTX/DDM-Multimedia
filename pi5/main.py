@@ -661,7 +661,7 @@ def api_weather():
 # ---------------------------------------------------------------------------
 # Initialize Racing Data Service and register blueprint
 # ---------------------------------------------------------------------------
-racing_service = init_racing_service(socketio=socketio, use_mock=True)
+racing_service = init_racing_service(socketio=socketio, use_mock=True, esp32_client=esp32)
 app.register_blueprint(racing_bp)
 app.register_blueprint(guest_ui)
 print("Racing data service initialised (mock mode)")
@@ -675,13 +675,13 @@ print("Racing data service initialised (mock mode)")
 def handle_request_racing_state():
     """Emit current racing state to the requesting client."""
     state_info = racing_service.get_state()
-    state_info['horses'] = racing_service.get_horses()
     emit('race_state_change', {
         'old_state': state_info['state'],
         'new_state': state_info['state'],
         'timestamp': time.time(),
-        'state_info': racing_service.get_state(),
+        'state_info': state_info,
         'horses': racing_service.get_horses(),
+        'mode': racing_service.get_mode(),
     })
 
 

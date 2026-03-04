@@ -53,15 +53,15 @@ STATE_DURATIONS = {
     # OFFICIAL has no timer — it stays until manually reset
 }
 
-# LED animation commands mapped to each race state
+# LED animation commands mapped to each race state (ESP32 format: ANIM:...)
 STATE_LED_COMMANDS = {
-    RaceState.ENTRIES_LOADED: "ANIMATION:WELCOME",
-    RaceState.BETTING_OPEN: "ANIMATION:BETTING_60",
-    RaceState.BETTING_CLOSING: "ANIMATION:FINAL_CALL",
-    RaceState.AT_THE_POST: "ANIMATION:IDLE",
-    RaceState.RUNNING: "ANIMATION:RACE_START",
-    RaceState.FINISHED: "ANIMATION:FINISH",
-    # OFFICIAL is handled specially — triggers winner spotlight
+    RaceState.ENTRIES_LOADED: "ANIM:WELCOME",
+    RaceState.BETTING_OPEN: "ANIM:BETTING_60",
+    RaceState.BETTING_CLOSING: "ANIM:FINAL_CALL",
+    RaceState.AT_THE_POST: "RESET",
+    RaceState.RUNNING: "ANIM:RACE_START",
+    RaceState.FINISHED: "ANIM:FINISH",
+    # OFFICIAL is handled specially — ANIM:RESULTS_ACTIVE:W:P:S
 }
 
 
@@ -172,9 +172,13 @@ class RacingDataService:
         use_mock: If True, generate mock horse entries on init.
     """
 
-    def __init__(self, socketio=None, use_mock: bool = True):
+    def __init__(self, socketio=None, use_mock: bool = True, esp32_client=None):
         self.socketio = socketio
         self.use_mock = use_mock
+        self.esp32_client = esp32_client
+
+        # Race control mode: "auto" (API-driven) or "manual" (dashboard buttons)
+        self._mode: str = "manual"
 
         # Race state
         self.current_state: RaceState = RaceState.DORMANT
@@ -251,6 +255,7 @@ class RacingDataService:
 
         return {
             "state": self.current_state.value,
+            "mode": self._mode,
             "elapsed_seconds": elapsed,
             "duration_seconds": duration,
             "remaining_seconds": remaining,
@@ -258,6 +263,28 @@ class RacingDataService:
             "place": self._place,
             "show": self._show,
         }
+
+    def get_mode(self) -> str:
+        """Return current race control mode: 'auto' or 'manual'."""
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        """
+        Switch between auto and manual mode.
+        - auto: start API polling, state advances automatically
+        - manual: stop polling, state only changes via override routes
+        """
+        mode = mode.lower().strip()
+        if mode not in ("auto", "manual"):
+            raise ValueError("mode must be 'auto' or 'manual'")
+        old_mode = self._mode
+        self._mode = mode
+        logger.info("Race control mode: %s → %s", old_mode, mode)
+
+        if mode == "auto":
+            self.start_auto_progression()
+        else:
+            self.stop_auto_progression()
 
     def set_state(self, state: RaceState) -> None:
         """
@@ -331,12 +358,12 @@ class RacingDataService:
         logger.info("Auto progression stopped")
 
     def _auto_progression_loop(self) -> None:
-        """Background loop that advances state after each duration expires."""
+        """Background loop that advances state after each duration expires. Runs only in auto mode."""
         # Start from ENTRIES_LOADED
         if self.current_state == RaceState.DORMANT:
             self.set_state(RaceState.ENTRIES_LOADED)
 
-        while self._running:
+        while self._running and self._mode == "auto":
             duration = STATE_DURATIONS.get(self.current_state)
             if duration is None:
                 # OFFICIAL or DORMANT — no auto-advance
@@ -402,6 +429,8 @@ class RacingDataService:
         payload = {
             "old_state": old_state.value,
             "new_state": new_state.value,
+            "state": new_state.value,
+            "mode": self._mode,
             "timestamp": time.time(),
             "state_info": self.get_state(),
             "horses": self.get_horses(),
@@ -416,17 +445,16 @@ class RacingDataService:
     def emit_led_command(self, state: RaceState) -> None:
         """
         Send the appropriate LED animation command for the given state.
+        Sends to both Socket.IO clients and ESP32.
 
-        For OFFICIAL state, sends a winner spotlight command using the
-        winning post position. For all other states, sends the mapped
-        animation command.
+        For OFFICIAL state, sends RESULTS_ACTIVE with win/place/show.
+        For all other states, sends the mapped animation command.
 
         Args:
             state: The current RaceState to send LED command for.
         """
-        if state == RaceState.OFFICIAL and self._win is not None:
-            # Winner spotlight — highlight the winning post position
-            command = f"ANIMATION:WINNER_SPOTLIGHT:{self._win}"
+        if state == RaceState.OFFICIAL and self._win is not None and self._place is not None and self._show is not None:
+            command = f"ANIM:RESULTS_ACTIVE:{self._win}:{self._place}:{self._show}"
         else:
             command = STATE_LED_COMMANDS.get(state)
 
@@ -434,11 +462,15 @@ class RacingDataService:
             logger.debug("No LED command for state %s", state.value)
             return
 
+        # Emit to Socket.IO clients
         if self.socketio:
             self.socketio.emit("led_command", {"command": command})
-            logger.info("LED command emitted: %s", command)
-        else:
-            logger.info("LED command (no socketio): %s", command)
+            logger.debug("LED command emitted (socketio): %s", command)
+
+        # Send to ESP32
+        if self.esp32_client:
+            resp = self.esp32_client.send_command(command)
+            logger.info("LED command sent to ESP32: %s → %s", command, resp)
 
     # -----------------------------------------------------------------
     # Horse data access

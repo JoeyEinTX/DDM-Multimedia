@@ -24,7 +24,7 @@ _service: RacingDataService = None  # type: ignore[assignment]
 # Service initialisation
 # ---------------------------------------------------------------------------
 
-def init_racing_service(socketio=None, use_mock: bool = True) -> RacingDataService:
+def init_racing_service(socketio=None, use_mock: bool = True, esp32_client=None) -> RacingDataService:
     """
     Create and store the RacingDataService instance.
 
@@ -34,13 +34,14 @@ def init_racing_service(socketio=None, use_mock: bool = True) -> RacingDataServi
     Args:
         socketio: Flask-SocketIO instance (or None for headless operation).
         use_mock: If True, populate with mock horse data on init.
+        esp32_client: ESP32 client for sending LED commands (or None).
 
     Returns:
         The initialised RacingDataService instance.
     """
     global _service
-    _service = RacingDataService(socketio=socketio, use_mock=use_mock)
-    logger.info("Racing service initialised via init_racing_service()")
+    _service = RacingDataService(socketio=socketio, use_mock=use_mock, esp32_client=esp32_client)
+    logger.info("Racing service initialised (mode=manual, esp32=%s)", "connected" if esp32_client else "none")
     return _service
 
 
@@ -132,12 +133,13 @@ def get_horses():
 
 @racing_bp.route("/state", methods=["GET"])
 def get_state():
-    """Return current race state, elapsed time, and remaining time."""
+    """Return current race state, mode, horse data, odds, and timing."""
     try:
         svc = _get_service()
         return jsonify({
             "success": True,
             **svc.get_state(),
+            "horses": svc.get_horses(),
         })
     except RuntimeError as exc:
         return jsonify({"success": False, "error": str(exc)}), 503
@@ -150,6 +152,7 @@ def get_state():
 def set_state():
     """
     Manually set the race state (admin override).
+    Works in both modes; for manual-only override use POST /api/racing/override/state.
 
     Body JSON: {"state": "betting"}
     Accepts enum values or short aliases (case-insensitive).
@@ -182,6 +185,156 @@ def set_state():
         return jsonify({"success": False, "error": str(exc)}), 503
     except Exception as exc:
         logger.exception("Error in set_state")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Routes — Mode Toggle (AUTO / MANUAL)
+# ---------------------------------------------------------------------------
+
+@racing_bp.route("/mode", methods=["GET"])
+def get_mode():
+    """Return current race control mode: 'auto' or 'manual'."""
+    try:
+        svc = _get_service()
+        return jsonify({
+            "success": True,
+            "mode": svc.get_mode(),
+        })
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
+
+
+@racing_bp.route("/mode", methods=["POST"])
+def set_mode():
+    """
+    Switch between auto and manual race control.
+    Body JSON: {"mode": "auto"} or {"mode": "manual"}
+    """
+    try:
+        svc = _get_service()
+        data = request.get_json(silent=True) or {}
+        mode = data.get("mode")
+
+        if not mode:
+            return jsonify({
+                "success": False,
+                "error": "Missing required field: mode",
+            }), 400
+
+        try:
+            svc.set_mode(mode)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        return jsonify({
+            "success": True,
+            "mode": svc.get_mode(),
+            **svc.get_state(),
+        })
+
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception as exc:
+        logger.exception("Error in set_mode")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Routes — Manual Override (state + winner)
+# ---------------------------------------------------------------------------
+
+@racing_bp.route("/override/state", methods=["POST"])
+def override_state():
+    """
+    Manually set race state (manual mode only). Triggers LED animation on ESP32.
+    Body JSON: {"state": "BETTING_OPEN"} — any valid RaceState.
+    """
+    try:
+        svc = _get_service()
+        if svc.get_mode() != "manual":
+            return jsonify({
+                "success": False,
+                "error": "Override only available in MANUAL mode. Switch to manual first.",
+            }), 403
+
+        data = request.get_json(silent=True) or {}
+        state_name = data.get("state")
+
+        if not state_name:
+            return jsonify({
+                "success": False,
+                "error": "Missing required field: state",
+            }), 400
+
+        try:
+            new_state = _resolve_state(state_name)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        svc.set_state(new_state)
+
+        return jsonify({
+            "success": True,
+            "message": f"State set to {new_state.value}",
+            **svc.get_state(),
+        })
+
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception as exc:
+        logger.exception("Error in override_state")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@racing_bp.route("/override/winner", methods=["POST"])
+def override_winner():
+    """
+    Manually trigger winner spotlight. Works in BOTH modes (emergency override).
+    Body JSON: {"post_position": 7} — sets win=7, place/show from mock or defaults.
+    """
+    try:
+        svc = _get_service()
+        data = request.get_json(silent=True) or {}
+        post_pos = data.get("post_position")
+
+        if post_pos is None:
+            return jsonify({
+                "success": False,
+                "error": "Missing required field: post_position",
+            }), 400
+
+        try:
+            post_pos = int(post_pos)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "post_position must be an integer"}), 400
+
+        if post_pos not in svc.horses:
+            return jsonify({"success": False, "error": f"Invalid post position: {post_pos}"}), 400
+
+        # Use provided as win; pick place/show from other horses (or use defaults)
+        others = [p for p in svc.horses if p != post_pos]
+        place_pos = others[0] if len(others) > 0 else (2 if post_pos != 2 else 3)
+        show_pos = [p for p in others if p != place_pos][0] if len(others) > 1 else (3 if post_pos != 3 else 4)
+
+        svc.set_winners(post_pos, place_pos, show_pos)
+        svc.set_state(RaceState.OFFICIAL)
+
+        return jsonify({
+            "success": True,
+            "message": f"Winner spotlight: post position {post_pos}",
+            "results": {
+                "win": svc.get_horse(post_pos),
+                "place": svc.get_horse(place_pos),
+                "show": svc.get_horse(show_pos),
+            },
+            **svc.get_state(),
+        })
+
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception as exc:
+        logger.exception("Error in override_winner")
         return jsonify({"success": False, "error": str(exc)}), 500
 
 

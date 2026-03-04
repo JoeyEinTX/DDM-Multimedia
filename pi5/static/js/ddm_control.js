@@ -3,6 +3,10 @@
 // Track if this device just submitted results (to skip reveal popup)
 let justSubmittedResults = false;
 
+// Race control: MANUAL (default) or AUTO
+let raceControlMode = 'manual';
+let raceStatePollInterval = null;
+
 // Track active button
 let activeButton = null;
 
@@ -196,7 +200,9 @@ async function checkESP32Status() {
         
         if (isOnline) {
             esp32WasOnline = true;
-        } else {
+        }
+        updateRaceControlDotFromEsp32();
+        if (!isOnline) {
             // If ESP32 just went offline, clear active buttons
             if (esp32WasOnline) {
                 clearActiveButton();
@@ -217,6 +223,7 @@ async function checkESP32Status() {
     } catch (error) {
         console.error('Error checking ESP32 status:', error);
         esp32Info.online = false;
+        updateRaceControlDotFromEsp32();
         
         // If ESP32 just went offline, clear active buttons
         if (esp32WasOnline) {
@@ -376,8 +383,131 @@ function flashButton(buttonElement) {
     }
 }
 
+// ----- Race Control (AUTO / MANUAL) -----
+
+async function fetchRaceControlMode() {
+    try {
+        const response = await fetch('/api/racing/mode');
+        const data = await response.json();
+        if (data.success && data.mode) {
+            raceControlMode = data.mode;
+            return data.mode;
+        }
+    } catch (error) {
+        console.error('[Race Control] Error fetching mode:', error);
+    }
+    return raceControlMode;
+}
+
+async function setRaceControlMode(mode) {
+    try {
+        const response = await fetch('/api/racing/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode })
+        });
+        const data = await response.json();
+        if (data.success) {
+            raceControlMode = data.mode;
+            updateRaceControlUI();
+            showNotification(`Race control: ${data.mode.toUpperCase()}`, 'success');
+            return true;
+        } else {
+            showNotification(data.error || 'Failed to set mode', 'error');
+            return false;
+        }
+    } catch (error) {
+        console.error('[Race Control] Error setting mode:', error);
+        showNotification('Connection error', 'error');
+        return false;
+    }
+}
+
+function updateRaceControlUI() {
+    const toggle = document.getElementById('race-control-toggle');
+    const stateText = document.getElementById('race-control-state');
+    const apiHint = document.getElementById('race-control-api-hint');
+    const dot = document.getElementById('race-control-dot');
+    const panels = document.querySelector('.panels');
+
+    if (!toggle || !stateText) return;
+
+    const isAuto = raceControlMode === 'auto';
+    toggle.checked = isAuto;
+
+    if (isAuto) {
+        stateText.textContent = 'AUTO (API)';
+        apiHint.style.display = 'inline';
+        panels?.classList.add('race-control-auto');
+        // Status dot: green if ESP32 connected, yellow if not
+        dot.classList.remove('status-manual', 'status-auto-connected', 'status-auto-disconnected');
+        dot.classList.add(esp32Info.online ? 'status-auto-connected' : 'status-auto-disconnected');
+    } else {
+        stateText.textContent = 'MANUAL';
+        apiHint.style.display = 'none';
+        panels?.classList.remove('race-control-auto');
+        dot.classList.remove('status-auto-connected', 'status-auto-disconnected');
+        dot.classList.add('status-manual');
+    }
+}
+
+function initRaceControlToggle() {
+    const toggle = document.getElementById('race-control-toggle');
+    if (!toggle) return;
+
+    toggle.addEventListener('change', async () => {
+        const newMode = toggle.checked ? 'auto' : 'manual';
+        const success = await setRaceControlMode(newMode);
+        if (!success) {
+            toggle.checked = raceControlMode === 'auto';
+        }
+    });
+
+    fetchRaceControlMode().then(() => updateRaceControlUI());
+}
+
+async function pollRaceState() {
+    try {
+        const response = await fetch('/api/racing/state');
+        const data = await response.json();
+        if (data.success) {
+            if (data.mode && data.mode !== raceControlMode) {
+                raceControlMode = data.mode;
+                updateRaceControlUI();
+            }
+        }
+    } catch (error) {
+        console.error('[Race Control] Poll error:', error);
+    }
+}
+
+function startRaceStatePolling() {
+    if (raceStatePollInterval) return;
+    raceStatePollInterval = setInterval(pollRaceState, 2000);
+}
+
+function stopRaceStatePolling() {
+    if (raceStatePollInterval) {
+        clearInterval(raceStatePollInterval);
+        raceStatePollInterval = null;
+    }
+}
+
+// Update status dot when ESP32 connection changes (AUTO mode)
+function updateRaceControlDotFromEsp32() {
+    if (raceControlMode !== 'auto') return;
+    const dot = document.getElementById('race-control-dot');
+    if (!dot) return;
+    dot.classList.remove('status-auto-connected', 'status-auto-disconnected');
+    dot.classList.add(esp32Info.online ? 'status-auto-connected' : 'status-auto-disconnected');
+}
+
 // Send animation command with toggle functionality
 async function sendAnimation(animName, buttonElement) {
+    if (raceControlMode === 'auto') {
+        showNotification('Switch to MANUAL to control animations', 'error');
+        return;
+    }
     // One-shot animations that don't stay active
     const oneShotAnimations = ['IDLE'];
     
@@ -473,6 +603,7 @@ async function sendAnimation(animName, buttonElement) {
 
 // Standby - turns off LEDs without clearing results
 async function sendStandby() {
+    if (raceControlMode === 'auto') return;
     showLoader();
     try {
         // Turn off all LEDs
@@ -502,6 +633,7 @@ async function sendStandby() {
 
 // Reset system - clears results and re-enables all buttons
 async function sendReset() {
+    if (raceControlMode === 'auto') return;
     if (confirm('Reset race? This will clear results, turn off LEDs, and re-enable all buttons.')) {
         showLoader();
         try {
@@ -776,6 +908,7 @@ const BRONZE_RGB = { r: 205, g: 127, b: 50 };
 
 // Show results modal with saddle cloth grid
 async function showResultsModal() {
+    if (raceControlMode === 'auto') return;
     console.log('[RESULTS MODAL] Opening modal, starting heartbeat...');
     
     // Clear finish timer if running
@@ -924,7 +1057,7 @@ async function selectCup(cupNumber) {
 // Update modal UI based on state
 function updateResultsModalUI() {
     const header = document.getElementById('results-modal-header');
-    const subtext = document.getElementById('results-modal-subtext');
+    const subtext = document.getElementById('results-modal-subtitle');
     const confirmSection = document.getElementById('results-confirm-section');
     
     // Update header and subtext based on step (with null checks)
@@ -1483,6 +1616,10 @@ function closeAnimationsModal() {
 
 // Animations Modal - Trigger animation and close
 async function triggerAnimation(animName, buttonElement) {
+    if (raceControlMode === 'auto') {
+        showNotification('Switch to MANUAL to control animations', 'error');
+        return;
+    }
     // Highlight selected button
     document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
     buttonElement.classList.add('active');
@@ -1518,6 +1655,10 @@ async function triggerAnimation(animName, buttonElement) {
 
 // Animations Modal - Trigger LED command (ALL_ON / ALL_OFF) and close
 async function triggerAnimCommand(command, buttonElement) {
+    if (raceControlMode === 'auto') {
+        showNotification('Switch to MANUAL to control animations', 'error');
+        return;
+    }
     // Highlight selected button
     document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
     buttonElement.classList.add('active');
@@ -1713,6 +1854,10 @@ function updateFullscreenIcon() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
+    
+    // Race control toggle + state polling
+    initRaceControlToggle();
+    startRaceStatePolling();
     
     // BUG FIX #1: Clear localStorage on page load to prevent persistence across server restarts
     localStorage.removeItem('raceResults');

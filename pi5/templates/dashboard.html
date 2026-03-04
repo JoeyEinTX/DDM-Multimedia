@@ -37,6 +37,20 @@
             </div>
         </header>
 
+        <!-- RACE CONTROL Toggle - AUTO (API) / MANUAL -->
+        <div class="race-control-bar">
+            <div class="race-control-label">RACE CONTROL</div>
+            <div class="race-control-toggle-wrap">
+                <span class="race-control-status-dot status-manual" id="race-control-dot"></span>
+                <label class="race-control-switch">
+                    <input type="checkbox" id="race-control-toggle" autocomplete="off">
+                    <span class="race-control-slider"></span>
+                </label>
+                <span class="race-control-state-text" id="race-control-state">MANUAL</span>
+                <span class="race-control-api-hint" id="race-control-api-hint" style="display: none;">API CONTROLLED</span>
+            </div>
+        </div>
+
         <!-- Results Banner (shown after winners are set) - Dot Matrix Style -->
         <div id="results-banner" class="results-banner" style="display: none;">
             <div class="results-tote-board">
