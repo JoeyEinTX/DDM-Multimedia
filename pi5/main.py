@@ -529,6 +529,15 @@ def api_tote_command():
     })
 
 
+@app.route('/api/power', methods=['GET'])
+def api_power():
+    """Get software-estimated power draw from ESP32"""
+    power = esp32.get_power_status()
+    if power:
+        return jsonify({'success': True, **power})
+    return jsonify({'success': False, 'current_ma': 0, 'peak_ma': 0, 'min_ma': 0})
+
+
 @app.route('/api/status', methods=['GET'])
 def api_status():
     """Get system status"""

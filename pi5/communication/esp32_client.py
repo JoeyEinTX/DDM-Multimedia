@@ -139,6 +139,19 @@ class ESP32Client:
         """Get the last response received from ESP32"""
         return self.last_response
 
+    def get_power_status(self):
+        """Get software-estimated power draw from ESP32"""
+        response = self.send_command("STATUS")
+        if response.startswith("STATUS:"):
+            parts = response.split(":")
+            if len(parts) == 4:
+                return {
+                    'current_ma': int(parts[1]),
+                    'peak_ma': int(parts[2]),
+                    'min_ma': int(parts[3])
+                }
+        return None
+
 
 # Global client instance
 esp32 = ESP32Client()

@@ -51,6 +51,11 @@ WiFiServer server(SOCKET_PORT);
 String currentIP = "";
 uint8_t currentBrightness = 128;
 
+// Power estimation
+uint32_t currentDrawMA = 0;
+uint32_t peakDrawMA = 0;
+uint32_t minDrawMA = 0;
+
 // Animation state
 bool animationRunning = false;
 String currentAnimation = "";
@@ -103,6 +108,7 @@ CRGB hexToRGB(String hex);
 void setCup(uint8_t cupNumber, CRGB color);
 void blinkStatus(int times);
 void printBanner();
+void updatePowerEstimate();
 
 // OLED display functions
 void initOLED();
@@ -151,6 +157,7 @@ void setup() {
     FastLED.setBrightness(currentBrightness);
     FastLED.clear();
     FastLED.show();
+    updatePowerEstimate();
     Serial.println("[LED] LED strip initialized");
     
     // Show "CONNECTING..." on OLED during WiFi setup
@@ -279,6 +286,7 @@ String processCommand(String cmd) {
         currentMode = "ALL_ON";
         fill_solid(leds, LED_COUNT, CRGB::White);
         FastLED.show();
+        updatePowerEstimate();
         return "OK:ALL_ON";
     }
     
@@ -288,6 +296,7 @@ String processCommand(String cmd) {
         currentMode = "ALL_OFF";
         FastLED.clear();
         FastLED.show();
+        updatePowerEstimate();
         return "OK:ALL_OFF";
     }
     
@@ -298,6 +307,7 @@ String processCommand(String cmd) {
         currentBrightness = map(brightness, 0, 100, 0, 255);
         FastLED.setBrightness(currentBrightness);
         FastLED.show();
+        updatePowerEstimate();
         return "OK:BRIGHTNESS:" + String(brightness);
     }
     
@@ -309,6 +319,7 @@ String processCommand(String cmd) {
         CRGB color = hexToRGB(hexColor);
         fill_solid(leds, LED_COUNT, color);
         FastLED.show();
+        updatePowerEstimate();
         return "OK:COLOR:" + hexColor;
     }
     
@@ -345,6 +356,7 @@ String processCommand(String cmd) {
                 
                 setCup(cupNum, color);
                 FastLED.show();
+                updatePowerEstimate();
                 return "OK:CUP:" + String(cupNum) + ":" + colorStr;
             }
         }
@@ -377,6 +389,7 @@ String processCommand(String cmd) {
             CRGB color = CRGB(r, g, b);
             fill_solid(leds, LED_COUNT, color);
             FastLED.show();
+            updatePowerEstimate();
             
             return "OK:TEST:" + String(r) + "," + String(g) + "," + String(b) + "," + String(brightness);
         }
@@ -398,6 +411,7 @@ String processCommand(String cmd) {
         welcomeCometSweeps = 0;
         FastLED.clear();
         FastLED.show();
+        updatePowerEstimate();
         return "OK:ANIM:WELCOME";
     }
     
@@ -457,6 +471,7 @@ String processCommand(String cmd) {
         // Immediately set all LEDs to 100% bright green for Phase 1
         fill_solid(leds, LED_COUNT, CRGB(0, 255, 0));
         FastLED.show();
+        updatePowerEstimate();
         return "OK:ANIM:RACE_START";
     }
     
@@ -579,6 +594,7 @@ String processCommand(String cmd) {
                 cupLockedColor[cupNum] = CRGB(r, g, b);
                 setCup(cupNum, cupLockedColor[cupNum]);
                 FastLED.show();
+                updatePowerEstimate();
                 return "OK:CUP:LOCKED:" + String(cupNum);
             }
         }
@@ -612,9 +628,15 @@ String processCommand(String cmd) {
         stopAnimation();
         FastLED.clear();
         FastLED.show();
+        updatePowerEstimate();
         return "OK:RESET";
     }
-    
+
+    // STATUS - Return power draw estimates
+    else if (cmd == "STATUS") {
+        return "STATUS:" + String(currentDrawMA) + ":" + String(peakDrawMA) + ":" + String(minDrawMA);
+    }
+
     return "ERROR:UNKNOWN_COMMAND";
 }
 
@@ -689,6 +711,7 @@ void animWelcome() {
                 lastCascade = now;
                 setCup(animStep + 1, DDM_PALETTE[animStep % DDM_PALETTE_SIZE]);
                 FastLED.show();
+                updatePowerEstimate();
                 animStep++;
             }
         } else {
@@ -718,6 +741,7 @@ void animWelcome() {
 
         fill_solid(leds, LED_COUNT, color);
         FastLED.show();
+        updatePowerEstimate();
 
         if (phaseElapsed >= 10000) {
             welcomePhase = 2;
@@ -764,6 +788,7 @@ void animWelcome() {
             }
 
             FastLED.show();
+            updatePowerEstimate();
 
             // Advance comet position
             if (welcomeCometForward) {
@@ -816,6 +841,7 @@ void animWelcome() {
             }
 
             FastLED.show();
+            updatePowerEstimate();
         }
 
         if (phaseElapsed >= 8000) {
@@ -850,6 +876,7 @@ void animWelcome() {
             }
 
             FastLED.show();
+            updatePowerEstimate();
         }
 
         if (phaseElapsed >= 10000) {
@@ -859,6 +886,7 @@ void animWelcome() {
             animStep = 0;
             FastLED.clear();
             FastLED.show();
+            updatePowerEstimate();
         }
         break;
     }
@@ -878,10 +906,12 @@ void animTest() {
         FastLED.clear();
         setCup(animStep + 1, COLOR_WHITE);
         FastLED.show();
+        updatePowerEstimate();
         animStep++;
     } else {
         FastLED.clear();
         FastLED.show();
+        updatePowerEstimate();
         stopAnimation();
     }
 }
@@ -899,6 +929,7 @@ void animBetting60() {
     
     fill_solid(leds, LED_COUNT, color);
     FastLED.show();
+    updatePowerEstimate();
     
     // Continuous animation
 }
@@ -916,6 +947,7 @@ void animBetting30() {
     
     fill_solid(leds, LED_COUNT, color);
     FastLED.show();
+    updatePowerEstimate();
     
     // Continuous animation
 }
@@ -933,6 +965,7 @@ void animFinalCall() {
     
     fill_solid(leds, LED_COUNT, color);
     FastLED.show();
+    updatePowerEstimate();
     
     // Continuous animation
 }
@@ -970,6 +1003,7 @@ void animRaceStart() {
             CRGB bgGreen = CRGB(0, 102, 0);
             fill_solid(leds, LED_COUNT, bgGreen);
             FastLED.show();
+            updatePowerEstimate();
         }
         return;
     }
@@ -996,6 +1030,7 @@ void animRaceStart() {
             // Flash complete — restore this cup to green background
             setCup(raceStartCurrentCup, CRGB(0, 102, 0));
             FastLED.show();
+            updatePowerEstimate();
             raceStartFlashing = false;
             
             // Advance to next cup (wrap around 1→20→1)
@@ -1011,6 +1046,7 @@ void animRaceStart() {
             // Time to flash the current cup white!
             setCup(raceStartCurrentCup, CRGB(255, 255, 255));
             FastLED.show();
+            updatePowerEstimate();
             raceStartFlashing = true;
             raceStartLastCupTime = now;  // Record when this flash started
         }
@@ -1035,6 +1071,7 @@ void animChaos() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
 }
 
 /**
@@ -1057,6 +1094,7 @@ void animFinish() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
     animStep++;
 }
 
@@ -1094,6 +1132,7 @@ void animHeartbeat() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
 }
 
 /**
@@ -1121,6 +1160,7 @@ void animHeartbeatFast() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
 }
 
 /**
@@ -1161,6 +1201,7 @@ void animHeartbeatCooldown() {
     }
 
     FastLED.show();
+    updatePowerEstimate();
 }
 
 /**
@@ -1184,6 +1225,7 @@ void animResults() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
     // Static display - stays until changed
 }
 
@@ -1229,6 +1271,21 @@ void animResultsActive() {
     }
     
     FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * Update software-estimated power draw from current LED state
+ */
+void updatePowerEstimate() {
+    uint32_t mW = calculate_unscaled_power_mW(leds, LED_COUNT);
+    currentDrawMA = mW / 5; // 5V system
+    if (currentDrawMA > peakDrawMA) {
+        peakDrawMA = currentDrawMA;
+    }
+    if (currentDrawMA > 0 && (minDrawMA == 0 || currentDrawMA < minDrawMA)) {
+        minDrawMA = currentDrawMA;
+    }
 }
 
 /**
@@ -1403,10 +1460,13 @@ void updateDisplayNow() {
         display.println(F("RSSI: --"));
     }
 
-    // ---- Line 5 (y=52): LED count ----
+    // ---- Line 5 (y=52): Current draw ----
     display.setCursor(0, 52);
-    display.print(F("LEDs: "));
-    display.println(LED_COUNT);
+    display.print(F("Draw: "));
+    display.print(currentDrawMA);
+    display.print(F("mA (pk:"));
+    display.print(peakDrawMA);
+    display.print(F(")"));
 
     display.display();
 }

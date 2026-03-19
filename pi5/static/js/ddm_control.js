@@ -1866,6 +1866,36 @@ function updateFullscreenIcon() {
     }
 }
 
+// Poll power draw from ESP32
+async function pollPowerStatus() {
+    try {
+        const response = await fetch('/api/power');
+        const data = await response.json();
+        const el = document.getElementById('power-draw');
+        const container = document.getElementById('power-status');
+
+        if (data.success) {
+            const currentA = (data.current_ma / 1000).toFixed(1);
+            const peakA = (data.peak_ma / 1000).toFixed(1);
+            el.textContent = `${currentA}A (peak: ${peakA}A)`;
+
+            container.classList.remove('power-normal', 'power-warning', 'power-critical');
+            if (data.current_ma > 25000) {
+                container.classList.add('power-critical');
+            } else if (data.current_ma > 15000) {
+                container.classList.add('power-warning');
+            } else {
+                container.classList.add('power-normal');
+            }
+        } else {
+            el.textContent = '--';
+            container.classList.remove('power-normal', 'power-warning', 'power-critical');
+        }
+    } catch (error) {
+        console.error('Error polling power status:', error);
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
@@ -1901,6 +1931,10 @@ document.addEventListener('DOMContentLoaded', function() {
     getWeather();
     setInterval(getWeather, 30 * 60 * 1000);
     
+    // Poll power draw every 2 seconds
+    pollPowerStatus();
+    setInterval(pollPowerStatus, 2000);
+
     // Listen for fullscreen changes
     document.addEventListener('fullscreenchange', updateFullscreenIcon);
     document.addEventListener('webkitfullscreenchange', updateFullscreenIcon); // Safari

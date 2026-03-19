@@ -913,6 +913,25 @@ body {
     color: #ffffff !important;
 }
 
+/* Power Status Indicator */
+.power-status {
+    font-size: 0.85em;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.power-normal {
+    color: #4ECDC4 !important;
+}
+
+.power-warning {
+    color: #FFD700 !important;
+}
+
+.power-critical {
+    color: #FF4444 !important;
+}
+
 /* Copyright Bar */
 .copyright-bar {
     text-align: center;
