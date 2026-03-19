@@ -81,6 +81,10 @@ bool welcomeCometForward = true;       // comet direction for chase phase
 int welcomeCometSweeps = 0;            // number of completed sweeps
 CRGB welcomeMarchColors[NUM_CUPS];     // color assignment for march phase
 
+// HEARTBEAT_COOLDOWN animation state
+unsigned long cooldownStartTime = 0;
+const unsigned long COOLDOWN_DURATION_MS = 90000; // 90 seconds deceleration
+
 // DDM brand color palette (6 colors)
 const CRGB DDM_PALETTE[] = {
     CRGB(34, 139, 34),    // Forest Green
@@ -121,6 +125,7 @@ void animHeartbeat();
 void animHeartbeatFast();
 void animResults();
 void animResultsActive();
+void animHeartbeatCooldown();
 
 /**
  * SETUP - Runs once at startup
@@ -495,6 +500,17 @@ String processCommand(String cmd) {
         return "OK:ANIM:HEARTBEAT_FAST";
     }
     
+    // ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat (160 BPM → 60 BPM)
+    else if (cmd == "ANIM:HEARTBEAT_COOLDOWN") {
+        currentMode = "COOLDOWN";
+        currentAnimation = "HEARTBEAT_COOLDOWN";
+        animationRunning = true;
+        animStartTime = millis();
+        cooldownStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:HEARTBEAT_COOLDOWN";
+    }
+
     // ANIM:RESULTS:W:P:S - Winner spotlight (e.g., ANIM:RESULTS:7:12:3)
     else if (cmd.startsWith("ANIM:RESULTS:")) {
         // Parse: ANIM:RESULTS:7:12:3
@@ -637,6 +653,8 @@ void runAnimation() {
         animHeartbeat();
     } else if (currentAnimation == "HEARTBEAT_FAST") {
         animHeartbeatFast();
+    } else if (currentAnimation == "HEARTBEAT_COOLDOWN") {
+        animHeartbeatCooldown();
     } else if (currentAnimation == "RESULTS") {
         animResults();
     } else if (currentAnimation == "RESULTS_ACTIVE") {
@@ -1102,6 +1120,46 @@ void animHeartbeatFast() {
         }
     }
     
+    FastLED.show();
+}
+
+/**
+ * ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat
+ * Starts at ~160 BPM with dramatic pulses, linearly slows to ~60 BPM
+ * over COOLDOWN_DURATION_MS, then holds at 60 BPM indefinitely.
+ */
+void animHeartbeatCooldown() {
+    unsigned long now = millis();
+    unsigned long cooldownElapsed = now - cooldownStartTime;
+
+    // Linear interpolation: 160 BPM → 60 BPM over COOLDOWN_DURATION_MS
+    float progress = (float)cooldownElapsed / (float)COOLDOWN_DURATION_MS;
+    if (progress > 1.0) progress = 1.0;
+
+    float currentBPM = 160.0 - (progress * 100.0); // 160 → 60
+    float periodMs = 60000.0 / currentBPM;
+
+    // Brightness range narrows as BPM decreases
+    // Peak (160 BPM): 77-255 (30%-100%)  →  Rest (60 BPM): 153-217 (60%-85%)
+    uint8_t minBright = (uint8_t)(77 + progress * (153 - 77));
+    uint8_t maxBright = (uint8_t)(255 - progress * (255 - 217));
+
+    // Sine wave pulse based on current period
+    float phase = fmod((float)(now - animStartTime), periodMs) / periodMs;
+    float pulse = (sin(phase * 2.0 * PI) + 1.0) / 2.0; // 0.0 to 1.0
+
+    uint8_t brightness = minBright + (uint8_t)(pulse * (maxBright - minBright));
+    CRGB color = COLOR_RED;
+    color.nscale8(brightness);
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (cupLocked[cup]) {
+            setCup(cup, cupLockedColor[cup]);
+        } else {
+            setCup(cup, color);
+        }
+    }
+
     FastLED.show();
 }
 
