@@ -664,10 +664,17 @@ async function sendReset() {
             const data = await response.json();
             
             if (data.success) {
+                // Also send RESET to ESP32 to stop animations
+                await fetch('/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: 'RESET' })
+                });
                 showNotification('Race reset - all systems cleared', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
                 // Clear results from localStorage
                 localStorage.removeItem('raceResults');
+                pendingResults = null;
                 // Hide results banner
                 hideResultsBanner();
                 // Re-enable all race-phase buttons
