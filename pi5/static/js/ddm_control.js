@@ -76,6 +76,16 @@ function clearActiveButton() {
     }
 }
 
+// Clear ALL active button highlights across main panel and animations modal
+function clearAllActiveButtons() {
+    // Clear tracked active button
+    clearActiveButton();
+    // Clear main panel buttons
+    document.querySelectorAll('.panels .btn.active').forEach(btn => btn.classList.remove('active'));
+    // Clear animations modal buttons
+    document.querySelectorAll('.anim-btn.active').forEach(btn => btn.classList.remove('active'));
+}
+
 // Dot matrix patterns (5×7 grid: 5 columns × 7 rows) - 1 = lit, 0 = unlit
 // Slashed zero distinguishes 0 from O (authentic tote board style)
 const dotPatterns = {
@@ -303,7 +313,12 @@ function closeDeviceModal() {
 // Send command to ESP32
 async function sendCommand(command, buttonElement, toggle = false) {
     // If toggle mode and button is already active, turn it off
-    if (toggle && activeButton === buttonElement) {
+    const isToggleOff = toggle && (activeButton === buttonElement);
+
+    // Clear all highlights before sending any command
+    clearAllActiveButtons();
+
+    if (isToggleOff) {
         showLoader();
         try {
             // Send command to stop (turn off LEDs)
@@ -314,13 +329,12 @@ async function sendCommand(command, buttonElement, toggle = false) {
                 },
                 body: JSON.stringify({ command: 'LED:ALL_OFF' })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 showNotification('Test stopped', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
-                clearActiveButton();
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -334,12 +348,12 @@ async function sendCommand(command, buttonElement, toggle = false) {
         }
         return;
     }
-    
+
     // One-shot mode: flash briefly
     if (!toggle) {
         flashButton(buttonElement);
     }
-    
+
     showLoader();
     try {
         const response = await fetch('/api/command', {
@@ -349,13 +363,13 @@ async function sendCommand(command, buttonElement, toggle = false) {
             },
             body: JSON.stringify({ command: command })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showNotification(`Command sent: ${command}`, 'success');
             document.getElementById('current-mode').textContent = command.split(':')[0];
-            
+
             // If toggle mode, set button as active
             if (toggle) {
                 setActiveButton(buttonElement);
@@ -512,21 +526,20 @@ async function sendAnimation(animName, buttonElement) {
     const oneShotAnimations = ['IDLE'];
     
     if (oneShotAnimations.includes(animName)) {
-        // Just flash the button and execute without toggle
+        // Clear all highlights and flash the button for one-shot
+        clearAllActiveButtons();
         flashButton(buttonElement);
         showLoader();
         try {
             const response = await fetch(`/api/animation/${animName}`, {
                 method: 'POST'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 showNotification(`Animation: ${animName}`, 'success');
                 document.getElementById('current-mode').textContent = animName;
-                // Clear any active button
-                clearActiveButton();
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -541,9 +554,14 @@ async function sendAnimation(animName, buttonElement) {
         return;
     }
     
-    // BUG FIX #2: Toggle animations (check if this button is already active)
-    // When clicking active animation button, turn OFF the LEDs
-    if (activeButton === buttonElement) {
+    // Check toggle-off BEFORE clearing (so we can detect re-click on same button)
+    const isToggleOff = (activeButton === buttonElement);
+
+    // Clear all highlights before sending new animation
+    clearAllActiveButtons();
+
+    // BUG FIX #2: Toggle animations - if same button was clicked, turn OFF the LEDs
+    if (isToggleOff) {
         showLoader();
         try {
             // Send LED:ALL_OFF command to stop the animation and turn off LEDs
@@ -635,6 +653,7 @@ async function sendStandby() {
 async function sendReset() {
     if (raceControlMode === 'auto') return;
     if (confirm('Reset race? This will clear results, turn off LEDs, and re-enable all buttons.')) {
+        clearAllActiveButtons();
         showLoader();
         try {
             // Clear results on server (deletes results.json and turns off LEDs)
@@ -653,8 +672,6 @@ async function sendReset() {
                 hideResultsBanner();
                 // Re-enable all race-phase buttons
                 setRaceComplete(false);
-                // Clear active button state
-                clearActiveButton();
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -686,6 +703,7 @@ function toggleEmergencyStop() {
 // Emergency stop
 async function emergencyStop() {
     if (confirm('EMERGENCY STOP: Turn off all LEDs?')) {
+        clearAllActiveButtons();
         showLoader();
         try {
             const response = await fetch('/api/led/all_off', {
@@ -697,8 +715,6 @@ async function emergencyStop() {
             if (data.success) {
                 showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
                 document.getElementById('current-mode').textContent = 'STOPPED';
-                // Clear all active button states
-                clearActiveButton();
                 // Collapse emergency stop after use
                 const expanded = document.getElementById('emergency-expanded');
                 const icon = document.getElementById('emergency-icon');
@@ -1620,8 +1636,9 @@ async function triggerAnimation(animName, buttonElement) {
         showNotification('Switch to MANUAL to control animations', 'error');
         return;
     }
+    // Clear all highlights across panels and modal
+    clearAllActiveButtons();
     // Highlight selected button
-    document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
     buttonElement.classList.add('active');
 
     // Use existing sendAnimation for animations (sends to /api/animation/...)
@@ -1635,8 +1652,6 @@ async function triggerAnimation(animName, buttonElement) {
         if (data.success) {
             showNotification(`Animation: ${animName}`, 'success');
             document.getElementById('current-mode').textContent = animName;
-            // Also update main panel active button state
-            clearActiveButton();
             await checkESP32Status();
             hideLoader();
         } else {
@@ -1659,8 +1674,9 @@ async function triggerAnimCommand(command, buttonElement) {
         showNotification('Switch to MANUAL to control animations', 'error');
         return;
     }
+    // Clear all highlights across panels and modal
+    clearAllActiveButtons();
     // Highlight selected button
-    document.querySelectorAll('.anim-btn').forEach(btn => btn.classList.remove('active'));
     buttonElement.classList.add('active');
 
     try {
@@ -1675,7 +1691,6 @@ async function triggerAnimCommand(command, buttonElement) {
         if (data.success) {
             showNotification(`Command: ${command}`, 'success');
             document.getElementById('current-mode').textContent = command.replace('LED:', '');
-            clearActiveButton();
             await checkESP32Status();
             hideLoader();
         } else {

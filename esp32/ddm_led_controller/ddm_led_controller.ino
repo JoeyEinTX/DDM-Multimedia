@@ -1020,26 +1020,21 @@ void animChaos() {
 }
 
 /**
- * ANIM:FINISH - Green checkered flag pattern (celebration!)
+ * ANIM:FINISH - Green/white checkered flag pattern (celebration!)
+ * Alternates green and white every 500ms — full brightness, no cups off.
  */
 void animFinish() {
     static unsigned long lastUpdate = 0;
     if (millis() - lastUpdate < 500) return; // Alternate every 500ms
     lastUpdate = millis();
     
-    FastLED.clear();
-    
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (animStep % 2 == 0) {
-            // Even step: odd cups green, even cups black
-            if (cup % 2 == 1) {
-                setCup(cup, COLOR_GREEN);
-            }
+            // Even step: odd cups = green, even cups = white
+            setCup(cup, (cup % 2 == 1) ? COLOR_GREEN : COLOR_WHITE);
         } else {
-            // Odd step: even cups green, odd cups black
-            if (cup % 2 == 0) {
-                setCup(cup, COLOR_GREEN);
-            }
+            // Odd step: even cups = green, odd cups = white
+            setCup(cup, (cup % 2 == 0) ? COLOR_GREEN : COLOR_WHITE);
         }
     }
     
@@ -1304,7 +1299,7 @@ void updateDisplay() {
 
 /**
  * Actually render the five-line status screen:
- *   Line 1: "DDM CUP CONTROLLER"  (header)
+ *   Line 1: "DDM CTRL"  (header, textSize 2, centered in yellow band)
  *   Line 2: MODE: <currentMode>
  *   Line 3: WiFi: <IP> or "NO WIFI"
  *   Line 4: RSSI: <value> dBm
@@ -1314,15 +1309,17 @@ void updateDisplayNow() {
     if (!oledReady) return;
 
     display.clearDisplay();
-    display.setTextSize(1);       // 6x8 pixels per char — fits 21 chars × 8 lines
     display.setTextColor(SSD1306_WHITE);
 
-    // ---- Line 1 (y=0): Header ----
-    display.setCursor(9, 0);
-    display.println(F("DDM CUP CONTROLLER"));
+    // ---- Line 1 (y=0): Header - textSize 2, centered in yellow band ----
+    display.setTextSize(2);
+    display.setCursor(16, 0);
+    display.println(F("DDM CTRL"));
 
     // Thin separator line at yellow/blue boundary
     display.drawLine(0, 16, 127, 16, SSD1306_WHITE);
+
+    display.setTextSize(1);       // 6x8 pixels per char for remaining lines
 
     // ---- Line 2 (y=20): Current mode ----
     display.setCursor(0, 20);
