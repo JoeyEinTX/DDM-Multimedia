@@ -889,21 +889,21 @@ async function triggerFinish() {
     // Send checkered/finish animation
     await sendAnimation('FINISH');
     
-    // After 60 seconds, transition to fast heartbeat
+    // After 60 seconds, transition to heartbeat cooldown
     finishTimer = setTimeout(async () => {
         try {
-            const response = await fetch('/api/animation/HEARTBEAT_FAST', {
+            const response = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
                 method: 'POST'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
-                showNotification('Transitioning to fast heartbeat', 'success');
-                document.getElementById('current-mode').textContent = 'HEARTBEAT_FAST';
+                showNotification('Transitioning to heartbeat cooldown', 'success');
+                document.getElementById('current-mode').textContent = 'COOLDOWN';
             }
         } catch (error) {
-            console.error('Error transitioning to fast heartbeat:', error);
+            console.error('Error transitioning to heartbeat cooldown:', error);
         }
         finishTimer = null;
     }, 60000);  // 60 seconds
@@ -961,12 +961,12 @@ async function showResultsModal() {
             body: JSON.stringify({ cup: 'ALL' })
         });
         
-        console.log('[RESULTS MODAL] Starting HEARTBEAT animation...');
-        const heartbeatResp = await fetch('/api/animation/HEARTBEAT', {
+        console.log('[RESULTS MODAL] Starting HEARTBEAT_COOLDOWN animation...');
+        const heartbeatResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
             method: 'POST'
         });
         const heartbeatData = await heartbeatResp.json();
-        console.log('[RESULTS MODAL] Heartbeat response:', heartbeatData);
+        console.log('[RESULTS MODAL] Heartbeat cooldown response:', heartbeatData);
     } catch (error) {
         console.error('[RESULTS MODAL] Error starting heartbeat:', error);
     }
@@ -1270,7 +1270,23 @@ async function resultsConfirm() {
             
             // Close modal AFTER animation is sent (keep animation running)
             closeResultsModal(true);
-            
+
+            // After 5 seconds of winner spotlight, transition to heartbeat cooldown
+            setTimeout(async () => {
+                try {
+                    console.log('[CONFIRM] Transitioning to HEARTBEAT_COOLDOWN...');
+                    const cooldownResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
+                        method: 'POST'
+                    });
+                    const cooldownData = await cooldownResp.json();
+                    if (cooldownData.success) {
+                        document.getElementById('current-mode').textContent = 'COOLDOWN';
+                    }
+                } catch (error) {
+                    console.error('[CONFIRM] Error starting heartbeat cooldown:', error);
+                }
+            }, 5000);
+
             await checkESP32Status();
             hideLoader();
         } else {
@@ -1602,7 +1618,22 @@ async function applyResults() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
             });
-            
+
+            // After 5 seconds of winner spotlight, transition to heartbeat cooldown
+            setTimeout(async () => {
+                try {
+                    const cooldownResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
+                        method: 'POST'
+                    });
+                    const cooldownData = await cooldownResp.json();
+                    if (cooldownData.success) {
+                        document.getElementById('current-mode').textContent = 'COOLDOWN';
+                    }
+                } catch (error) {
+                    console.error('Error starting heartbeat cooldown:', error);
+                }
+            }, 5000);
+
             await checkESP32Status();
             hideLoader();
         } else {

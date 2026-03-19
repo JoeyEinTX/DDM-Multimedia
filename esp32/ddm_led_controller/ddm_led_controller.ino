@@ -127,8 +127,6 @@ void animFinalCall();
 void animRaceStart();
 void animChaos();
 void animFinish();
-void animHeartbeat();
-void animHeartbeatFast();
 void animResults();
 void animResultsActive();
 void animHeartbeatCooldown();
@@ -495,26 +493,6 @@ String processCommand(String cmd) {
         return "OK:ANIM:FINISH";
     }
     
-    // ANIM:HEARTBEAT - Red breathing
-    else if (cmd == "ANIM:HEARTBEAT") {
-        currentMode = "HEARTBEAT";
-        currentAnimation = "HEARTBEAT";
-        animationRunning = true;
-        animStartTime = millis();
-        animStep = 0;
-        return "OK:ANIM:HEARTBEAT";
-    }
-    
-    // ANIM:HEARTBEAT_FAST - Fast red breathing (more urgent)
-    else if (cmd == "ANIM:HEARTBEAT_FAST") {
-        currentMode = "HEARTBEAT_FAST";
-        currentAnimation = "HEARTBEAT_FAST";
-        animationRunning = true;
-        animStartTime = millis();
-        animStep = 0;
-        return "OK:ANIM:HEARTBEAT_FAST";
-    }
-    
     // ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat (160 BPM → 60 BPM)
     else if (cmd == "ANIM:HEARTBEAT_COOLDOWN") {
         currentMode = "COOLDOWN";
@@ -671,10 +649,6 @@ void runAnimation() {
         animChaos();
     } else if (currentAnimation == "FINISH") {
         animFinish();
-    } else if (currentAnimation == "HEARTBEAT") {
-        animHeartbeat();
-    } else if (currentAnimation == "HEARTBEAT_FAST") {
-        animHeartbeatFast();
     } else if (currentAnimation == "HEARTBEAT_COOLDOWN") {
         animHeartbeatCooldown();
     } else if (currentAnimation == "RESULTS") {
@@ -1099,71 +1073,6 @@ void animFinish() {
 }
 
 /**
- * ANIM:HEARTBEAT - Slow red throb (all cups breathe together)
- */
-void animHeartbeat() {
-    unsigned long elapsed = millis() - animStartTime;
-    
-    // Double pulse pattern (heartbeat)
-    float beat = 0.0;
-    float phase = fmod(elapsed / 1000.0, 2.0); // 2-second cycle
-    
-    if (phase < 0.3) {
-        beat = sin(phase * 10.47) * 0.5 + 0.5; // First beat
-    } else if (phase < 0.6) {
-        beat = sin((phase - 0.3) * 10.47) * 0.3 + 0.3; // Second beat (softer)
-    } else {
-        beat = 0.1; // Rest
-    }
-    
-    uint8_t brightness = 25 + (beat * 230);
-    CRGB heartbeatColor = COLOR_RED;
-    heartbeatColor.nscale8(brightness);
-    
-    // Apply heartbeat, respecting locked cups
-    for (int cup = 1; cup <= NUM_CUPS; cup++) {
-        if (cupLocked[cup]) {
-            // Keep locked color
-            setCup(cup, cupLockedColor[cup]);
-        } else {
-            // Apply heartbeat
-            setCup(cup, heartbeatColor);
-        }
-    }
-    
-    FastLED.show();
-    updatePowerEstimate();
-}
-
-/**
- * ANIM:HEARTBEAT_FAST - Fast red throb (more urgent than regular heartbeat)
- */
-void animHeartbeatFast() {
-    unsigned long elapsed = millis() - animStartTime;
-    
-    // Faster sine wave breathing (0.6 sec cycle instead of 2 sec)
-    float breathe = (sin(elapsed / 300.0) + 1.0) / 2.0; // 0.0 to 1.0
-    
-    uint8_t brightness = 50 + (breathe * 205); // 50-255 range
-    CRGB heartbeatColor = COLOR_RED;
-    heartbeatColor.nscale8(brightness);
-    
-    // Apply heartbeat, respecting locked cups
-    for (int cup = 1; cup <= NUM_CUPS; cup++) {
-        if (cupLocked[cup]) {
-            // Keep locked color
-            setCup(cup, cupLockedColor[cup]);
-        } else {
-            // Apply heartbeat
-            setCup(cup, heartbeatColor);
-        }
-    }
-    
-    FastLED.show();
-    updatePowerEstimate();
-}
-
-/**
  * ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat
  * Starts at ~160 BPM with dramatic pulses, linearly slows to ~60 BPM
  * over COOLDOWN_DURATION_MS, then holds at 60 BPM indefinitely.
@@ -1192,9 +1101,16 @@ void animHeartbeatCooldown() {
     CRGB color = COLOR_RED;
     color.nscale8(brightness);
 
+    // Slow fade for locked (winner) cups: gentle breathing at ~40 BPM
+    float winnerPhase = fmod((float)(now - animStartTime), 1500.0) / 1500.0;
+    float winnerPulse = (sin(winnerPhase * 2.0 * PI) + 1.0) / 2.0;
+    uint8_t winnerBright = 140 + (uint8_t)(winnerPulse * 115); // 140-255 (55%-100%)
+
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (cupLocked[cup]) {
-            setCup(cup, cupLockedColor[cup]);
+            CRGB lockedColor = cupLockedColor[cup];
+            lockedColor.nscale8(winnerBright);
+            setCup(cup, lockedColor);
         } else {
             setCup(cup, color);
         }
