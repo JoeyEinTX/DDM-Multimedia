@@ -741,6 +741,8 @@ let currentBrightness = 75;
 // Open test modal with color wheel
 function openTestModal() {
     console.log('[TEST MODAL] Opening modal...');
+    clearAllActiveButtons();
+    document.getElementById('current-mode').textContent = 'TEST';
     const modal = document.getElementById('test-modal');
     modal.classList.add('active');
     
@@ -811,7 +813,9 @@ function openTestModal() {
 async function closeTestModal() {
     const modal = document.getElementById('test-modal');
     modal.classList.remove('active');
-    
+    clearAllActiveButtons();
+    document.getElementById('current-mode').textContent = 'IDLE';
+
     // Send LED:ALL_OFF command
     try {
         await fetch('/api/command', {
