@@ -101,6 +101,54 @@ const CRGB DDM_PALETTE[] = {
 };
 const int DDM_PALETTE_SIZE = 6;
 
+// Saddle cloth colors: primary and accent for posts 1-20 (index 0 unused)
+const CRGB SILK_PRIMARY[21] = {
+    CRGB(0,0,0),           // 0: unused
+    CRGB(231,24,55),       // 1:  red
+    CRGB(255,255,255),     // 2:  white
+    CRGB(0,51,160),        // 3:  blue
+    CRGB(255,205,0),       // 4:  yellow
+    CRGB(0,132,61),        // 5:  green
+    CRGB(0,0,0),           // 6:  black
+    CRGB(255,102,0),       // 7:  orange
+    CRGB(255,105,180),     // 8:  pink
+    CRGB(64,224,208),      // 9:  turquoise
+    CRGB(102,51,153),      // 10: purple
+    CRGB(128,128,128),     // 11: grey
+    CRGB(50,205,50),       // 12: lime
+    CRGB(139,69,19),       // 13: brown
+    CRGB(128,0,0),         // 14: maroon
+    CRGB(196,183,166),     // 15: khaki
+    CRGB(135,206,235),     // 16: light blue
+    CRGB(0,0,128),         // 17: navy
+    CRGB(34,139,34),       // 18: forest green
+    CRGB(0,0,139),         // 19: dark blue
+    CRGB(255,0,255)        // 20: fuchsia
+};
+const CRGB SILK_ACCENT[21] = {
+    CRGB(0,0,0),           // 0: unused
+    CRGB(255,255,255),     // 1:  white
+    CRGB(0,0,0),           // 2:  black
+    CRGB(255,255,255),     // 3:  white
+    CRGB(0,0,0),           // 4:  black
+    CRGB(255,255,255),     // 5:  white
+    CRGB(255,215,0),       // 6:  gold
+    CRGB(0,0,0),           // 7:  black
+    CRGB(0,0,0),           // 8:  black
+    CRGB(0,0,0),           // 9:  black
+    CRGB(255,255,255),     // 10: white
+    CRGB(231,24,55),       // 11: red
+    CRGB(0,0,0),           // 12: black
+    CRGB(255,255,255),     // 13: white
+    CRGB(255,205,0),       // 14: yellow
+    CRGB(0,0,0),           // 15: black
+    CRGB(231,24,55),       // 16: red
+    CRGB(255,255,255),     // 17: white
+    CRGB(255,205,0),       // 18: yellow
+    CRGB(231,24,55),       // 19: red
+    CRGB(255,205,0)        // 20: yellow
+};
+
 // ===== FUNCTION DECLARATIONS =====
 void connectWiFi();
 String processCommand(String cmd);
@@ -130,6 +178,7 @@ void animFinish();
 void animResults();
 void animResultsActive();
 void animHeartbeatCooldown();
+void animSilks();
 
 /**
  * SETUP - Runs once at startup
@@ -493,6 +542,16 @@ String processCommand(String cmd) {
         return "OK:ANIM:FINISH";
     }
     
+    // ANIM:SILKS - Display saddle cloth colors on each cup
+    else if (cmd == "ANIM:SILKS") {
+        currentMode = "SILKS";
+        currentAnimation = "SILKS";
+        animationRunning = true;
+        animStartTime = millis();
+        animStep = 0;
+        return "OK:ANIM:SILKS";
+    }
+
     // ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat (160 BPM → 60 BPM)
     else if (cmd == "ANIM:HEARTBEAT_COOLDOWN") {
         currentMode = "COOLDOWN";
@@ -651,6 +710,8 @@ void runAnimation() {
         animFinish();
     } else if (currentAnimation == "HEARTBEAT_COOLDOWN") {
         animHeartbeatCooldown();
+    } else if (currentAnimation == "SILKS") {
+        animSilks();
     } else if (currentAnimation == "RESULTS") {
         animResults();
     } else if (currentAnimation == "RESULTS_ACTIVE") {
@@ -1118,6 +1179,25 @@ void animHeartbeatCooldown() {
 
     FastLED.show();
     updatePowerEstimate();
+}
+
+/**
+ * ANIM:SILKS - Display saddle cloth colors on each cup
+ * Static: alternating 4-LED blocks of primary/accent per cup
+ */
+void animSilks() {
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        int startIdx = (cup - 1) * LEDS_PER_CUP;
+        for (int i = 0; i < LEDS_PER_CUP; i++) {
+            // 4-LED blocks: 0-3 primary, 4-7 accent, 8-11 primary, ...
+            bool isPrimary = ((i / 4) % 2 == 0);
+            leds[startIdx + i] = isPrimary ? SILK_PRIMARY[cup] : SILK_ACCENT[cup];
+        }
+    }
+    FastLED.show();
+    updatePowerEstimate();
+    // Static hold — stop the animation loop
+    animationRunning = false;
 }
 
 /**
