@@ -760,59 +760,45 @@ let currentBrightness = 75;
 
 // Open test modal with color wheel
 function openTestModal() {
-    console.log('[TEST MODAL] Opening modal...');
     clearAllActiveButtons();
     document.getElementById('current-mode').textContent = 'TEST';
     const modal = document.getElementById('test-modal');
     modal.classList.add('active');
-    
+
     // Initialize color picker if not already done
     if (!colorPicker) {
-        console.log('[TEST MODAL] Initializing color picker and event handlers...');
         colorPicker = new iro.ColorPicker('#color-picker', {
-            width: 210,  // Slightly larger wheel
-            color: '#E195AB', // Default to ROSE
-            borderWidth: 0,  // Remove border to allow full edge access
+            width: 210,
+            color: '#E195AB',
+            borderWidth: 0,
             borderColor: '#1B998B',
-            padding: 0,  // Remove padding to allow picker at edge for full saturation
-            margin: 0,   // Remove margin
-            handleRadius: 4,  // Smaller handle for better edge access
+            padding: 0,
+            margin: 0,
+            handleRadius: 4,
             layout: [
                 {
                     component: iro.ui.Wheel,
-                    options: {
-                        borderWidth: 0,  // Remove wheel border constraint
-                        handleRadius: 4  // Smaller handle in wheel options too
-                    }
+                    options: { borderWidth: 0, handleRadius: 4 }
                 }
             ]
         });
-        
-        // Listen to color changes
+
         colorPicker.on('color:change', function(color) {
-            console.log('[COLOR WHEEL] Color changed:', color.rgb);
             sendTestColor(color.rgb.r, color.rgb.g, color.rgb.b, currentBrightness);
         });
-        
-        // Set up brightness slider (only once)
+
         const brightnessSlider = document.getElementById('brightness-slider');
         brightnessSlider.addEventListener('input', function() {
             currentBrightness = parseInt(this.value);
             document.getElementById('brightness-value').textContent = currentBrightness;
             const color = colorPicker.color.rgb;
-            console.log('[BRIGHTNESS] Changed to:', currentBrightness);
             sendTestColor(color.r, color.g, color.b, currentBrightness);
         });
-        
-        // Set up preset buttons (only once)
-        const presetButtons = document.querySelectorAll('.preset-btn');
-        console.log('[PRESET BUTTONS] Found', presetButtons.length, 'buttons');
-        presetButtons.forEach(btn => {
+
+        document.querySelectorAll('.preset-btn').forEach(btn => {
             btn.addEventListener('click', function() {
                 const colorStr = this.dataset.color;
                 const name = this.dataset.name;
-                console.log('[PRESET] Button clicked:', name);
-                
                 if (name === 'OFF') {
                     sendTestOff();
                 } else {
@@ -822,10 +808,6 @@ function openTestModal() {
                 }
             });
         });
-        
-        console.log('[TEST MODAL] Initialization complete');
-    } else {
-        console.log('[TEST MODAL] Color picker already initialized');
     }
 }
 
@@ -854,51 +836,31 @@ async function closeTestModal() {
 async function sendTestColor(r, g, b, brightness) {
     const command = `LED:TEST:${Math.round(r)},${Math.round(g)},${Math.round(b)},${brightness}`;
     
-    console.log('[SEND TEST COLOR] Function called with:', { r, g, b, brightness });
-    console.log('[SEND TEST COLOR] Command:', command);
-    
     try {
-        console.log('[SEND TEST COLOR] Sending fetch request to /api/command...');
-        
         const response = await fetch('/api/command', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: command })
         });
-        
-        console.log('[SEND TEST COLOR] Fetch completed, status:', response.status);
-        
         const data = await response.json();
-        console.log('[SEND TEST COLOR] Response data:', data);
-        
         if (!data.success) {
-            console.error('[SEND TEST COLOR] Command failed:', data);
+            console.error('Test color command failed:', data);
         }
     } catch (error) {
-        console.error('[SEND TEST COLOR] ERROR:', error);
+        console.error('Error sending test color:', error);
     }
 }
 
 // Send test off command
 async function sendTestOff() {
-    console.log('[SEND TEST OFF] Turning off LEDs...');
-    
     try {
-        const response = await fetch('/api/command', {
+        await fetch('/api/command', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: 'LED:ALL_OFF' })
         });
-        
-        console.log('[SEND TEST OFF] Response status:', response.status);
-        const data = await response.json();
-        console.log('[SEND TEST OFF] Response data:', data);
     } catch (error) {
-        console.error('[SEND TEST OFF] ERROR:', error);
+        console.error('Error sending test off:', error);
     }
 }
 
@@ -949,8 +911,7 @@ const BRONZE_RGB = { r: 205, g: 127, b: 50 };
 // Show results modal with saddle cloth grid
 async function showResultsModal() {
     if (raceControlMode === 'auto') return;
-    console.log('[RESULTS MODAL] Opening modal, starting heartbeat...');
-    
+
     // Clear finish timer if running
     if (finishTimer) {
         clearTimeout(finishTimer);
@@ -978,33 +939,21 @@ async function showResultsModal() {
     
     // Unlock all cups and start heartbeat animation
     try {
-        console.log('[RESULTS MODAL] Unlocking all cups...');
         await fetch('/api/cup/unlock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ cup: 'ALL' })
         });
-        
-        console.log('[RESULTS MODAL] Starting HEARTBEAT_COOLDOWN animation...');
-        const heartbeatResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
-            method: 'POST'
-        });
-        const heartbeatData = await heartbeatResp.json();
-        console.log('[RESULTS MODAL] Heartbeat cooldown response:', heartbeatData);
+        await fetch('/api/animation/HEARTBEAT_COOLDOWN', { method: 'POST' });
     } catch (error) {
-        console.error('[RESULTS MODAL] Error starting heartbeat:', error);
+        console.error('Error starting results heartbeat:', error);
     }
-    
-    // Generate saddle cloth grid
+
     generateSaddleClothGrid();
-    
-    // Update modal UI
     updateResultsModalUI();
-    
-    // Show the modal
+
     const modal = document.getElementById('results-modal');
     modal.classList.add('active');
-    console.log('[RESULTS MODAL] Modal displayed');
 }
 
 // Generate saddle cloth grid (4 rows × 5 columns)
@@ -1046,48 +995,32 @@ function updateSlot(slot, horseNum) {
 // Select a cup in current step
 async function selectCup(cupNumber) {
     const step = resultsState.step;
-    
-    console.log(`[SELECT CUP] Selected cup ${cupNumber} for ${step}`);
-    
-    // Set selection
     resultsState[step] = cupNumber;
-    
-    // Update sidebar slot with animation
     updateSlot(step, cupNumber);
-    
-    // Lock cup to color (while heartbeat continues on others)
-    const colorMap = {
-        win: GOLD_RGB,
-        place: SILVER_RGB,
-        show: BRONZE_RGB
-    };
-    
-    console.log(`[SELECT CUP] Locking cup ${cupNumber} to RGB(${colorMap[step].r}, ${colorMap[step].g}, ${colorMap[step].b})`);
-    
+
+    // Lock cup to winner color (while heartbeat continues on others)
+    const colorMap = { win: GOLD_RGB, place: SILVER_RGB, show: BRONZE_RGB };
+
     try {
-        const lockResp = await fetch('/api/cup/lock', {
+        await fetch('/api/cup/lock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                cup: cupNumber, 
-                r: colorMap[step].r, 
-                g: colorMap[step].g, 
-                b: colorMap[step].b 
+            body: JSON.stringify({
+                cup: cupNumber,
+                r: colorMap[step].r,
+                g: colorMap[step].g,
+                b: colorMap[step].b
             })
         });
-        const lockData = await lockResp.json();
-        console.log(`[SELECT CUP] Lock response:`, lockData);
     } catch (error) {
-        console.error('[SELECT CUP] Error locking cup:', error);
+        console.error('Error locking cup:', error);
     }
-    
+
     // Move to next step
     if (step === 'win') {
         resultsState.step = 'place';
-        console.log('[SELECT CUP] Moving to PLACE step');
     } else if (step === 'place') {
         resultsState.step = 'show';
-        console.log('[SELECT CUP] Moving to SHOW step');
     }
     
     // Update UI
@@ -1187,8 +1120,6 @@ async function resultsGoBack() {
 
 // Reset selection
 async function resultsReset() {
-    console.log('[RESULTS RESET] Resetting all selections');
-    
     // Unlock all selected cups
     try {
         await fetch('/api/cup/unlock', {
@@ -1223,23 +1154,19 @@ async function closeResultsModal(keepAnimation = false) {
     // Only unlock cups and stop animation if NOT confirmed
     if (!keepAnimation) {
         try {
-            console.log('[CLOSE MODAL] Canceling - unlocking cups and turning off LEDs');
             await fetch('/api/cup/unlock', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cup: 'ALL' })
             });
-            
             await fetch('/api/command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: 'LED:ALL_OFF' })
             });
         } catch (error) {
-            console.error('[CLOSE MODAL] Error stopping animation:', error);
+            console.error('Error stopping animation on modal close:', error);
         }
-    } else {
-        console.log('[CLOSE MODAL] Confirmed - keeping animation running');
     }
 }
 
@@ -1254,51 +1181,34 @@ async function resultsConfirm() {
     
     showLoader();
     try {
-        console.log('[CONFIRM] Sending results to server...');
         const response = await fetch('/api/results', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                win: winHorse,
-                place: placeHorse,
-                show: showHorse
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
         });
-        
+
         const data = await response.json();
-        console.log('[CONFIRM] Server response:', data);
-        
+
         if (data.success) {
             showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
             document.getElementById('current-mode').textContent = 'RESULTS';
-            // Save results to localStorage
             localStorage.setItem('raceResults', JSON.stringify({
-                win: winHorse,
-                place: placeHorse,
-                show: showHorse
+                win: winHorse, place: placeHorse, show: showHorse
             }));
-            // Show results banner
             showResultsBanner(winHorse, placeHorse, showHorse);
-            
-            // Send results display animation (winners + heartbeat on others) BEFORE closing modal
-            console.log('[CONFIRM] Sending RESULTS_ACTIVE animation...');
-            const resultsActiveResponse = await fetch('/api/animation/RESULTS_ACTIVE', {
+
+            // Send results display animation before closing modal
+            await fetch('/api/animation/RESULTS_ACTIVE', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
             });
-            const resultsActiveData = await resultsActiveResponse.json();
-            console.log('[CONFIRM] RESULTS_ACTIVE response:', resultsActiveData);
-            
-            // Close modal AFTER animation is sent (keep animation running)
+
             closeResultsModal(true);
 
             // After 5 seconds of winner spotlight, transition to heartbeat cooldown
             setTimeout(async () => {
                 try {
-                    console.log('[CONFIRM] Transitioning to HEARTBEAT_COOLDOWN...');
                     const cooldownResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
                         method: 'POST'
                     });
@@ -1307,7 +1217,7 @@ async function resultsConfirm() {
                         document.getElementById('current-mode').textContent = 'COOLDOWN';
                     }
                 } catch (error) {
-                    console.error('[CONFIRM] Error starting heartbeat cooldown:', error);
+                    console.error('Error starting heartbeat cooldown:', error);
                 }
             }, 5000);
 
@@ -1537,19 +1447,12 @@ function connectResultsStream() {
     
     resultsEventSource = new EventSource('/api/results/stream');
     
-    resultsEventSource.onopen = function() {
-        console.log('[SSE] Connected to results stream');
-    };
-    
     resultsEventSource.addEventListener('results', function(e) {
-        console.log('[SSE] Results received:', e.data);
         const data = JSON.parse(e.data);
-        
+
         if (justSubmittedResults) {
-            justSubmittedResults = false;  // Reset flag
-            console.log('[SSE] Skipping reveal popup - this device submitted results');
-            // Don't show reveal popup - banner already updated by resultsConfirm()
-            return;
+            justSubmittedResults = false;
+            return; // Skip reveal popup — this device submitted the results
         }
         
         // Show dramatic reveal popup for other devices
@@ -1592,82 +1495,6 @@ function revealWinners() {
     if (pendingResults) {
         showResultsBanner(pendingResults.win, pendingResults.place, pendingResults.show);
         pendingResults = null;
-    }
-}
-
-// Apply results
-async function applyResults() {
-    const winHorse = parseInt(document.getElementById('win-horse').value);
-    const placeHorse = parseInt(document.getElementById('place-horse').value);
-    const showHorse = parseInt(document.getElementById('show-horse').value);
-    
-    // Validate unique selections
-    if (winHorse === placeHorse || winHorse === showHorse || placeHorse === showHorse) {
-        showNotification('Win, Place, and Show must be different horses!', 'error');
-        return;
-    }
-    
-    showLoader();
-    try {
-        const response = await fetch('/api/results', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                win: winHorse,
-                place: placeHorse,
-                show: showHorse
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
-            document.getElementById('current-mode').textContent = 'RESULTS';
-            // Save results to localStorage
-            localStorage.setItem('raceResults', JSON.stringify({
-                win: winHorse,
-                place: placeHorse,
-                show: showHorse
-            }));
-            // Show results banner
-            showResultsBanner(winHorse, placeHorse, showHorse);
-            closeResultsModal();
-            
-            // Send results display animation (winners + heartbeat on others)
-            await fetch('/api/animation/RESULTS_ACTIVE', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
-            });
-
-            // After 5 seconds of winner spotlight, transition to heartbeat cooldown
-            setTimeout(async () => {
-                try {
-                    const cooldownResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
-                        method: 'POST'
-                    });
-                    const cooldownData = await cooldownResp.json();
-                    if (cooldownData.success) {
-                        document.getElementById('current-mode').textContent = 'COOLDOWN';
-                    }
-                } catch (error) {
-                    console.error('Error starting heartbeat cooldown:', error);
-                }
-            }, 5000);
-
-            await checkESP32Status();
-            hideLoader();
-        } else {
-            hideLoader(true); // Hide immediately on error
-            showNotification(`Error: ${data.response || data.error}`, 'error');
-        }
-    } catch (error) {
-        hideLoader(true); // Hide immediately on error
-        console.error('Error setting results:', error);
-        showNotification('Connection error', 'error');
     }
 }
 

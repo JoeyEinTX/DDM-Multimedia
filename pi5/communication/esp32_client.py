@@ -1,7 +1,6 @@
 # esp32_client.py - Socket client to communicate with ESP32
 
 import socket
-import time
 from config import ESP32_IP, ESP32_PORT, SOCKET_TIMEOUT
 
 

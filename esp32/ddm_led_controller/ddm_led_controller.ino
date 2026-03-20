@@ -75,8 +75,8 @@ unsigned long raceStartLastCupTime = 0; // when current cup's white flash starte
 bool raceStartFlashing = false;         // is a cup currently showing white?
 
 // Cup locking for custom colors during animations
-bool cupLocked[21] = {false};  // cups 1-20, index 0 unused
-CRGB cupLockedColor[21];       // color for locked cups
+bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
+CRGB cupLockedColor[NUM_CUPS + 1];      // color for locked cups
 
 // WELCOME animation state
 int welcomePhase = 0;                  // 0-4 for phases 1-5
@@ -102,7 +102,7 @@ const CRGB DDM_PALETTE[] = {
 const int DDM_PALETTE_SIZE = 6;
 
 // Saddle cloth colors: primary and accent for posts 1-20 (index 0 unused)
-const CRGB SILK_PRIMARY[21] = {
+const CRGB SILK_PRIMARY[NUM_CUPS + 1] = {
     CRGB(0,0,0),           // 0: unused
     CRGB(231,24,55),       // 1:  red
     CRGB(255,255,255),     // 2:  white
@@ -125,7 +125,7 @@ const CRGB SILK_PRIMARY[21] = {
     CRGB(0,0,139),         // 19: dark blue
     CRGB(255,0,255)        // 20: fuchsia
 };
-const CRGB SILK_ACCENT[21] = {
+const CRGB SILK_ACCENT[NUM_CUPS + 1] = {
     CRGB(0,0,0),           // 0: unused
     CRGB(255,255,255),     // 1:  white
     CRGB(0,0,0),           // 2:  black
@@ -381,7 +381,7 @@ String processCommand(String cmd) {
             int cupNum = cmd.substring(8, firstColon).toInt();
             String colorStr = cmd.substring(firstColon + 1);
             
-            if (cupNum >= 1 && cupNum <= 20) {
+            if (cupNum >= 1 && cupNum <= NUM_CUPS) {
                 CRGB color;
                 
                 // Check if RGB format (contains comma)
@@ -574,9 +574,9 @@ String processCommand(String cmd) {
             placeCup = cmd.substring(firstColon + 1, secondColon).toInt();
             showCup = cmd.substring(secondColon + 1).toInt();
             
-            if (winCup >= 1 && winCup <= 20 && 
-                placeCup >= 1 && placeCup <= 20 && 
-                showCup >= 1 && showCup <= 20) {
+            if (winCup >= 1 && winCup <= NUM_CUPS && 
+                placeCup >= 1 && placeCup <= NUM_CUPS && 
+                showCup >= 1 && showCup <= NUM_CUPS) {
                 currentMode = "RESULTS";
                 currentAnimation = "RESULTS";
                 animationRunning = true;
@@ -599,9 +599,9 @@ String processCommand(String cmd) {
             placeCup = cmd.substring(firstColon + 1, secondColon).toInt();
             showCup = cmd.substring(secondColon + 1).toInt();
             
-            if (winCup >= 1 && winCup <= 20 && 
-                placeCup >= 1 && placeCup <= 20 && 
-                showCup >= 1 && showCup <= 20) {
+            if (winCup >= 1 && winCup <= NUM_CUPS && 
+                placeCup >= 1 && placeCup <= NUM_CUPS && 
+                showCup >= 1 && showCup <= NUM_CUPS) {
                 currentMode = "RESULTS_ACTIVE";
                 currentAnimation = "RESULTS_ACTIVE";
                 animationRunning = true;
@@ -626,7 +626,7 @@ String processCommand(String cmd) {
             int g = cmd.substring(secondColon + 1, thirdColon).toInt();
             int b = cmd.substring(thirdColon + 1).toInt();
             
-            if (cupNum >= 1 && cupNum <= 20) {
+            if (cupNum >= 1 && cupNum <= NUM_CUPS) {
                 cupLocked[cupNum] = true;
                 cupLockedColor[cupNum] = CRGB(r, g, b);
                 setCup(cupNum, cupLockedColor[cupNum]);
@@ -644,14 +644,14 @@ String processCommand(String cmd) {
         
         if (param == "ALL") {
             // Unlock all cups
-            for (int i = 1; i <= 20; i++) {
+            for (int i = 1; i <= NUM_CUPS; i++) {
                 cupLocked[i] = false;
             }
             return "OK:CUP:UNLOCKED:ALL";
         } else {
             // Unlock specific cup
             int cupNum = param.toInt();
-            if (cupNum >= 1 && cupNum <= 20) {
+            if (cupNum >= 1 && cupNum <= NUM_CUPS) {
                 cupLocked[cupNum] = false;
                 return "OK:CUP:UNLOCKED:" + String(cupNum);
             }
@@ -1230,7 +1230,7 @@ void animResultsActive() {
     unsigned long elapsed = millis() - animStartTime;
     
     // Shared 2-second breathing cycle for all cups (sin 0→1→0 in 2 sec)
-    float breathe = (sin(elapsed * 3.14159f / 1000.0f - 1.5708f) + 1.0f) / 2.0f;
+    float breathe = (sin(elapsed * M_PI / 1000.0f - (M_PI / 2.0f)) + 1.0f) / 2.0f;
     
     // Winners: pulse 40%–100% (102-255) — dramatic dim-to-bright pulse
     uint8_t winnerBrightness = 102 + (uint8_t)(breathe * 153);  // 102-255 = 40-100%
@@ -1301,10 +1301,10 @@ CRGB hexToRGB(String hex) {
  * Set a specific cup to a color (Cups 1-20, 32 LEDs each)
  */
 void setCup(uint8_t cupNumber, CRGB color) {
-    if (cupNumber < 1 || cupNumber > 20) return;
-    
-    int startIdx = (cupNumber - 1) * 32;
-    int endIdx = startIdx + 32;
+    if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
+
+    int startIdx = (cupNumber - 1) * LEDS_PER_CUP;
+    int endIdx = startIdx + LEDS_PER_CUP;
     
     for (int i = startIdx; i < endIdx; i++) {
         leds[i] = color;

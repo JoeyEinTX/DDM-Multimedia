@@ -267,13 +267,6 @@ body {
     margin-left: 8px;
 }
 
-.dot-ampm .dot-letter {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(7, 1fr);
-    gap: 2px;
-}
-
 .dot-ampm .dot {
     width: 4px;
     height: 4px;

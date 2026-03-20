@@ -1,7 +1,6 @@
 # tote_client.py - HTTP client to communicate with Interstate75 LED tote board
 
 import requests
-import time
 from urllib.parse import urlencode
 
 

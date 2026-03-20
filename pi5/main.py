@@ -8,7 +8,7 @@ import requests
 import json
 import queue
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from threading import Lock
 
 # Add parent directory to path for imports
@@ -18,7 +18,7 @@ from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, N
                    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED)
 from communication.esp32_client import esp32, check_esp32_connection
-from communication.tote_client import init_tote_client, get_tote_client
+from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 
