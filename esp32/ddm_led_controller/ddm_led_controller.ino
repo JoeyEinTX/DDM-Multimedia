@@ -1187,12 +1187,7 @@ void animHeartbeatCooldown() {
  */
 void animSilks() {
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
-        int startIdx = (cup - 1) * LEDS_PER_CUP;
-        for (int i = 0; i < LEDS_PER_CUP; i++) {
-            // 4-LED blocks: 0-3 primary, 4-7 accent, 8-11 primary, ...
-            bool isPrimary = ((i / 4) % 2 == 0);
-            leds[startIdx + i] = isPrimary ? SILK_PRIMARY[cup] : SILK_ACCENT[cup];
-        }
+        setCup(cup, SILK_PRIMARY[cup]);
     }
     FastLED.show();
     updatePowerEstimate();
