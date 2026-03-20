@@ -670,11 +670,24 @@ async function sendReset() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ command: 'RESET' })
                 });
+                // Unlock all cups on ESP32
+                await fetch('/api/cup/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cup: 'ALL' })
+                });
                 showNotification('Race reset - all systems cleared', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
-                // Clear results from localStorage
+                // Clear ALL results state
                 localStorage.removeItem('raceResults');
                 pendingResults = null;
+                justSubmittedResults = false;
+                resultsState = { step: 'win', win: null, place: null, show: null };
+                // Clear finish timer if running
+                if (finishTimer) {
+                    clearTimeout(finishTimer);
+                    finishTimer = null;
+                }
                 // Hide results banner
                 hideResultsBanner();
                 // Re-enable all race-phase buttons
