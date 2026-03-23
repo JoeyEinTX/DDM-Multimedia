@@ -1,0 +1,539 @@
+/* =====================================================================
+   DDM Spectator Tote Board — TV Display Styles
+   Designed for 1080p TV viewing at 10+ feet distance.
+   Dark teal palette, monospace type, high-contrast text.
+   ===================================================================== */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg:             #0a1f1a;
+    --bg2:            #0d2920;
+    --bg3:            #112e24;
+    --border:         #1a3a30;
+    --amber:          #D4A000;
+    --amber-bright:   #FFD700;
+    --teal:           #4ECDC4;
+    --green:          #22c55e;
+    --red:            #E53935;
+    --text-primary:   #e8e8e8;
+    --text-secondary: #888888;
+    --text-dim:       #444444;
+}
+
+html, body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: 'Courier New', 'Lucida Console', monospace;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+/* =====================================================================
+   SHARED HEADER  (65 px, always visible)
+   ===================================================================== */
+
+.sp-header {
+    height: 65px;
+    background: var(--bg2);
+    border-bottom: 2px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.sp-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sp-brand-title {
+    color: var(--amber);
+    font-size: 1.4em;
+    font-weight: 700;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+}
+
+.sp-brand-sub {
+    color: var(--text-dim);
+    font-size: 0.65em;
+    letter-spacing: 3px;
+}
+
+.sp-header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.sp-clock {
+    color: var(--amber);
+    font-size: 1.8em;
+    font-weight: 700;
+    letter-spacing: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================================
+   STATE BADGE  (header pill)
+   ===================================================================== */
+
+.state-badge {
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 700;
+    letter-spacing: 3px;
+    white-space: nowrap;
+}
+
+.state-badge.betting    { background: #f59e0b; color: #000; }
+.state-badge.entries    { background: var(--green); color: #000; }
+.state-badge.dormant    { background: var(--text-dim); color: var(--text-secondary); }
+.state-badge.official   { background: var(--amber-bright); color: #000; }
+.state-badge.racing     { background: var(--teal); color: #000; }
+
+.state-badge.final-call {
+    background: var(--red);
+    color: #fff;
+    animation: badgeBlink 0.7s infinite;
+}
+
+@keyframes badgeBlink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
+
+/* =====================================================================
+   SCREEN SWITCHER
+   ===================================================================== */
+
+.screen {
+    display: none;
+    width: 100vw;
+    height: calc(100vh - 65px);
+}
+
+.screen.active {
+    display: flex;
+    flex-direction: column;
+}
+
+/* =====================================================================
+   ENTRIES / BETTING OPEN SCREEN
+   ===================================================================== */
+
+.sp-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 16px 24px;
+}
+
+.entries-column-header {
+    display: grid;
+    grid-template-columns: 52px 1fr 160px 80px;
+    gap: 12px;
+    padding: 4px 8px 8px 8px;
+    color: var(--text-dim);
+    font-size: 0.7em;
+    letter-spacing: 3px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+}
+
+.horse-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    height: calc(100% - 40px);
+}
+
+/* ----- Individual horse row ----- */
+
+.horse-row {
+    display: grid;
+    grid-template-columns: 52px 1fr 160px 80px;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid transparent;
+    transition: background 0.3s;
+}
+
+.horse-row.odds-flash {
+    background: rgba(212, 160, 0, 0.12);
+    border-color: rgba(212, 160, 0, 0.3);
+}
+
+/* ----- Saddle cloth number ----- */
+
+.cloth {
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 1.1em;
+    font-family: 'Arial Black', Arial, sans-serif;
+    letter-spacing: -1px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* ----- Horse info ----- */
+
+.horse-info {
+    overflow: hidden;
+}
+
+.horse-name {
+    font-size: 1em;
+    font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.horse-jockey {
+    font-size: 0.65em;
+    color: var(--text-secondary);
+    margin-top: 1px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.horse-jockey-wide {
+    font-size: 0.65em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* ----- Odds ----- */
+
+.horse-odds {
+    font-size: 1.2em;
+    font-weight: 700;
+    color: var(--amber);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.3s;
+}
+
+.horse-odds.flash {
+    color: #fff;
+}
+
+/* ----- Footer ----- */
+
+.sp-footer {
+    padding: 8px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.65em;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+    flex-shrink: 0;
+}
+
+/* =====================================================================
+   AT THE POST SCREEN
+   ===================================================================== */
+
+#screen-atpost .screen-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 28px;
+    text-align: center;
+}
+
+.atpost-eyebrow {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    letter-spacing: 6px;
+}
+
+.atpost-headline {
+    color: var(--amber-bright);
+    font-size: 5em;
+    font-weight: 700;
+    letter-spacing: 8px;
+    line-height: 1.1;
+    text-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+    animation: headlineGlow 2s ease-in-out infinite;
+}
+
+@keyframes headlineGlow {
+    0%, 100% { text-shadow: 0 0 20px rgba(255, 215, 0, 0.4); }
+    50%      { text-shadow: 0 0 50px rgba(255, 215, 0, 0.8); }
+}
+
+.atpost-closed {
+    color: var(--red);
+    font-size: 0.9em;
+    letter-spacing: 4px;
+    animation: badgeBlink 1.5s infinite;
+}
+
+/* Gate row */
+
+.gate-row {
+    display: flex;
+    gap: 4px;
+}
+
+.gate {
+    width: 28px;
+    height: 52px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+.gate-number {
+    font-size: 0.5em;
+    color: var(--text-dim);
+}
+
+.gate-cloth {
+    width: 18px;
+    height: 18px;
+    border-radius: 2px;
+}
+
+/* =====================================================================
+   RUNNING SCREEN
+   ===================================================================== */
+
+#screen-running .screen-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 24px;
+    text-align: center;
+}
+
+.running-eyebrow {
+    color: var(--teal);
+    font-size: 0.9em;
+    letter-spacing: 6px;
+}
+
+.running-headline {
+    color: var(--teal);
+    font-size: 5em;
+    font-weight: 700;
+    letter-spacing: 8px;
+    line-height: 1.1;
+    animation: runPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes runPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.7; transform: scale(0.98); }
+}
+
+.running-sub {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    letter-spacing: 4px;
+}
+
+.running-dots {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.running-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    animation: dotBounce 0.8s ease-in-out infinite;
+}
+
+.running-dot:nth-child(2) { animation-delay: 0.15s; }
+.running-dot:nth-child(3) { animation-delay: 0.30s; }
+.running-dot:nth-child(4) { animation-delay: 0.45s; }
+.running-dot:nth-child(5) { animation-delay: 0.60s; }
+
+@keyframes dotBounce {
+    0%, 100% { transform: translateY(0);     opacity: 0.4; }
+    50%      { transform: translateY(-10px); opacity: 1; }
+}
+
+/* =====================================================================
+   RESULTS / OFFICIAL SCREEN
+   ===================================================================== */
+
+#screen-results .screen-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0;
+    padding: 40px;
+}
+
+.results-eyebrow {
+    color: var(--text-dim);
+    font-size: 0.8em;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+}
+
+.results-headline {
+    color: var(--amber);
+    font-size: 2.4em;
+    font-weight: 700;
+    letter-spacing: 10px;
+    margin-bottom: 40px;
+    text-align: center;
+    animation: headlineGlow 3s ease-in-out infinite;
+}
+
+.results-board {
+    background: var(--bg2);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    width: 100%;
+    max-width: 900px;
+}
+
+/* ----- Result row ----- */
+
+.result-row {
+    display: grid;
+    grid-template-columns: 140px 80px 1fr;
+    gap: 24px;
+    align-items: center;
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+}
+
+.result-row:last-child { border-bottom: none; }
+
+.result-row.win   { background: rgba(255, 215, 0, 0.04); }
+.result-row.place { background: rgba(192, 192, 192, 0.04); }
+.result-row.show  { background: rgba(205, 127, 50, 0.04); }
+
+/* ----- Result label (WIN / PLACE / SHOW) ----- */
+
+.result-label {
+    font-size: 2em;
+    font-weight: 700;
+    letter-spacing: 4px;
+}
+
+.result-label.win   { color: var(--amber-bright); }
+.result-label.place { color: #C0C0C0; }
+.result-label.show  { color: #CD7F32; }
+
+/* ----- Large result cloth square ----- */
+
+.result-cloth-big {
+    width: 72px;
+    height: 72px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 1.8em;
+    font-family: 'Arial Black', Arial, sans-serif;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+/* ----- Result horse details ----- */
+
+.result-horse-name {
+    font-size: 2.2em;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: var(--text-primary);
+    text-transform: uppercase;
+}
+
+.result-horse-meta {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    letter-spacing: 2px;
+}
+
+/* Breathing animation on results board */
+#screen-results.active .results-board {
+    animation: resultsBreathe 4s ease-in-out infinite;
+}
+
+@keyframes resultsBreathe {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.85; }
+}
+
+/* =====================================================================
+   DORMANT / STANDBY SCREEN
+   ===================================================================== */
+
+#screen-dormant .screen-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+}
+
+.dormant-title {
+    color: var(--text-dim);
+    font-size: 3em;
+    font-weight: 700;
+    letter-spacing: 10px;
+    animation: dormantPulse 4s ease-in-out infinite;
+}
+
+@keyframes dormantPulse {
+    0%, 100% { opacity: 0.3; }
+    50%      { opacity: 0.7; }
+}
+
+.dormant-sub {
+    color: var(--text-dim);
+    font-size: 0.7em;
+    letter-spacing: 4px;
+    opacity: 0.5;
+}
+
+.dormant-date {
+    color: var(--amber);
+    font-size: 0.8em;
+    letter-spacing: 3px;
+    opacity: 0.5;
+    animation: dormantPulse 4s ease-in-out infinite 2s;
+}
