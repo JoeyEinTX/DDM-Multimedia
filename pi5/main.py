@@ -362,6 +362,29 @@ def api_results():
         })
 
 
+@app.route('/api/spectator/state')
+def spectator_state():
+    """Return current race state and horse data for spectator display."""
+    try:
+        state_data = racing_service.get_current_state_data()
+        results = load_results()
+        return jsonify({
+            'success': True,
+            'state': state_data.get('state', 'DORMANT'),
+            'horses': state_data.get('horses', []),
+            'race_name': state_data.get('race_name', 'Derby de Mayo'),
+            'results': results
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'state': 'DORMANT',
+            'horses': [],
+            'results': None
+        })
+
+
 @app.route('/api/results/clear', methods=['DELETE', 'POST'])
 def api_results_clear():
     """Clear race results"""

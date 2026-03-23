@@ -569,6 +569,37 @@ class RacingDataService:
         logger.info("Results cleared")
 
     # -----------------------------------------------------------------
+    # Spectator state bundle
+    # -----------------------------------------------------------------
+
+    def get_current_state_data(self) -> dict:
+        """Return current race state and horse data for spectator display.
+
+        Returns:
+            Dict with keys: state (str), horses (list of dicts), race_name (str).
+        """
+        state_info = self.get_state()
+        horses_raw = self.get_horses()
+
+        # Re-map horse dicts to the shape the spectator JS expects
+        horses = [
+            {
+                "position": h["post_position"],
+                "name": h["horse_name"],
+                "jockey": h["jockey"],
+                "odds": h.get("morning_line_odds", "---"),
+                "morning_line": h.get("morning_line_odds", "---"),
+            }
+            for h in horses_raw
+        ]
+
+        return {
+            "state": state_info["state"],
+            "horses": horses,
+            "race_name": "Derby de Mayo",
+        }
+
+    # -----------------------------------------------------------------
     # Lifecycle
     # -----------------------------------------------------------------
 
