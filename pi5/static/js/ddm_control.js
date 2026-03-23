@@ -1820,4 +1820,45 @@ document.addEventListener('DOMContentLoaded', function() {
     // Listen for fullscreen changes
     document.addEventListener('fullscreenchange', updateFullscreenIcon);
     document.addEventListener('webkitfullscreenchange', updateFullscreenIcon); // Safari
+
+    // Keep spectator preview indicator in sync with current-mode text
+    const modeEl = document.getElementById('current-mode');
+    if (modeEl) {
+        const modeObserver = new MutationObserver(function () {
+            updateSpectatorIndicator(modeEl.textContent.trim());
+        });
+        modeObserver.observe(modeEl, { childList: true, characterData: true, subtree: true });
+    }
 });
+
+// =====================================================================
+// Spectator Preview — state indicator on admin dashboard
+// =====================================================================
+
+function updateSpectatorIndicator(modeText) {
+    var el = document.getElementById('spectator-state-indicator');
+    if (!el) return;
+
+    // Map admin mode strings to spectator state display
+    var MODE_TO_SPECTATOR = {
+        'STANDBY':            { text: '\u25CF DORMANT',      cls: 'dormant' },
+        'IDLE':               { text: '\u25CF DORMANT',      cls: 'dormant' },
+        'DISCONNECTED':       { text: '\u25CF DORMANT',      cls: 'dormant' },
+        'WELCOME':            { text: '\u25CF ENTRIES',       cls: 'betting' },
+        'BETTING_60':         { text: '\u25CF BETTING OPEN',  cls: 'betting' },
+        'BETTING_30':         { text: '\u25CF BETTING OPEN',  cls: 'betting' },
+        'FINAL_CALL':         { text: '\u25CF FINAL CALL',    cls: 'final-call' },
+        'RACE_START':         { text: '\u25CF AT THE POST',   cls: 'racing' },
+        'CHAOS':              { text: '\u25CF RUNNING',       cls: 'racing' },
+        'FINISH':             { text: '\u25CF FINISHED',      cls: 'official' },
+        'RESULTS':            { text: '\u25CF OFFICIAL',      cls: 'official' },
+        'HEARTBEAT_COOLDOWN': { text: '\u25CF OFFICIAL',      cls: 'official' },
+        'COOLDOWN':           { text: '\u25CF OFFICIAL',      cls: 'official' },
+        'TEST':               { text: '\u25CF DORMANT',      cls: 'dormant' },
+        'STOPPED':            { text: '\u25CF DORMANT',      cls: 'dormant' }
+    };
+
+    var info = MODE_TO_SPECTATOR[modeText] || { text: '\u25CF DORMANT', cls: 'dormant' };
+    el.textContent = info.text;
+    el.className = 'spectator-state-dot ' + info.cls;
+}

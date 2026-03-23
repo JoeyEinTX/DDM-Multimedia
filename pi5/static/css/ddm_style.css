@@ -1954,3 +1954,82 @@ body {
         padding: 24px;
     }
 }
+
+/* =====================================================================
+   Spectator Preview Panel
+   ===================================================================== */
+
+.spectator-preview-section {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.spectator-preview-header {
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spectator-preview-label {
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 3px;
+    color: #666666;
+    text-transform: uppercase;
+}
+
+.spectator-preview-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.spectator-state-dot {
+    font-size: 0.75em;
+    letter-spacing: 2px;
+    font-weight: 600;
+}
+
+.spectator-state-dot.dormant    { color: #555; }
+.spectator-state-dot.betting    { color: #f59e0b; }
+.spectator-state-dot.final-call { color: #E53935; }
+.spectator-state-dot.racing     { color: #4ECDC4; }
+.spectator-state-dot.official   { color: #FFD700; }
+
+.btn-spectator-open {
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: #4ECDC4;
+    text-decoration: none;
+    padding: 4px 12px;
+    border: 1px solid rgba(78, 205, 196, 0.4);
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.btn-spectator-open:hover {
+    background: rgba(78, 205, 196, 0.1);
+    border-color: #4ECDC4;
+}
+
+.spectator-preview-frame-wrapper {
+    position: relative;
+    height: 200px;
+    overflow: hidden;
+    background: #0a1f1a;
+}
+
+.spectator-preview-iframe {
+    width: 1920px;
+    height: 1080px;
+    border: none;
+    transform: scale(0.185);
+    transform-origin: top left;
+    pointer-events: none;
+}

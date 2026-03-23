@@ -107,6 +107,21 @@
             </div>
         </div>
 
+        <!-- Spectator Preview Panel -->
+        <div class="spectator-preview-section">
+            <div class="spectator-preview-header">
+                <span class="spectator-preview-label">SPECTATOR DISPLAY</span>
+                <div class="spectator-preview-controls">
+                    <span id="spectator-state-indicator" class="spectator-state-dot dormant">● DORMANT</span>
+                    <a href="/guest/spectator" target="_blank" class="btn-spectator-open">OPEN ON TV ↗</a>
+                </div>
+            </div>
+            <div class="spectator-preview-frame-wrapper">
+                <iframe id="spectator-preview-iframe" src="/guest/spectator"
+                    class="spectator-preview-iframe" scrolling="no" frameborder="0"></iframe>
+            </div>
+        </div>
+
         <!-- Footer: WiFi + Mode + Device Count (left), Powered by JoeyAI (right) -->
         <div class="footer-section">
             <div class="footer-info">
