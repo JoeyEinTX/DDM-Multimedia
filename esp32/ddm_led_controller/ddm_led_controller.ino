@@ -14,10 +14,23 @@
 
 #define SOCKET_PORT 5005
 #define LED_PIN 18
-#define LED_COUNT 640
+#define LED_COUNT 636
 #define STATUS_LED_PIN 2
 #define NUM_CUPS 20
-#define LEDS_PER_CUP 32
+#define LEDS_PER_CUP 32  // max LEDs per cup (some cups have 31)
+
+// Per-cup LED counts (4 cups have 31 LEDs instead of 32)
+const uint8_t CUP_LED_COUNT[NUM_CUPS + 1] = {
+    0,                       // index 0 unused
+    32, 32, 32, 32, 32,      // cups 1-5
+    31, 32, 32, 31, 32,      // cups 6-10
+    32, 32, 32, 32, 31,      // cups 11-15
+    32, 31, 32, 32, 32       // cups 16-20
+};
+
+// Pre-calculated start indices for each cup
+// Cup 1 starts at 0, Cup 2 at 32, ..., Cup 6 at 160, Cup 7 at 191, etc.
+uint16_t CUP_START_INDEX[NUM_CUPS + 1];  // calculated in setup()
 
 // ===== OLED DISPLAY =====
 #define OLED_WIDTH 128
@@ -189,7 +202,15 @@ void setup() {
     delay(1000);
     
     printBanner();
-    
+
+    // Calculate cup start indices from per-cup LED counts
+    CUP_START_INDEX[0] = 0;  // unused
+    CUP_START_INDEX[1] = 0;  // cup 1 starts at LED 0
+    for (int i = 2; i <= NUM_CUPS; i++) {
+        CUP_START_INDEX[i] = CUP_START_INDEX[i - 1] + CUP_LED_COUNT[i - 1];
+    }
+    // CUP_START_INDEX[1]=0, [2]=32, ..., [6]=160, [7]=191, etc.
+
     // Initialize status LED
     pinMode(STATUS_LED_PIN, OUTPUT);
     digitalWrite(STATUS_LED_PIN, LOW);
@@ -199,7 +220,7 @@ void setup() {
     showBootSplash();   // "DDM v3.1" for 2 seconds (blocking, startup only)
     
     // Initialize LED strip
-    Serial.println("[LED] Initializing 640 LEDs on GPIO 18...");
+    Serial.println("[LED] Initializing 636 LEDs on GPIO 18...");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
     FastLED.setBrightness(currentBrightness);
     FastLED.clear();
@@ -1014,7 +1035,7 @@ void animFinalCall() {
  * Phase 2 (Galloping on Green): Runs continuously until next command
  *   - Background: All cups stay solid green (~40% brightness)
  *   - A bright white pulse sweeps across cups sequentially (1→2→3→...→20→1...)
- *   - Each cup's white flash is all 32 LEDs going full white for ~60ms
+ *   - Each cup's white flash is all LEDs in that cup going full white for ~60ms
  *   - After the flash, cup fades back to green background
  *   - Tempo starts at 250ms between pulses and accelerates to 80ms over 45 seconds
  *   - Non-blocking millis() timing throughout
@@ -1298,15 +1319,15 @@ CRGB hexToRGB(String hex) {
 }
 
 /**
- * Set a specific cup to a color (Cups 1-20, 32 LEDs each)
+ * Set a specific cup to a color (Cups 1-20, variable LED counts)
  */
 void setCup(uint8_t cupNumber, CRGB color) {
     if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
 
-    int startIdx = (cupNumber - 1) * LEDS_PER_CUP;
-    int endIdx = startIdx + LEDS_PER_CUP;
-    
-    for (int i = startIdx; i < endIdx; i++) {
+    int startIdx = CUP_START_INDEX[cupNumber];
+    int count = CUP_LED_COUNT[cupNumber];
+
+    for (int i = startIdx; i < startIdx + count; i++) {
         leds[i] = color;
     }
 }
