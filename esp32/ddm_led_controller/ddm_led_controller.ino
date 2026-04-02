@@ -45,24 +45,8 @@ const CRGB COLOR_BRONZE = CRGB(205, 127, 50);
 const CRGB COLOR_WHITE = CRGB(255, 255, 255);
 const CRGB COLOR_BLACK = CRGB(0, 0, 0);
 
-// ===== PER-CUP LED COUNTS =====
-// Cups 6, 9, 15, 17 have 31 LEDs; all others have 32
-const uint8_t CUP_LED_COUNT[NUM_CUPS + 1] = {
-    0,                                          // index 0 unused
-    32, 32, 32, 32, 32,                         // cups 1-5
-    31,                                         // cup 6
-    32, 32,                                     // cups 7-8
-    31,                                         // cup 9
-    32, 32, 32, 32, 32,                         // cups 10-14
-    31,                                         // cup 15
-    32,                                         // cup 16
-    31,                                         // cup 17
-    32, 32, 32                                  // cups 18-20
-};
-uint16_t CUP_START_INDEX[NUM_CUPS + 1];        // computed in setup()
-
 // ===== GLOBAL VARIABLES =====
-CRGB leds[LED_COUNT];
+CRGB leds[636];
 WiFiServer server(SOCKET_PORT);
 String currentIP = "";
 uint8_t currentBrightness = 128;
@@ -165,6 +149,18 @@ const CRGB SILK_ACCENT[NUM_CUPS + 1] = {
     CRGB(255,205,0)        // 20: yellow
 };
 
+// Per-cup LED counts (cups 6,9,15,17 have 31 LEDs, all others 32)
+const uint8_t CUP_LED_COUNT[NUM_CUPS + 1] = {
+  0,                          // index 0 unused
+  32, 32, 32, 32, 32,        // cups 1-5
+  31, 32, 32, 31, 32,        // cups 6-10
+  32, 32, 32, 32, 31,        // cups 11-15
+  32, 31, 32, 32, 32         // cups 16-20
+};
+
+// Pre-calculated start indices (filled in setup())
+int CUP_START_INDEX[NUM_CUPS + 1] = {0};
+
 // ===== FUNCTION DECLARATIONS =====
 void connectWiFi();
 String processCommand(String cmd);
@@ -214,10 +210,15 @@ void setup() {
     initOLED();
     showBootSplash();   // "DDM v3.1" for 2 seconds (blocking, startup only)
     
-    // Compute per-cup start indices
-    CUP_START_INDEX[0] = 0;
+    // Calculate cumulative start indices
+    CUP_START_INDEX[1] = 0;
+    for (int i = 2; i <= NUM_CUPS; i++) {
+        CUP_START_INDEX[i] = CUP_START_INDEX[i-1] + CUP_LED_COUNT[i-1];
+    }
+    // Print for verification
+    Serial.println("[LED] Cup start indices:");
     for (int i = 1; i <= NUM_CUPS; i++) {
-        CUP_START_INDEX[i] = CUP_START_INDEX[i - 1] + CUP_LED_COUNT[i - 1];
+        Serial.println("  Cup " + String(i) + ": start=" + String(CUP_START_INDEX[i]) + " count=" + String(CUP_LED_COUNT[i]));
     }
 
     // Initialize LED strip
