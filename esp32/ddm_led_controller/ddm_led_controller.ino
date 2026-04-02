@@ -14,7 +14,7 @@
 
 #define SOCKET_PORT 5005
 #define LED_PIN 18
-#define LED_COUNT 640
+#define LED_COUNT 636
 #define STATUS_LED_PIN 2
 #define NUM_CUPS 20
 #define LEDS_PER_CUP 32
@@ -44,6 +44,22 @@ const CRGB COLOR_SILVER = CRGB(192, 192, 192);
 const CRGB COLOR_BRONZE = CRGB(205, 127, 50);
 const CRGB COLOR_WHITE = CRGB(255, 255, 255);
 const CRGB COLOR_BLACK = CRGB(0, 0, 0);
+
+// ===== PER-CUP LED COUNTS =====
+// Cups 6, 9, 15, 17 have 31 LEDs; all others have 32
+const uint8_t CUP_LED_COUNT[NUM_CUPS + 1] = {
+    0,                                          // index 0 unused
+    32, 32, 32, 32, 32,                         // cups 1-5
+    31,                                         // cup 6
+    32, 32,                                     // cups 7-8
+    31,                                         // cup 9
+    32, 32, 32, 32, 32,                         // cups 10-14
+    31,                                         // cup 15
+    32,                                         // cup 16
+    31,                                         // cup 17
+    32, 32, 32                                  // cups 18-20
+};
+uint16_t CUP_START_INDEX[NUM_CUPS + 1];        // computed in setup()
 
 // ===== GLOBAL VARIABLES =====
 CRGB leds[LED_COUNT];
@@ -198,8 +214,14 @@ void setup() {
     initOLED();
     showBootSplash();   // "DDM v3.1" for 2 seconds (blocking, startup only)
     
+    // Compute per-cup start indices
+    CUP_START_INDEX[0] = 0;
+    for (int i = 1; i <= NUM_CUPS; i++) {
+        CUP_START_INDEX[i] = CUP_START_INDEX[i - 1] + CUP_LED_COUNT[i - 1];
+    }
+
     // Initialize LED strip
-    Serial.println("[LED] Initializing 640 LEDs on GPIO 18...");
+    Serial.println("[LED] Initializing 636 LEDs on GPIO 18...");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
     FastLED.setBrightness(currentBrightness);
     FastLED.clear();
@@ -1303,10 +1325,10 @@ CRGB hexToRGB(String hex) {
 void setCup(uint8_t cupNumber, CRGB color) {
     if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
 
-    int startIdx = (cupNumber - 1) * LEDS_PER_CUP;
-    int endIdx = startIdx + LEDS_PER_CUP;
-    
-    for (int i = startIdx; i < endIdx; i++) {
+    int startIdx = CUP_START_INDEX[cupNumber];
+    int count = CUP_LED_COUNT[cupNumber];
+
+    for (int i = startIdx; i < startIdx + count; i++) {
         leds[i] = color;
     }
 }
