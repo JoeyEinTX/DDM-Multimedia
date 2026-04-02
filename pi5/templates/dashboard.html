@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ system_name }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Playfair+Display:ital@1&display=swap" rel="stylesheet">
     <!-- iro.js Color Picker Library -->
     <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
 </head>
@@ -18,11 +21,11 @@
         <!-- Header: Logo/Title (left), Weather + Clock (right) -->
         <header class="header">
             <div class="header-title">
-                <div class="logo-text">
-                    <div class="main-title">
-                        <span class="letter" style="color: #4ECDC4;">D</span><span class="letter" style="color: #E53935;">E</span><span class="letter" style="color: #22c55e;">R</span><span class="letter" style="color: #4ECDC4;">B</span><span class="letter" style="color: #f59e0b;">Y</span><span class="word-space"></span><span class="letter" style="color: #E53935;">D</span><span class="letter" style="color: #22c55e;">E</span><span class="word-space"></span><span class="letter" style="color: #f59e0b;">M</span><span class="letter" style="color: #4ECDC4;">A</span><span class="letter" style="color: #22c55e;">Y</span><span class="letter" style="color: #f59e0b;">O</span>
-                    </div>
-                    <div class="sub-title">MULTIMEDIA</div>
+                <div class="logo-stack">
+                    <span class="logo-derby">DERBY</span>
+                    <span class="logo-de">de</span>
+                    <span class="logo-mayo">MAYO</span>
+                    <span class="logo-multimedia">MULTIMEDIA</span>
                 </div>
             </div>
             <div class="header-info">
@@ -37,17 +40,33 @@
             </div>
         </header>
 
-        <!-- RACE CONTROL Toggle - AUTO (API) / MANUAL -->
+        <!-- Serape Band -->
+        <div class="serape-band"></div>
+
+        <!-- RACE CONTROL Toggle Bar - Two Cards -->
         <div class="race-control-bar">
-            <div class="race-control-label">RACE CONTROL</div>
-            <div class="race-control-toggle-wrap">
-                <span class="race-control-status-dot status-manual" id="race-control-dot"></span>
-                <label class="race-control-switch">
-                    <input type="checkbox" id="race-control-toggle" autocomplete="off">
-                    <span class="race-control-slider"></span>
-                </label>
-                <span class="race-control-state-text" id="race-control-state">MANUAL</span>
-                <span class="race-control-api-hint" id="race-control-api-hint" style="display: none;">API CONTROLLED</span>
+            <div class="race-control-card">
+                <div class="race-control-card-label">AUTO / MANUAL</div>
+                <div class="race-control-toggle-wrap">
+                    <span class="race-control-status-dot status-manual" id="race-control-dot"></span>
+                    <label class="race-control-switch">
+                        <input type="checkbox" id="race-control-toggle" autocomplete="off">
+                        <span class="race-control-slider"></span>
+                    </label>
+                    <span class="race-control-state-text" id="race-control-state">MANUAL</span>
+                    <span class="race-control-api-hint" id="race-control-api-hint" style="display: none;">API CONTROLLED</span>
+                </div>
+            </div>
+            <div class="race-control-card">
+                <div class="race-control-card-label">RACE INFO</div>
+                <div class="race-control-toggle-wrap">
+                    <span class="race-info-status-dot" id="race-info-dot"></span>
+                    <label class="race-control-switch">
+                        <input type="checkbox" id="race-info-toggle" autocomplete="off">
+                        <span class="race-control-slider"></span>
+                    </label>
+                    <span class="race-control-state-text" id="race-info-state">OFF</span>
+                </div>
             </div>
         </div>
 
@@ -107,18 +126,19 @@
             </div>
         </div>
 
-        <!-- Spectator Preview Panel -->
-        <div class="spectator-preview-section">
-            <div class="spectator-preview-header">
-                <span class="spectator-preview-label">SPECTATOR DISPLAY</span>
-                <div class="spectator-preview-controls">
+        <!-- Spectator Panel (hidden by default, toggled by Race Info) -->
+        <div id="spectator-panel" class="spectator-panel" style="display: none;">
+            <div class="spectator-panel-header">
+                <span class="spectator-panel-label">SPECTATOR DISPLAY</span>
+                <div class="spectator-panel-controls">
                     <span id="spectator-state-indicator" class="spectator-state-dot dormant">● DORMANT</span>
                     <a href="/guest/spectator" target="_blank" class="btn-spectator-open">OPEN ON TV ↗</a>
                 </div>
             </div>
-            <div class="spectator-preview-frame-wrapper">
+            <div class="spectator-panel-frame-wrapper">
                 <iframe id="spectator-preview-iframe" src="/guest/spectator"
-                    class="spectator-preview-iframe" scrolling="no" frameborder="0"></iframe>
+                    scrolling="no" frameborder="0"
+                    style="width:1920px;height:1080px;border:none;transform:scale(0.185);transform-origin:top left;pointer-events:none;"></iframe>
             </div>
         </div>
 
@@ -303,5 +323,27 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/ddm_control.js') }}"></script>
+    <script>
+    // Race Info toggle — show/hide spectator panel
+    (function() {
+        const toggle = document.getElementById('race-info-toggle');
+        const panel = document.getElementById('spectator-panel');
+        const stateText = document.getElementById('race-info-state');
+        const dot = document.getElementById('race-info-dot');
+        if (toggle && panel) {
+            toggle.addEventListener('change', function() {
+                if (this.checked) {
+                    panel.style.display = 'block';
+                    stateText.textContent = 'ON';
+                    if (dot) { dot.classList.add('active'); }
+                } else {
+                    panel.style.display = 'none';
+                    stateText.textContent = 'OFF';
+                    if (dot) { dot.classList.remove('active'); }
+                }
+            });
+        }
+    })();
+    </script>
 </body>
 </html>

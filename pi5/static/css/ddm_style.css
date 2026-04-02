@@ -70,8 +70,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: #0c1820;
-    color: #ffffff;
+    background: #F5F0E8;
+    color: #1a1a1a;
     min-height: 100vh;
     min-width: 1000px;
     padding: 24px;
@@ -86,13 +86,13 @@ body {
 
 /* Header */
 .header {
-    background: rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(8px);
     padding: 24px 32px;
     border-radius: 8px;
-    margin-bottom: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.7);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -104,37 +104,52 @@ body {
     gap: 16px;
 }
 
-.logo-text {
+/* Stacked Logo */
+.logo-stack {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    line-height: 0.9;
 }
 
-.main-title {
-    font-family: Impact, 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
-    font-size: 2.5em;
-    font-weight: 900;
-    line-height: 1;
-    letter-spacing: 0px;
+.logo-derby {
+    font-family: 'Bebas Neue', Impact, sans-serif;
+    font-size: 3em;
+    font-weight: 400;
+    background: linear-gradient(135deg, #FF6A13, #DE4343);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 2px;
 }
 
-.main-title .letter {
-    text-shadow: 
-        2px 2px 0px rgba(0, 0, 0, 0.3),
-        3px 3px 8px rgba(0, 0, 0, 0.2);
+.logo-de {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-style: italic;
+    font-size: 1.4em;
+    color: #3F8E43;
+    letter-spacing: 6px;
+    text-transform: lowercase;
+    padding-left: 4px;
 }
 
-.main-title .word-space {
-    display: inline-block;
-    width: 0.4em;
+.logo-mayo {
+    font-family: 'Bebas Neue', Impact, sans-serif;
+    font-size: 3em;
+    font-weight: 400;
+    background: linear-gradient(135deg, #FEC600, #FF6A13);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 2px;
 }
 
-.sub-title {
-    font-family: Impact, 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
-    font-size: 1.3em;
-    font-weight: 700;
-    letter-spacing: 4px;
-    color: #22c55e;
+.logo-multimedia {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.8em;
+    font-variant: small-caps;
+    color: #00B1B7;
+    letter-spacing: 8px;
+    padding-left: 2px;
 }
 
 .header-info {
@@ -143,7 +158,7 @@ body {
     gap: 16px;
     font-size: 1.1em;
     font-weight: 500;
-    color: #888888;
+    color: #555;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */
@@ -156,22 +171,22 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
     font-size: 1.3em;
-    color: #888888;
+    color: #555;
     padding: 0;
     z-index: 900;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .btn-fullscreen-corner:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: #ffffff;
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(0, 0, 0, 0.2);
+    color: #1a1a1a;
 }
 
 .btn-fullscreen-corner:active {
@@ -282,17 +297,17 @@ body {
     align-items: center;
     gap: 10px;
     padding: 6px 12px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.04);
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.08);
     cursor: pointer;
     transition: all 0.2s ease;
     margin-right: 12px;
 }
 
 .weather-summary-header:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.07);
+    border-color: rgba(0, 0, 0, 0.12);
 }
 
 .weather-icon {
@@ -309,19 +324,19 @@ body {
 .weather-temp-large {
     font-size: 1.3em;
     font-weight: 700;
-    color: #ffffff;
+    color: #1a1a1a;
     line-height: 1;
 }
 
 .weather-condition {
     font-size: 0.75em;
-    color: #888888;
+    color: #555;
     font-weight: 500;
 }
 
 .weather-location {
     font-size: 0.7em;
-    color: #666666;
+    color: #777;
 }
 
 /* Weather Modal */
@@ -413,26 +428,93 @@ body {
     color: #E53935 !important;
 }
 
-/* RACE CONTROL Toggle Bar */
+/* =====================================================================
+   Serape Band — Full Width
+   ===================================================================== */
+.serape-band {
+    width: 100%;
+    height: 20px;
+    background: linear-gradient(90deg,
+        #DE4343 0px, #DE4343 12px,
+        #FFFFFF 12px, #FFFFFF 14px,
+        #FEC600 14px, #FEC600 23px,
+        #FFFFFF 23px, #FFFFFF 25px,
+        #FF6A13 25px, #FF6A13 31px,
+        #FFFFFF 31px, #FFFFFF 33px,
+        #00B1B7 33px, #00B1B7 49px,
+        #FFFFFF 49px, #FFFFFF 51px,
+        #3F8E43 51px, #3F8E43 57px,
+        #F5547C 57px, #F5547C 59px,
+        #FFFFFF 59px, #FFFFFF 62px,
+        #FEC600 62px, #FEC600 78px,
+        #FFFFFF 78px, #FFFFFF 80px,
+        #DE4343 80px, #DE4343 86px,
+        #6F5034 86px, #6F5034 88px,
+        #FFFFFF 88px, #FFFFFF 91px,
+        #FF6A13 91px, #FF6A13 103px,
+        #FFFFFF 103px, #FFFFFF 105px,
+        #00B1B7 105px, #00B1B7 108px,
+        #3F8E43 108px, #3F8E43 120px,
+        #FFFFFF 120px, #FFFFFF 122px,
+        #DE4343 122px, #DE4343 131px,
+        #FFFFFF 131px, #FFFFFF 133px,
+        #FEC600 133px, #FEC600 149px,
+        #F5547C 149px, #F5547C 152px,
+        #FFFFFF 152px, #FFFFFF 155px,
+        #6F5034 155px, #6F5034 161px,
+        #FFFFFF 161px, #FFFFFF 163px,
+        #00B1B7 163px, #00B1B7 172px,
+        #FF6A13 172px, #FF6A13 175px,
+        #FFFFFF 175px, #FFFFFF 178px,
+        #3F8E43 178px, #3F8E43 190px
+    );
+    background-size: 190px 20px;
+    background-repeat: repeat-x;
+    margin-bottom: 16px;
+}
+
+/* RACE CONTROL Toggle Bar - Two Cards */
 .race-control-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.race-control-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
     padding: 12px 20px;
-    margin-bottom: 24px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.7);
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.race-control-label {
+.race-control-card-label {
     font-size: 0.9em;
     font-weight: 700;
     letter-spacing: 1.5px;
-    color: #888888;
+    color: #555;
     text-transform: uppercase;
+}
+
+.race-info-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #aaa;
+    box-shadow: 0 0 4px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+}
+
+.race-info-status-dot.active {
+    background: #22c55e;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+    animation: statusDotPulse 2s ease-in-out infinite;
 }
 
 .race-control-toggle-wrap {
@@ -490,7 +572,7 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: #2a2a2a;
+    background: #d4cfc6;
     border: 2px solid #1B998B;
     border-radius: 26px;
     transition: 0.25s;
@@ -525,7 +607,7 @@ body {
 .race-control-state-text {
     font-size: 0.95em;
     font-weight: 600;
-    color: #ffffff;
+    color: #1a1a1a;
     min-width: 80px;
 }
 
@@ -676,46 +758,145 @@ body {
 }
 
 .panel {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(8px);
     border-radius: 8px;
-    padding: 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    overflow: hidden;
+}
+
+.panel .btn {
+    margin-left: 24px;
+    margin-right: 24px;
+    width: calc(100% - 48px);
+}
+
+.panel .btn:last-child {
+    margin-bottom: 24px;
 }
 
 .panel h2 {
-    color: #ffffff;
-    margin-bottom: 20px;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 20px 24px 16px;
     text-align: center;
     font-size: 1.5em;
     font-weight: 700;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    padding-bottom: 16px;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
     white-space: nowrap;
+}
+
+/* Panel serape top bands */
+.panel::before {
+    content: '';
+    display: block;
+    height: 12px;
+    width: 100%;
+}
+
+/* PRE-RACE: teal/green emphasis */
+.panel:nth-child(1)::before {
+    background: linear-gradient(90deg,
+        #00B1B7 0px, #00B1B7 12px,
+        #FFFFFF 12px, #FFFFFF 14px,
+        #3F8E43 14px, #3F8E43 26px,
+        #FFFFFF 26px, #FFFFFF 28px,
+        #00B1B7 28px, #00B1B7 34px,
+        #FFFFFF 34px, #FFFFFF 36px,
+        #3F8E43 36px, #3F8E43 52px,
+        #FFFFFF 52px, #FFFFFF 55px,
+        #00B1B7 55px, #00B1B7 64px,
+        #3F8E43 64px, #3F8E43 67px,
+        #FFFFFF 67px, #FFFFFF 70px,
+        #00B1B7 70px, #00B1B7 82px
+    );
+    background-size: 82px 12px;
+    background-repeat: repeat-x;
+}
+
+/* BETTING OPEN: gold/orange emphasis */
+.panel:nth-child(2)::before {
+    background: linear-gradient(90deg,
+        #FEC600 0px, #FEC600 16px,
+        #FFFFFF 16px, #FFFFFF 18px,
+        #FF6A13 18px, #FF6A13 27px,
+        #FFFFFF 27px, #FFFFFF 29px,
+        #FEC600 29px, #FEC600 35px,
+        #FFFFFF 35px, #FFFFFF 37px,
+        #FF6A13 37px, #FF6A13 53px,
+        #FFFFFF 53px, #FFFFFF 56px,
+        #FEC600 56px, #FEC600 62px,
+        #FF6A13 62px, #FF6A13 65px,
+        #FFFFFF 65px, #FFFFFF 68px,
+        #FEC600 68px, #FEC600 80px
+    );
+    background-size: 80px 12px;
+    background-repeat: repeat-x;
+}
+
+/* DURING RACE: green/teal emphasis */
+.panel:nth-child(3)::before {
+    background: linear-gradient(90deg,
+        #3F8E43 0px, #3F8E43 9px,
+        #FFFFFF 9px, #FFFFFF 11px,
+        #00B1B7 11px, #00B1B7 27px,
+        #FFFFFF 27px, #FFFFFF 30px,
+        #3F8E43 30px, #3F8E43 42px,
+        #FFFFFF 42px, #FFFFFF 44px,
+        #00B1B7 44px, #00B1B7 50px,
+        #3F8E43 50px, #3F8E43 53px,
+        #FFFFFF 53px, #FFFFFF 56px,
+        #00B1B7 56px, #00B1B7 68px,
+        #FFFFFF 68px, #FFFFFF 70px,
+        #3F8E43 70px, #3F8E43 85px
+    );
+    background-size: 85px 12px;
+    background-repeat: repeat-x;
+}
+
+/* RESULTS: red/pink emphasis */
+.panel:nth-child(4)::before {
+    background: linear-gradient(90deg,
+        #DE4343 0px, #DE4343 16px,
+        #FFFFFF 16px, #FFFFFF 18px,
+        #F5547C 18px, #F5547C 24px,
+        #FFFFFF 24px, #FFFFFF 26px,
+        #DE4343 26px, #DE4343 35px,
+        #FFFFFF 35px, #FFFFFF 38px,
+        #F5547C 38px, #F5547C 54px,
+        #FFFFFF 54px, #FFFFFF 56px,
+        #DE4343 56px, #DE4343 59px,
+        #F5547C 59px, #F5547C 65px,
+        #FFFFFF 65px, #FFFFFF 68px,
+        #DE4343 68px, #DE4343 84px
+    );
+    background-size: 84px 12px;
+    background-repeat: repeat-x;
 }
 
 /* Panel-specific header colors */
 .panel:nth-child(1) h2 {
-    color: #4ECDC4;
-    border-bottom-color: rgba(78, 205, 196, 0.3);
+    color: #00897B;
+    border-bottom-color: rgba(0, 177, 183, 0.2);
 }
 
 .panel:nth-child(2) h2 {
-    color: #f59e0b;
-    border-bottom-color: rgba(245, 158, 11, 0.3);
+    color: #E65100;
+    border-bottom-color: rgba(254, 198, 0, 0.3);
 }
 
 .panel:nth-child(3) h2 {
-    color: #22c55e;
-    border-bottom-color: rgba(34, 197, 94, 0.3);
+    color: #2E7D32;
+    border-bottom-color: rgba(63, 142, 67, 0.2);
 }
 
 .panel:nth-child(4) h2 {
-    color: #E53935;
-    border-bottom-color: rgba(229, 57, 53, 0.3);
+    color: #C62828;
+    border-bottom-color: rgba(222, 67, 67, 0.2);
 }
 
 /* Buttons - Ghost Style with Panel Colors */
@@ -727,18 +908,18 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border: 2px solid #888888;
+    border: 2px solid #999;
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
     background: transparent;
-    color: #888888;
+    color: #555;
     box-shadow: none;
     outline: none;
 }
 
 .btn:hover {
-    background: rgba(136, 136, 136, 0.12);
+    background: rgba(0, 0, 0, 0.05);
     box-shadow: none;
 }
 
@@ -752,11 +933,11 @@ body {
 }
 
 .btn.active {
-    background: rgba(136, 136, 136, 0.15);
+    background: rgba(0, 0, 0, 0.08);
 }
 
 .btn.active:focus {
-    background: rgba(136, 136, 136, 0.15);
+    background: rgba(0, 0, 0, 0.08);
 }
 
 /* Disabled button state - grayed out when race is complete */
@@ -771,88 +952,88 @@ body {
 /* Panel-specific button colors - DDM Brand Palette */
 /* PRE-RACE: Teal/Cyan */
 .panel:nth-child(1) .btn {
-    border-color: #4ECDC4;
-    color: #4ECDC4;
+    border-color: #00897B;
+    color: #00897B;
 }
 
 .panel:nth-child(1) .btn:hover {
-    background: rgba(78, 205, 196, 0.12);
+    background: rgba(0, 177, 183, 0.1);
 }
 
 .panel:nth-child(1) .btn.active {
-    background: #4ECDC4;
-    color: #0a1a24;
+    background: #00B1B7;
+    color: #fff;
 }
 
 .panel:nth-child(1) .btn.flash {
-    background: rgba(78, 205, 196, 0.15);
+    background: rgba(0, 177, 183, 0.12);
 }
 
 /* BETTING OPEN: Orange/Gold */
 .panel:nth-child(2) .btn {
-    border-color: #f59e0b;
-    color: #f59e0b;
+    border-color: #E65100;
+    color: #E65100;
 }
 
 .panel:nth-child(2) .btn:hover {
-    background: rgba(245, 158, 11, 0.12);
+    background: rgba(255, 106, 19, 0.1);
 }
 
 .panel:nth-child(2) .btn.active {
-    background: #f59e0b;
-    color: #0a1a24;
+    background: #FF6A13;
+    color: #fff;
 }
 
 .panel:nth-child(2) .btn.flash {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(255, 106, 19, 0.12);
 }
 
 /* DURING RACE: Green */
 .panel:nth-child(3) .btn {
-    border-color: #22c55e;
-    color: #22c55e;
+    border-color: #2E7D32;
+    color: #2E7D32;
 }
 
 .panel:nth-child(3) .btn:hover {
-    background: rgba(34, 197, 94, 0.12);
+    background: rgba(63, 142, 67, 0.1);
 }
 
 .panel:nth-child(3) .btn.active {
-    background: #22c55e;
-    color: #0a1a24;
+    background: #3F8E43;
+    color: #fff;
 }
 
 .panel:nth-child(3) .btn.flash {
-    background: rgba(34, 197, 94, 0.15);
+    background: rgba(63, 142, 67, 0.12);
 }
 
 /* RESULTS: Red */
 .panel:nth-child(4) .btn {
-    border-color: #E53935;
-    color: #E53935;
+    border-color: #C62828;
+    color: #C62828;
 }
 
 .panel:nth-child(4) .btn:hover {
-    background: rgba(229, 57, 53, 0.12);
+    background: rgba(222, 67, 67, 0.1);
 }
 
 .panel:nth-child(4) .btn.active {
-    background: #E53935;
+    background: #DE4343;
     color: #ffffff;
 }
 
 .panel:nth-child(4) .btn.flash {
-    background: rgba(229, 57, 53, 0.15);
+    background: rgba(222, 67, 67, 0.12);
 }
 
 /* Footer Section */
 .footer-section {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(8px);
     padding: 20px 24px;
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.7);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -861,16 +1042,16 @@ body {
 .footer-info {
     display: flex;
     gap: 32px;
-    color: #666666;
+    color: #777;
     font-size: 0.9em;
 }
 
 .footer-info span {
-    color: #888888;
+    color: #555;
 }
 
 #current-mode {
-    color: #ffffff;
+    color: #1a1a1a;
     font-weight: 500;
 }
 
@@ -880,20 +1061,20 @@ body {
     align-items: center;
     gap: 8px;
     padding: 6px 14px;
-    background: #0a0a0a;
-    border: 1px solid #2a2a2a;
+    background: rgba(0, 0, 0, 0.06);
+    border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 16px;
 }
 
 .powered-text {
     font-size: 0.85em;
-    color: #666666;
+    color: #777;
 }
 
 .joey-ai {
     font-size: 0.9em;
     font-weight: 600;
-    color: #ffffff;
+    color: #1a1a1a;
 }
 
 /* Device Status - Clickable */
@@ -930,7 +1111,7 @@ body {
     text-align: center;
     padding: 16px 0;
     font-size: 0.75em;
-    color: #555555;
+    color: #999;
     letter-spacing: 0.5px;
 }
 
@@ -947,9 +1128,9 @@ body {
     align-items: center;
     gap: 16px;
     padding: 14px 18px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .device-icon {
@@ -1795,19 +1976,19 @@ body {
     font-size: 0.82em;
     font-weight: 600;
     letter-spacing: 0.5px;
-    border: 1px solid rgba(78, 205, 196, 0.4);
+    border: 1px solid rgba(0, 177, 183, 0.4);
     border-radius: 16px;
     background: transparent;
-    color: #4ECDC4;
+    color: #00897B;
     cursor: pointer;
     transition: all 0.2s ease;
     white-space: nowrap;
 }
 
 .btn-animations:hover {
-    background: rgba(78, 205, 196, 0.12);
-    border-color: #4ECDC4;
-    color: #6ee7de;
+    background: rgba(0, 177, 183, 0.1);
+    border-color: #00B1B7;
+    color: #00897B;
 }
 
 .btn-animations:active {
@@ -1956,34 +2137,36 @@ body {
 }
 
 /* =====================================================================
-   Spectator Preview Panel
+   Spectator Panel (toggled by Race Info card)
    ===================================================================== */
 
-.spectator-preview-section {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+.spectator-panel {
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.7);
     border-radius: 8px;
     margin-bottom: 24px;
     overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.spectator-preview-header {
+.spectator-panel-header {
     padding: 12px 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-.spectator-preview-label {
+.spectator-panel-label {
     font-size: 0.75em;
     font-weight: 600;
     letter-spacing: 3px;
-    color: #666666;
+    color: #555;
     text-transform: uppercase;
 }
 
-.spectator-preview-controls {
+.spectator-panel-controls {
     display: flex;
     align-items: center;
     gap: 16px;
@@ -1995,41 +2178,33 @@ body {
     font-weight: 600;
 }
 
-.spectator-state-dot.dormant    { color: #555; }
-.spectator-state-dot.betting    { color: #f59e0b; }
-.spectator-state-dot.final-call { color: #E53935; }
-.spectator-state-dot.racing     { color: #4ECDC4; }
-.spectator-state-dot.official   { color: #FFD700; }
+.spectator-state-dot.dormant    { color: #999; }
+.spectator-state-dot.betting    { color: #E65100; }
+.spectator-state-dot.final-call { color: #C62828; }
+.spectator-state-dot.racing     { color: #00897B; }
+.spectator-state-dot.official   { color: #B8860B; }
 
 .btn-spectator-open {
     font-size: 0.75em;
     font-weight: 600;
     letter-spacing: 2px;
-    color: #4ECDC4;
+    color: #00897B;
     text-decoration: none;
     padding: 4px 12px;
-    border: 1px solid rgba(78, 205, 196, 0.4);
+    border: 1px solid rgba(0, 177, 183, 0.4);
     border-radius: 4px;
     transition: all 0.2s;
 }
 
 .btn-spectator-open:hover {
-    background: rgba(78, 205, 196, 0.1);
-    border-color: #4ECDC4;
+    background: rgba(0, 177, 183, 0.1);
+    border-color: #00B1B7;
 }
 
-.spectator-preview-frame-wrapper {
+.spectator-panel-frame-wrapper {
     position: relative;
     height: 200px;
     overflow: hidden;
     background: #0a1f1a;
-}
-
-.spectator-preview-iframe {
-    width: 1920px;
-    height: 1080px;
-    border: none;
-    transform: scale(0.185);
-    transform-origin: top left;
-    pointer-events: none;
+    border-radius: 0 0 8px 8px;
 }
