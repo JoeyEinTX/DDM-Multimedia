@@ -497,7 +497,7 @@ async function pollRaceState() {
 
 function startRaceStatePolling() {
     if (raceStatePollInterval) return;
-    raceStatePollInterval = setInterval(pollRaceState, 2000);
+    raceStatePollInterval = setInterval(pollRaceState, 5000);
 }
 
 function stopRaceStatePolling() {
@@ -1748,7 +1748,7 @@ function updateFullscreenIcon() {
     }
 }
 
-// Poll power draw from ESP32
+// Poll power draw from ESP32 (also serves as connectivity check — replaces separate ping)
 async function pollPowerStatus() {
     try {
         const response = await fetch('/api/power');
@@ -1769,13 +1769,38 @@ async function pollPowerStatus() {
             } else {
                 container.classList.add('power-normal');
             }
+
+            // ESP32 is online — STATUS command succeeded
+            esp32Info.online = true;
+            esp32WasOnline = true;
+            updateRaceControlDotFromEsp32();
+            document.getElementById('device-count').textContent = '1';
+            document.getElementById('device-plural').textContent = '';
+            updateDeviceList();
         } else {
             el.textContent = '--';
             container.classList.remove('power-normal', 'power-warning', 'power-critical');
+            handleEsp32Offline();
         }
     } catch (error) {
         console.error('Error polling power status:', error);
+        handleEsp32Offline();
     }
+}
+
+// Handle ESP32 going offline (used by pollPowerStatus on failure)
+function handleEsp32Offline() {
+    esp32Info.online = false;
+    updateRaceControlDotFromEsp32();
+    if (esp32WasOnline) {
+        clearActiveButton();
+        document.getElementById('current-mode').textContent = 'DISCONNECTED';
+        showNotification('ESP32 disconnected - animation stopped', 'error');
+        esp32WasOnline = false;
+    }
+    document.getElementById('device-count').textContent = '0';
+    document.getElementById('device-plural').textContent = 's';
+    updateDeviceList();
 }
 
 // Initialize on page load
@@ -1796,10 +1821,6 @@ document.addEventListener('DOMContentLoaded', function() {
     updateClock();
     setInterval(updateClock, 1000);
     
-    // Check ESP32 status immediately and every 5 seconds
-    checkESP32Status();
-    setInterval(checkESP32Status, 5000);
-    
     // Get system status
     getSystemStatus();
     
@@ -1813,9 +1834,9 @@ document.addEventListener('DOMContentLoaded', function() {
     getWeather();
     setInterval(getWeather, 30 * 60 * 1000);
     
-    // Poll power draw every 2 seconds
+    // Poll power draw every 5 seconds (also detects ESP32 online/offline)
     pollPowerStatus();
-    setInterval(pollPowerStatus, 2000);
+    setInterval(pollPowerStatus, 5000);
 
     // Listen for fullscreen changes
     document.addEventListener('fullscreenchange', updateFullscreenIcon);
