@@ -14,7 +14,7 @@
 
 #define SOCKET_PORT 5005
 #define LED_PIN 18
-#define LED_COUNT 640
+#define LED_COUNT 636
 #define STATUS_LED_PIN 2
 #define NUM_CUPS 20
 #define LEDS_PER_CUP 32
@@ -46,7 +46,7 @@ const CRGB COLOR_WHITE = CRGB(255, 255, 255);
 const CRGB COLOR_BLACK = CRGB(0, 0, 0);
 
 // ===== GLOBAL VARIABLES =====
-CRGB leds[LED_COUNT];
+CRGB leds[636];
 WiFiServer server(SOCKET_PORT);
 String currentIP = "";
 uint8_t currentBrightness = 128;
@@ -149,6 +149,18 @@ const CRGB SILK_ACCENT[NUM_CUPS + 1] = {
     CRGB(255,205,0)        // 20: yellow
 };
 
+// Per-cup LED counts (cups 6,9,15,17 have 31 LEDs, all others 32)
+const uint8_t CUP_LED_COUNT[NUM_CUPS + 1] = {
+  0,                          // index 0 unused
+  32, 32, 32, 32, 32,        // cups 1-5
+  31, 32, 32, 31, 32,        // cups 6-10
+  32, 32, 32, 32, 31,        // cups 11-15
+  32, 31, 32, 32, 32         // cups 16-20
+};
+
+// Pre-calculated start indices (filled in setup())
+int CUP_START_INDEX[NUM_CUPS + 1] = {0};
+
 // ===== FUNCTION DECLARATIONS =====
 void connectWiFi();
 String processCommand(String cmd);
@@ -198,8 +210,19 @@ void setup() {
     initOLED();
     showBootSplash();   // "DDM v3.1" for 2 seconds (blocking, startup only)
     
+    // Calculate cumulative start indices
+    CUP_START_INDEX[1] = 0;
+    for (int i = 2; i <= NUM_CUPS; i++) {
+        CUP_START_INDEX[i] = CUP_START_INDEX[i-1] + CUP_LED_COUNT[i-1];
+    }
+    // Print for verification
+    Serial.println("[LED] Cup start indices:");
+    for (int i = 1; i <= NUM_CUPS; i++) {
+        Serial.println("  Cup " + String(i) + ": start=" + String(CUP_START_INDEX[i]) + " count=" + String(CUP_LED_COUNT[i]));
+    }
+
     // Initialize LED strip
-    Serial.println("[LED] Initializing 640 LEDs on GPIO 18...");
+    Serial.println("[LED] Initializing 636 LEDs on GPIO 18...");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
     FastLED.setBrightness(currentBrightness);
     FastLED.clear();
@@ -1303,10 +1326,10 @@ CRGB hexToRGB(String hex) {
 void setCup(uint8_t cupNumber, CRGB color) {
     if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
 
-    int startIdx = (cupNumber - 1) * LEDS_PER_CUP;
-    int endIdx = startIdx + LEDS_PER_CUP;
-    
-    for (int i = startIdx; i < endIdx; i++) {
+    int startIdx = CUP_START_INDEX[cupNumber];
+    int count = CUP_LED_COUNT[cupNumber];
+
+    for (int i = startIdx; i < startIdx + count; i++) {
         leds[i] = color;
     }
 }
