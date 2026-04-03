@@ -84,33 +84,34 @@ body {
     margin: 0 auto;
 }
 
-/* Header - Three Column Grid */
-.header {
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(8px);
-    padding: 16px 24px;
-    border-radius: 8px;
-    margin-bottom: 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    display: grid;
-    grid-template-columns: 160px 1fr 160px;
-    align-items: center;
-}
-
-/* Center Logo */
-.header-center {
-    justify-self: center;
+/* Row 1: Hero Header — centered logo on dark bg */
+.hero-header {
+    background: #0a0a0a;
+    padding: 24px 0;
+    border-radius: 8px 8px 0 0;
+    text-align: center;
 }
 
 .header-logo {
-    height: 120px;
+    height: 150px;
     width: auto;
+    display: block;
+    margin: 0 auto;
 }
 
-/* Weather Card (left) */
+/* Row 2: Info Banner — weather left, clock right */
+.info-banner {
+    background: #0d1f18;
+    padding: 10px 28px;
+    border-radius: 0 0 8px 8px;
+    margin-bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Weather Card (left side of info banner) */
 .weather-card {
-    width: 160px;
     background: #0a0a0a;
     border-radius: 8px;
     border: 2px solid var(--tote-board-border);
@@ -130,12 +131,19 @@ body {
     border-color: #20b39c;
 }
 
-/* Clock Card (right) — positioning wrapper only, tote-clock-container has its own styling */
+/* Clock Card (right side of info banner) */
 .clock-card {
-    width: 160px;
+    overflow: visible;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
+}
+
+/* Scale wrapper — shrinks clock without modifying any clock classes */
+.clock-scale-wrapper {
+    transform: scale(0.4);
+    transform-origin: right center;
+    display: inline-block;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */
