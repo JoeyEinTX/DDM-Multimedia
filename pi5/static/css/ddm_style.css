@@ -84,11 +84,10 @@ body {
     margin: 0 auto;
 }
 
-/* Row 1: Hero Header — centered logo on dark bg */
+/* Row 1: Hero Header — centered logo */
 .hero-header {
-    background: #0a0a0a;
+    background: transparent;
     padding: 24px 0;
-    border-radius: 8px 8px 0 0;
     text-align: center;
 }
 
@@ -125,6 +124,11 @@ body {
 }
 
 /* Ticker dot-matrix sizing — smaller than results banner */
+.ticker-strip .dot-matrix-text {
+    display: inline-flex;
+    align-items: center;
+}
+
 .ticker-strip .dot-digit {
     transform: scale(0.7);
     transform-origin: top left;
@@ -134,16 +138,6 @@ body {
 .ticker-strip .dot {
     width: 4px;
     height: 4px;
-}
-
-/* Ticker segment spacer */
-.ticker-spacer {
-    display: inline-flex;
-    align-items: center;
-    padding: 0 10px;
-    color: #D4A000;
-    font-size: 1.2em;
-    opacity: 0.6;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */
