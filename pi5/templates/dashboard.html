@@ -23,19 +23,10 @@
             <img src="{{ url_for('static', filename='css/ddm_logo_2026.png') }}" alt="Derby de Mayo" class="header-logo">
         </div>
 
-        <!-- Row 2: Info Banner — Weather + Clock -->
-        <div class="info-banner">
-            <div id="weather-summary" class="weather-card" onclick="openWeatherModal()" style="display: none;">
-                <!-- Weather summary will be inserted here -->
-            </div>
-            <div class="clock-card">
-                <div class="clock-scale-wrapper">
-                    <div class="tote-clock-container">
-                        <div id="tote-display" class="tote-display">
-                            <!-- Dot matrix digits will be inserted here by JavaScript -->
-                        </div>
-                    </div>
-                </div>
+        <!-- Row 2: Dot-Matrix Scrolling Ticker -->
+        <div class="ticker-strip">
+            <div class="ticker-track" id="ticker-track">
+                <!-- populated by JavaScript -->
             </div>
         </div>
 

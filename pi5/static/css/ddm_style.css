@@ -99,51 +99,51 @@ body {
     margin: 0 auto;
 }
 
-/* Row 2: Info Banner — weather left, clock right */
-.info-banner {
-    background: #0d1f18;
-    padding: 10px 28px;
-    border-radius: 0 0 8px 8px;
-    margin-bottom: 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-/* Weather Card (left side of info banner) */
-.weather-card {
-    background: #0a0a0a;
-    border-radius: 8px;
-    border: 2px solid var(--tote-board-border);
-    box-shadow:
-        0 4px 12px rgba(0, 0, 0, 0.5),
-        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.weather-card:hover {
-    border-color: #20b39c;
-}
-
-/* Clock Card (right side of info banner) */
-.clock-card {
-    overflow: visible;
+/* Row 2: Dot-Matrix Scrolling Ticker Strip */
+.ticker-strip {
+    background: #0a1f1a;
+    height: 52px;
+    overflow: hidden;
+    width: 100%;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    border-top: 1px solid #1a3a30;
+    border-bottom: 1px solid #1a3a30;
 }
 
-/* Scale wrapper — shrinks clock without modifying any clock classes */
-.clock-scale-wrapper {
-    transform: scale(0.4);
-    transform-origin: right center;
-    display: inline-block;
+.ticker-track {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    animation: tickerScroll 40s linear infinite;
+    will-change: transform;
+}
+
+@keyframes tickerScroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+/* Ticker dot-matrix sizing — smaller than results banner */
+.ticker-strip .dot-digit {
+    transform: scale(0.7);
+    transform-origin: top left;
+    margin-right: -3px;
+}
+
+.ticker-strip .dot {
+    width: 4px;
+    height: 4px;
+}
+
+/* Ticker segment spacer */
+.ticker-spacer {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    color: #D4A000;
+    font-size: 1.2em;
+    opacity: 0.6;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */

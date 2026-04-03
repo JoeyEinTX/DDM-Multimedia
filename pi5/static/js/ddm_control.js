@@ -149,33 +149,107 @@ function createColon() {
     return colon;
 }
 
-// Update dot matrix tote board clock
+// Update dot matrix tote board clock (spectator.html still uses tote-display)
 function updateClock() {
     const now = new Date();
     let hours = now.getHours();
     const minutes = now.getMinutes();
     const ampm = hours >= 12 ? 'PM' : 'AM';
-    
+
     hours = hours % 12;
     hours = hours ? hours : 12;
-    
+
     const timeStr = String(hours).padStart(2, '0') + String(minutes).padStart(2, '0');
     const display = document.getElementById('tote-display');
-    display.innerHTML = '';
-    
-    // Add digits
-    display.appendChild(createDotDigit(timeStr[0]));
-    display.appendChild(createDotDigit(timeStr[1]));
-    display.appendChild(createColon());
-    display.appendChild(createDotDigit(timeStr[2]));
-    display.appendChild(createDotDigit(timeStr[3]));
-    
-    // Add AM/PM
-    const ampmDiv = document.createElement('div');
-    ampmDiv.className = 'dot-ampm';
-    ampmDiv.appendChild(createDotDigit(ampm[0]));
-    ampmDiv.appendChild(createDotDigit(ampm[1]));
-    display.appendChild(ampmDiv);
+    if (display) {
+        display.innerHTML = '';
+
+        // Add digits
+        display.appendChild(createDotDigit(timeStr[0]));
+        display.appendChild(createDotDigit(timeStr[1]));
+        display.appendChild(createColon());
+        display.appendChild(createDotDigit(timeStr[2]));
+        display.appendChild(createDotDigit(timeStr[3]));
+
+        // Add AM/PM
+        const ampmDiv = document.createElement('div');
+        ampmDiv.className = 'dot-ampm';
+        ampmDiv.appendChild(createDotDigit(ampm[0]));
+        ampmDiv.appendChild(createDotDigit(ampm[1]));
+        display.appendChild(ampmDiv);
+    }
+
+    // Rebuild ticker on the dashboard (every second keeps time current)
+    buildTicker();
+}
+
+// =====================================================================
+// Dot-Matrix Scrolling Ticker Strip
+// =====================================================================
+
+function buildTicker() {
+    const track = document.getElementById('ticker-track');
+    if (!track) return;
+
+    // --- 1. Current time: HH:MM AM/PM ---
+    const now = new Date();
+    let h = now.getHours();
+    const m = now.getMinutes();
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    const timeText = String(h).padStart(2, ' ') + ':' + String(m).padStart(2, '0') + ' ' + ap;
+
+    // --- 2. Weather ---
+    let weatherText = '';
+    if (weatherData && weatherData.current) {
+        const temp = Math.round(weatherData.current.temp_f);
+        const cond = weatherData.current.condition.text.toUpperCase();
+        const loc = (weatherData.location || 'DALLAS').toUpperCase().split(',')[0].trim();
+        weatherText = temp + 'F ' + cond + ' ' + loc;
+    }
+
+    // --- 3. Race state ---
+    const modeEl = document.getElementById('current-mode');
+    const raceState = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
+
+    // --- 4. Date ---
+    const days = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const dayName = days[now.getDay()];
+    const monthName = months[now.getMonth()];
+    const dateText = dayName + ' ' + monthName + ' ' + now.getDate() + ' ' + now.getFullYear();
+
+    // --- 5. Brand ---
+    const brandText = 'DERBY DE MAYO';
+
+    // Build one copy of all segments
+    function buildSegments() {
+        const frag = document.createDocumentFragment();
+        const segments = [timeText, weatherText, raceState, dateText, brandText]
+            .filter(s => s.length > 0);
+
+        segments.forEach((text, i) => {
+            frag.appendChild(createDotMatrixText(text));
+            // Diamond spacer between segments
+            if (i < segments.length - 1) {
+                const spacer = document.createElement('span');
+                spacer.className = 'ticker-spacer';
+                spacer.textContent = '\u25C6';
+                frag.appendChild(spacer);
+            }
+        });
+        // Trailing spacer before the duplicate
+        const endSpacer = document.createElement('span');
+        endSpacer.className = 'ticker-spacer';
+        endSpacer.textContent = '\u25C6';
+        frag.appendChild(endSpacer);
+        return frag;
+    }
+
+    // Two identical copies for seamless loop
+    track.innerHTML = '';
+    track.appendChild(buildSegments());
+    track.appendChild(buildSegments());
 }
 
 // Show notification
@@ -1626,32 +1700,36 @@ async function getWeather() {
         if (data.success && data.current && data.hourly) {
             weatherData = data;
             
-            // Update graphical header summary
+            // Update graphical header summary (if element exists — e.g. spectator page)
             const summary = document.getElementById('weather-summary');
-            const current = data.current;
-            const temp = Math.round(current.temp_f);
-            const tempColorClass = getTempColorClass(temp);
-            const condition = current.condition.text;
-            const location = data.location || 'Dallas, TX';
-            const iconUrl = current.condition.icon.replace('64x64', '128x128');
-            
-            // Build graphical weather widget with forced icon size
-            summary.innerHTML = `
-                <img src="https:${iconUrl}" alt="${condition}" class="weather-icon" 
-                     width="36" height="36"
-                     style="width: 36px !important; height: 36px !important; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; flex-shrink: 0;">
-                <div class="weather-info">
-                    <div class="weather-temp-large ${tempColorClass}">${temp}°F</div>
-                    <div class="weather-condition">${condition}</div>
-                    <div class="weather-location">${location}</div>
-                </div>
-            `;
-            summary.style.display = 'flex';
+            if (summary) {
+                const current = data.current;
+                const temp = Math.round(current.temp_f);
+                const tempColorClass = getTempColorClass(temp);
+                const condition = current.condition.text;
+                const location = data.location || 'Dallas, TX';
+                const iconUrl = current.condition.icon.replace('64x64', '128x128');
+
+                // Build graphical weather widget with forced icon size
+                summary.innerHTML = `
+                    <img src="https:${iconUrl}" alt="${condition}" class="weather-icon"
+                         width="36" height="36"
+                         style="width: 36px !important; height: 36px !important; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; flex-shrink: 0;">
+                    <div class="weather-info">
+                        <div class="weather-temp-large ${tempColorClass}">${temp}°F</div>
+                        <div class="weather-condition">${condition}</div>
+                        <div class="weather-location">${location}</div>
+                    </div>
+                `;
+                summary.style.display = 'flex';
+            }
+            buildTicker();
         }
     } catch (error) {
         console.error('Error fetching weather:', error);
         // Hide weather summary on error
-        document.getElementById('weather-summary').style.display = 'none';
+        const ws = document.getElementById('weather-summary');
+        if (ws) ws.style.display = 'none';
     }
 }
 
@@ -1847,6 +1925,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (modeEl) {
         const modeObserver = new MutationObserver(function () {
             updateSpectatorIndicator(modeEl.textContent.trim());
+            buildTicker();
         });
         modeObserver.observe(modeEl, { childList: true, characterData: true, subtree: true });
     }
