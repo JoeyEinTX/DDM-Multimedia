@@ -246,11 +246,11 @@ function buildTicker() {
             frag.appendChild(createDotMatrixText(text));
             // Pipe separator between segments (and trailing)
             if (i < segments.length - 1) {
-                frag.appendChild(createDotMatrixText('  |  '));
+                frag.appendChild(createDotMatrixText(' | '));
             }
         });
         // Trailing separator before duplicate copy
-        frag.appendChild(createDotMatrixText('  |  '));
+        frag.appendChild(createDotMatrixText(' | '));
         return frag;
     }
 

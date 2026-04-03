@@ -100,7 +100,7 @@ body {
 
 /* Row 2: Dot-Matrix Scrolling Ticker Strip */
 .ticker-strip {
-    background: #0a1f1a;
+    background: #0a1f1a !important;
     height: 52px;
     overflow: hidden;
     width: 100%;
