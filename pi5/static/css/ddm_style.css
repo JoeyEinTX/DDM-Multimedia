@@ -471,8 +471,8 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 12px 20px;
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(160deg, #F5F0E8 0%, #EDE8DC 100%);
+    backdrop-filter: none;
     border: 1px solid rgba(255, 255, 255, 0.7);
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -743,8 +743,8 @@ body {
 }
 
 .panel {
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(160deg, #F5F0E8 0%, #EDE8DC 100%);
+    backdrop-filter: none;
     border-radius: 8px;
     padding: 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -1013,8 +1013,8 @@ body {
 
 /* Footer Section */
 .footer-section {
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(160deg, #F5F0E8 0%, #EDE8DC 100%);
+    backdrop-filter: none;
     padding: 20px 24px;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -2126,8 +2126,8 @@ body {
    ===================================================================== */
 
 .spectator-panel {
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(160deg, #F5F0E8 0%, #EDE8DC 100%);
+    backdrop-filter: none;
     border: 1px solid rgba(255, 255, 255, 0.7);
     border-radius: 8px;
     margin-bottom: 24px;
