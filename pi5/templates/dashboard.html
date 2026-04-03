@@ -24,11 +24,13 @@
                 <!-- Weather summary will be inserted here -->
             </div>
             <div class="header-center">
-                <img src="{{ url_for('static', filename='css/ddm_logo_2026.png') }}" alt="Derby de Mayo" class="header-logo">
+                <img src="{{ url_for('static', filename='css/ddm_logo.png') }}" alt="Derby de Mayo" class="header-logo">
             </div>
             <div class="clock-card">
-                <div id="tote-display" class="tote-display">
-                    <!-- Dot matrix digits will be inserted here by JavaScript -->
+                <div class="tote-clock-container">
+                    <div id="tote-display" class="tote-display">
+                        <!-- Dot matrix digits will be inserted here by JavaScript -->
+                    </div>
                 </div>
             </div>
         </header>
