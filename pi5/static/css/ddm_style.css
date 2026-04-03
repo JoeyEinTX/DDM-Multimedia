@@ -84,81 +84,65 @@ body {
     margin: 0 auto;
 }
 
-/* Header */
+/* Header - Three Column Grid */
 .header {
     background: rgba(255, 255, 255, 0.55);
     backdrop-filter: blur(8px);
-    padding: 24px 32px;
+    padding: 16px 24px;
     border-radius: 8px;
     margin-bottom: 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.7);
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 160px 1fr 160px;
     align-items: center;
 }
 
-.header-title {
-    display: flex;
-    align-items: center;
-    gap: 16px;
+/* Center Logo */
+.header-center {
+    justify-self: center;
 }
 
-/* Stacked Logo */
-.logo-stack {
+.header-logo {
+    height: 120px;
+    width: auto;
+}
+
+/* Weather Card (left) */
+.weather-card {
+    width: 160px;
+    background: #0a0a0a;
+    border-radius: 8px;
+    border: 2px solid var(--tote-board-border);
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.5),
+        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+    padding: 10px 12px;
     display: flex;
     flex-direction: column;
-    line-height: 0.9;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
 }
 
-.logo-derby {
-    font-family: 'Bebas Neue', Impact, sans-serif;
-    font-size: 3em;
-    font-weight: 400;
-    background: linear-gradient(135deg, #FF6A13, #DE4343);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 2px;
+.weather-card:hover {
+    border-color: #20b39c;
 }
 
-.logo-de {
-    font-family: 'Playfair Display', Georgia, serif;
-    font-style: italic;
-    font-size: 1.4em;
-    color: #3F8E43;
-    letter-spacing: 6px;
-    text-transform: lowercase;
-    padding-left: 4px;
-}
-
-.logo-mayo {
-    font-family: 'Bebas Neue', Impact, sans-serif;
-    font-size: 3em;
-    font-weight: 400;
-    background: linear-gradient(135deg, #FEC600, #FF6A13);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 2px;
-}
-
-.logo-multimedia {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 0.8em;
-    font-variant: small-caps;
-    color: #00B1B7;
-    letter-spacing: 8px;
-    padding-left: 2px;
-}
-
-.header-info {
+/* Clock Card (right) */
+.clock-card {
+    width: 160px;
+    background: #0a0a0a;
+    border-radius: 8px;
+    border: 2px solid var(--tote-board-border);
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.5),
+        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+    padding: 10px 12px;
     display: flex;
     align-items: center;
-    gap: 16px;
-    font-size: 1.1em;
-    font-weight: 500;
-    color: #555;
+    justify-content: center;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */
@@ -210,6 +194,7 @@ body {
 }
 
 /* Tote Board Clock - Dot Matrix Light Bulb Style */
+/* tote-clock-container kept for backwards compat but styling now on .clock-card */
 .tote-clock-container {
     display: flex;
     align-items: center;
@@ -217,10 +202,19 @@ body {
     background: var(--tote-board-bg);
     border-radius: 8px;
     border: 2px solid var(--tote-board-border);
-    box-shadow: 
+    box-shadow:
         0 4px 12px rgba(0, 0, 0, 0.5),
         inset 0 -2px 8px rgba(0, 0, 0, 0.3);
     width: fit-content;
+}
+
+/* When clock is inside .clock-card, strip container styling */
+.clock-card .tote-clock-container {
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    border-radius: 0;
 }
 
 .tote-display {
@@ -292,6 +286,7 @@ body {
 }
 
 /* Weather Summary - Header (Compact) */
+/* Legacy weather-summary-header (no longer used, kept for JS compat) */
 .weather-summary-header {
     display: flex;
     align-items: center;
@@ -311,32 +306,33 @@ body {
 }
 
 .weather-icon {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
 }
 
 .weather-info {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 1px;
 }
 
 .weather-temp-large {
     font-size: 1.3em;
     font-weight: 700;
-    color: #1a1a1a;
+    color: #D4A000;
     line-height: 1;
 }
 
 .weather-condition {
     font-size: 0.75em;
-    color: #555;
+    color: #888888;
     font-weight: 500;
 }
 
 .weather-location {
     font-size: 0.7em;
-    color: #777;
+    color: #666666;
 }
 
 /* Weather Modal */

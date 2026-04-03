@@ -18,24 +18,17 @@
     </div>
 
     <div class="container">
-        <!-- Header: Logo/Title (left), Weather + Clock (right) -->
+        <!-- Header: Weather (left), Logo (center), Clock (right) -->
         <header class="header">
-            <div class="header-title">
-                <div class="logo-stack">
-                    <span class="logo-derby">DERBY</span>
-                    <span class="logo-de">de</span>
-                    <span class="logo-mayo">MAYO</span>
-                    <span class="logo-multimedia">MULTIMEDIA</span>
-                </div>
+            <div id="weather-summary" class="weather-card" onclick="openWeatherModal()" style="display: none;">
+                <!-- Weather summary will be inserted here -->
             </div>
-            <div class="header-info">
-                <div id="weather-summary" class="weather-summary-header" onclick="openWeatherModal()" style="display: none;">
-                    <!-- Weather summary will be inserted here -->
-                </div>
-                <div class="tote-clock-container">
-                    <div id="tote-display" class="tote-display">
-                        <!-- Dot matrix digits will be inserted here by JavaScript -->
-                    </div>
+            <div class="header-center">
+                <img src="{{ url_for('static', filename='css/ddm_logo_2026.png') }}" alt="Derby de Mayo" class="header-logo">
+            </div>
+            <div class="clock-card">
+                <div id="tote-display" class="tote-display">
+                    <!-- Dot matrix digits will be inserted here by JavaScript -->
                 </div>
             </div>
         </header>
