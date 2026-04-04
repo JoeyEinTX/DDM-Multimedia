@@ -90,6 +90,16 @@ CRGB welcomeMarchColors[NUM_CUPS];     // color assignment for march phase
 unsigned long cooldownStartTime = 0;
 const unsigned long COOLDOWN_DURATION_MS = 90000; // 90 seconds deceleration
 
+// RESULTS_ENTRY animation state
+int  cupChasePos[NUM_CUPS + 1];                // current head LED offset (0 to CUP_LED_COUNT[cup]-1)
+unsigned long cupChaseLastStep[NUM_CUPS + 1];  // millis of last chase step per cup
+
+unsigned long resultsEntryStart = 0;           // millis when RESULTS_ENTRY triggered
+bool resultsFinalizing = false;                // true after RESULTS:FINALIZE received
+unsigned long finalizeTime = 0;               // millis when RESULTS:FINALIZE received
+
+#define RESULTS_DECEL_MS 300000UL              // 5-minute loser decel duration
+
 // DDM brand color palette (6 colors)
 const CRGB DDM_PALETTE[] = {
     CRGB(34, 139, 34),    // Forest Green
@@ -191,6 +201,7 @@ void animResults();
 void animResultsActive();
 void animHeartbeatCooldown();
 void animSilks();
+void animResultsEntry();
 
 /**
  * SETUP - Runs once at startup
@@ -586,6 +597,32 @@ String processCommand(String cmd) {
         return "OK:ANIM:HEARTBEAT_COOLDOWN";
     }
 
+    // ANIM:RESULTS_ENTRY - New results entry animation with chase + heartbeat
+    else if (cmd == "ANIM:RESULTS_ENTRY") {
+        stopAnimation();
+        for (int i = 1; i <= NUM_CUPS; i++) {
+            cupLocked[i] = false;
+        }
+        resultsEntryStart = millis();
+        resultsFinalizing = false;
+        finalizeTime = 0;
+        for (int i = 0; i <= NUM_CUPS; i++) {
+            cupChasePos[i] = 0;
+            cupChaseLastStep[i] = 0;
+        }
+        currentMode = "RESULTS_ENTRY";
+        currentAnimation = "RESULTS_ENTRY";
+        animationRunning = true;
+        return "OK:ANIM:RESULTS_ENTRY";
+    }
+
+    // RESULTS:FINALIZE - Begin deceleration of winner chases
+    else if (cmd == "RESULTS:FINALIZE") {
+        resultsFinalizing = true;
+        finalizeTime = millis();
+        return "OK:RESULTS:FINALIZE";
+    }
+
     // ANIM:RESULTS:W:P:S - Winner spotlight (e.g., ANIM:RESULTS:7:12:3)
     else if (cmd.startsWith("ANIM:RESULTS:")) {
         // Parse: ANIM:RESULTS:7:12:3
@@ -652,9 +689,9 @@ String processCommand(String cmd) {
             if (cupNum >= 1 && cupNum <= NUM_CUPS) {
                 cupLocked[cupNum] = true;
                 cupLockedColor[cupNum] = CRGB(r, g, b);
-                setCup(cupNum, cupLockedColor[cupNum]);
-                FastLED.show();
-                updatePowerEstimate();
+                cupChasePos[cupNum] = 0;
+                cupChaseLastStep[cupNum] = 0;
+                // Do not call setCup() or FastLED.show() — animation loop handles rendering
                 return "OK:CUP:LOCKED:" + String(cupNum);
             }
         }
@@ -739,6 +776,8 @@ void runAnimation() {
         animResults();
     } else if (currentAnimation == "RESULTS_ACTIVE") {
         animResultsActive();
+    } else if (currentAnimation == "RESULTS_ENTRY") {
+        animResultsEntry();
     }
 }
 
@@ -1218,12 +1257,11 @@ void animSilks() {
     animationRunning = false;
 }
 
-/**
- * ANIM:RESULTS - Gold/Silver/Bronze on win/place/show, others dim
- */
+// LEGACY - animResults()
+/*
 void animResults() {
     FastLED.clear();
-    
+
     // Spotlight on winners
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (cup == winCup) {
@@ -1237,30 +1275,27 @@ void animResults() {
             setCup(cup, CRGB(10, 10, 10));
         }
     }
-    
+
     FastLED.show();
     updatePowerEstimate();
     // Static display - stays until changed
 }
+*/
 
-/**
- * ANIM:RESULTS_ACTIVE - Entire mantle breathes in unison
- * Win/Place/Show: Pulsing gold/silver/bronze (40-100%) — dramatic pulse
- * Other 17 cups: Red heartbeat (15-60%) — visible throb, subordinate to winners
- * Same 2-second sine wave for all — cohesive, living display
- */
+// LEGACY - animResultsActive()
+/*
 void animResultsActive() {
     unsigned long elapsed = millis() - animStartTime;
-    
+
     // Shared 2-second breathing cycle for all cups (sin 0→1→0 in 2 sec)
     float breathe = (sin(elapsed * M_PI / 1000.0f - (M_PI / 2.0f)) + 1.0f) / 2.0f;
-    
+
     // Winners: pulse 40%–100% (102-255) — dramatic dim-to-bright pulse
     uint8_t winnerBrightness = 102 + (uint8_t)(breathe * 153);  // 102-255 = 40-100%
 
     // Others: pulse 15%–60% (38-153) — visible throb, clearly dimmer than winners
     uint8_t otherBrightness = 38 + (uint8_t)(breathe * 115);    // 38-153 = 15-60%
-    
+
     CRGB winnerGold, winnerSilver, winnerBronze;
     winnerGold   = COLOR_GOLD;
     winnerSilver = COLOR_SILVER;
@@ -1268,10 +1303,10 @@ void animResultsActive() {
     winnerGold.nscale8(winnerBrightness);
     winnerSilver.nscale8(winnerBrightness);
     winnerBronze.nscale8(winnerBrightness);
-    
+
     CRGB otherRed = COLOR_RED;
     otherRed.nscale8(otherBrightness);
-    
+
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         if (cup == winCup) {
             setCup(cup, winnerGold);
@@ -1283,7 +1318,148 @@ void animResultsActive() {
             setCup(cup, otherRed);
         }
     }
-    
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+*/
+
+/**
+ * ANIM:RESULTS_ENTRY - New results entry animation
+ * Unlocked cups: decelerating red heartbeat (140→50 BPM over 5 min)
+ * Locked cups: colored chase with tail, decelerating to heartbeat after FINALIZE
+ */
+void animResultsEntry() {
+    unsigned long now = millis();
+
+    // ===== Part A: Loser Heartbeat (all unlocked cups) =====
+    float progress = (float)(now - resultsEntryStart) / (float)RESULTS_DECEL_MS;
+    if (progress > 1.0) progress = 1.0;
+
+    float currentBPM = 140.0 - (progress * 90.0);       // 140 → 50
+    float periodMs = 60000.0 / currentBPM;
+
+    uint8_t minBright = 51  + (uint8_t)(progress * 89);  // 51→140  (20%→55%)
+    uint8_t maxBright = 255 - (uint8_t)(progress * 64);  // 255→191 (100%→75%)
+
+    float phase = fmod((float)(now - resultsEntryStart), periodMs) / periodMs;
+    float pulse  = (sin(phase * 2.0 * PI) + 1.0) / 2.0;
+    uint8_t loserBrightness = minBright + (uint8_t)(pulse * (maxBright - minBright));
+
+    CRGB loserColor = COLOR_RED;
+    loserColor.nscale8(loserBrightness);
+
+    // Apply loser heartbeat to unlocked cups
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (!cupLocked[cup]) {
+            int startIdx = CUP_START_INDEX[cup];
+            int count = CUP_LED_COUNT[cup];
+            for (int i = startIdx; i < startIdx + count; i++) {
+                leds[i] = loserColor;
+            }
+        }
+    }
+
+    // ===== Part B: Winner Cup Chase (locked cups) =====
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (!cupLocked[cup]) continue;
+
+        int cupLedCount = CUP_LED_COUNT[cup];
+        CRGB lockedCol = cupLockedColor[cup];
+
+        // Determine base chase interval from locked color
+        float baseInterval;
+        if (lockedCol.r == 255 && lockedCol.g == 215 && lockedCol.b == 0) {
+            baseInterval = 18.0;   // Gold
+        } else if (lockedCol.r == 192 && lockedCol.g == 192 && lockedCol.b == 192) {
+            baseInterval = 35.0;   // Silver
+        } else if (lockedCol.r == 205 && lockedCol.g == 127 && lockedCol.b == 50) {
+            baseInterval = 65.0;   // Bronze
+        } else {
+            baseInterval = 40.0;   // Other
+        }
+
+        // Compute blend factor if finalizing
+        float b = 0.0;
+        if (resultsFinalizing) {
+            b = (float)(now - finalizeTime) / 180000.0;
+            if (b > 1.0) b = 1.0;
+        }
+
+        // Winner heartbeat values (used during/after finalization)
+        float winnerPeriodMs = 1500.0;   // 40 BPM
+        float winnerPhase = fmod((float)(now - finalizeTime), winnerPeriodMs) / winnerPeriodMs;
+        float winnerPulse  = (sin(winnerPhase * 2.0 * PI) + 1.0) / 2.0;
+        uint8_t winnerBright = 140 + (uint8_t)(winnerPulse * 115);  // 140–255
+
+        // If fully finalized, skip chase — render pure heartbeat
+        if (resultsFinalizing && b >= 1.0) {
+            CRGB winColor = lockedCol;
+            winColor.nscale8(winnerBright);
+            int startIdx = CUP_START_INDEX[cup];
+            for (int i = startIdx; i < startIdx + cupLedCount; i++) {
+                leds[i] = winColor;
+            }
+            continue;
+        }
+
+        // Compute effective interval with deceleration
+        float effectiveInterval = baseInterval;
+        if (resultsFinalizing) {
+            effectiveInterval = baseInterval * (1.0 + b * 4.0);
+        }
+
+        // Advance chase position (non-blocking)
+        if (now - cupChaseLastStep[cup] >= (unsigned long)effectiveInterval) {
+            cupChasePos[cup]++;
+            if (cupChasePos[cup] >= cupLedCount) cupChasePos[cup] = 0;
+            cupChaseLastStep[cup] = now;
+        }
+
+        // Render LEDs directly
+        int startIdx = CUP_START_INDEX[cup];
+
+        // Base: all LEDs at 15% brightness
+        CRGB baseDim = lockedCol;
+        baseDim.nscale8(38);  // 15%
+        for (int i = startIdx; i < startIdx + cupLedCount; i++) {
+            leds[i] = baseDim;
+        }
+
+        // Tail brightness levels (offsets -4 to -1)
+        const uint8_t tailBright[] = {26, 64, 115, 178};  // 10%, 25%, 45%, 70%
+        for (int t = 0; t < 4; t++) {
+            int tailIdx = (cupChasePos[cup] - (4 - t) + cupLedCount) % cupLedCount;
+            int stripIdx = startIdx + tailIdx;
+            CRGB tailColor = lockedCol;
+            uint8_t chaseBright = tailBright[t];
+
+            if (resultsFinalizing && b > 0) {
+                uint8_t finalBright = (uint8_t)((1.0 - b) * chaseBright + b * winnerBright);
+                tailColor.nscale8(finalBright);
+            } else {
+                tailColor.nscale8(chaseBright);
+            }
+            leds[stripIdx] = tailColor;
+        }
+
+        // Head LED at full brightness
+        {
+            int headIdx = startIdx + cupChasePos[cup];
+            CRGB headColor = lockedCol;
+            uint8_t chaseBright = 255;
+
+            if (resultsFinalizing && b > 0) {
+                uint8_t finalBright = (uint8_t)((1.0 - b) * chaseBright + b * winnerBright);
+                headColor.nscale8(finalBright);
+            } else {
+                headColor.nscale8(chaseBright);
+            }
+            leds[headIdx] = headColor;
+        }
+    }
+
+    // ===== Part C: Show Output =====
     FastLED.show();
     updatePowerEstimate();
 }

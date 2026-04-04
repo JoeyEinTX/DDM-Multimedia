@@ -130,6 +130,32 @@ const dotPatterns = {
     '|': [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
 };
 
+// Convert a message string into a flat array of pixel columns.
+// Each column is a 7-bit integer (bit 6 = top row, bit 0 = bottom row).
+// Characters not in dotPatterns are rendered as blank (space).
+// Each character = 5 columns of pixel data + 1 blank gap column.
+function messageToBitmap(text) {
+    const columns = [];
+    for (const ch of text.toUpperCase()) {
+        const rows = dotPatterns[ch] || dotPatterns[' '];
+        // For each of the 5 columns, pack the 7 row bits into one integer
+        for (let col = 0; col < 5; col++) {
+            let colBits = 0;
+            for (let row = 0; row < 7; row++) {
+                if (rows[row] & (1 << (4 - col))) {
+                    colBits |= (1 << (6 - row));
+                }
+            }
+            columns.push(colBits);
+        }
+        // 1-column blank gap between characters
+        columns.push(0);
+    }
+    // Add trailing blank gap so the message loops cleanly
+    for (let i = 0; i < 8; i++) columns.push(0);
+    return columns;
+}
+
 // Create a digit element with dot matrix (5×7 grid: 5 columns × 7 rows)
 function createDotDigit(char) {
     const digit = document.createElement('div');
@@ -193,20 +219,92 @@ function updateClock() {
         ampmDiv.appendChild(createDotDigit(ampm[1]));
         display.appendChild(ampmDiv);
     }
-
-    // Rebuild ticker on the dashboard (every second keeps time current)
-    buildTicker();
 }
 
 // =====================================================================
-// Dot-Matrix Scrolling Ticker Strip
+// Dot-Matrix Ticker Strip — Fixed Grid / Pixel Shift Engine
 // =====================================================================
 
-function buildTicker() {
+let tickerBitmap    = [];   // flat column array for the current message
+let tickerOffset    = 0;    // current left-most visible column index
+let tickerInterval  = null; // setInterval handle
+let tickerGridCols  = 0;    // how many columns fit in the container
+let tickerDotsBuilt = false; // true after the fixed dot grid is created
+
+// Build the fixed dot grid — called once on init, and on resize.
+// Creates tickerGridCols × 7 dot divs inside #ticker-track.
+// Does NOT use innerHTML — builds DOM nodes directly.
+function buildTickerGrid() {
     const track = document.getElementById('ticker-track');
     if (!track) return;
 
-    // --- 1. Current time: HH:MM AM/PM ---
+    // Dot size + gap must match CSS: --dot-size + --dot-gap
+    const DOT_SIZE = 6;   // px — matches CSS var --ticker-dot-size
+    const DOT_GAP  = 2;   // px — matches CSS var --ticker-dot-gap
+
+    const containerWidth = track.parentElement
+        ? track.parentElement.getBoundingClientRect().width
+        : window.innerWidth;
+
+    // How many columns fit?
+    tickerGridCols = Math.floor(containerWidth / (DOT_SIZE + DOT_GAP));
+    if (tickerGridCols < 1) tickerGridCols = 80; // fallback
+
+    // Rebuild grid
+    track.innerHTML = '';
+    track.style.display = 'grid';
+    track.style.gridTemplateColumns = `repeat(${tickerGridCols}, ${DOT_SIZE}px)`;
+    track.style.gridTemplateRows    = `repeat(7, ${DOT_SIZE}px)`;
+    track.style.gap = `${DOT_GAP}px`;
+    track.style.width = 'max-content';
+    track.style.padding = '6px 8px';
+
+    // Fill grid: 7 rows × tickerGridCols columns (row-major order for CSS grid)
+    for (let row = 0; row < 7; row++) {
+        for (let col = 0; col < tickerGridCols; col++) {
+            const dot = document.createElement('div');
+            dot.className = 'dot ticker-dot';
+            dot.dataset.row = row;
+            dot.dataset.col = col;
+            track.appendChild(dot);
+        }
+    }
+
+    tickerDotsBuilt = true;
+}
+
+// Render the current frame: read tickerGridCols columns starting at tickerOffset
+// from tickerBitmap, update lit class on each dot div.
+function renderTickerFrame() {
+    const track = document.getElementById('ticker-track');
+    if (!track || !tickerDotsBuilt || tickerBitmap.length === 0) return;
+
+    const dots = track.querySelectorAll('.ticker-dot');
+    const len  = tickerBitmap.length;
+
+    for (let col = 0; col < tickerGridCols; col++) {
+        const bitmapCol = tickerBitmap[(tickerOffset + col) % len];
+        for (let row = 0; row < 7; row++) {
+            const dotIndex = row * tickerGridCols + col;
+            const dot = dots[dotIndex];
+            if (!dot) continue;
+            const lit = !!(bitmapCol & (1 << (6 - row)));
+            dot.classList.toggle('lit', lit);
+        }
+    }
+}
+
+// Advance offset by 1 column, wrap at bitmap length.
+function tickerTick() {
+    if (tickerBitmap.length === 0) return;
+    tickerOffset = (tickerOffset + 1) % tickerBitmap.length;
+    renderTickerFrame();
+}
+
+// Build the message string and update the bitmap. Called every second (same
+// cadence as the old buildTicker) so time and race state stay current.
+function buildTicker() {
+    // --- 1. Time ---
     const now = new Date();
     let h = now.getHours();
     const m = now.getMinutes();
@@ -214,9 +312,9 @@ function buildTicker() {
     h = h % 12 || 12;
     const timeText = String(h).padStart(2, ' ') + ':' + String(m).padStart(2, '0') + ' ' + ap;
 
-    // --- 2. Weather (temp + condition only, no city) ---
+    // --- 2. Weather ---
     let weatherText = '';
-    if (weatherData && weatherData.current) {
+    if (typeof weatherData !== 'undefined' && weatherData && weatherData.current) {
         const temp = Math.round(weatherData.current.temp_f);
         const cond = weatherData.current.condition.text.toUpperCase();
         weatherText = temp + 'F ' + cond;
@@ -227,37 +325,43 @@ function buildTicker() {
     const raceState = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
 
     // --- 4. Date ---
-    const days = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+    const days   = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
     const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-    const dayName = days[now.getDay()];
-    const monthName = months[now.getMonth()];
-    const dateText = dayName + ' ' + monthName + ' ' + now.getDate() + ' ' + now.getFullYear();
+    const dateText = days[now.getDay()] + ' ' + months[now.getMonth()] + ' ' +
+                     now.getDate() + ' ' + now.getFullYear();
 
     // --- 5. Brand ---
     const brandText = 'DERBY DE MAYO';
 
-    // Build one copy of all segments separated by dot-matrix pipe |
-    function buildSegments() {
-        const frag = document.createDocumentFragment();
-        const segments = [timeText, weatherText, raceState, dateText, brandText]
-            .filter(s => s.length > 0);
+    // Assemble full message with pipe separators
+    const segments = [timeText, weatherText, raceState, dateText, brandText]
+        .filter(s => s.length > 0);
+    const message = segments.join(' | ') + ' | ';
 
-        segments.forEach((text, i) => {
-            frag.appendChild(createDotMatrixText(text));
-            // Pipe separator between segments (and trailing)
-            if (i < segments.length - 1) {
-                frag.appendChild(createDotMatrixText(' | '));
-            }
-        });
-        // Trailing separator before duplicate copy
-        frag.appendChild(createDotMatrixText(' | '));
-        return frag;
-    }
+    // Rebuild bitmap (offset resets to 0 to avoid a flash on content change)
+    tickerBitmap = messageToBitmap(message);
+    tickerOffset = 0;
 
-    // Two identical copies for seamless loop
-    track.innerHTML = '';
-    track.appendChild(buildSegments());
-    track.appendChild(buildSegments());
+    // Render immediately so the first frame shows without waiting for a tick
+    if (tickerDotsBuilt) renderTickerFrame();
+}
+
+// Initialize the ticker engine — call once from DOMContentLoaded
+function initTicker() {
+    buildTickerGrid();
+    buildTicker();          // populate bitmap
+
+    // Scroll at ~40ms per column (~25 columns/sec) — adjust to taste
+    tickerInterval = setInterval(tickerTick, 40);
+
+    // Rebuild message string every second (keeps time/state current)
+    setInterval(buildTicker, 1000);
+
+    // Rebuild grid on window resize
+    window.addEventListener('resize', () => {
+        buildTickerGrid();
+        renderTickerFrame();
+    });
 }
 
 // Show notification
@@ -1906,7 +2010,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Update clock immediately and every second
     updateClock();
     setInterval(updateClock, 1000);
-    
+
+    // Initialize dot-matrix ticker engine (fixed grid / pixel shift)
+    initTicker();
+
     // Get system status
     getSystemStatus();
     
