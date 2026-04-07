@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ssh:*)"
+      "Bash(ssh:*)",
+      "WebSearch",
+      "Bash(ls -la \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*Logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*DDM*)"
     ]
   }
 }
