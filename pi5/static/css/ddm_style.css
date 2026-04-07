@@ -98,24 +98,6 @@ body {
     margin: 0 auto;
 }
 
-/* ── Ticker Strip ── */
-.ticker-strip {
-    width: 100%;
-    background: #111111;
-    border-top: 2px solid #2a2a2a;
-    border-bottom: 2px solid #2a2a2a;
-    overflow: hidden;
-    padding: 0;
-    line-height: 0;
-}
-
-#ticker-track {
-    /* Layout is set dynamically by buildTickerGrid() */
-    /* No animation, no transform, no transition here */
-    display: grid;
-    background: #111111;
-}
-
 /* Ticker dots reuse the existing .dot and .dot.lit styles.
    No additional rules needed unless sizing differs from clock dots.
    If clock dots are a different size, scope with .ticker-dot: */
