@@ -202,7 +202,7 @@ function updateClock() {
 let tickerMessage    = '';   // full looping message string
 let tickerCharOffset = 0;    // index of character in tickerMessage shown in tile 0
 let tickerTileCount  = 0;    // number of visible tile slots
-let tickerTimerMs    = 120;  // ms per character advance — adjust for scroll speed
+let tickerTimerMs    = 250;  // ms per character advance — adjust for scroll speed
 
 // (Re)build the fixed tile slots inside #ticker-track.
 // Called once on init and on window resize.
