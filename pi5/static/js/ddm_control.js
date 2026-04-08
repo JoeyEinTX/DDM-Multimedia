@@ -1075,16 +1075,11 @@ async function showResultsModal() {
     document.getElementById('slot-show').innerHTML = '';
     document.getElementById('slot-show').classList.remove('filled');
     
-    // Unlock all cups and start heartbeat animation
+    // Start RESULTS_ENTRY animation (clears cup locks internally)
     try {
-        await fetch('/api/cup/unlock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cup: 'ALL' })
-        });
-        await fetch('/api/animation/HEARTBEAT_COOLDOWN', { method: 'POST' });
+        await fetch('/api/animation/RESULTS_ENTRY', { method: 'POST' });
     } catch (error) {
-        console.error('Error starting results heartbeat:', error);
+        console.error('Error starting results entry animation:', error);
     }
 
     generateSaddleClothGrid();
@@ -1335,29 +1330,10 @@ async function resultsConfirm() {
             }));
             showResultsBanner(winHorse, placeHorse, showHorse);
 
-            // Send results display animation before closing modal
-            await fetch('/api/animation/RESULTS_ACTIVE', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
-            });
+            // Signal ESP32 to blend winner chase into heartbeat seamlessly
+            await fetch('/api/results/finalize', { method: 'POST' });
 
             closeResultsModal(true);
-
-            // After 5 seconds of winner spotlight, transition to heartbeat cooldown
-            setTimeout(async () => {
-                try {
-                    const cooldownResp = await fetch('/api/animation/HEARTBEAT_COOLDOWN', {
-                        method: 'POST'
-                    });
-                    const cooldownData = await cooldownResp.json();
-                    if (cooldownData.success) {
-                        document.getElementById('current-mode').textContent = 'COOLDOWN';
-                    }
-                } catch (error) {
-                    console.error('Error starting heartbeat cooldown:', error);
-                }
-            }, 5000);
 
             await checkESP32Status();
             hideLoader();

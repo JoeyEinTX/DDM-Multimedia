@@ -491,6 +491,16 @@ def api_cup_unlock():
     })
 
 
+@app.route('/api/results/finalize', methods=['POST'])
+def api_results_finalize():
+    """Signal ESP32 to begin seamless winner blend (no LED interruption)"""
+    response = esp32.send_command('RESULTS:FINALIZE')
+    return jsonify({
+        'success': response == 'OK:RESULTS:FINALIZE',
+        'response': response
+    })
+
+
 @app.route('/api/reset', methods=['POST'])
 def api_reset():
     """Reset to idle state"""
