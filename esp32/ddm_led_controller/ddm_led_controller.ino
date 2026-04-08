@@ -1366,7 +1366,7 @@ void animResultsEntry() {
         if (lockedCol.r == 255 && lockedCol.g == 215 && lockedCol.b == 0) {
             baseInterval = 18.0;   // Gold
         } else if (lockedCol.r == 192 && lockedCol.g == 192 && lockedCol.b == 192) {
-            baseInterval = 35.0;   // Silver
+            baseInterval = 42.0;   // Silver
         } else if (lockedCol.r == 205 && lockedCol.g == 127 && lockedCol.b == 50) {
             baseInterval = 65.0;   // Bronze
         } else {
@@ -1413,20 +1413,21 @@ void animResultsEntry() {
         // Render LEDs directly
         int startIdx = CUP_START_INDEX[cup];
 
-        // Base: all LEDs at 15% brightness
-        CRGB baseDim = lockedCol;
-        baseDim.nscale8(38);  // 15%
-        for (int i = startIdx; i < startIdx + cupLedCount; i++) {
-            leds[i] = baseDim;
+        // Base: all LEDs in cup at 15% brightness
+        for (int i = 0; i < cupLedCount; i++) {
+            int stripIdx = CUP_START_INDEX[cup] + i;
+            leds[stripIdx] = lockedCol;
+            leds[stripIdx].nscale8(38);
         }
 
-        // Tail brightness levels (offsets -4 to -1)
-        const uint8_t tailBright[] = {26, 64, 115, 178};  // 10%, 25%, 45%, 70%
-        for (int t = 0; t < 4; t++) {
-            int tailIdx = (cupChasePos[cup] - (4 - t) + cupLedCount) % cupLedCount;
-            int stripIdx = startIdx + tailIdx;
+        // Tail: 6 LEDs behind head, decreasing brightness
+        // Tail offsets -1 through -6, brightness: 200, 150, 100, 60, 30, 10
+        uint8_t tailBright[] = {200, 150, 100, 60, 30, 10};
+        for (int t = 1; t <= 6; t++) {
+            int tailOffset = (cupChasePos[cup] - t + cupLedCount) % cupLedCount;
+            int stripIdx = CUP_START_INDEX[cup] + tailOffset;
             CRGB tailColor = lockedCol;
-            uint8_t chaseBright = tailBright[t];
+            uint8_t chaseBright = tailBright[t - 1];
 
             if (resultsFinalizing && b > 0) {
                 uint8_t finalBright = (uint8_t)((1.0 - b) * chaseBright + b * winnerBright);
@@ -1437,9 +1438,10 @@ void animResultsEntry() {
             leds[stripIdx] = tailColor;
         }
 
-        // Head LED at full brightness
-        {
-            int headIdx = startIdx + cupChasePos[cup];
+        // Head: 3 LEDs at full brightness (center + 1 either side)
+        for (int h = -1; h <= 1; h++) {
+            int headOffset = (cupChasePos[cup] + h + cupLedCount) % cupLedCount;
+            int stripIdx = CUP_START_INDEX[cup] + headOffset;
             CRGB headColor = lockedCol;
             uint8_t chaseBright = 255;
 
@@ -1449,7 +1451,7 @@ void animResultsEntry() {
             } else {
                 headColor.nscale8(chaseBright);
             }
-            leds[headIdx] = headColor;
+            leds[stripIdx] = headColor;
         }
     }
 
