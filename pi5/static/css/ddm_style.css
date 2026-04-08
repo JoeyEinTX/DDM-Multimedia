@@ -105,7 +105,7 @@ body {
     border-top: 2px solid #2a2a2a;
     border-bottom: 2px solid #2a2a2a;
     overflow: hidden;
-    padding: 4px 0;
+    padding: 3px 0;
     box-sizing: border-box;
 }
 
@@ -113,9 +113,8 @@ body {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 2px;
-    padding: 0 6px;
-    /* No animation. No transform. No transition. */
+    gap: 1px;
+    padding: 0 4px;
 }
 
 /* Fullscreen Toggle Button - Bottom Left Corner */
@@ -198,6 +197,17 @@ body {
     border: 1px solid #333333;
     border-radius: 2px;
     margin: 1px;
+}
+
+#ticker-track .dot-digit {
+    gap: 1px;
+    padding: 2px;
+    margin: 0;
+}
+
+#ticker-track .dot {
+    width: 4px;
+    height: 4px;
 }
 
 /* Individual dot/bulb - unlit socket (visible dark circle) */
