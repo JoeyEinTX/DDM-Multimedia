@@ -202,7 +202,7 @@ function updateClock() {
 let tickerMessage    = '';   // full looping message string
 let tickerCharOffset = 0;    // index of character in tickerMessage shown in tile 0
 let tickerTileCount  = 0;    // number of visible tile slots
-let tickerTimerMs    = 180;  // ms per character advance — adjust for scroll speed
+let tickerTimerMs    = 220;  // ms per character advance — adjust for scroll speed
 
 // (Re)build the fixed tile slots inside #ticker-track.
 // Called once on init and on window resize.
@@ -212,7 +212,7 @@ function buildTickerGrid() {
 
     // Each .dot-digit tile is 5 cols × 7 rows of 5px dots + 2px gaps + padding
     // Approximate tile width: (5 * 5) + (4 * 2) + 6px padding + 2px margin = ~41px
-    const TILE_WIDTH = 22;
+    const TILE_WIDTH = 18;
     const containerWidth = track.parentElement
         ? track.parentElement.getBoundingClientRect().width
         : window.innerWidth;
