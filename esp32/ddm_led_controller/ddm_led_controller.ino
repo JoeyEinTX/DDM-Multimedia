@@ -197,8 +197,6 @@ void animFinalCall();
 void animRaceStart();
 void animChaos();
 void animFinish();
-void animResults();
-void animResultsActive();
 void animHeartbeatCooldown();
 void animSilks();
 void animResultsEntry();
@@ -772,10 +770,6 @@ void runAnimation() {
         animHeartbeatCooldown();
     } else if (currentAnimation == "SILKS") {
         animSilks();
-    } else if (currentAnimation == "RESULTS") {
-        animResults();
-    } else if (currentAnimation == "RESULTS_ACTIVE") {
-        animResultsActive();
     } else if (currentAnimation == "RESULTS_ENTRY") {
         animResultsEntry();
     }
