@@ -755,4 +755,4 @@ if __name__ == '__main__':
     print(f"\n  Debug Mode: {FLASK_DEBUG}\n")
     print("="*60 + "\n")
     
-    socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
+    socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)
