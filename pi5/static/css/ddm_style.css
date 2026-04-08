@@ -208,6 +208,7 @@ body {
 #ticker-track .dot {
     width: 3px;
     height: 3px;
+    transition: none;
 }
 
 /* Individual dot/bulb - unlit socket (visible dark circle) */
