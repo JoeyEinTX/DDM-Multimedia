@@ -1612,6 +1612,11 @@ function revealWinners() {
     }
 }
 
+// Race Setup Modal - placeholder until modal is built
+function openRaceSetup() {
+    showNotification('Race Setup coming soon', 'info');
+}
+
 // Animations Modal - Open
 function openAnimationsModal() {
     const modal = document.getElementById('animations-modal');
@@ -1941,6 +1946,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize dot-matrix ticker engine (fixed grid / pixel shift)
     initTicker();
+
+    document.getElementById('footer-year').textContent = new Date().getFullYear();
 
     // Get system status
     getSystemStatus();

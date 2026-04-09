@@ -132,28 +132,21 @@
             </div>
         </div>
 
-        <!-- Footer: WiFi + Mode + Device Count (left), Powered by JoeyAI (right) -->
+        <!-- Unified Footer -->
         <div class="footer-section">
             <div class="footer-info">
-                <span><span class="icon-small">📶</span> Connected</span>
+                <span class="footer-status-dot" id="footer-connection-dot">📶</span>
                 <span>MODE: <span id="current-mode">STANDBY</span></span>
                 <span id="device-status" class="device-status" onclick="toggleDeviceModal()">
                     <span id="device-count">0</span> device<span id="device-plural">s</span> connected
                 </span>
-                <span id="power-status" class="power-status">⚡ <span id="power-draw">--</span></span>
+                <span id="power-display" class="footer-power"></span>
             </div>
             <div class="footer-right">
-                <button class="btn-animations" onclick="openAnimationsModal()">🎬 Animations</button>
-                <div class="powered-by">
-                    <span class="powered-text">Powered by</span>
-                    <span class="joey-ai">JoeyAI</span>
-                </div>
+                <button class="btn-footer" onclick="openRaceSetup()">⚙️ Race Setup</button>
+                <button class="btn-footer btn-animations" onclick="openAnimationsModal()">🎬 Animations</button>
+                <span class="footer-version">© <span id="footer-year"></span> Derby de Mayo Multimedia | v{{ version }}</span>
             </div>
-        </div>
-
-        <!-- Copyright Bar -->
-        <div class="copyright-bar">
-            © 2025 Derby de Mayo Multimedia | {{ version }}
         </div>
     </div>
 

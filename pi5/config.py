@@ -29,7 +29,7 @@ DDM_COLORS = {
 
 # System Information
 SYSTEM_NAME = "Derby de Mayo Control Center"
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 NUM_CUPS = 20
 TOTAL_LEDS = 640
 
