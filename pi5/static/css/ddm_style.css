@@ -1032,11 +1032,35 @@ body {
     flex-shrink: 0;
 }
 
-.footer-version {
+/* Powered by JoeyAI Badge */
+.powered-by {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: #0a0a0a;
+    border: 1px solid #2a2a2a;
+    border-radius: 16px;
+}
+
+.powered-text {
+    font-size: 0.85em;
+    color: #666666;
+}
+
+.joey-ai {
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+/* Copyright Bar */
+.copyright-bar {
+    text-align: center;
+    padding: 12px 0;
     font-size: 0.75em;
     color: #555555;
     letter-spacing: 0.5px;
-    white-space: nowrap;
 }
 
 .footer-power {
