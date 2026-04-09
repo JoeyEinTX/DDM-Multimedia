@@ -1876,22 +1876,12 @@ async function pollPowerStatus() {
     try {
         const response = await fetch('/api/power');
         const data = await response.json();
-        const el = document.getElementById('power-draw');
-        const container = document.getElementById('power-status');
+        const el = document.getElementById('power-display');
 
         if (data.success) {
             const currentA = (data.current_ma / 1000).toFixed(1);
             const peakA = (data.peak_ma / 1000).toFixed(1);
-            el.textContent = `${currentA}A (peak: ${peakA}A)`;
-
-            container.classList.remove('power-normal', 'power-warning', 'power-critical');
-            if (data.current_ma > 25000) {
-                container.classList.add('power-critical');
-            } else if (data.current_ma > 15000) {
-                container.classList.add('power-warning');
-            } else {
-                container.classList.add('power-normal');
-            }
+            if (el) el.textContent = `⚡ ${currentA}A (peak: ${peakA}A)`;
 
             // ESP32 is online — STATUS command succeeded
             esp32Info.online = true;
@@ -1901,8 +1891,7 @@ async function pollPowerStatus() {
             document.getElementById('device-plural').textContent = '';
             updateDeviceList();
         } else {
-            el.textContent = '--';
-            container.classList.remove('power-normal', 'power-warning', 'power-critical');
+            if (el) el.textContent = '⚡ --';
             handleEsp32Offline();
         }
     } catch (error) {
