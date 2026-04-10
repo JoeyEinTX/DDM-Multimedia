@@ -1326,33 +1326,8 @@ void animResultsActive() {
 void animResultsEntry() {
     unsigned long now = millis();
 
-    // ===== Part A: Loser Heartbeat (all unlocked cups) =====
-    float progress = (float)(now - resultsEntryStart) / (float)RESULTS_DECEL_MS;
-    if (progress > 1.0) progress = 1.0;
-
-    float currentBPM = 140.0 - (progress * 90.0);       // 140 → 50
-    float periodMs = 60000.0 / currentBPM;
-
-    uint8_t minBright = 51  + (uint8_t)(progress * 89);  // 51→140  (20%→55%)
-    uint8_t maxBright = 255 - (uint8_t)(progress * 64);  // 255→191 (100%→75%)
-
-    float phase = fmod((float)(now - resultsEntryStart), periodMs) / periodMs;
-    float pulse  = (sin(phase * 2.0 * PI) + 1.0) / 2.0;
-    uint8_t loserBrightness = minBright + (uint8_t)(pulse * (maxBright - minBright));
-
-    CRGB loserColor = COLOR_RED;
-    loserColor.nscale8(loserBrightness);
-
-    // Apply loser heartbeat to unlocked cups
-    for (int cup = 1; cup <= NUM_CUPS; cup++) {
-        if (!cupLocked[cup]) {
-            int startIdx = CUP_START_INDEX[cup];
-            int count = CUP_LED_COUNT[cup];
-            for (int i = startIdx; i < startIdx + count; i++) {
-                leds[i] = loserColor;
-            }
-        }
-    }
+    // Clear all LEDs to prevent stale data bleeding between frames
+    FastLED.clear();
 
     // ===== Part B: Winner Cup Chase (locked cups) =====
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
@@ -1390,11 +1365,9 @@ void animResultsEntry() {
         if (resultsFinalizing && b >= 1.0) {
             CRGB winColor = lockedCol;
             winColor.nscale8(winnerBright);
-            for (int i = 0; i < cupLedCount; i++) {
-                int stripIdx = CUP_START_INDEX[cup] + i;
-                if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
-                if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
-                leds[stripIdx] = winColor;
+            int startIdx = CUP_START_INDEX[cup];
+            for (int i = startIdx; i < startIdx + cupLedCount; i++) {
+                leds[i] = winColor;
             }
             continue;
         }
@@ -1413,12 +1386,11 @@ void animResultsEntry() {
         }
 
         // Render LEDs directly
+        int startIdx = CUP_START_INDEX[cup];
 
         // Base: all LEDs in cup at 15% brightness
         for (int i = 0; i < cupLedCount; i++) {
-            int stripIdx = CUP_START_INDEX[cup] + i;
-            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
-            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
+            int stripIdx = startIdx + i;
             leds[stripIdx] = lockedCol;
             leds[stripIdx].nscale8(38);
         }
@@ -1428,9 +1400,7 @@ void animResultsEntry() {
         uint8_t tailBright[] = {200, 150, 100, 60, 30, 10};
         for (int t = 1; t <= 6; t++) {
             int tailOffset = (cupChasePos[cup] - t + cupLedCount) % cupLedCount;
-            int stripIdx = CUP_START_INDEX[cup] + tailOffset;
-            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
-            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
+            int stripIdx = startIdx + tailOffset;
             CRGB tailColor = lockedCol;
             uint8_t chaseBright = tailBright[t - 1];
 
@@ -1446,9 +1416,7 @@ void animResultsEntry() {
         // Head: 3 LEDs at full brightness (center + 1 either side)
         for (int h = -1; h <= 1; h++) {
             int headOffset = (cupChasePos[cup] + h + cupLedCount) % cupLedCount;
-            int stripIdx = CUP_START_INDEX[cup] + headOffset;
-            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
-            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
+            int stripIdx = startIdx + headOffset;
             CRGB headColor = lockedCol;
             uint8_t chaseBright = 255;
 
@@ -1459,6 +1427,34 @@ void animResultsEntry() {
                 headColor.nscale8(chaseBright);
             }
             leds[stripIdx] = headColor;
+        }
+    }
+
+    // ===== Part A: Loser Heartbeat (all unlocked cups) =====
+    float progress = (float)(now - resultsEntryStart) / (float)RESULTS_DECEL_MS;
+    if (progress > 1.0) progress = 1.0;
+
+    float currentBPM = 140.0 - (progress * 90.0);       // 140 → 50
+    float periodMs = 60000.0 / currentBPM;
+
+    uint8_t minBright = 51  + (uint8_t)(progress * 89);  // 51→140  (20%→55%)
+    uint8_t maxBright = 255 - (uint8_t)(progress * 64);  // 255→191 (100%→75%)
+
+    float phase = fmod((float)(now - resultsEntryStart), periodMs) / periodMs;
+    float pulse  = (sin(phase * 2.0 * PI) + 1.0) / 2.0;
+    uint8_t loserBrightness = minBright + (uint8_t)(pulse * (maxBright - minBright));
+
+    CRGB loserColor = COLOR_RED;
+    loserColor.nscale8(loserBrightness);
+
+    // Apply loser heartbeat to unlocked cups
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        if (!cupLocked[cup]) {
+            int startIdx = CUP_START_INDEX[cup];
+            int count = CUP_LED_COUNT[cup];
+            for (int i = startIdx; i < startIdx + count; i++) {
+                leds[i] = loserColor;
+            }
         }
     }
 
