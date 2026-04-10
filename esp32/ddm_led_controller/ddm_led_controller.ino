@@ -1390,9 +1390,11 @@ void animResultsEntry() {
         if (resultsFinalizing && b >= 1.0) {
             CRGB winColor = lockedCol;
             winColor.nscale8(winnerBright);
-            int startIdx = CUP_START_INDEX[cup];
-            for (int i = startIdx; i < startIdx + cupLedCount; i++) {
-                leds[i] = winColor;
+            for (int i = 0; i < cupLedCount; i++) {
+                int stripIdx = CUP_START_INDEX[cup] + i;
+                if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
+                if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
+                leds[stripIdx] = winColor;
             }
             continue;
         }
@@ -1411,11 +1413,12 @@ void animResultsEntry() {
         }
 
         // Render LEDs directly
-        int startIdx = CUP_START_INDEX[cup];
 
         // Base: all LEDs in cup at 15% brightness
         for (int i = 0; i < cupLedCount; i++) {
             int stripIdx = CUP_START_INDEX[cup] + i;
+            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
+            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
             leds[stripIdx] = lockedCol;
             leds[stripIdx].nscale8(38);
         }
@@ -1426,6 +1429,8 @@ void animResultsEntry() {
         for (int t = 1; t <= 6; t++) {
             int tailOffset = (cupChasePos[cup] - t + cupLedCount) % cupLedCount;
             int stripIdx = CUP_START_INDEX[cup] + tailOffset;
+            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
+            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
             CRGB tailColor = lockedCol;
             uint8_t chaseBright = tailBright[t - 1];
 
@@ -1442,6 +1447,8 @@ void animResultsEntry() {
         for (int h = -1; h <= 1; h++) {
             int headOffset = (cupChasePos[cup] + h + cupLedCount) % cupLedCount;
             int stripIdx = CUP_START_INDEX[cup] + headOffset;
+            if (stripIdx < 0 || stripIdx >= LED_COUNT) continue;
+            if (stripIdx < CUP_START_INDEX[cup] || stripIdx >= CUP_START_INDEX[cup] + cupLedCount) continue;
             CRGB headColor = lockedCol;
             uint8_t chaseBright = 255;
 
