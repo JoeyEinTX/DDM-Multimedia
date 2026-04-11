@@ -1266,66 +1266,73 @@ void animGatesBurst() {
         return;
     }
 
-    // ===== PHASE 3: Right-to-left gallop =====
+    // ===== PHASE 3: Right-to-left thundering gallop =====
     if (gatesPhase == 3) {
         unsigned long phase3Elapsed = now - gatesPhaseStart;
 
-        // Calculate current stride interval: 200ms → 60ms over 45 seconds
+        // Stride interval: 250ms → 70ms over 45 seconds
         unsigned long strideInterval;
         if (phase3Elapsed >= 45000) {
-            strideInterval = 60;
+            strideInterval = 70;
         } else {
-            strideInterval = 200 - (unsigned long)(140.0 * (float)phase3Elapsed / 45000.0);
+            strideInterval = 250 - (unsigned long)(180.0 * (float)phase3Elapsed / 45000.0);
         }
 
-        const unsigned long FLASH_DURATION = 80;   // ms white flash per cup
-        const unsigned long FADE_DURATION  = 120;  // ms fade back to green after flash
+        const unsigned long FLASH_DURATION = 100;  // ms white flash per cup
+        const unsigned long FADE_DURATION  = 150;  // ms fade back to dim green
 
-        // Check if it's time to start the next stride
+        // Fire next stride group
         if (now - gallopLastStride >= strideInterval) {
-            // Flash the current head cup white
-            setCup(gallopHead, CRGB(255, 255, 255));
-            gallopFlashing[gallopHead] = true;
-            gallopFlashStart[gallopHead] = now;
             gallopLastStride = now;
 
-            // Global green brightness pulse — subtle ground shake
-            // (applied as a brief boost to background cups not currently flashing)
+            // Fire a group of 4 cups centered on gallopHead
+            int groupOffsets[] = {-1, 0, 1, 2};
+            for (int o = 0; o < 4; o++) {
+                int cup = gallopHead + groupOffsets[o];
+                if (cup < 1) cup += NUM_CUPS;
+                if (cup > NUM_CUPS) cup -= NUM_CUPS;
+                gallopFlashing[cup] = true;
+                gallopFlashStart[cup] = now;
+                setCup(cup, CRGB(255, 255, 255));
+            }
+
+            // Ground shake: brief brightness boost on all non-flashing cups
             for (int cup = 1; cup <= NUM_CUPS; cup++) {
                 if (!gallopFlashing[cup]) {
-                    setCup(cup, CRGB(0, 90, 0));  // brief bright pulse
+                    setCup(cup, CRGB(0, 80, 0));
                 }
             }
 
-            // Advance head right to left: 20→1, wrap back to 20
+            // Advance head right to left
             gallopHead--;
-            if (gallopHead < 1) gallopHead = 20;
+            if (gallopHead < 1) gallopHead = NUM_CUPS;
 
             FastLED.show();
             updatePowerEstimate();
         }
 
-        // Fade flashing cups back to dim green after flash duration
+        // Fade flashing cups back to dim green
+        bool needsShow = false;
         for (int cup = 1; cup <= NUM_CUPS; cup++) {
             if (gallopFlashing[cup]) {
                 unsigned long flashElapsed = now - gallopFlashStart[cup];
                 if (flashElapsed >= FLASH_DURATION + FADE_DURATION) {
-                    // Fully faded — back to dim green
                     setCup(cup, CRGB(0, 64, 0));
                     gallopFlashing[cup] = false;
-                    FastLED.show();
-                    updatePowerEstimate();
+                    needsShow = true;
                 } else if (flashElapsed >= FLASH_DURATION) {
-                    // Fading: lerp from white to dim green
                     float fadeProgress = (float)(flashElapsed - FLASH_DURATION) / (float)FADE_DURATION;
-                    uint8_t r = (uint8_t)(255 * (1.0 - fadeProgress));
-                    uint8_t g = (uint8_t)(255 * (1.0 - fadeProgress) + 64 * fadeProgress);
-                    uint8_t b = (uint8_t)(255 * (1.0 - fadeProgress));
+                    uint8_t r = (uint8_t)(255.0f * (1.0f - fadeProgress));
+                    uint8_t g = (uint8_t)(255.0f * (1.0f - fadeProgress) + 64.0f * fadeProgress);
+                    uint8_t b = (uint8_t)(255.0f * (1.0f - fadeProgress));
                     setCup(cup, CRGB(r, g, b));
-                    FastLED.show();
-                    updatePowerEstimate();
+                    needsShow = true;
                 }
             }
+        }
+        if (needsShow) {
+            FastLED.show();
+            updatePowerEstimate();
         }
     }
 }
