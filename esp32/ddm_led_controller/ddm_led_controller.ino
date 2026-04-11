@@ -74,6 +74,17 @@ int raceStartCurrentCup = 1;           // current cup being pulsed (1-based)
 unsigned long raceStartLastCupTime = 0; // when current cup's white flash started
 bool raceStartFlashing = false;         // is a cup currently showing white?
 
+// GATES_BURST animation state
+int   gatesPhase = 0;                          // 0=flash, 1=green, 2=chaos, 3=gallop
+unsigned long gatesPhaseStart = 0;             // millis when current phase began
+unsigned long cupChaosLastChange[NUM_CUPS + 1]; // millis of last color change per cup (chaos phase)
+unsigned long cupChaosInterval[NUM_CUPS + 1];  // random interval per cup (chaos phase)
+uint8_t       cupChaosState[NUM_CUPS + 1];     // 0=silk, 1=white, 2=green (current state per cup)
+int   gallopHead = 20;                         // current leading cup (counts DOWN 20→1, right to left)
+unsigned long gallopLastStride = 0;            // millis of last stride
+bool  gallopFlashing[NUM_CUPS + 1];            // true if cup is currently in white flash
+unsigned long gallopFlashStart[NUM_CUPS + 1];  // millis when flash started per cup
+
 // Cup locking for custom colors during animations
 bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
 CRGB cupLockedColor[NUM_CUPS + 1];      // color for locked cups
@@ -195,6 +206,7 @@ void animBetting60();
 void animBetting30();
 void animFinalCall();
 void animRaceStart();
+void animGatesBurst();
 void animChaos();
 void animFinish();
 void animHeartbeatCooldown();
@@ -534,7 +546,8 @@ String processCommand(String cmd) {
         return "OK:ANIM:FINAL_CALL";
     }
     
-    // ANIM:RACE_START - "They're Off!" green blast then galloping white sweep
+    // LEGACY - ANIM:RACE_START replaced by ANIM:GATES_BURST
+    /*
     else if (cmd == "ANIM:RACE_START") {
         currentMode = "RACE_START";
         currentAnimation = "RACE_START";
@@ -552,6 +565,31 @@ String processCommand(String cmd) {
         FastLED.show();
         updatePowerEstimate();
         return "OK:ANIM:RACE_START";
+    }
+    */
+
+    // ANIM:GATES_BURST - Explosive race start animation
+    else if (cmd == "ANIM:GATES_BURST") {
+        stopAnimation();
+        gatesPhase = 0;
+        gatesPhaseStart = millis();
+        gallopHead = 20;
+        gallopLastStride = millis();
+        for (int i = 1; i <= NUM_CUPS; i++) {
+            cupChaosLastChange[i] = millis();
+            cupChaosInterval[i] = random(60, 180);
+            cupChaosState[i] = 0;
+            gallopFlashing[i] = false;
+            gallopFlashStart[i] = 0;
+        }
+        // Phase 1: immediate full white blast
+        fill_solid(leds, LED_COUNT, CRGB(255, 255, 255));
+        FastLED.show();
+        updatePowerEstimate();
+        currentMode = "GATES_BURST";
+        currentAnimation = "GATES_BURST";
+        animationRunning = true;
+        return "OK:ANIM:GATES_BURST";
     }
     
     // ANIM:CHAOS - Random madness
@@ -760,8 +798,11 @@ void runAnimation() {
         animBetting30();
     } else if (currentAnimation == "FINAL_CALL") {
         animFinalCall();
-    } else if (currentAnimation == "RACE_START") {
-        animRaceStart();
+    // LEGACY - RACE_START replaced by GATES_BURST
+    // } else if (currentAnimation == "RACE_START") {
+    //     animRaceStart();
+    } else if (currentAnimation == "GATES_BURST") {
+        animGatesBurst();
     } else if (currentAnimation == "CHAOS") {
         animChaos();
     } else if (currentAnimation == "FINISH") {
@@ -1062,8 +1103,9 @@ void animFinalCall() {
 }
 
 /**
+ * LEGACY - ANIM:RACE_START replaced by ANIM:GATES_BURST
  * ANIM:RACE_START - "They're Off!" Two-phase race start animation
- * 
+ *
  * Phase 1 (Green Blast): All LEDs instantly go 100% bright green (#00FF00)
  *   - Holds for 1000ms — sharp, dramatic start (gates are open!)
  * 
@@ -1140,6 +1182,150 @@ void animRaceStart() {
             updatePowerEstimate();
             raceStartFlashing = true;
             raceStartLastCupTime = now;  // Record when this flash started
+        }
+    }
+}
+
+/**
+ * ANIM:GATES_BURST - Explosive race start
+ * Phase 0 (0–400ms):   All cups full white blast (set on trigger)
+ * Phase 1 (400–800ms): All cups hard cut to full green
+ * Phase 2 (800–3500ms): Per-cup chaos — each cup independently cycles
+ *                        silk color / white / green at random intervals
+ * Phase 3 (3500ms+):   Right-to-left gallop on dim green background,
+ *                        accelerating from 200ms→60ms stride over 45s
+ */
+void animGatesBurst() {
+    unsigned long now = millis();
+    unsigned long elapsed = now - gatesPhaseStart;
+
+    // ===== PHASE 0: White blast (hold until 400ms) =====
+    if (gatesPhase == 0) {
+        if (elapsed >= 400) {
+            gatesPhase = 1;
+            gatesPhaseStart = now;
+            fill_solid(leds, LED_COUNT, CRGB(0, 255, 0));
+            FastLED.show();
+            updatePowerEstimate();
+        }
+        return;
+    }
+
+    // ===== PHASE 1: Full green (hold until 800ms total = 400ms in this phase) =====
+    if (gatesPhase == 1) {
+        if (elapsed >= 400) {
+            gatesPhase = 2;
+            gatesPhaseStart = now;
+            // Initialize chaos state
+            for (int i = 1; i <= NUM_CUPS; i++) {
+                cupChaosLastChange[i] = now;
+                cupChaosInterval[i] = random(60, 180);
+                cupChaosState[i] = random(0, 3);
+            }
+        }
+        return;
+    }
+
+    // ===== PHASE 2: Per-cup chaos scramble =====
+    if (gatesPhase == 2) {
+        for (int cup = 1; cup <= NUM_CUPS; cup++) {
+            if (now - cupChaosLastChange[cup] >= cupChaosInterval[cup]) {
+                // Advance to next random state
+                cupChaosState[cup] = random(0, 3);  // 0=silk, 1=white, 2=green
+                cupChaosInterval[cup] = random(60, 180);
+                cupChaosLastChange[cup] = now;
+            }
+            // Render current state
+            CRGB color;
+            if (cupChaosState[cup] == 0) {
+                color = SILK_PRIMARY[cup];
+            } else if (cupChaosState[cup] == 1) {
+                color = CRGB(255, 255, 255);
+            } else {
+                color = CRGB(0, 255, 0);
+            }
+            setCup(cup, color);
+        }
+        FastLED.show();
+        updatePowerEstimate();
+
+        // Transition to gallop at 3500ms
+        if (elapsed >= 2700) {
+            gatesPhase = 3;
+            gatesPhaseStart = now;
+            gallopHead = 20;
+            gallopLastStride = now;
+            // Set all cups to dim green background
+            for (int i = 1; i <= NUM_CUPS; i++) {
+                gallopFlashing[i] = false;
+            }
+            fill_solid(leds, LED_COUNT, CRGB(0, 64, 0));
+            FastLED.show();
+            updatePowerEstimate();
+        }
+        return;
+    }
+
+    // ===== PHASE 3: Right-to-left gallop =====
+    if (gatesPhase == 3) {
+        unsigned long phase3Elapsed = now - gatesPhaseStart;
+
+        // Calculate current stride interval: 200ms → 60ms over 45 seconds
+        unsigned long strideInterval;
+        if (phase3Elapsed >= 45000) {
+            strideInterval = 60;
+        } else {
+            strideInterval = 200 - (unsigned long)(140.0 * (float)phase3Elapsed / 45000.0);
+        }
+
+        const unsigned long FLASH_DURATION = 80;   // ms white flash per cup
+        const unsigned long FADE_DURATION  = 120;  // ms fade back to green after flash
+
+        // Check if it's time to start the next stride
+        if (now - gallopLastStride >= strideInterval) {
+            // Flash the current head cup white
+            setCup(gallopHead, CRGB(255, 255, 255));
+            gallopFlashing[gallopHead] = true;
+            gallopFlashStart[gallopHead] = now;
+            gallopLastStride = now;
+
+            // Global green brightness pulse — subtle ground shake
+            // (applied as a brief boost to background cups not currently flashing)
+            for (int cup = 1; cup <= NUM_CUPS; cup++) {
+                if (!gallopFlashing[cup]) {
+                    setCup(cup, CRGB(0, 90, 0));  // brief bright pulse
+                }
+            }
+
+            // Advance head right to left: 20→1, wrap back to 20
+            gallopHead--;
+            if (gallopHead < 1) gallopHead = 20;
+
+            FastLED.show();
+            updatePowerEstimate();
+        }
+
+        // Fade flashing cups back to dim green after flash duration
+        for (int cup = 1; cup <= NUM_CUPS; cup++) {
+            if (gallopFlashing[cup]) {
+                unsigned long flashElapsed = now - gallopFlashStart[cup];
+                if (flashElapsed >= FLASH_DURATION + FADE_DURATION) {
+                    // Fully faded — back to dim green
+                    setCup(cup, CRGB(0, 64, 0));
+                    gallopFlashing[cup] = false;
+                    FastLED.show();
+                    updatePowerEstimate();
+                } else if (flashElapsed >= FLASH_DURATION) {
+                    // Fading: lerp from white to dim green
+                    float fadeProgress = (float)(flashElapsed - FLASH_DURATION) / (float)FADE_DURATION;
+                    uint8_t r = (uint8_t)(255 * (1.0 - fadeProgress));
+                    uint8_t g = (uint8_t)(255 * (1.0 - fadeProgress) + 64 * fadeProgress);
+                    uint8_t b = (uint8_t)(255 * (1.0 - fadeProgress));
+                    setCup(cup, CRGB(r, g, b));
+                    FastLED.show();
+                    updatePowerEstimate();
+                }
+            }
         }
     }
 }
