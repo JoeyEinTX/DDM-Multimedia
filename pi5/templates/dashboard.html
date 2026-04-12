@@ -102,7 +102,10 @@
             <!-- During Race Panel -->
             <div class="panel">
                 <h2>DURING RACE</h2>
-                <button class="btn" onclick="sendAnimation('GATES_BURST', this)">They're Off!</button>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn" style="flex:1" onclick="sendAnimation('AT_THE_GATE', this)">At The Gate</button>
+                    <button class="btn" style="flex:1" onclick="sendAnimation('GATES_BURST', this)">They're Off!</button>
+                </div>
                 <button class="btn" onclick="sendAnimation('CHAOS', this)">Chaos</button>
                 <button class="btn" onclick="sendAnimation('FINISH', this)">Finish</button>
             </div>

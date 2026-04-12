@@ -88,6 +88,10 @@ unsigned long hoofLastBeat[NUM_HORSES];  // millis of last beat for each horse
 bool  hoofFlashing[NUM_CUPS + 1];        // true if cup is currently flashing
 unsigned long hoofFlashStart[NUM_CUPS + 1]; // millis when flash started
 
+// Gate opening sequence state
+int   gateOpenStep = 0;              // current step in gate opening (0-1, one per cup per door)
+unsigned long gateOpenLastStep = 0;  // millis of last gate step
+
 // Cup locking for custom colors during animations
 bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
 CRGB cupLockedColor[NUM_CUPS + 1];      // color for locked cups
@@ -209,6 +213,7 @@ void animBetting60();
 void animBetting30();
 void animFinalCall();
 void animRaceStart();
+void animAtTheGate();
 void animGatesBurst();
 void animChaos();
 void animFinish();
@@ -571,6 +576,20 @@ String processCommand(String cmd) {
     }
     */
 
+    // ANIM:AT_THE_GATE - Horses loading, steady bright white glow
+    else if (cmd == "ANIM:AT_THE_GATE") {
+        stopAnimation();
+        currentMode = "AT_THE_GATE";
+        currentAnimation = "AT_THE_GATE";
+        animationRunning = true;
+        animStartTime = millis();
+        // All cups full bright white
+        fill_solid(leds, LED_COUNT, CRGB(255, 255, 255));
+        FastLED.show();
+        updatePowerEstimate();
+        return "OK:ANIM:AT_THE_GATE";
+    }
+
     // ANIM:GATES_BURST - Explosive race start animation
     else if (cmd == "ANIM:GATES_BURST") {
         stopAnimation();
@@ -598,7 +617,12 @@ String processCommand(String cmd) {
             hoofFlashing[i] = false;
             hoofFlashStart[i] = 0;
         }
-        // Phase 1: immediate full white blast
+        // Initialize gate opening sequence
+        gateOpenStep = 0;
+        gateOpenLastStep = millis();
+        // Fire inner cups immediately (step 0): 2,3,6,7,10,11,14,15,18,19
+        int innerCups[] = {2, 3, 6, 7, 10, 11, 14, 15, 18, 19};
+        // Start from AT_THE_GATE white — just ensure all cups are white first
         fill_solid(leds, LED_COUNT, CRGB(255, 255, 255));
         FastLED.show();
         updatePowerEstimate();
@@ -817,6 +841,8 @@ void runAnimation() {
     // LEGACY - RACE_START replaced by GATES_BURST
     // } else if (currentAnimation == "RACE_START") {
     //     animRaceStart();
+    } else if (currentAnimation == "AT_THE_GATE") {
+        animAtTheGate();
     } else if (currentAnimation == "GATES_BURST") {
         animGatesBurst();
     } else if (currentAnimation == "CHAOS") {
@@ -1203,9 +1229,25 @@ void animRaceStart() {
 }
 
 /**
+ * ANIM:AT_THE_GATE - Steady bright white with slow gentle breathe
+ * All 20 cups glow white, slow sine pulse 85%→100% brightness
+ * Builds tension while horses load into the gate
+ */
+void animAtTheGate() {
+    unsigned long elapsed = millis() - animStartTime;
+    // Slow breathe: 3 second cycle, 85%→100% brightness
+    float breathe = (sin(elapsed / 1500.0f) + 1.0f) / 2.0f;
+    uint8_t brightness = 217 + (uint8_t)(breathe * 38);  // 217→255 (85%→100%)
+    CRGB color = CRGB(255, 255, 255);
+    color.nscale8(brightness);
+    fill_solid(leds, LED_COUNT, color);
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
  * ANIM:GATES_BURST - Explosive race start
- * Phase 0 (0–400ms):   All cups full white blast (set on trigger)
- * Phase 1 (400–800ms): All cups hard cut to full green
+ * Phase 0: Gate opening — 5-gate outward white burst
  * Phase 2 (800–3500ms): Per-cup chaos — each cup independently cycles
  *                        silk color / white / green at random intervals
  * Phase 3 (3500ms+):   Right-to-left gallop on dim green background,
@@ -1215,22 +1257,24 @@ void animGatesBurst() {
     unsigned long now = millis();
     unsigned long elapsed = now - gatesPhaseStart;
 
-    // ===== PHASE 0: White blast (hold until 400ms) =====
+    // ===== PHASE 0: Gate opening — outward white burst across 5 gates =====
     if (gatesPhase == 0) {
-        if (elapsed >= 400) {
-            gatesPhase = 1;
-            gatesPhaseStart = now;
-            fill_solid(leds, LED_COUNT, CRGB(0, 255, 0));
+        // Step 0: inner cups of each door (fired immediately on trigger — already set in handler)
+        // Step 1: outer cups of each door — fire after 60ms
+        if (gateOpenStep == 0 && now - gateOpenLastStep >= 60) {
+            // Outer cups: 1,4,5,8,9,12,13,16,17,20
+            int outerCups[] = {1, 4, 5, 8, 9, 12, 13, 16, 17, 20};
+            for (int i = 0; i < 10; i++) {
+                setCup(outerCups[i], CRGB(255, 255, 255));
+            }
             FastLED.show();
             updatePowerEstimate();
+            gateOpenStep = 1;
+            gateOpenLastStep = now;
         }
-        return;
-    }
-
-    // ===== PHASE 1: Full green (hold until 800ms total = 400ms in this phase) =====
-    if (gatesPhase == 1) {
-        if (elapsed >= 400) {
-            gatesPhase = 2;
+        // Hold all white for 300ms then transition to chaos
+        if (gateOpenStep == 1 && now - gateOpenLastStep >= 300) {
+            gatesPhase = 2;  // Skip old Phase 1 (green), go straight to chaos
             gatesPhaseStart = now;
             // Initialize chaos state
             for (int i = 1; i <= NUM_CUPS; i++) {
