@@ -80,10 +80,13 @@ unsigned long gatesPhaseStart = 0;             // millis when current phase bega
 unsigned long cupChaosLastChange[NUM_CUPS + 1]; // millis of last color change per cup (chaos phase)
 unsigned long cupChaosInterval[NUM_CUPS + 1];  // random interval per cup (chaos phase)
 uint8_t       cupChaosState[NUM_CUPS + 1];     // 0=silk, 1=white, 2=green (current state per cup)
-int   gallopHead = 20;                         // current leading cup (counts DOWN 20→1, right to left)
-unsigned long gallopLastStride = 0;            // millis of last stride
-bool  gallopFlashing[NUM_CUPS + 1];            // true if cup is currently in white flash
-unsigned long gallopFlashStart[NUM_CUPS + 1];  // millis when flash started per cup
+// Hoofbeat sequences (3 simultaneous horses)
+#define NUM_HORSES 3
+int   hoofPos[NUM_HORSES];               // current cup position for each horse (1-20)
+int   hoofBeat[NUM_HORSES];              // current beat within sequence (0-2 = quick, 3 = pause)
+unsigned long hoofLastBeat[NUM_HORSES];  // millis of last beat for each horse
+bool  hoofFlashing[NUM_CUPS + 1];        // true if cup is currently flashing
+unsigned long hoofFlashStart[NUM_CUPS + 1]; // millis when flash started
 
 // Cup locking for custom colors during animations
 bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
@@ -573,14 +576,27 @@ String processCommand(String cmd) {
         stopAnimation();
         gatesPhase = 0;
         gatesPhaseStart = millis();
-        gallopHead = 20;
-        gallopLastStride = millis();
         for (int i = 1; i <= NUM_CUPS; i++) {
             cupChaosLastChange[i] = millis();
             cupChaosInterval[i] = random(60, 180);
             cupChaosState[i] = 0;
-            gallopFlashing[i] = false;
-            gallopFlashStart[i] = 0;
+        }
+        // Stagger horse starting positions evenly across the mantle
+        hoofPos[0] = 20;
+        hoofPos[1] = 14;
+        hoofPos[2] = 7;
+        // Stagger beat phase so horses don't sync up
+        hoofBeat[0] = 0;
+        hoofBeat[1] = 1;
+        hoofBeat[2] = 2;
+        // Stagger timing so first beats don't all fire simultaneously
+        hoofLastBeat[0] = millis();
+        hoofLastBeat[1] = millis() - 40;
+        hoofLastBeat[2] = millis() - 80;
+        // Clear flash state
+        for (int i = 1; i <= NUM_CUPS; i++) {
+            hoofFlashing[i] = false;
+            hoofFlashStart[i] = 0;
         }
         // Phase 1: immediate full white blast
         fill_solid(leds, LED_COUNT, CRGB(255, 255, 255));
@@ -1266,59 +1282,60 @@ void animGatesBurst() {
         return;
     }
 
-    // ===== PHASE 3: Right-to-left thundering gallop =====
+    // ===== PHASE 3: Hoofbeat rhythm gallop =====
     if (gatesPhase == 3) {
         unsigned long phase3Elapsed = now - gatesPhaseStart;
 
-        // Stride interval: 250ms → 70ms over 45 seconds
-        unsigned long strideInterval;
-        if (phase3Elapsed >= 45000) {
-            strideInterval = 70;
-        } else {
-            strideInterval = 250 - (unsigned long)(180.0 * (float)phase3Elapsed / 45000.0);
-        }
+        // Tempo accelerates over 45 seconds
+        // Quick beat interval: 120ms → 40ms
+        // Pause duration: 350ms → 100ms
+        float tempoProgress = (phase3Elapsed >= 45000) ? 1.0f : (float)phase3Elapsed / 45000.0f;
+        unsigned long quickBeat = 120 - (unsigned long)(80.0f * tempoProgress);   // 120→40ms
+        unsigned long pauseBeat = 350 - (unsigned long)(250.0f * tempoProgress);  // 350→100ms
 
-        const unsigned long FLASH_DURATION = 100;  // ms white flash per cup
-        const unsigned long FADE_DURATION  = 150;  // ms fade back to dim green
+        const unsigned long FLASH_DURATION = 80;   // ms white flash
+        const unsigned long FADE_DURATION  = 120;  // ms fade to dim green
 
-        // Fire next stride group
-        if (now - gallopLastStride >= strideInterval) {
-            gallopLastStride = now;
+        // Update each horse sequence
+        for (int h = 0; h < NUM_HORSES; h++) {
+            unsigned long interval = (hoofBeat[h] == 3) ? pauseBeat : quickBeat;
 
-            // Fire a group of 4 cups centered on gallopHead
-            int groupOffsets[] = {-1, 0, 1, 2};
-            for (int o = 0; o < 4; o++) {
-                int cup = gallopHead + groupOffsets[o];
-                if (cup < 1) cup += NUM_CUPS;
-                if (cup > NUM_CUPS) cup -= NUM_CUPS;
-                gallopFlashing[cup] = true;
-                gallopFlashStart[cup] = now;
-                setCup(cup, CRGB(255, 255, 255));
-            }
+            if (now - hoofLastBeat[h] >= interval) {
+                hoofLastBeat[h] = now;
 
-            // Ground shake: brief brightness boost on all non-flashing cups
-            for (int cup = 1; cup <= NUM_CUPS; cup++) {
-                if (!gallopFlashing[cup]) {
-                    setCup(cup, CRGB(0, 80, 0));
+                if (hoofBeat[h] < 3) {
+                    // Quick beat — flash current cup white, advance position
+                    int cup = hoofPos[h];
+                    hoofFlashing[cup] = true;
+                    hoofFlashStart[cup] = now;
+                    setCup(cup, CRGB(255, 255, 255));
+
+                    // Move right to left
+                    hoofPos[h]--;
+                    if (hoofPos[h] < 1) hoofPos[h] = NUM_CUPS;
+
+                    hoofBeat[h]++;
+                } else {
+                    // Pause beat (beat 3) — no flash, just advance position slightly
+                    hoofBeat[h] = 0;  // reset to next sequence
+                    // Skip 1 cup during suspension (all 4 feet off ground)
+                    hoofPos[h]--;
+                    if (hoofPos[h] < 1) hoofPos[h] = NUM_CUPS;
                 }
+
+                FastLED.show();
+                updatePowerEstimate();
             }
-
-            // Advance head right to left
-            gallopHead--;
-            if (gallopHead < 1) gallopHead = NUM_CUPS;
-
-            FastLED.show();
-            updatePowerEstimate();
         }
 
         // Fade flashing cups back to dim green
         bool needsShow = false;
         for (int cup = 1; cup <= NUM_CUPS; cup++) {
-            if (gallopFlashing[cup]) {
-                unsigned long flashElapsed = now - gallopFlashStart[cup];
+            if (hoofFlashing[cup]) {
+                unsigned long flashElapsed = now - hoofFlashStart[cup];
                 if (flashElapsed >= FLASH_DURATION + FADE_DURATION) {
                     setCup(cup, CRGB(0, 64, 0));
-                    gallopFlashing[cup] = false;
+                    hoofFlashing[cup] = false;
                     needsShow = true;
                 } else if (flashElapsed >= FLASH_DURATION) {
                     float fadeProgress = (float)(flashElapsed - FLASH_DURATION) / (float)FADE_DURATION;
