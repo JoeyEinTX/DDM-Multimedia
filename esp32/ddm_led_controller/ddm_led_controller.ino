@@ -1269,11 +1269,10 @@ void animGatesBurst() {
         if (elapsed >= 2700) {
             gatesPhase = 3;
             gatesPhaseStart = now;
-            gallopHead = 20;
-            gallopLastStride = now;
-            // Set all cups to dim green background
+            // Clear flash state for phase 3
             for (int i = 1; i <= NUM_CUPS; i++) {
-                gallopFlashing[i] = false;
+                hoofFlashing[i] = false;
+                hoofFlashStart[i] = 0;
             }
             fill_solid(leds, LED_COUNT, CRGB(0, 64, 0));
             FastLED.show();
