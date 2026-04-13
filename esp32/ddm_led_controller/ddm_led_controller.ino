@@ -92,6 +92,13 @@ unsigned long hoofFlashStart[NUM_CUPS + 1]; // millis when flash started
 int   gateOpenStep = 0;              // current step in gate opening (0-1, one per cup per door)
 unsigned long gateOpenLastStep = 0;  // millis of last gate step
 
+// Gate split animation state (LED-level gate swing)
+bool  gateSplitActive = false;           // true while gate split is running
+unsigned long gateSplitStart = 0;        // millis when gate split began
+#define GATE_SPLIT_STEP_MS 22            // ms per LED step (22ms × 16 steps = ~350ms total)
+#define GATE_OUTER_DELAY_MS 120          // ms delay before outer cups start fading
+#define GATE_OUTER2_DELAY_MS 240         // ms delay before outermost cups start fading
+
 // Cup locking for custom colors during animations
 bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
 CRGB cupLockedColor[NUM_CUPS + 1];      // color for locked cups
@@ -617,12 +624,14 @@ String processCommand(String cmd) {
             hoofFlashing[i] = false;
             hoofFlashStart[i] = 0;
         }
-        // Initialize gate opening sequence
+        // Initialize gate split
+        gateSplitActive = true;
+        gateSplitStart = millis();
+        gatesPhase = 0;
+        gatesPhaseStart = millis();
         gateOpenStep = 0;
         gateOpenLastStep = millis();
-        // Fire inner cups immediately (step 0): 2,3,6,7,10,11,14,15,18,19
-        int innerCups[] = {2, 3, 6, 7, 10, 11, 14, 15, 18, 19};
-        // Start from AT_THE_GATE white — just ensure all cups are white first
+        // All cups start full white (coming from AT_THE_GATE or any other state)
         fill_solid(leds, LED_COUNT, CRGB(255, 255, 255));
         FastLED.show();
         updatePowerEstimate();
@@ -1235,9 +1244,9 @@ void animRaceStart() {
  */
 void animAtTheGate() {
     unsigned long elapsed = millis() - animStartTime;
-    // Slow breathe: 3 second cycle, 85%→100% brightness
-    float breathe = (sin(elapsed / 1500.0f) + 1.0f) / 2.0f;
-    uint8_t brightness = 217 + (uint8_t)(breathe * 38);  // 217→255 (85%→100%)
+    // Slow breathe: 4 second cycle, 55%→100% brightness
+    float breathe = (sin(elapsed / 2000.0f) + 1.0f) / 2.0f;  // 4 second cycle
+    uint8_t brightness = 140 + (uint8_t)(breathe * 115);  // 140→255 (55%→100%)
     CRGB color = CRGB(255, 255, 255);
     color.nscale8(brightness);
     fill_solid(leds, LED_COUNT, color);
@@ -1257,26 +1266,86 @@ void animGatesBurst() {
     unsigned long now = millis();
     unsigned long elapsed = now - gatesPhaseStart;
 
-    // ===== PHASE 0: Gate opening — outward white burst across 5 gates =====
+    // ===== PHASE 0: Gate split — darkness radiates outward from center of each gate =====
     if (gatesPhase == 0) {
-        // Step 0: inner cups of each door (fired immediately on trigger — already set in handler)
-        // Step 1: outer cups of each door — fire after 60ms
-        if (gateOpenStep == 0 && now - gateOpenLastStep >= 60) {
-            // Outer cups: 1,4,5,8,9,12,13,16,17,20
-            int outerCups[] = {1, 4, 5, 8, 9, 12, 13, 16, 17, 20};
-            for (int i = 0; i < 10; i++) {
-                setCup(outerCups[i], CRGB(255, 255, 255));
+        unsigned long gateElapsed = now - gateSplitStart;
+
+        // Gate layout: 4 gates, each 5 cups wide
+        // Center cups: 3, 8, 13, 18
+        // Inner neighbors: 2&4, 7&9, 12&14, 17&19
+        // Outer cups: 1&5, 6&10, 11&15, 16&20
+        const int centerCups[]  = {3, 8, 13, 18};
+        const int innerLeft[]   = {2, 7, 12, 17};
+        const int innerRight[]  = {4, 9, 14, 19};
+        const int outerLeft[]   = {1, 6, 11, 16};
+        const int outerRight[]  = {5, 10, 15, 20};
+
+        // How many LEDs have faded on the center cups
+        int centerStep = (int)(gateElapsed / GATE_SPLIT_STEP_MS);
+        if (centerStep > 16) centerStep = 16;
+
+        // Render center cups — LEDs fade dark outward from split point
+        for (int g = 0; g < 4; g++) {
+            int cup = centerCups[g];
+            int splitPoint = CUP_LED_COUNT[cup] / 2;  // LED 16 for 32-LED cups, 15 for 31-LED
+
+            for (int i = 0; i < CUP_LED_COUNT[cup]; i++) {
+                int distFromSplit;
+                if (i < splitPoint) {
+                    distFromSplit = splitPoint - i - 1;  // left side: distance from split going down
+                } else {
+                    distFromSplit = i - splitPoint;       // right side: distance from split going up
+                }
+
+                int stripIdx = CUP_START_INDEX[cup] + i;
+
+                if (distFromSplit < centerStep) {
+                    // This LED has reached its fade step — calculate fade progress
+                    int ledStep = centerStep - distFromSplit;
+                    float fadeProgress = (float)ledStep / 4.0f;  // fade over 4 steps (~88ms)
+                    if (fadeProgress > 1.0f) fadeProgress = 1.0f;
+                    uint8_t brightness = (uint8_t)(255.0f * (1.0f - fadeProgress));
+                    leds[stripIdx] = CRGB(brightness, brightness, brightness);
+                } else {
+                    // Not yet faded — full white
+                    leds[stripIdx] = CRGB(255, 255, 255);
+                }
             }
-            FastLED.show();
-            updatePowerEstimate();
-            gateOpenStep = 1;
-            gateOpenLastStep = now;
         }
-        // Hold all white for 300ms then transition to chaos
-        if (gateOpenStep == 1 && now - gateOpenLastStep >= 300) {
-            gatesPhase = 2;  // Skip old Phase 1 (green), go straight to chaos
+
+        // Render inner neighbor cups — start fading after GATE_OUTER_DELAY_MS
+        if (gateElapsed >= GATE_OUTER_DELAY_MS) {
+            unsigned long innerElapsed = gateElapsed - GATE_OUTER_DELAY_MS;
+            float innerFade = (float)innerElapsed / 300.0f;
+            if (innerFade > 1.0f) innerFade = 1.0f;
+            uint8_t innerBright = (uint8_t)(255.0f * (1.0f - innerFade));
+            CRGB innerColor = CRGB(innerBright, innerBright, innerBright);
+            for (int g = 0; g < 4; g++) {
+                setCup(innerLeft[g],  innerColor);
+                setCup(innerRight[g], innerColor);
+            }
+        }
+
+        // Render outer cups — start fading after GATE_OUTER2_DELAY_MS
+        if (gateElapsed >= GATE_OUTER2_DELAY_MS) {
+            unsigned long outerElapsed = gateElapsed - GATE_OUTER2_DELAY_MS;
+            float outerFade = (float)outerElapsed / 300.0f;
+            if (outerFade > 1.0f) outerFade = 1.0f;
+            uint8_t outerBright = (uint8_t)(255.0f * (1.0f - outerFade));
+            CRGB outerColor = CRGB(outerBright, outerBright, outerBright);
+            for (int g = 0; g < 4; g++) {
+                setCup(outerLeft[g],  outerColor);
+                setCup(outerRight[g], outerColor);
+            }
+        }
+
+        FastLED.show();
+        updatePowerEstimate();
+
+        // Transition to chaos after all cups have fully faded (~700ms total)
+        if (gateElapsed >= 700) {
+            gatesPhase = 2;
             gatesPhaseStart = now;
-            // Initialize chaos state
             for (int i = 1; i <= NUM_CUPS; i++) {
                 cupChaosLastChange[i] = now;
                 cupChaosInterval[i] = random(60, 180);
@@ -1310,7 +1379,7 @@ void animGatesBurst() {
         updatePowerEstimate();
 
         // Transition to gallop at 3500ms
-        if (elapsed >= 2700) {
+        if (elapsed >= 4000) {
             gatesPhase = 3;
             gatesPhaseStart = now;
             // Clear flash state for phase 3
