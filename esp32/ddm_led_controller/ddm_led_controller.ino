@@ -95,9 +95,9 @@ unsigned long gateOpenLastStep = 0;  // millis of last gate step
 // Gate split animation state (LED-level gate swing)
 bool  gateSplitActive = false;           // true while gate split is running
 unsigned long gateSplitStart = 0;        // millis when gate split began
-#define GATE_SPLIT_STEP_MS 22            // ms per LED step (22ms × 16 steps = ~350ms total)
-#define GATE_OUTER_DELAY_MS 120          // ms delay before outer cups start fading
-#define GATE_OUTER2_DELAY_MS 240         // ms delay before outermost cups start fading
+#define GATE_SPLIT_STEP_MS 45            // ms per LED step (45ms × 16 steps = ~720ms total)
+#define GATE_OUTER_DELAY_MS 300          // ms delay before inner neighbor cups start fading
+#define GATE_OUTER2_DELAY_MS 600         // ms delay before outermost cups start fading
 
 // Cup locking for custom colors during animations
 bool cupLocked[NUM_CUPS + 1] = {false};  // cups 1-20, index 0 unused
@@ -1244,8 +1244,9 @@ void animRaceStart() {
  */
 void animAtTheGate() {
     unsigned long elapsed = millis() - animStartTime;
-    // Slow breathe: 4 second cycle, 55%→100% brightness
-    float breathe = (sin(elapsed / 2000.0f) + 1.0f) / 2.0f;  // 4 second cycle
+    // Slow breathe: 3 second cycle, 55%→100% brightness
+    // sin() period = 2π × 477 ≈ 3000ms
+    float breathe = (sin(elapsed / 477.0f) + 1.0f) / 2.0f;  // 3 second cycle
     uint8_t brightness = 140 + (uint8_t)(breathe * 115);  // 140→255 (55%→100%)
     CRGB color = CRGB(255, 255, 255);
     color.nscale8(brightness);
@@ -1316,7 +1317,7 @@ void animGatesBurst() {
         // Render inner neighbor cups — start fading after GATE_OUTER_DELAY_MS
         if (gateElapsed >= GATE_OUTER_DELAY_MS) {
             unsigned long innerElapsed = gateElapsed - GATE_OUTER_DELAY_MS;
-            float innerFade = (float)innerElapsed / 300.0f;
+            float innerFade = (float)innerElapsed / 500.0f;
             if (innerFade > 1.0f) innerFade = 1.0f;
             uint8_t innerBright = (uint8_t)(255.0f * (1.0f - innerFade));
             CRGB innerColor = CRGB(innerBright, innerBright, innerBright);
@@ -1329,7 +1330,7 @@ void animGatesBurst() {
         // Render outer cups — start fading after GATE_OUTER2_DELAY_MS
         if (gateElapsed >= GATE_OUTER2_DELAY_MS) {
             unsigned long outerElapsed = gateElapsed - GATE_OUTER2_DELAY_MS;
-            float outerFade = (float)outerElapsed / 300.0f;
+            float outerFade = (float)outerElapsed / 500.0f;
             if (outerFade > 1.0f) outerFade = 1.0f;
             uint8_t outerBright = (uint8_t)(255.0f * (1.0f - outerFade));
             CRGB outerColor = CRGB(outerBright, outerBright, outerBright);
@@ -1342,8 +1343,8 @@ void animGatesBurst() {
         FastLED.show();
         updatePowerEstimate();
 
-        // Transition to chaos after all cups have fully faded (~700ms total)
-        if (gateElapsed >= 700) {
+        // Transition to chaos after all cups have fully faded (~1500ms total)
+        if (gateElapsed >= 1500) {
             gatesPhase = 2;
             gatesPhaseStart = now;
             for (int i = 1; i <= NUM_CUPS; i++) {
