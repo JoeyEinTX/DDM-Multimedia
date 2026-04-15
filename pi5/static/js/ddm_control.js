@@ -1612,9 +1612,12 @@ function revealWinners() {
     }
 }
 
-// Race Setup Modal - placeholder until modal is built
-function openRaceSetup() {
-    showNotification('Race Setup coming soon', 'info');
+function openTuningModal() {
+    document.getElementById('tuning-modal').classList.add('active');
+}
+
+function closeTuningModal() {
+    document.getElementById('tuning-modal').classList.remove('active');
 }
 
 // Animations Modal - Open
