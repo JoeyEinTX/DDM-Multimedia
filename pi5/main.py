@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
                    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
-                   TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED)
+                   TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED,
+                   PARAMS_FILE)
 from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
@@ -252,6 +253,40 @@ def api_animation(anim_name):
         'animation': anim_name,
         'response': response
     })
+
+
+def load_params_cache():
+    """Load cached animation params from JSON file."""
+    try:
+        if os.path.exists(PARAMS_FILE):
+            with open(PARAMS_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f'[PARAMS] Error loading cache: {e}')
+    return {}
+
+def save_params_cache(params: dict):
+    """Save animation params to JSON cache file."""
+    try:
+        with open(PARAMS_FILE, 'w') as f:
+            json.dump(params, f, indent=2)
+    except Exception as e:
+        print(f'[PARAMS] Error saving cache: {e}')
+
+def parse_params_response(response: str) -> dict:
+    """Parse PARAMS:key=value,key=value response from ESP32 into a dict."""
+    params = {}
+    if not response.startswith('PARAMS:'):
+        return params
+    pairs = response[7:].split(',')
+    for pair in pairs:
+        if '=' in pair:
+            key, val = pair.split('=', 1)
+            try:
+                params[key.strip()] = int(val.strip())
+            except ValueError:
+                params[key.strip()] = val.strip()
+    return params
 
 
 def save_results(win, place, show):
@@ -499,6 +534,81 @@ def api_results_finalize():
         'success': response == 'OK:RESULTS:FINALIZE',
         'response': response
     })
+
+
+@app.route('/api/params', methods=['GET'])
+def api_params_get():
+    """Get all animation params — fetch from ESP32 and cache locally."""
+    try:
+        response = esp32.send_command('PARAM:GET:ALL')
+        if response and response.startswith('PARAMS:'):
+            params = parse_params_response(response)
+            save_params_cache(params)
+            return jsonify({'success': True, 'params': params})
+        else:
+            # ESP32 unreachable — return cached values
+            cached = load_params_cache()
+            return jsonify({
+                'success': bool(cached),
+                'params': cached,
+                'cached': True
+            })
+    except Exception as e:
+        cached = load_params_cache()
+        return jsonify({
+            'success': bool(cached),
+            'params': cached,
+            'cached': True,
+            'error': str(e)
+        })
+
+
+@app.route('/api/params', methods=['POST'])
+def api_params_set():
+    """Set a single animation param live on the ESP32."""
+    data = request.get_json()
+    key   = data.get('key', '').strip()
+    value = data.get('value')
+
+    if not key or value is None:
+        return jsonify({'success': False, 'error': 'key and value required'}), 400
+
+    command = f'PARAM:SET:{key}:{int(value)}'
+    response = esp32.send_command(command)
+    success = response and response.startswith('OK:PARAM:SET')
+
+    if success:
+        # Update local cache
+        cached = load_params_cache()
+        cached[key] = int(value)
+        save_params_cache(cached)
+
+    return jsonify({
+        'success': success,
+        'key': key,
+        'value': value,
+        'response': response
+    })
+
+
+@app.route('/api/params/save', methods=['POST'])
+def api_params_save():
+    """Tell ESP32 to persist current params to EEPROM."""
+    response = esp32.send_command('PARAM:SAVE')
+    success = response == 'OK:PARAM:SAVED'
+    return jsonify({'success': success, 'response': response})
+
+
+@app.route('/api/params/reset', methods=['POST'])
+def api_params_reset():
+    """Reset ESP32 params to defaults and clear local cache."""
+    response = esp32.send_command('PARAM:RESET')
+    success = response == 'OK:PARAM:RESET'
+    if success:
+        # Clear local cache so next GET fetches fresh defaults
+        if os.path.exists(PARAMS_FILE):
+            os.remove(PARAMS_FILE)
+    return jsonify({'success': success, 'response': response})
 
 
 @app.route('/api/reset', methods=['POST'])

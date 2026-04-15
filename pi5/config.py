@@ -33,6 +33,10 @@ VERSION = "3.2.0"
 NUM_CUPS = 20
 TOTAL_LEDS = 640
 
+# Animation Params Cache
+import os
+PARAMS_FILE = os.path.join(os.path.dirname(__file__), 'animation_params.json')
+
 # Weather API Settings (WeatherAPI.com)
 WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
 WEATHER_LOCATION = "Dallas,TX"
