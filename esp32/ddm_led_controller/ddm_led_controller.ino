@@ -7,6 +7,100 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <EEPROM.h>
+
+// ===== ANIMATION PARAMS (live-tunable, EEPROM-persisted) =====
+#define EEPROM_MAGIC 0xDDu   // change if struct layout changes
+#define EEPROM_SIZE  128
+
+struct AnimParams {
+    uint8_t  magic;                // must equal EEPROM_MAGIC
+
+    // Global
+    uint8_t  masterBrightness;     // 0-255, default 128
+
+    // GATES_BURST — gate opening
+    uint8_t  gateStepMs;           // ms per cup step, default 70
+    uint8_t  gateFadeMs;           // ms to fade cup dark, default 60
+    uint8_t  gateHoldMs;           // ms pause after all dark, default 80
+
+    // GATES_BURST — hoofbeat gallop
+    uint8_t  hoofQuickStart;       // quick beat start ms, default 120
+    uint8_t  hoofQuickEnd;         // quick beat end ms, default 40
+    uint16_t hoofPauseStart;       // pause beat start ms, default 350
+    uint8_t  hoofPauseEnd;         // pause beat end ms, default 100
+    uint8_t  hoofFlashMs;          // flash duration ms, default 80
+    uint8_t  hoofFadeMs;           // fade duration ms, default 120
+
+    // RESULTS_ENTRY — winner chase
+    uint8_t  chaseGoldMs;          // gold chase interval ms, default 18
+    uint8_t  chaseSilverMs;        // silver chase interval ms, default 42
+    uint8_t  chaseBronzeMs;        // bronze chase interval ms, default 65
+
+    // RESULTS_ENTRY — loser heartbeat
+    uint8_t  loserBpmStart;        // starting BPM, default 140
+    uint8_t  loserBpmEnd;          // ending BPM, default 50
+    uint16_t loserDecelSec;        // decel duration seconds, default 300
+
+    // HEARTBEAT_COOLDOWN
+    uint8_t  cooldownBpmStart;     // starting BPM, default 160
+    uint8_t  cooldownBpmEnd;       // ending BPM, default 60
+    uint8_t  cooldownDecelSec;     // decel duration seconds (max 255), default 90
+
+    // BETTING breathe speeds (cycle half-period ms)
+    uint16_t betting60PeriodMs;    // default 1000
+    uint16_t betting30PeriodMs;    // default 500
+    uint16_t finalCallPeriodMs;    // default 300
+
+    // AT_THE_GATE
+    uint16_t atGatePeriodMs;       // breathe cycle half-period ms, default 2000
+    uint8_t  atGateMinBright;      // min brightness, default 140
+};
+
+AnimParams P;  // global params instance — always use P.xxx in animation code
+
+void loadParams() {
+    EEPROM.begin(EEPROM_SIZE);
+    EEPROM.get(0, P);
+    if (P.magic != EEPROM_MAGIC) {
+        // First boot or struct changed — load defaults
+        resetParamsToDefault();
+        saveParams();
+    }
+}
+
+void saveParams() {
+    EEPROM.put(0, P);
+    EEPROM.commit();
+}
+
+void resetParamsToDefault() {
+    P.magic             = EEPROM_MAGIC;
+    P.masterBrightness  = 128;
+    P.gateStepMs        = 70;
+    P.gateFadeMs        = 60;
+    P.gateHoldMs        = 80;
+    P.hoofQuickStart    = 120;
+    P.hoofQuickEnd      = 40;
+    P.hoofPauseStart    = 350;
+    P.hoofPauseEnd      = 100;
+    P.hoofFlashMs       = 80;
+    P.hoofFadeMs        = 120;
+    P.chaseGoldMs       = 18;
+    P.chaseSilverMs     = 42;
+    P.chaseBronzeMs     = 65;
+    P.loserBpmStart     = 140;
+    P.loserBpmEnd       = 50;
+    P.loserDecelSec     = 300;
+    P.cooldownBpmStart  = 160;
+    P.cooldownBpmEnd    = 60;
+    P.cooldownDecelSec  = 90;
+    P.betting60PeriodMs = 1000;
+    P.betting30PeriodMs = 500;
+    P.finalCallPeriodMs = 300;
+    P.atGatePeriodMs    = 2000;
+    P.atGateMinBright   = 140;
+}
 
 // ===== CONFIGURATION =====
 #define WIFI_SSID "BMP_WIFI_MAIN"
@@ -90,10 +184,6 @@ bool  hoofFlashing[NUM_CUPS + 1];        // true if cup is currently flashing
 unsigned long hoofFlashStart[NUM_CUPS + 1]; // millis when flash started
 
 // Gate opening state (2-gate 4-door sweep)
-#define GATE_STEP_MS     70     // ms between each cup step
-#define GATE_FADE_MS     60     // ms to fade each cup to black
-#define GATE_HOLD_MS     80     // ms pause after all cups dark before gallop
-
 int   gateStep = 0;                         // current step 0-4
 unsigned long gateStepStart = 0;            // millis when current step began
 unsigned long gateFadeStart[NUM_CUPS + 1];  // millis when each cup started fading
@@ -114,7 +204,7 @@ CRGB welcomeMarchColors[NUM_CUPS];     // color assignment for march phase
 
 // HEARTBEAT_COOLDOWN animation state
 unsigned long cooldownStartTime = 0;
-const unsigned long COOLDOWN_DURATION_MS = 90000; // 90 seconds deceleration
+// COOLDOWN_DURATION_MS now derived from P.cooldownDecelSec
 
 // RESULTS_ENTRY animation state
 int  cupChasePos[NUM_CUPS + 1];                // current head LED offset (0 to CUP_LED_COUNT[cup]-1)
@@ -124,7 +214,7 @@ unsigned long resultsEntryStart = 0;           // millis when RESULTS_ENTRY trig
 bool resultsFinalizing = false;                // true after RESULTS:FINALIZE received
 unsigned long finalizeTime = 0;               // millis when RESULTS:FINALIZE received
 
-#define RESULTS_DECEL_MS 300000UL              // 5-minute loser decel duration
+// RESULTS_DECEL_MS now derived from P.loserDecelSec
 
 // DDM brand color palette (6 colors)
 const CRGB DDM_PALETTE[] = {
@@ -236,7 +326,8 @@ void setup() {
     // Initialize serial
     Serial.begin(115200);
     delay(1000);
-    
+    loadParams();
+
     printBanner();
     
     // Initialize status LED
@@ -261,7 +352,7 @@ void setup() {
     // Initialize LED strip
     Serial.println("[LED] Initializing 636 LEDs on GPIO 18...");
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, LED_COUNT);
-    FastLED.setBrightness(currentBrightness);
+    FastLED.setBrightness(P.masterBrightness);
     FastLED.clear();
     FastLED.show();
     updatePowerEstimate();
@@ -387,6 +478,88 @@ String processCommand(String cmd) {
         return "PONG";
     }
     
+    // PARAM:GET:ALL - Return all params as key=value pairs
+    else if (cmd == "PARAM:GET:ALL") {
+        String result = "PARAMS:";
+        result += "masterBrightness=" + String(P.masterBrightness) + ",";
+        result += "gateStepMs=" + String(P.gateStepMs) + ",";
+        result += "gateFadeMs=" + String(P.gateFadeMs) + ",";
+        result += "gateHoldMs=" + String(P.gateHoldMs) + ",";
+        result += "hoofQuickStart=" + String(P.hoofQuickStart) + ",";
+        result += "hoofQuickEnd=" + String(P.hoofQuickEnd) + ",";
+        result += "hoofPauseStart=" + String(P.hoofPauseStart) + ",";
+        result += "hoofPauseEnd=" + String(P.hoofPauseEnd) + ",";
+        result += "hoofFlashMs=" + String(P.hoofFlashMs) + ",";
+        result += "hoofFadeMs=" + String(P.hoofFadeMs) + ",";
+        result += "chaseGoldMs=" + String(P.chaseGoldMs) + ",";
+        result += "chaseSilverMs=" + String(P.chaseSilverMs) + ",";
+        result += "chaseBronzeMs=" + String(P.chaseBronzeMs) + ",";
+        result += "loserBpmStart=" + String(P.loserBpmStart) + ",";
+        result += "loserBpmEnd=" + String(P.loserBpmEnd) + ",";
+        result += "loserDecelSec=" + String(P.loserDecelSec) + ",";
+        result += "cooldownBpmStart=" + String(P.cooldownBpmStart) + ",";
+        result += "cooldownBpmEnd=" + String(P.cooldownBpmEnd) + ",";
+        result += "cooldownDecelSec=" + String(P.cooldownDecelSec) + ",";
+        result += "betting60PeriodMs=" + String(P.betting60PeriodMs) + ",";
+        result += "betting30PeriodMs=" + String(P.betting30PeriodMs) + ",";
+        result += "finalCallPeriodMs=" + String(P.finalCallPeriodMs) + ",";
+        result += "atGatePeriodMs=" + String(P.atGatePeriodMs) + ",";
+        result += "atGateMinBright=" + String(P.atGateMinBright);
+        return result;
+    }
+
+    // PARAM:SET:key:value - Set a single param live
+    else if (cmd.startsWith("PARAM:SET:")) {
+        int colonPos = cmd.indexOf(':', 10);
+        if (colonPos > 0) {
+            String key = cmd.substring(10, colonPos);
+            int value  = cmd.substring(colonPos + 1).toInt();
+
+            if (key == "masterBrightness") { P.masterBrightness = constrain(value, 0, 255); FastLED.setBrightness(P.masterBrightness); }
+            else if (key == "gateStepMs")        P.gateStepMs        = constrain(value, 10, 200);
+            else if (key == "gateFadeMs")        P.gateFadeMs        = constrain(value, 10, 200);
+            else if (key == "gateHoldMs")        P.gateHoldMs        = constrain(value, 0, 500);
+            else if (key == "hoofQuickStart")    P.hoofQuickStart    = constrain(value, 20, 250);
+            else if (key == "hoofQuickEnd")      P.hoofQuickEnd      = constrain(value, 10, 100);
+            else if (key == "hoofPauseStart")    P.hoofPauseStart    = constrain(value, 50, 1000);
+            else if (key == "hoofPauseEnd")      P.hoofPauseEnd      = constrain(value, 20, 300);
+            else if (key == "hoofFlashMs")       P.hoofFlashMs       = constrain(value, 20, 200);
+            else if (key == "hoofFadeMs")        P.hoofFadeMs        = constrain(value, 20, 300);
+            else if (key == "chaseGoldMs")       P.chaseGoldMs       = constrain(value, 5, 100);
+            else if (key == "chaseSilverMs")     P.chaseSilverMs     = constrain(value, 5, 100);
+            else if (key == "chaseBronzeMs")     P.chaseBronzeMs     = constrain(value, 5, 150);
+            else if (key == "loserBpmStart")     P.loserBpmStart     = constrain(value, 60, 200);
+            else if (key == "loserBpmEnd")       P.loserBpmEnd       = constrain(value, 30, 100);
+            else if (key == "loserDecelSec")     P.loserDecelSec     = constrain(value, 30, 600);
+            else if (key == "cooldownBpmStart")  P.cooldownBpmStart  = constrain(value, 60, 200);
+            else if (key == "cooldownBpmEnd")    P.cooldownBpmEnd    = constrain(value, 30, 100);
+            else if (key == "cooldownDecelSec")  P.cooldownDecelSec  = constrain(value, 10, 255);
+            else if (key == "betting60PeriodMs") P.betting60PeriodMs = constrain(value, 200, 3000);
+            else if (key == "betting30PeriodMs") P.betting30PeriodMs = constrain(value, 100, 2000);
+            else if (key == "finalCallPeriodMs") P.finalCallPeriodMs = constrain(value, 50, 1000);
+            else if (key == "atGatePeriodMs")    P.atGatePeriodMs    = constrain(value, 500, 5000);
+            else if (key == "atGateMinBright")   P.atGateMinBright   = constrain(value, 0, 200);
+            else return "ERROR:UNKNOWN_PARAM:" + key;
+
+            return "OK:PARAM:SET:" + key + "=" + String(value);
+        }
+        return "ERROR:INVALID_PARAM_CMD";
+    }
+
+    // PARAM:SAVE - Write current params to EEPROM
+    else if (cmd == "PARAM:SAVE") {
+        saveParams();
+        return "OK:PARAM:SAVED";
+    }
+
+    // PARAM:RESET - Reset to defaults and save
+    else if (cmd == "PARAM:RESET") {
+        resetParamsToDefault();
+        saveParams();
+        FastLED.setBrightness(P.masterBrightness);
+        return "OK:PARAM:RESET";
+    }
+
     // LED:ALL_ON - Turn all LEDs white
     else if (cmd == "LED:ALL_ON") {
         stopAnimation();
@@ -1083,7 +1256,7 @@ void animTest() {
  */
 void animBetting60() {
     unsigned long elapsed = millis() - animStartTime;
-    float breathe = (sin(elapsed / 1000.0) + 1.0) / 2.0; // 0.0 to 1.0
+    float breathe = (sin(elapsed / (float)P.betting60PeriodMs) + 1.0) / 2.0; // 0.0 to 1.0
     
     uint8_t brightness = 50 + (breathe * 205); // 50-255 range
     CRGB color = COLOR_GREEN;
@@ -1101,7 +1274,7 @@ void animBetting60() {
  */
 void animBetting30() {
     unsigned long elapsed = millis() - animStartTime;
-    float breathe = (sin(elapsed / 500.0) + 1.0) / 2.0; // 0.5 sec cycle (faster)
+    float breathe = (sin(elapsed / (float)P.betting30PeriodMs) + 1.0) / 2.0; // faster
     
     uint8_t brightness = 50 + (breathe * 205); // 50-255 range
     CRGB color = COLOR_AMBER;
@@ -1119,7 +1292,7 @@ void animBetting30() {
  */
 void animFinalCall() {
     unsigned long elapsed = millis() - animStartTime;
-    float breathe = (sin(elapsed / 300.0) + 1.0) / 2.0; // 0.3 sec cycle (fastest)
+    float breathe = (sin(elapsed / (float)P.finalCallPeriodMs) + 1.0) / 2.0; // fastest
     
     uint8_t brightness = 50 + (breathe * 205); // 50-255 range
     CRGB color = COLOR_RED;
@@ -1225,8 +1398,8 @@ void animAtTheGate() {
     unsigned long elapsed = millis() - animStartTime;
     // Slow breathe: 3 second cycle, 55%→100% brightness
     // sin() period = 2π × 477 ≈ 3000ms
-    float breathe = (sin(elapsed / 477.0f) + 1.0f) / 2.0f;  // 3 second cycle
-    uint8_t brightness = 140 + (uint8_t)(breathe * 115);  // 140→255 (55%→100%)
+    float breathe = (sin(elapsed / (float)P.atGatePeriodMs) + 1.0f) / 2.0f;
+    uint8_t brightness = P.atGateMinBright + (uint8_t)(breathe * (255 - P.atGateMinBright));
     CRGB color = CRGB(255, 255, 255);
     color.nscale8(brightness);
     fill_solid(leds, LED_COUNT, color);
@@ -1260,7 +1433,7 @@ void animGatesBurst() {
         };
 
         // Trigger new step when timer elapses
-        if (gateStep < 5 && now - gateStepStart >= (unsigned long)(gateStep == 0 ? 0 : GATE_STEP_MS)) {
+        if (gateStep < 5 && now - gateStepStart >= (unsigned long)(gateStep == 0 ? 0 : P.gateStepMs)) {
             // Start fading the cups in this step
             for (int i = 0; i < 4; i++) {
                 int cup = stepCups[gateStep][i];
@@ -1277,14 +1450,14 @@ void animGatesBurst() {
         for (int cup = 1; cup <= NUM_CUPS; cup++) {
             if (gateFading[cup]) {
                 unsigned long fadeElapsed = now - gateFadeStart[cup];
-                if (fadeElapsed >= GATE_FADE_MS) {
+                if (fadeElapsed >= P.gateFadeMs) {
                     // Fully dark
                     setCup(cup, CRGB(0, 0, 0));
                     gateFading[cup] = false;
                     gateDark[cup] = true;
                 } else {
                     // Fading
-                    float fadeProgress = (float)fadeElapsed / (float)GATE_FADE_MS;
+                    float fadeProgress = (float)fadeElapsed / (float)P.gateFadeMs;
                     uint8_t brightness = (uint8_t)(255.0f * (1.0f - fadeProgress));
                     setCup(cup, CRGB(brightness, brightness, brightness));
                     allDark = false;
@@ -1301,7 +1474,7 @@ void animGatesBurst() {
 
         // Once all cups dark, hold briefly then go straight to gallop
         if (allDark && gateStep >= 5) {
-            if (now - gateStepStart >= GATE_HOLD_MS) {
+            if (now - gateStepStart >= P.gateHoldMs) {
                 // Transition directly to Phase 3 (gallop) — skip chaos entirely
                 gatesPhase = 3;
                 gatesPhaseStart = now;
@@ -1343,11 +1516,11 @@ void animGatesBurst() {
         // Quick beat interval: 120ms → 40ms
         // Pause duration: 350ms → 100ms
         float tempoProgress = (phase3Elapsed >= 45000) ? 1.0f : (float)phase3Elapsed / 45000.0f;
-        unsigned long quickBeat = 120 - (unsigned long)(80.0f * tempoProgress);   // 120→40ms
-        unsigned long pauseBeat = 350 - (unsigned long)(250.0f * tempoProgress);  // 350→100ms
+        unsigned long quickBeat = P.hoofQuickStart - (unsigned long)((float)(P.hoofQuickStart - P.hoofQuickEnd) * tempoProgress);
+        unsigned long pauseBeat = P.hoofPauseStart - (unsigned long)((float)(P.hoofPauseStart - P.hoofPauseEnd) * tempoProgress);
 
-        const unsigned long FLASH_DURATION = 80;   // ms white flash
-        const unsigned long FADE_DURATION  = 120;  // ms fade to dim green
+        const unsigned long FLASH_DURATION = P.hoofFlashMs;
+        const unsigned long FADE_DURATION  = P.hoofFadeMs;
 
         // Update each horse sequence
         for (int h = 0; h < NUM_HORSES; h++) {
@@ -1455,17 +1628,17 @@ void animFinish() {
 /**
  * ANIM:HEARTBEAT_COOLDOWN - Decelerating heartbeat
  * Starts at ~160 BPM with dramatic pulses, linearly slows to ~60 BPM
- * over COOLDOWN_DURATION_MS, then holds at 60 BPM indefinitely.
+ * over configured decel duration, then holds at end BPM indefinitely.
  */
 void animHeartbeatCooldown() {
     unsigned long now = millis();
     unsigned long cooldownElapsed = now - cooldownStartTime;
 
-    // Linear interpolation: 160 BPM → 60 BPM over COOLDOWN_DURATION_MS
-    float progress = (float)cooldownElapsed / (float)COOLDOWN_DURATION_MS;
+    // Linear interpolation: BPM deceleration over configured duration
+    float progress = (float)cooldownElapsed / ((float)P.cooldownDecelSec * 1000.0f);
     if (progress > 1.0) progress = 1.0;
 
-    float currentBPM = 160.0 - (progress * 100.0); // 160 → 60
+    float currentBPM = (float)P.cooldownBpmStart - (progress * (float)(P.cooldownBpmStart - P.cooldownBpmEnd));
     float periodMs = 60000.0 / currentBPM;
 
     // Brightness range narrows as BPM decreases
@@ -1602,11 +1775,11 @@ void animResultsEntry() {
         // Determine base chase interval from locked color
         float baseInterval;
         if (lockedCol.r == 255 && lockedCol.g == 215 && lockedCol.b == 0) {
-            baseInterval = 18.0;   // Gold
+            baseInterval = (float)P.chaseGoldMs;
         } else if (lockedCol.r == 192 && lockedCol.g == 192 && lockedCol.b == 192) {
-            baseInterval = 42.0;   // Silver
+            baseInterval = (float)P.chaseSilverMs;
         } else if (lockedCol.r == 205 && lockedCol.g == 127 && lockedCol.b == 50) {
-            baseInterval = 65.0;   // Bronze
+            baseInterval = (float)P.chaseBronzeMs;
         } else {
             baseInterval = 40.0;   // Other
         }
@@ -1694,10 +1867,10 @@ void animResultsEntry() {
     }
 
     // ===== Part A: Loser Heartbeat (all unlocked cups) =====
-    float progress = (float)(now - resultsEntryStart) / (float)RESULTS_DECEL_MS;
+    float progress = (float)(now - resultsEntryStart) / ((float)P.loserDecelSec * 1000.0f);
     if (progress > 1.0) progress = 1.0;
 
-    float currentBPM = 140.0 - (progress * 90.0);       // 140 → 50
+    float currentBPM = (float)P.loserBpmStart - (progress * (float)(P.loserBpmStart - P.loserBpmEnd));
     float periodMs = 60000.0 / currentBPM;
 
     uint8_t minBright = 51  + (uint8_t)(progress * 89);  // 51→140  (20%→55%)
