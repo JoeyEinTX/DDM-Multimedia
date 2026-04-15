@@ -1,7 +1,7 @@
 # config.py - Configuration settings for DDM Horse Dashboard (Raspberry Pi 5)
 
 # ESP32 Connection Settings
-ESP32_IP = "192.168.1.100"  # Replace with your ESP32's IP address
+ESP32_IP = "10.0.0.44"  # DDM ESP32 controller
 ESP32_PORT = 5005
 SOCKET_TIMEOUT = 5.0  # Seconds
 
