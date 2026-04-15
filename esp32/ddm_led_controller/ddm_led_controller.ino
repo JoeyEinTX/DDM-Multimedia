@@ -470,6 +470,7 @@ void connectWiFi() {
  */
 String processCommand(String cmd) {
     cmd.trim();
+    String originalCmd = cmd;  // preserve original case for PARAM:SET
     cmd.toUpperCase();
     
     // PING - Test connection
@@ -510,10 +511,10 @@ String processCommand(String cmd) {
 
     // PARAM:SET:key:value - Set a single param live
     else if (cmd.startsWith("PARAM:SET:")) {
-        int colonPos = cmd.indexOf(':', 10);
+        int colonPos = originalCmd.indexOf(':', 10);
         if (colonPos > 0) {
-            String key = cmd.substring(10, colonPos);
-            int value  = cmd.substring(colonPos + 1).toInt();
+            String key = originalCmd.substring(10, colonPos);
+            int value  = originalCmd.substring(colonPos + 1).toInt();
 
             if (key == "masterBrightness") { P.masterBrightness = constrain(value, 0, 255); FastLED.setBrightness(P.masterBrightness); }
             else if (key == "gateStepMs")        P.gateStepMs        = constrain(value, 10, 200);
