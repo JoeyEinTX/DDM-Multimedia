@@ -148,7 +148,7 @@
             </div>
             <!-- Right: actions + branding -->
             <div class="footer-right">
-                <button class="btn-footer" onclick="openRaceSetup()">⚙️ Race Setup</button>
+                <button class="btn-footer" onclick="openTuningModal()">🎛️ Tuning</button>
                 <button class="btn-footer" onclick="openAnimationsModal()">🎬 Animations</button>
                 <div class="powered-by">
                     <span class="powered-text">Powered by</span>
@@ -304,6 +304,186 @@
                 <button class="anim-btn anim-btn-on" data-anim="LED:ALL_ON" onclick="triggerAnimCommand('LED:ALL_ON', this)">All On</button>
                 <button class="anim-btn anim-btn-off" data-anim="LED:ALL_OFF" onclick="triggerAnimCommand('LED:ALL_OFF', this)">All Off</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Animation Tuning Modal -->
+    <div id="tuning-modal" class="modal">
+        <div class="modal-content tuning-modal-content">
+            <span class="modal-close-tab" onclick="closeTuningModal()">&times;</span>
+            <h2>🎛️ Animation Tuning</h2>
+            <p class="tuning-subtitle">Changes apply live. Hit Save to persist to ESP32.</p>
+
+            <div class="tuning-groups">
+
+                <!-- Global -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Global</h3>
+                    <div class="tuning-row">
+                        <label>Master Brightness</label>
+                        <input type="range" class="tuning-slider" data-key="masterBrightness" min="0" max="255" step="1">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Gates Burst — Gate Opening -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Gates Burst — Gate Opening</h3>
+                    <div class="tuning-row">
+                        <label>Step Speed (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="gateStepMs" min="10" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Fade Speed (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="gateFadeMs" min="10" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Hold After Dark (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="gateHoldMs" min="0" max="500" step="10">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Gates Burst — Hoofbeat Gallop -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Gates Burst — Hoofbeat Gallop</h3>
+                    <div class="tuning-row">
+                        <label>Quick Beat Start (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofQuickStart" min="20" max="250" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Quick Beat End (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofQuickEnd" min="10" max="100" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Pause Beat Start (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofPauseStart" min="50" max="1000" step="10">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Pause Beat End (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofPauseEnd" min="20" max="300" step="10">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Flash Duration (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofFlashMs" min="20" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Fade Duration (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="hoofFadeMs" min="20" max="300" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Results Entry — Winner Chase -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Results Entry — Winner Chase</h3>
+                    <div class="tuning-row">
+                        <label>Gold Chase Speed (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="chaseGoldMs" min="5" max="100" step="1">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Silver Chase Speed (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="chaseSilverMs" min="5" max="100" step="1">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Bronze Chase Speed (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="chaseBronzeMs" min="5" max="150" step="1">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Results Entry — Loser Heartbeat -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Results Entry — Loser Heartbeat</h3>
+                    <div class="tuning-row">
+                        <label>Start BPM</label>
+                        <input type="range" class="tuning-slider" data-key="loserBpmStart" min="60" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>End BPM</label>
+                        <input type="range" class="tuning-slider" data-key="loserBpmEnd" min="30" max="100" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Decel Duration (sec)</label>
+                        <input type="range" class="tuning-slider" data-key="loserDecelSec" min="30" max="600" step="10">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Heartbeat Cooldown -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Heartbeat Cooldown</h3>
+                    <div class="tuning-row">
+                        <label>Start BPM</label>
+                        <input type="range" class="tuning-slider" data-key="cooldownBpmStart" min="60" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>End BPM</label>
+                        <input type="range" class="tuning-slider" data-key="cooldownBpmEnd" min="30" max="100" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Decel Duration (sec)</label>
+                        <input type="range" class="tuning-slider" data-key="cooldownDecelSec" min="10" max="255" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- Betting Animations -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">Betting Breathe Speed</h3>
+                    <div class="tuning-row">
+                        <label>60 Min Period (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="betting60PeriodMs" min="200" max="3000" step="50">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>30 Min Period (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="betting30PeriodMs" min="100" max="2000" step="50">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Final Call Period (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="finalCallPeriodMs" min="50" max="1000" step="25">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+                <!-- At The Gate -->
+                <div class="tuning-group">
+                    <h3 class="tuning-group-title">At The Gate</h3>
+                    <div class="tuning-row">
+                        <label>Breathe Period (ms)</label>
+                        <input type="range" class="tuning-slider" data-key="atGatePeriodMs" min="500" max="5000" step="100">
+                        <span class="tuning-value"></span>
+                    </div>
+                    <div class="tuning-row">
+                        <label>Min Brightness</label>
+                        <input type="range" class="tuning-slider" data-key="atGateMinBright" min="0" max="200" step="5">
+                        <span class="tuning-value"></span>
+                    </div>
+                </div>
+
+            </div><!-- end tuning-groups -->
+
+            <!-- Footer buttons -->
+            <div class="tuning-footer">
+                <button class="btn tuning-btn-reset" onclick="resetTuningParams()">↺ Reset Defaults</button>
+                <button class="btn tuning-btn-save" onclick="saveTuningParams()">💾 Save to ESP32</button>
+            </div>
+
         </div>
     </div>
 
