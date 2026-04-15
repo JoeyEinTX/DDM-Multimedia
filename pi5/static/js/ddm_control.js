@@ -1612,12 +1612,130 @@ function revealWinners() {
     }
 }
 
-function openTuningModal() {
+// =====================================================================
+// Animation Tuning Modal
+// =====================================================================
+
+let tuningParams = {};  // current param values, keyed by param name
+
+// Open modal — fetch params from ESP32 and populate sliders
+async function openTuningModal() {
     document.getElementById('tuning-modal').classList.add('active');
+    await loadTuningParams();
 }
 
 function closeTuningModal() {
     document.getElementById('tuning-modal').classList.remove('active');
+}
+
+// Fetch all params from Flask/ESP32 and populate sliders
+async function loadTuningParams() {
+    try {
+        const response = await fetch('/api/params');
+        const data = await response.json();
+
+        if (data.success && data.params) {
+            tuningParams = data.params;
+            populateTuningSliders();
+            if (data.cached) {
+                showNotification('ESP32 offline — showing cached values', 'info');
+            }
+        } else {
+            showNotification('Could not load params', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading tuning params:', error);
+        showNotification('Error loading params', 'error');
+    }
+}
+
+// Populate all sliders with current param values
+function populateTuningSliders() {
+    const sliders = document.querySelectorAll('.tuning-slider');
+    sliders.forEach(slider => {
+        const key = slider.dataset.key;
+        if (key && tuningParams[key] !== undefined) {
+            slider.value = tuningParams[key];
+            updateTuningValueDisplay(slider);
+        }
+    });
+}
+
+// Update the value display span next to a slider
+function updateTuningValueDisplay(slider) {
+    const valueSpan = slider.nextElementSibling;
+    if (valueSpan && valueSpan.classList.contains('tuning-value')) {
+        valueSpan.textContent = slider.value;
+    }
+}
+
+// Push a single param change live to ESP32
+async function pushTuningParam(key, value) {
+    try {
+        const response = await fetch('/api/params', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value: parseInt(value) })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            console.warn(`Failed to set ${key}=${value}:`, data);
+        }
+    } catch (error) {
+        console.error(`Error setting param ${key}:`, error);
+    }
+}
+
+// Save current params to ESP32 EEPROM
+async function saveTuningParams() {
+    try {
+        const response = await fetch('/api/params/save', { method: 'POST' });
+        const data = await response.json();
+        if (data.success) {
+            showNotification('Params saved to ESP32 EEPROM', 'success');
+        } else {
+            showNotification('Save failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving params:', error);
+        showNotification('Save error', 'error');
+    }
+}
+
+// Reset params to defaults on ESP32 and reload sliders
+async function resetTuningParams() {
+    try {
+        const response = await fetch('/api/params/reset', { method: 'POST' });
+        const data = await response.json();
+        if (data.success) {
+            showNotification('Params reset to defaults', 'success');
+            await loadTuningParams();  // Reload sliders with default values
+        } else {
+            showNotification('Reset failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error resetting params:', error);
+        showNotification('Reset error', 'error');
+    }
+}
+
+// Wire up slider input events — runs once on DOMContentLoaded
+function initTuningSliders() {
+    const sliders = document.querySelectorAll('.tuning-slider');
+    sliders.forEach(slider => {
+        // Update display while dragging (no ESP32 call yet)
+        slider.addEventListener('input', () => {
+            updateTuningValueDisplay(slider);
+        });
+
+        // Push to ESP32 on release
+        slider.addEventListener('change', () => {
+            const key = slider.dataset.key;
+            const value = slider.value;
+            tuningParams[key] = parseInt(value);
+            pushTuningParam(key, value);
+        });
+    });
 }
 
 // Animations Modal - Open
@@ -1938,6 +2056,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize dot-matrix ticker engine (fixed grid / pixel shift)
     initTicker();
+
+    initTuningSliders();
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
