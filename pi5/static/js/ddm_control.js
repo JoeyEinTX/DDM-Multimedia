@@ -1621,7 +1621,47 @@ let tuningParams = {};  // current param values, keyed by param name
 // Open modal — fetch params from ESP32 and populate sliders
 async function openTuningModal() {
     document.getElementById('tuning-modal').classList.add('active');
+
+    // Get current running animation from mode display
+    const currentMode = document.getElementById('current-mode')?.textContent.trim().toUpperCase() || '';
+
+    // Filter groups based on current animation
+    filterTuningGroups(currentMode);
+
     await loadTuningParams();
+}
+
+function filterTuningGroups(currentMode) {
+    const groups = document.querySelectorAll('.tuning-group');
+    const label = document.getElementById('tuning-context-label');
+
+    // Animation mode → display name mapping
+    const modeNames = {
+        'GATES_BURST':        'Gates Burst',
+        'AT_THE_GATE':        'At The Gate',
+        'RESULTS_ENTRY':      'Results Entry',
+        'HEARTBEAT_COOLDOWN': 'Heartbeat Cooldown',
+        'COOLDOWN':           'Heartbeat Cooldown',
+        'BETTING_60':         'Betting 60 Min',
+        'BETTING_30':         'Betting 30 Min',
+        'FINAL_CALL':         'Final Call',
+    };
+
+    const isKnown = modeNames[currentMode] !== undefined;
+
+    groups.forEach(group => {
+        const anims = (group.dataset.anims || 'ALL').split(',').map(a => a.trim());
+        const show = !isKnown || anims.includes('ALL') || anims.includes(currentMode);
+        group.style.display = show ? '' : 'none';
+    });
+
+    if (label) {
+        label.textContent = isKnown
+            ? `Showing params for: ${modeNames[currentMode]}`
+            : currentMode && currentMode !== 'STANDBY'
+                ? `Showing all params (${currentMode} has no specific tuning)`
+                : 'Showing all params';
+    }
 }
 
 function closeTuningModal() {
