@@ -355,11 +355,12 @@ async function checkESP32Status() {
             if (esp32WasOnline) {
                 clearActiveButton();
                 document.getElementById('current-mode').textContent = 'DISCONNECTED';
+                filterTuningGroups('DISCONNECTED');
                 showNotification('ESP32 disconnected - animation stopped', 'error');
                 esp32WasOnline = false;
             }
         }
-        
+
         // Update device count (ESP32 devices only - 0 or 1)
         const deviceCount = isOnline ? 1 : 0;
         document.getElementById('device-count').textContent = deviceCount;
@@ -377,10 +378,11 @@ async function checkESP32Status() {
         if (esp32WasOnline) {
             clearActiveButton();
             document.getElementById('current-mode').textContent = 'DISCONNECTED';
+            filterTuningGroups('DISCONNECTED');
             showNotification('ESP32 disconnected - animation stopped', 'error');
             esp32WasOnline = false;
         }
-        
+
         // Update device count
         document.getElementById('device-count').textContent = '0';
         document.getElementById('device-plural').textContent = 's';
@@ -473,6 +475,7 @@ async function sendCommand(command, buttonElement, toggle = false) {
             if (data.success) {
                 showNotification('Test stopped', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
+                filterTuningGroups('IDLE');
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -507,6 +510,7 @@ async function sendCommand(command, buttonElement, toggle = false) {
         if (data.success) {
             showNotification(`Command sent: ${command}`, 'success');
             document.getElementById('current-mode').textContent = command.split(':')[0];
+            filterTuningGroups(command.split(':')[0].toUpperCase());
 
             // If toggle mode, set button as active
             if (toggle) {
@@ -678,6 +682,7 @@ async function sendAnimation(animName, buttonElement) {
             if (data.success) {
                 showNotification(`Animation: ${animName}`, 'success');
                 document.getElementById('current-mode').textContent = animName;
+                filterTuningGroups(animName.toUpperCase());
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -716,6 +721,7 @@ async function sendAnimation(animName, buttonElement) {
             if (data.success) {
                 showNotification('Animation stopped', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
+                filterTuningGroups('IDLE');
                 clearActiveButton();
                 await checkESP32Status();
                 hideLoader();
@@ -743,6 +749,7 @@ async function sendAnimation(animName, buttonElement) {
         if (data.success) {
             showNotification(`Animation: ${animName}`, 'success');
             document.getElementById('current-mode').textContent = animName;
+            filterTuningGroups(animName.toUpperCase());
             setActiveButton(buttonElement);
             await checkESP32Status();
             hideLoader();
@@ -772,6 +779,7 @@ async function sendStandby() {
         if (data.success) {
             showNotification('Standby mode - LEDs off', 'success');
             document.getElementById('current-mode').textContent = 'STANDBY';
+            filterTuningGroups('STANDBY');
             // Clear active button state
             clearActiveButton();
             await checkESP32Status();
@@ -816,6 +824,7 @@ async function sendReset() {
                 });
                 showNotification('Race reset - all systems cleared', 'success');
                 document.getElementById('current-mode').textContent = 'IDLE';
+                filterTuningGroups('IDLE');
                 // Clear ALL results state
                 localStorage.removeItem('raceResults');
                 pendingResults = null;
@@ -873,6 +882,7 @@ async function emergencyStop() {
             if (data.success) {
                 showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
                 document.getElementById('current-mode').textContent = 'STOPPED';
+                filterTuningGroups('STOPPED');
                 // Collapse emergency stop after use
                 const expanded = document.getElementById('emergency-expanded');
                 const icon = document.getElementById('emergency-icon');
@@ -900,6 +910,7 @@ let currentBrightness = 75;
 function openTestModal() {
     clearAllActiveButtons();
     document.getElementById('current-mode').textContent = 'TEST';
+    filterTuningGroups('TEST');
     const modal = document.getElementById('test-modal');
     modal.classList.add('active');
 
@@ -955,6 +966,7 @@ async function closeTestModal() {
     modal.classList.remove('active');
     clearAllActiveButtons();
     document.getElementById('current-mode').textContent = 'IDLE';
+    filterTuningGroups('IDLE');
 
     // Send LED:ALL_OFF command
     try {
@@ -1025,6 +1037,7 @@ async function triggerFinish() {
             if (data.success) {
                 showNotification('Transitioning to heartbeat cooldown', 'success');
                 document.getElementById('current-mode').textContent = 'COOLDOWN';
+                filterTuningGroups('COOLDOWN');
             }
         } catch (error) {
             console.error('Error transitioning to heartbeat cooldown:', error);
@@ -1325,6 +1338,7 @@ async function resultsConfirm() {
         if (data.success) {
             showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
             document.getElementById('current-mode').textContent = 'RESULTS';
+            filterTuningGroups('RESULTS');
             localStorage.setItem('raceResults', JSON.stringify({
                 win: winHorse, place: placeHorse, show: showHorse
             }));
@@ -1645,6 +1659,12 @@ function filterTuningGroups(currentMode) {
         'BETTING_60':         'Betting 60 Min',
         'BETTING_30':         'Betting 30 Min',
         'FINAL_CALL':         'Final Call',
+        'CHAOS':              null,
+        'FINISH':             null,
+        'WELCOME':            null,
+        'SILKS':              null,
+        'IDLE':               null,
+        'STANDBY':            null,
     };
 
     const isKnown = modeNames[currentMode] !== undefined;
@@ -1654,6 +1674,25 @@ function filterTuningGroups(currentMode) {
         const show = !isKnown || anims.includes('ALL') || anims.includes(currentMode);
         group.style.display = show ? '' : 'none';
     });
+
+    // Count how many non-ALL groups are visible
+    const tunableGroups = Array.from(groups).filter(g => {
+        const anims = (g.dataset.anims || 'ALL').split(',').map(a => a.trim());
+        return !anims.includes('ALL') && (anims.includes(currentMode));
+    });
+
+    const tuningBtn = document.querySelector('.btn-footer[onclick="openTuningModal()"]');
+    if (tuningBtn) {
+        if (isKnown && tunableGroups.length === 0) {
+            tuningBtn.disabled = true;
+            tuningBtn.style.opacity = '0.4';
+            tuningBtn.style.cursor = 'not-allowed';
+        } else {
+            tuningBtn.disabled = false;
+            tuningBtn.style.opacity = '';
+            tuningBtn.style.cursor = '';
+        }
+    }
 
     if (label) {
         label.textContent = isKnown
@@ -1814,6 +1853,7 @@ async function triggerAnimation(animName, buttonElement) {
         if (data.success) {
             showNotification(`Animation: ${animName}`, 'success');
             document.getElementById('current-mode').textContent = animName;
+            filterTuningGroups(animName.toUpperCase());
             await checkESP32Status();
             hideLoader();
         } else {
@@ -1853,6 +1893,7 @@ async function triggerAnimCommand(command, buttonElement) {
         if (data.success) {
             showNotification(`Command: ${command}`, 'success');
             document.getElementById('current-mode').textContent = command.replace('LED:', '');
+            filterTuningGroups(command.replace('LED:', '').toUpperCase());
             await checkESP32Status();
             hideLoader();
         } else {
@@ -2068,6 +2109,7 @@ function handleEsp32Offline() {
     if (esp32WasOnline) {
         clearActiveButton();
         document.getElementById('current-mode').textContent = 'DISCONNECTED';
+        filterTuningGroups('DISCONNECTED');
         showNotification('ESP32 disconnected - animation stopped', 'error');
         esp32WasOnline = false;
     }
