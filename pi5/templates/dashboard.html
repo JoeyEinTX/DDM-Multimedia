@@ -137,17 +137,31 @@
 
         <!-- Unified Footer -->
         <div class="footer-section">
-            <!-- Left: status info -->
+            <!-- Left: status indicators -->
             <div class="footer-info">
-                <span id="footer-connection-indicator">📶 Connected</span>
-                <span>MODE: <span id="current-mode">STANDBY</span></span>
-                <span id="device-status" class="device-status" onclick="toggleDeviceModal()">
-                    <span id="device-count">0</span> device<span id="device-plural">s</span> connected
-                </span>
-                <span id="power-display" class="footer-power"></span>
+                <!-- WiFi signal strength bars -->
+                <div class="footer-wifi" id="footer-wifi" title="WiFi Signal">
+                    <div class="wifi-bars">
+                        <span class="wifi-bar bar-1" id="wifi-bar-1"></span>
+                        <span class="wifi-bar bar-2" id="wifi-bar-2"></span>
+                        <span class="wifi-bar bar-3" id="wifi-bar-3"></span>
+                        <span class="wifi-bar bar-4" id="wifi-bar-4"></span>
+                    </div>
+                </div>
+                <!-- Device indicator -->
+                <div class="footer-device" id="footer-device" onclick="toggleDeviceModal()" title="Connected Devices">
+                    <span class="device-icon" id="device-icon">⬡</span>
+                    <span class="device-count-badge" id="device-count-badge">0</span>
+                </div>
+                <!-- Hidden mode span kept for JS compatibility -->
+                <span id="current-mode" style="display:none;">STANDBY</span>
+                <!-- Hidden device count spans kept for JS compatibility -->
+                <span id="device-count" style="display:none;">0</span>
+                <span id="device-plural" style="display:none;">s</span>
             </div>
             <!-- Right: actions + branding -->
             <div class="footer-right">
+                <button class="btn-footer" onclick="openRaceSetup()">⚙️ Race Setup</button>
                 <button class="btn-footer" onclick="openTuningModal()">🎛️ Tuning</button>
                 <button class="btn-footer" onclick="openAnimationsModal()">🎬 Animations</button>
                 <div class="powered-by">
@@ -481,6 +495,9 @@
 
             </div><!-- end tuning-groups -->
 
+            <div class="tuning-power-info">
+                <span id="tuning-power-display">⚡ --</span>
+            </div>
             <!-- Footer buttons -->
             <div class="tuning-footer">
                 <button class="btn tuning-btn-reset" onclick="resetTuningParams()">↺ Reset Defaults</button>
