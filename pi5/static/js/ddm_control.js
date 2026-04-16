@@ -2074,6 +2074,65 @@ function updateFullscreenIcon() {
 }
 
 // Poll power draw from ESP32 (also serves as connectivity check — replaces separate ping)
+// Update WiFi signal strength bars based on RSSI value
+// RSSI ranges: > -60 = excellent (4 bars), -60 to -70 = good (3 bars),
+//              -70 to -80 = fair (2 bars), < -80 = weak (1 bar), null = offline
+function updateWifiBars(rssi) {
+    const bars = [
+        document.getElementById('wifi-bar-1'),
+        document.getElementById('wifi-bar-2'),
+        document.getElementById('wifi-bar-3'),
+        document.getElementById('wifi-bar-4')
+    ];
+
+    if (!bars[0]) return;
+
+    // Clear all classes
+    bars.forEach(bar => {
+        if (bar) bar.classList.remove('active', 'weak', 'offline');
+    });
+
+    if (rssi === null || rssi === undefined) {
+        // Offline — all bars dim
+        bars.forEach(bar => { if (bar) bar.classList.add('offline'); });
+        return;
+    }
+
+    let activeBars;
+    let cls;
+    if (rssi > -60) {
+        activeBars = 4; cls = 'active';
+    } else if (rssi > -70) {
+        activeBars = 3; cls = 'active';
+    } else if (rssi > -80) {
+        activeBars = 2; cls = 'weak';
+    } else {
+        activeBars = 1; cls = 'weak';
+    }
+
+    for (let i = 0; i < activeBars; i++) {
+        if (bars[i]) bars[i].classList.add(cls);
+    }
+}
+
+// Update device icon and count badge
+function updateDeviceIndicator(count) {
+    const icon = document.getElementById('device-icon');
+    const badge = document.getElementById('device-count-badge');
+
+    if (!icon || !badge) return;
+
+    badge.textContent = count;
+
+    if (count > 0) {
+        icon.classList.add('connected');
+        badge.classList.add('connected');
+    } else {
+        icon.classList.remove('connected');
+        badge.classList.remove('connected');
+    }
+}
+
 async function pollPowerStatus() {
     try {
         const response = await fetch('/api/power');
@@ -2085,13 +2144,26 @@ async function pollPowerStatus() {
             const peakA = (data.peak_ma / 1000).toFixed(1);
             if (el) el.textContent = `⚡ ${currentA}A (peak: ${peakA}A)`;
 
+            // Update tuning modal power display
+            const tuningPower = document.getElementById('tuning-power-display');
+            if (tuningPower) tuningPower.textContent = `⚡ ${currentA}A (peak: ${peakA}A)`;
+
             // ESP32 is online — STATUS command succeeded
             esp32Info.online = true;
             esp32WasOnline = true;
             updateRaceControlDotFromEsp32();
             document.getElementById('device-count').textContent = '1';
             document.getElementById('device-plural').textContent = '';
+            updateDeviceIndicator(1);
             updateDeviceList();
+
+            // Update WiFi signal bars from RSSI if available
+            if (data.rssi !== undefined) {
+                updateWifiBars(data.rssi);
+            } else {
+                // ESP32 is reachable — show at least 2 bars
+                updateWifiBars(-65);
+            }
         } else {
             if (el) el.textContent = '⚡ --';
             handleEsp32Offline();
@@ -2115,6 +2187,10 @@ function handleEsp32Offline() {
     }
     document.getElementById('device-count').textContent = '0';
     document.getElementById('device-plural').textContent = 's';
+    updateDeviceIndicator(0);
+    updateWifiBars(null);
+    const tuningPower = document.getElementById('tuning-power-display');
+    if (tuningPower) tuningPower.textContent = '⚡ --';
     updateDeviceList();
 }
 
