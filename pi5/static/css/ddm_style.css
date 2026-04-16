@@ -1013,11 +1013,8 @@ body {
 
 .footer-info {
     display: flex;
-    gap: 24px;
+    gap: 16px;
     align-items: center;
-    color: #888888;
-    font-size: 0.85em;
-    flex-wrap: wrap;
 }
 
 #current-mode {
@@ -1063,9 +1060,89 @@ body {
     letter-spacing: 0.5px;
 }
 
-.footer-power {
-    font-size: 0.85em;
-    color: #888888;
+/* ── Footer WiFi Signal Bars ── */
+.footer-wifi {
+    display: flex;
+    align-items: flex-end;
+    cursor: default;
+}
+
+.wifi-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 16px;
+}
+
+.wifi-bar {
+    display: block;
+    width: 4px;
+    border-radius: 1px;
+    background: #333333;
+    transition: background 0.3s ease;
+}
+
+.wifi-bar.bar-1 { height: 4px; }
+.wifi-bar.bar-2 { height: 7px; }
+.wifi-bar.bar-3 { height: 11px; }
+.wifi-bar.bar-4 { height: 16px; }
+
+.wifi-bar.active {
+    background: #22c55e;
+}
+
+.wifi-bar.weak {
+    background: #f59e0b;
+}
+
+.wifi-bar.offline {
+    background: #555555;
+}
+
+/* ── Footer Device Indicator ── */
+.footer-device {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.footer-device:hover {
+    opacity: 0.8;
+}
+
+.device-icon {
+    font-size: 1.1em;
+    color: #444444;
+    transition: color 0.3s ease;
+    line-height: 1;
+}
+
+.device-icon.connected {
+    color: #22c55e;
+}
+
+.device-count-badge {
+    font-size: 0.8em;
+    font-weight: 700;
+    color: #444444;
+    transition: color 0.3s ease;
+    min-width: 12px;
+}
+
+.device-count-badge.connected {
+    color: #22c55e;
+}
+
+/* ── Tuning Modal Power Info ── */
+.tuning-power-info {
+    padding: 8px 0 0 0;
+    text-align: right;
+    font-size: 0.78em;
+    color: #666666;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 8px;
 }
 
 .btn-footer {
