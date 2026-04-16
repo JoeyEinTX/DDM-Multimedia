@@ -310,14 +310,17 @@
     <!-- Animation Tuning Modal -->
     <div id="tuning-modal" class="modal">
         <div class="modal-content tuning-modal-content">
-            <span class="modal-close-tab" onclick="closeTuningModal()">&times;</span>
-            <h2>🎛️ Animation Tuning</h2>
-            <p class="tuning-subtitle">Changes apply live. Hit Save to persist to ESP32.</p>
-
+            <button class="tuning-modal-close" onclick="closeTuningModal()">&times;</button>
+            <div class="tuning-modal-header">
+                <h2>🎛️ Animation Tuning</h2>
+                <p class="tuning-subtitle">Changes apply live. Hit Save to persist to ESP32.</p>
+                <p class="tuning-context-label" id="tuning-context-label"></p>
+            </div>
+            <div class="tuning-modal-body">
             <div class="tuning-groups">
 
                 <!-- Global -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="ALL">
                     <h3 class="tuning-group-title">Global</h3>
                     <div class="tuning-row">
                         <label>Master Brightness</label>
@@ -327,7 +330,7 @@
                 </div>
 
                 <!-- Gates Burst — Gate Opening -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="GATES_BURST">
                     <h3 class="tuning-group-title">Gates Burst — Gate Opening</h3>
                     <div class="tuning-row">
                         <label>Step Speed (ms)</label>
@@ -347,7 +350,7 @@
                 </div>
 
                 <!-- Gates Burst — Hoofbeat Gallop -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="GATES_BURST">
                     <h3 class="tuning-group-title">Gates Burst — Hoofbeat Gallop</h3>
                     <div class="tuning-row">
                         <label>Quick Beat Start (ms)</label>
@@ -382,7 +385,7 @@
                 </div>
 
                 <!-- Results Entry — Winner Chase -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="RESULTS_ENTRY">
                     <h3 class="tuning-group-title">Results Entry — Winner Chase</h3>
                     <div class="tuning-row">
                         <label>Gold Chase Speed (ms)</label>
@@ -402,7 +405,7 @@
                 </div>
 
                 <!-- Results Entry — Loser Heartbeat -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="RESULTS_ENTRY">
                     <h3 class="tuning-group-title">Results Entry — Loser Heartbeat</h3>
                     <div class="tuning-row">
                         <label>Start BPM</label>
@@ -422,7 +425,7 @@
                 </div>
 
                 <!-- Heartbeat Cooldown -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="HEARTBEAT_COOLDOWN">
                     <h3 class="tuning-group-title">Heartbeat Cooldown</h3>
                     <div class="tuning-row">
                         <label>Start BPM</label>
@@ -442,7 +445,7 @@
                 </div>
 
                 <!-- Betting Animations -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="BETTING_60,BETTING_30,FINAL_CALL">
                     <h3 class="tuning-group-title">Betting Breathe Speed</h3>
                     <div class="tuning-row">
                         <label>60 Min Period (ms)</label>
@@ -462,7 +465,7 @@
                 </div>
 
                 <!-- At The Gate -->
-                <div class="tuning-group">
+                <div class="tuning-group" data-anims="AT_THE_GATE">
                     <h3 class="tuning-group-title">At The Gate</h3>
                     <div class="tuning-row">
                         <label>Breathe Period (ms)</label>
@@ -484,6 +487,7 @@
                 <button class="btn tuning-btn-save" onclick="saveTuningParams()">💾 Save to ESP32</button>
             </div>
 
+            </div><!-- end tuning-modal-body -->
         </div>
     </div>
 
