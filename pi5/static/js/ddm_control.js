@@ -1627,6 +1627,259 @@ function revealWinners() {
 }
 
 // =====================================================================
+// Race Setup Modal
+// =====================================================================
+
+let raceSetupData = {
+    race_name: 'Derby de Mayo 2026',
+    post_time: '',
+    horses: {}
+};
+
+// Open modal and load saved data
+async function openRaceSetupModal() {
+    document.getElementById('race-setup-modal').classList.add('active');
+    generateHorseGrid();
+    await loadRaceSetup();
+}
+
+function closeRaceSetupModal() {
+    document.getElementById('race-setup-modal').classList.remove('active');
+}
+
+// Generate the 20-horse entry grid
+function generateHorseGrid() {
+    const grid = document.getElementById('race-setup-grid');
+    if (!grid || grid.children.length > 0) return;  // Already generated
+
+    for (let i = 1; i <= 20; i++) {
+        const row = document.createElement('div');
+        row.className = 'race-setup-horse-row';
+
+        const num = document.createElement('span');
+        num.className = 'race-setup-post-num';
+        num.textContent = String(i).padStart(2, '0');
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'race-setup-horse-input';
+        input.id = `horse-${i}`;
+        input.placeholder = `Horse ${i}`;
+        input.maxLength = 30;
+        input.addEventListener('input', () => {
+            input.classList.toggle('filled', input.value.trim().length > 0);
+        });
+
+        row.appendChild(num);
+        row.appendChild(input);
+        grid.appendChild(row);
+    }
+}
+
+// Load race setup data from Flask
+async function loadRaceSetup() {
+    try {
+        const response = await fetch('/api/race-setup');
+        const data = await response.json();
+
+        if (data.success && data.data) {
+            raceSetupData = data.data;
+            populateRaceSetupForm();
+        }
+    } catch (error) {
+        console.error('Error loading race setup:', error);
+        showNotification('Could not load race setup', 'error');
+    }
+}
+
+// Populate form fields with loaded data
+function populateRaceSetupForm() {
+    const nameInput = document.getElementById('setup-race-name');
+    const timeInput = document.getElementById('setup-post-time');
+
+    if (nameInput) nameInput.value = raceSetupData.race_name || '';
+    if (timeInput) timeInput.value = raceSetupData.post_time || '';
+
+    // Populate horse fields
+    for (let i = 1; i <= 20; i++) {
+        const input = document.getElementById(`horse-${i}`);
+        if (input) {
+            const name = (raceSetupData.horses || {})[String(i)] || '';
+            input.value = name;
+            input.classList.toggle('filled', name.length > 0);
+        }
+    }
+}
+
+// Collect form data into raceSetupData object
+function collectRaceSetupForm() {
+    const nameInput = document.getElementById('setup-race-name');
+    const timeInput = document.getElementById('setup-post-time');
+
+    raceSetupData.race_name = nameInput ? nameInput.value.trim() : '';
+    raceSetupData.post_time = timeInput ? timeInput.value : '';
+    raceSetupData.horses = {};
+
+    for (let i = 1; i <= 20; i++) {
+        const input = document.getElementById(`horse-${i}`);
+        raceSetupData.horses[String(i)] = input ? input.value.trim() : '';
+    }
+}
+
+// Save race setup to Flask
+async function raceSetupSave() {
+    collectRaceSetupForm();
+
+    try {
+        const response = await fetch('/api/race-setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(raceSetupData)
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification('Race setup saved!', 'success');
+            // Update post time countdown if post time was set
+            if (raceSetupData.post_time) {
+                updatePostTimeCountdown();
+            }
+        } else {
+            showNotification('Save failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving race setup:', error);
+        showNotification('Save error', 'error');
+    }
+}
+
+// Clear all horse entries
+function raceSetupClear() {
+    for (let i = 1; i <= 20; i++) {
+        const input = document.getElementById(`horse-${i}`);
+        if (input) {
+            input.value = '';
+            input.classList.remove('filled');
+        }
+    }
+    const timeInput = document.getElementById('setup-post-time');
+    if (timeInput) timeInput.value = '';
+}
+
+// AI Search — call Flask endpoint which calls Anthropic API
+async function raceSetupAISearch() {
+    const btn = document.getElementById('ai-search-btn');
+    const status = document.getElementById('ai-search-status');
+
+    if (btn) btn.disabled = true;
+    if (status) {
+        status.textContent = 'Searching...';
+        status.className = 'race-setup-ai-status loading';
+    }
+
+    try {
+        const response = await fetch('/api/race-setup/ai-search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+
+        if (data.success && data.data) {
+            // Populate form with AI results
+            const nameInput = document.getElementById('setup-race-name');
+            const timeInput = document.getElementById('setup-post-time');
+
+            if (nameInput && data.data.race_name) nameInput.value = data.data.race_name;
+            if (timeInput && data.data.post_time) timeInput.value = data.data.post_time;
+
+            if (data.data.horses) {
+                for (let i = 1; i <= 20; i++) {
+                    const input = document.getElementById(`horse-${i}`);
+                    const name = data.data.horses[String(i)] || '';
+                    if (input) {
+                        input.value = name;
+                        input.classList.toggle('filled', name.length > 0);
+                    }
+                }
+            }
+
+            // Count filled entries
+            const filled = Object.values(data.data.horses || {}).filter(n => n.trim()).length;
+            if (status) {
+                status.textContent = `Found ${filled} entries`;
+                status.className = 'race-setup-ai-status success';
+            }
+        } else {
+            if (status) {
+                status.textContent = data.error || 'Search failed';
+                status.className = 'race-setup-ai-status error';
+            }
+        }
+    } catch (error) {
+        console.error('AI search error:', error);
+        if (status) {
+            status.textContent = 'Connection error';
+            status.className = 'race-setup-ai-status error';
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// Post time countdown — updates the "MINUTES TO RACE" display
+function updatePostTimeCountdown() {
+    const display = document.getElementById('post-time-display');
+    const countEl = document.getElementById('post-time-count');
+    if (!display || !countEl) return;
+
+    if (!raceSetupData.post_time) {
+        display.style.display = 'none';
+        return;
+    }
+
+    const now = new Date();
+    const [hours, minutes] = raceSetupData.post_time.split(':').map(Number);
+    const postTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+
+    const diffMs = postTime - now;
+    const diffMin = Math.floor(diffMs / 60000);
+
+    if (diffMin <= 0) {
+        display.style.display = 'none';
+        return;
+    }
+
+    display.style.display = 'flex';
+    countEl.textContent = diffMin;
+
+    // Color coding
+    if (diffMin <= 5) {
+        display.className = 'post-time-display urgent';
+    } else if (diffMin <= 60) {
+        display.className = 'post-time-display warning';
+    } else {
+        display.className = 'post-time-display';
+    }
+}
+
+// Initialize post time countdown — called on page load and every minute
+function initPostTimeCountdown() {
+    // Load saved data silently to check for post time
+    fetch('/api/race-setup')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success && data.data) {
+                raceSetupData = data.data;
+                updatePostTimeCountdown();
+            }
+        })
+        .catch(() => {});
+
+    // Update every 30 seconds
+    setInterval(updatePostTimeCountdown, 30000);
+}
+
+// =====================================================================
 // Animation Tuning Modal
 // =====================================================================
 
@@ -2216,6 +2469,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initTicker();
 
     initTuningSliders();
+    initPostTimeCountdown();
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
