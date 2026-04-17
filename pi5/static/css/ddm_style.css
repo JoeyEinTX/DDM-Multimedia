@@ -2478,3 +2478,151 @@ body {
 .tuning-btn-save:hover {
     background: rgba(212, 160, 0, 0.25);
 }
+
+/* ── Race Setup Modal ── */
+.race-setup-modal-content {
+    width: 620px;
+    max-width: 95vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.race-setup-section {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.race-setup-field-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.race-setup-field-row:last-child {
+    margin-bottom: 0;
+}
+
+.race-setup-field-row label {
+    font-size: 0.82em;
+    color: #aaaaaa;
+}
+
+.race-setup-input {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #ffffff;
+    font-size: 0.9em;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.2s ease;
+}
+
+.race-setup-input:focus {
+    outline: none;
+    border-color: #D4A000;
+}
+
+.race-setup-time {
+    width: auto;
+    max-width: 140px;
+}
+
+/* 2-column grid for 20 horse entries */
+.race-setup-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.race-setup-horse-row {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    align-items: center;
+    gap: 8px;
+}
+
+.race-setup-post-num {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #D4A000;
+    text-align: center;
+    background: rgba(212, 160, 0, 0.1);
+    border-radius: 4px;
+    padding: 4px 2px;
+    line-height: 1;
+}
+
+.race-setup-horse-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    padding: 5px 8px;
+    color: #ffffff;
+    font-size: 0.82em;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.2s ease;
+}
+
+.race-setup-horse-input:focus {
+    outline: none;
+    border-color: #D4A000;
+}
+
+.race-setup-horse-input.filled {
+    border-color: rgba(212, 160, 0, 0.4);
+    color: #ffffff;
+}
+
+/* AI Search button and status */
+.race-setup-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.race-setup-btn-ai {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: #6366f1;
+    color: #a5b4fc;
+    white-space: nowrap;
+}
+
+.race-setup-btn-ai:hover {
+    background: rgba(99, 102, 241, 0.25);
+}
+
+.race-setup-btn-ai:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.race-setup-ai-status {
+    font-size: 0.82em;
+    color: #888888;
+    font-style: italic;
+}
+
+.race-setup-ai-status.loading {
+    color: #D4A000;
+}
+
+.race-setup-ai-status.success {
+    color: #22c55e;
+}
+
+.race-setup-ai-status.error {
+    color: #ef4444;
+}
