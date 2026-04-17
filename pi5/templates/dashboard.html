@@ -18,6 +18,38 @@
     </div>
 
     <div class="container">
+        <!-- Top Status Bar -->
+        <div class="top-status-bar">
+            <!-- Left: WiFi + Device status -->
+            <div class="top-status-left">
+                <div class="footer-wifi" id="footer-wifi" title="WiFi Signal">
+                    <div class="wifi-bars">
+                        <span class="wifi-bar bar-1" id="wifi-bar-1"></span>
+                        <span class="wifi-bar bar-2" id="wifi-bar-2"></span>
+                        <span class="wifi-bar bar-3" id="wifi-bar-3"></span>
+                        <span class="wifi-bar bar-4" id="wifi-bar-4"></span>
+                    </div>
+                </div>
+                <div class="footer-device" id="footer-device" onclick="toggleDeviceModal()" title="Connected Devices">
+                    <span class="device-icon" id="device-icon">⬡</span>
+                    <span class="device-count-badge" id="device-count-badge">0</span>
+                </div>
+            </div>
+            <!-- Right: Hamburger menu button -->
+            <div class="top-status-right">
+                <button class="hamburger-btn" onclick="toggleDrawer()" id="hamburger-btn" aria-label="Menu">
+                    <span class="hamburger-line"></span>
+                    <span class="hamburger-line"></span>
+                    <span class="hamburger-line"></span>
+                </button>
+            </div>
+            <!-- Hidden elements kept for JS compatibility -->
+            <span id="current-mode" style="display:none;">STANDBY</span>
+            <span id="device-count" style="display:none;">0</span>
+            <span id="device-plural" style="display:none;">s</span>
+            <span id="power-display" style="display:none;"></span>
+        </div>
+
         <!-- Row 1: Hero Header — Logo -->
         <div class="hero-header">
             <img src="{{ url_for('static', filename='css/ddm_logo_2026.png') }}" alt="Derby de Mayo" class="header-logo">
@@ -135,46 +167,6 @@
             </div>
         </div>
 
-        <!-- Unified Footer -->
-        <div class="footer-section">
-            <!-- Left: status indicators -->
-            <div class="footer-info">
-                <!-- WiFi signal strength bars -->
-                <div class="footer-wifi" id="footer-wifi" title="WiFi Signal">
-                    <div class="wifi-bars">
-                        <span class="wifi-bar bar-1" id="wifi-bar-1"></span>
-                        <span class="wifi-bar bar-2" id="wifi-bar-2"></span>
-                        <span class="wifi-bar bar-3" id="wifi-bar-3"></span>
-                        <span class="wifi-bar bar-4" id="wifi-bar-4"></span>
-                    </div>
-                </div>
-                <!-- Device indicator -->
-                <div class="footer-device" id="footer-device" onclick="toggleDeviceModal()" title="Connected Devices">
-                    <span class="device-icon" id="device-icon">⬡</span>
-                    <span class="device-count-badge" id="device-count-badge">0</span>
-                </div>
-                <!-- Hidden mode span kept for JS compatibility -->
-                <span id="current-mode" style="display:none;">STANDBY</span>
-                <!-- Hidden device count spans kept for JS compatibility -->
-                <span id="device-count" style="display:none;">0</span>
-                <span id="device-plural" style="display:none;">s</span>
-            </div>
-            <!-- Right: actions + branding -->
-            <div class="footer-right">
-                <button class="btn-footer" onclick="openRaceSetupModal()">⚙️ Race Setup</button>
-                <button class="btn-footer" onclick="openTuningModal()">🎛️ Tuning</button>
-                <button class="btn-footer" onclick="openAnimationsModal()">🎬 Animations</button>
-                <div class="powered-by">
-                    <span class="powered-text">Powered by</span>
-                    <span class="joey-ai">JoeyAI</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Copyright Bar -->
-        <div class="copyright-bar">
-            © <span id="footer-year"></span> Derby de Mayo Multimedia | v{{ version }}
-        </div>
     </div>
 
     <!-- Fullscreen Toggle (bottom left) -->
@@ -556,6 +548,40 @@
             </div>
 
             </div><!-- end tuning-modal-body -->
+        </div>
+    </div>
+
+    <!-- Drawer Overlay -->
+    <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+
+    <!-- Slide-out Drawer -->
+    <div class="drawer" id="drawer">
+        <div class="drawer-header">
+            <span class="drawer-title">Derby de Mayo</span>
+            <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+        </div>
+
+        <nav class="drawer-nav">
+            <button class="drawer-item" onclick="openRaceSetupModal(); closeDrawer()">
+                <span class="drawer-icon">⚙️</span>
+                <span class="drawer-label">Race Setup</span>
+            </button>
+            <button class="drawer-item" onclick="openTuningModal(); closeDrawer()">
+                <span class="drawer-icon">🎛️</span>
+                <span class="drawer-label">Tuning</span>
+            </button>
+            <button class="drawer-item" onclick="openAnimationsModal(); closeDrawer()">
+                <span class="drawer-icon">🎬</span>
+                <span class="drawer-label">Animations</span>
+            </button>
+        </nav>
+
+        <div class="drawer-footer">
+            <div class="powered-by">
+                <span class="powered-text">Powered by</span>
+                <span class="joey-ai">JoeyAI</span>
+            </div>
+            <div class="drawer-version">© <span id="footer-year"></span> Derby de Mayo Multimedia | v{{ version }}</div>
         </div>
     </div>
 
