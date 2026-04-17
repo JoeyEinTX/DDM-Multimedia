@@ -997,38 +997,6 @@ body {
     background: rgba(222, 67, 67, 0.12);
 }
 
-/* Footer Section */
-.footer-section {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
-    padding: 14px 24px;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-}
-
-.footer-info {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-}
-
-#current-mode {
-    color: #1a1a1a;
-    font-weight: 500;
-}
-
-.footer-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-}
-
 /* Powered by JoeyAI Badge */
 .powered-by {
     display: flex;
@@ -1049,15 +1017,6 @@ body {
     font-size: 0.9em;
     font-weight: 600;
     color: #ffffff;
-}
-
-/* Copyright Bar */
-.copyright-bar {
-    text-align: center;
-    padding: 12px 0;
-    font-size: 0.75em;
-    color: #555555;
-    letter-spacing: 0.5px;
 }
 
 /* ── Footer WiFi Signal Bars ── */
@@ -1135,6 +1094,195 @@ body {
     color: #22c55e;
 }
 
+/* ── Top Status Bar ── */
+.top-status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.top-status-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.top-status-right {
+    display: flex;
+    align-items: center;
+}
+
+/* ── Hamburger Button ── */
+.hamburger-btn {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 40px;
+    height: 40px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.hamburger-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.hamburger-btn:active {
+    transform: scale(0.95);
+}
+
+.hamburger-line {
+    display: block;
+    width: 100%;
+    height: 2px;
+    background: #cccccc;
+    border-radius: 2px;
+    transition: background 0.2s ease;
+}
+
+.hamburger-btn:hover .hamburger-line {
+    background: #ffffff;
+}
+
+/* ── Drawer Overlay ── */
+.drawer-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1400;
+    backdrop-filter: blur(2px);
+}
+
+.drawer-overlay.active {
+    display: block;
+}
+
+/* ── Slide-out Drawer ── */
+.drawer {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100vh;
+    background: #1a1a1a;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 1500;
+    display: flex;
+    flex-direction: column;
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.drawer.open {
+    right: 0;
+}
+
+.drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 20px 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.drawer-title {
+    font-size: 0.9em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #D4A000;
+}
+
+.drawer-close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.1em;
+    color: #aaaaaa;
+    transition: all 0.2s ease;
+    line-height: 1;
+}
+
+.drawer-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.drawer-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 16px 12px;
+}
+
+.drawer-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.drawer-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.drawer-item:active {
+    transform: scale(0.98);
+}
+
+.drawer-icon {
+    font-size: 1.3em;
+    width: 28px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.drawer-label {
+    font-size: 1em;
+    font-weight: 500;
+    color: #dddddd;
+    letter-spacing: 0.3px;
+}
+
+.drawer-footer {
+    padding: 16px 20px 24px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+}
+
+.drawer-version {
+    font-size: 0.72em;
+    color: #444444;
+    letter-spacing: 0.5px;
+}
+
 /* ── Tuning Modal Power Info ── */
 .tuning-power-info {
     padding: 8px 0 0 0;
@@ -1143,31 +1291,6 @@ body {
     color: #666666;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     margin-bottom: 8px;
-}
-
-.btn-footer {
-    padding: 6px 14px;
-    font-size: 0.8em;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 16px;
-    color: #cccccc;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-}
-
-.btn-footer:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.25);
-    color: #ffffff;
-}
-
-.btn-footer:active {
-    transform: scale(0.97);
 }
 
 /* Device Status - Clickable */
@@ -2041,13 +2164,6 @@ body {
     color: #dc2626;
 }
 
-/* Footer Right Group */
-.footer-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
 /* Animations Button - Subtle footer style */
 .btn-animations {
     padding: 6px 14px;
@@ -2188,17 +2304,6 @@ body {
     
     .status-left, .status-right {
         gap: 16px;
-    }
-    
-    .footer-section {
-        flex-direction: column;
-        gap: 16px;
-        text-align: center;
-    }
-    
-    .footer-info {
-        flex-direction: column;
-        gap: 8px;
     }
     
     .emergency-icon {
