@@ -1627,6 +1627,39 @@ function revealWinners() {
 }
 
 // =====================================================================
+// Slide-out Drawer
+// =====================================================================
+
+function toggleDrawer() {
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (!drawer) return;
+
+    const isOpen = drawer.classList.contains('open');
+    if (isOpen) {
+        closeDrawer();
+    } else {
+        openDrawer();
+    }
+}
+
+function openDrawer() {
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (drawer) drawer.classList.add('open');
+    if (overlay) overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeDrawer() {
+    const drawer = document.getElementById('drawer');
+    const overlay = document.getElementById('drawer-overlay');
+    if (drawer) drawer.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+// =====================================================================
 // Race Setup Modal
 // =====================================================================
 
@@ -2472,6 +2505,13 @@ document.addEventListener('DOMContentLoaded', function() {
     initPostTimeCountdown();
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
+
+    // Close drawer on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeDrawer();
+        }
+    });
 
     // Get system status
     getSystemStatus();
