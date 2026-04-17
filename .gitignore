@@ -36,5 +36,7 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+pi5/.env
 pi5/data/
+pi5/data/race_setup.json
 pi5/animation_params.json

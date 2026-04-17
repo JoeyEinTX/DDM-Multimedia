@@ -37,6 +37,18 @@ TOTAL_LEDS = 640
 import os
 PARAMS_FILE = os.path.join(os.path.dirname(__file__), 'animation_params.json')
 
+# Load .env file if present (API keys etc)
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(dotenv_path):
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path)
+
+# Anthropic API key for AI horse search
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+
+# Race setup data file
+RACE_SETUP_FILE = os.path.join(os.path.dirname(__file__), 'data', 'race_setup.json')
+
 # Weather API Settings (WeatherAPI.com)
 WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
 WEATHER_LOCATION = "Dallas,TX"

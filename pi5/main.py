@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
                    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED,
-                   PARAMS_FILE)
+                   PARAMS_FILE, ANTHROPIC_API_KEY, RACE_SETUP_FILE)
 from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
@@ -317,6 +317,32 @@ def load_results():
     return None
 
 
+def load_race_setup():
+    """Load race setup data from JSON file."""
+    try:
+        if os.path.exists(RACE_SETUP_FILE):
+            with open(RACE_SETUP_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f'[RACE SETUP] Error loading: {e}')
+    return {
+        'race_name': 'Derby de Mayo 2026',
+        'post_time': '',
+        'horses': {str(i): '' for i in range(1, 21)}
+    }
+
+def save_race_setup(data: dict):
+    """Save race setup data to JSON file."""
+    try:
+        os.makedirs(os.path.dirname(RACE_SETUP_FILE), exist_ok=True)
+        with open(RACE_SETUP_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f'[RACE SETUP] Error saving: {e}')
+        return False
+
+
 def broadcast_sse(event, data):
     """Broadcast SSE message to all connected clients"""
     with sse_lock:
@@ -609,6 +635,93 @@ def api_params_reset():
         if os.path.exists(PARAMS_FILE):
             os.remove(PARAMS_FILE)
     return jsonify({'success': success, 'response': response})
+
+
+@app.route('/api/race-setup', methods=['GET'])
+def api_race_setup_get():
+    """Get current race setup data."""
+    data = load_race_setup()
+    return jsonify({'success': True, 'data': data})
+
+
+@app.route('/api/race-setup', methods=['POST'])
+def api_race_setup_save():
+    """Save race setup data."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    success = save_race_setup(data)
+    return jsonify({'success': success})
+
+
+@app.route('/api/race-setup/ai-search', methods=['POST'])
+def api_race_setup_ai_search():
+    """Use Anthropic API with web search to find current Kentucky Derby entries."""
+    if not ANTHROPIC_API_KEY:
+        return jsonify({
+            'success': False,
+            'error': 'Anthropic API key not configured. Add ANTHROPIC_API_KEY to pi5/.env'
+        }), 503
+
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        response = client.messages.create(
+            model='claude-opus-4-5',
+            max_tokens=1024,
+            tools=[{
+                'type': 'web_search_20250305',
+                'name': 'web_search'
+            }],
+            messages=[{
+                'role': 'user',
+                'content': (
+                    'Search for the current official Kentucky Derby 2026 entries and post positions. '
+                    'Return ONLY a JSON object with no other text, no markdown, no explanation. '
+                    'Format: {"race_name": "Kentucky Derby 2026", "post_time": "18:57", '
+                    '"horses": {"1": "Horse Name", "2": "Horse Name", ..., "20": "Horse Name"}} '
+                    'Use empty string "" for any post positions not yet assigned. '
+                    'Post time should be in 24-hour HH:MM format (Kentucky Derby runs ~6:57 PM ET). '
+                    'Include all 20 post positions even if not all are filled.'
+                )
+            }]
+        )
+
+        # Extract text from response
+        result_text = ''
+        for block in response.content:
+            if block.type == 'text':
+                result_text += block.text
+
+        # Clean and parse JSON
+        result_text = result_text.strip()
+        # Strip markdown code fences if present
+        if result_text.startswith('```'):
+            lines = result_text.split('\n')
+            result_text = '\n'.join(lines[1:-1])
+
+        parsed = json.loads(result_text)
+
+        # Validate structure
+        if 'horses' not in parsed:
+            raise ValueError('Response missing horses field')
+
+        return jsonify({'success': True, 'data': parsed})
+
+    except json.JSONDecodeError as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to parse AI response as JSON: {str(e)}',
+            'raw': result_text if 'result_text' in locals() else ''
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route('/api/reset', methods=['POST'])
