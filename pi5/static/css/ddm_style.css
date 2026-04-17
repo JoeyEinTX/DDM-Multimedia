@@ -2731,3 +2731,16 @@ body {
 .race-setup-ai-status.error {
     color: #ef4444;
 }
+
+.copyright-bar {
+    text-align: center;
+    padding: 12px 0;
+    font-size: 0.75em;
+    color: #555555;
+    letter-spacing: 0.5px;
+}
+
+.copyright-divider {
+    margin: 0 8px;
+    color: #333333;
+}

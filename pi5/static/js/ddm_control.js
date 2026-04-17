@@ -2506,6 +2506,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
+    const copyrightYear = document.getElementById('copyright-year');
+    if (copyrightYear) copyrightYear.textContent = new Date().getFullYear();
+
     // Close drawer on Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
