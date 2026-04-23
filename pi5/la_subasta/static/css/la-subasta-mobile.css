@@ -107,6 +107,7 @@ input {
    ============================================================================= */
 
 .ls-header {
+    position: -webkit-sticky;
     position: sticky;
     top: 0;
     z-index: 100;
@@ -167,9 +168,6 @@ input {
     display: flex;
     align-items: center;
     gap: 8px;
-    position: sticky;
-    top: 64px;                   /* sits under the header */
-    z-index: 99;
 }
 
 .ls-countdown-strip.ls-countdown-urgent {
