@@ -22,6 +22,7 @@ from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
+from la_subasta import la_subasta_bp, init_la_subasta
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -930,6 +931,11 @@ racing_service = init_racing_service(socketio=socketio, use_mock=True, esp32_cli
 app.register_blueprint(racing_bp)
 app.register_blueprint(guest_ui)
 print("Racing data service initialised (mock mode)")
+
+# La Subasta auction blueprint
+init_la_subasta(socketio=socketio, racing_service=racing_service)
+app.register_blueprint(la_subasta_bp)
+print("La Subasta initialised (/la-subasta)")
 
 
 # ---------------------------------------------------------------------------

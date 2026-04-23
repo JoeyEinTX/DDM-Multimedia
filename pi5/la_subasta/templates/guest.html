@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a1f1a">
+    <title>Derby de Mayo's La Subasta</title>
+    <link rel="stylesheet" href="{{ url_for('la_subasta.static', filename='css/la-subasta-mobile.css') }}">
+</head>
+<body>
+
+<!-- =====================================================================
+     Identity setup modal — shown on first visit, hidden after.
+     Blocks the app until the guest registers; no skip, no dismiss.
+     ===================================================================== -->
+<div id="identity-modal" class="ls-modal" role="dialog" aria-modal="true" aria-labelledby="ls-modal-title" hidden>
+    <div class="ls-modal-inner">
+        <div class="ls-modal-brand">
+            <div class="ls-brand-line-small">Derby de Mayo's</div>
+            <div class="ls-brand-line-large">La Subasta</div>
+        </div>
+
+        <p class="ls-modal-lead">Pick a name and emoji to start bidding.</p>
+
+        <label class="ls-field-label" for="ls-name-input">Your name</label>
+        <input
+            type="text"
+            id="ls-name-input"
+            class="ls-text-input"
+            placeholder="Dave K"
+            maxlength="20"
+            autocomplete="off"
+            autocapitalize="words"
+            spellcheck="false">
+        <div class="ls-hint">First name + last initial (e.g. "Dave K")</div>
+
+        <label class="ls-field-label">Pick your emoji</label>
+        <div id="ls-emoji-grid" class="ls-emoji-grid" role="radiogroup" aria-label="Emoji selection">
+            {% for emoji in emoji_palette %}
+            <button type="button"
+                    class="ls-emoji-btn"
+                    role="radio"
+                    aria-checked="false"
+                    data-emoji="{{ emoji }}">{{ emoji }}</button>
+            {% endfor %}
+        </div>
+
+        <div id="ls-modal-error" class="ls-error-banner" role="alert" hidden></div>
+
+        <button id="ls-submit-btn" class="ls-primary-btn" type="button" disabled>
+            Enter La Subasta
+        </button>
+    </div>
+</div>
+
+<!-- =====================================================================
+     Main app — sticky header, countdown, horse list. Hidden until the
+     guest has an identity (either from localStorage or fresh registration).
+     ===================================================================== -->
+<main id="ls-app" hidden>
+
+    <header class="ls-header">
+        <div class="ls-serape-stripe" aria-hidden="true"></div>
+        <div class="ls-header-row">
+            <div class="ls-brand">
+                <div class="ls-brand-line-small">Derby de Mayo's</div>
+                <div class="ls-brand-line-large">La Subasta</div>
+            </div>
+            <div class="ls-identity-badge" id="ls-identity-badge">
+                <div class="ls-identity-name" id="ls-identity-display">—</div>
+                <div class="ls-identity-total">
+                    Owes <span id="ls-identity-total">$0</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="ls-countdown-strip" id="ls-countdown">
+        <span class="ls-countdown-icon">⏰</span>
+        <span id="ls-countdown-text">Loading…</span>
+    </div>
+
+    <!-- Full-page takeover shown when auction_locked fires -->
+    <div id="ls-locked-banner" class="ls-locked-banner" hidden>
+        <div class="ls-locked-inner">
+            <div class="ls-locked-icon">💰</div>
+            <div class="ls-locked-title">BIDDING CLOSED</div>
+            <div class="ls-locked-sub">Time to pay up</div>
+        </div>
+    </div>
+
+    <section id="ls-horse-list" class="ls-horse-list" aria-label="Horses">
+        <div class="ls-placeholder">Loading horses…</div>
+    </section>
+
+    <footer class="ls-footer">
+        <span>{{ num_horses }} horses • La Subasta 2026</span>
+    </footer>
+
+</main>
+
+<!-- Custom bid amount dialog — small modal for the "Custom" bid button -->
+<div id="ls-custom-bid-modal" class="ls-modal ls-modal-compact" role="dialog" aria-modal="true" hidden>
+    <div class="ls-modal-inner">
+        <div class="ls-custom-title">Custom bid</div>
+        <div class="ls-custom-horse" id="ls-custom-horse">—</div>
+        <input type="number" id="ls-custom-amount" class="ls-text-input" inputmode="numeric" step="1">
+        <div class="ls-hint" id="ls-custom-hint">—</div>
+        <div id="ls-custom-error" class="ls-error-banner" role="alert" hidden></div>
+        <div class="ls-btn-row">
+            <button type="button" class="ls-secondary-btn" id="ls-custom-cancel">Cancel</button>
+            <button type="button" class="ls-primary-btn"   id="ls-custom-submit">Place bid</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="{{ url_for('la_subasta.static', filename='js/guest.js') }}"></script>
+</body>
+</html>

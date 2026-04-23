@@ -1,0 +1,631 @@
+/* =============================================================================
+   La Subasta — Mobile-first guest UI styles (Phase 2A)
+
+   Mobile portrait is the primary target (iPhone/Android). Desktop is usable
+   but not the priority. Colors map 1:1 to the DDM palette per spec
+   § DDM Branding (Mobile-First).
+   ============================================================================= */
+
+:root {
+    /* Brand palette — see spec § DDM Branding */
+    --ls-bg-primary:       #0a1f1a;
+    --ls-bg-secondary:     #1a3a30;
+    --ls-card-bg:          linear-gradient(180deg, #f6e7c5 0%, #eed9a8 100%);
+    --ls-card-fg:          #1a1a1a;
+    --ls-accent:           #3F8E43;   /* Mistletoe Green */
+    --ls-accent-dark:      #2a6e2e;
+    --ls-urgent:           #DE4343;   /* Scarlet Red Matte */
+    --ls-gold:             #FEC600;   /* Sunflower Yellow */
+    --ls-turquoise:        #00B1B7;
+    --ls-hot-pink:         #F5547C;
+    --ls-text:             #FFFFFF;
+    --ls-muted:            #a8bfb4;
+    --ls-divider:          rgba(255,255,255,0.08);
+
+    /* Layout */
+    --ls-radius-card:      14px;
+    --ls-radius-btn:       10px;
+    --ls-tap-min:          44px;        /* iOS tap target minimum */
+    --ls-font:             -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                           Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    background: var(--ls-bg-primary);
+    color: var(--ls-text);
+    font-family: var(--ls-font);
+    font-size: 16px;             /* ≥16px per spec */
+    line-height: 1.4;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent over-scroll bounce on iOS from revealing white */
+body {
+    overscroll-behavior-y: contain;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+button {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+input {
+    font-family: inherit;
+}
+
+/* =============================================================================
+   Serape stripe — a 4-stripe horizontal band at the very top of the header.
+   Thin/scaled-down version per spec § Serape Stripes.
+   ============================================================================= */
+
+.ls-serape-stripe {
+    height: 6px;
+    background:
+        linear-gradient(to right,
+            var(--ls-urgent)    0%,   var(--ls-urgent)    25%,
+            var(--ls-gold)     25%,   var(--ls-gold)     50%,
+            var(--ls-turquoise) 50%,   var(--ls-turquoise) 75%,
+            var(--ls-hot-pink) 75%,   var(--ls-hot-pink)  100%
+        );
+}
+
+/* =============================================================================
+   Brand lines — two-line treatment per spec § Naming & Branding
+   ============================================================================= */
+
+.ls-brand-line-small {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e8d8a8;              /* serape-beige */
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.ls-brand-line-large {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--ls-accent);     /* Mistletoe Green */
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+}
+
+/* =============================================================================
+   Header — sticky, always visible
+   ============================================================================= */
+
+.ls-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--ls-bg-primary);
+    border-bottom: 1px solid var(--ls-divider);
+}
+
+.ls-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px 12px;
+    gap: 12px;
+}
+
+.ls-brand {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.ls-identity-badge {
+    flex: 0 0 auto;
+    background: var(--ls-bg-secondary);
+    padding: 8px 12px;
+    border-radius: var(--ls-radius-btn);
+    text-align: right;
+    min-width: 110px;
+}
+
+.ls-identity-name {
+    font-size: 15px;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ls-identity-total {
+    font-size: 12px;
+    color: var(--ls-muted);
+    margin-top: 2px;
+}
+
+.ls-identity-total span {
+    color: var(--ls-gold);
+    font-weight: 700;
+}
+
+/* =============================================================================
+   Countdown strip
+   ============================================================================= */
+
+.ls-countdown-strip {
+    background: var(--ls-bg-secondary);
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: sticky;
+    top: 64px;                   /* sits under the header */
+    z-index: 99;
+}
+
+.ls-countdown-strip.ls-countdown-urgent {
+    background: var(--ls-urgent);
+    animation: ls-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ls-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.85; }
+}
+
+.ls-countdown-icon { font-size: 16px; }
+
+/* =============================================================================
+   Horse list + card
+   ============================================================================= */
+
+.ls-horse-list {
+    padding: 14px 12px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ls-placeholder {
+    text-align: center;
+    color: var(--ls-muted);
+    padding: 40px 20px;
+}
+
+.ls-horse-card {
+    background: var(--ls-card-bg);
+    color: var(--ls-card-fg);
+    border-radius: var(--ls-radius-card);
+    padding: 14px 14px 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35),
+                0 0 0 1px rgba(0,0,0,0.06);
+    position: relative;
+    transition: box-shadow 150ms ease, transform 80ms ease;
+}
+
+.ls-horse-card.ls-flash-green {
+    animation: ls-flash-green 600ms ease-out;
+}
+
+@keyframes ls-flash-green {
+    0%   { box-shadow: 0 0 0 4px var(--ls-accent), 0 2px 10px rgba(0,0,0,0.35); }
+    100% { box-shadow: 0 2px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.06); }
+}
+
+.ls-horse-card.ls-scratched {
+    opacity: 0.55;
+    filter: grayscale(0.6);
+}
+
+/* Top row: saddle cloth + horse info + current bid */
+.ls-card-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.ls-saddle-cloth {
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    background: var(--ls-saddle-color, var(--ls-accent));
+    border: 2px solid rgba(0,0,0,0.1);
+}
+
+.ls-horse-info {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.ls-horse-name {
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1.15;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ls-jockey {
+    font-size: 13px;
+    color: #5a5648;
+    margin-top: 2px;
+}
+
+.ls-bid-block {
+    flex: 0 0 auto;
+    text-align: right;
+    min-width: 72px;
+}
+
+.ls-bid-amount {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--ls-accent-dark);
+}
+
+.ls-bid-empty {
+    font-size: 13px;
+    color: #7a6a44;
+}
+
+/* Leader row — "Dave K 🌮 leading" or "👑 You're leading" */
+.ls-leader-row {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #3f3b2c;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ls-leader-row.ls-you-leading {
+    color: var(--ls-accent-dark);
+    font-weight: 800;
+}
+
+.ls-leader-row.ls-no-bids {
+    color: #7a6a44;
+    font-style: italic;
+}
+
+.ls-scratched-badge {
+    display: inline-block;
+    background: var(--ls-urgent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+}
+
+/* Bid buttons — 44px min tap target, thumb-friendly */
+.ls-bid-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.ls-bid-btn {
+    min-height: var(--ls-tap-min);
+    padding: 10px 6px;
+    background: var(--ls-accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    border-radius: var(--ls-radius-btn);
+    transition: background 120ms ease, transform 80ms ease, opacity 120ms ease;
+}
+
+.ls-bid-btn:active { transform: scale(0.96); }
+
+.ls-bid-btn:disabled {
+    background: #a9a197;
+    color: #efeadd;
+    cursor: not-allowed;
+    opacity: 0.85;
+}
+
+.ls-bid-btn.ls-custom {
+    background: var(--ls-bg-secondary);
+}
+
+.ls-bid-btn.ls-loading {
+    color: transparent;
+    position: relative;
+}
+
+.ls-bid-btn.ls-loading::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    margin: -8px 0 0 -8px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: ls-spin 0.7s linear infinite;
+}
+
+@keyframes ls-spin { to { transform: rotate(360deg); } }
+
+.ls-bid-error {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: rgba(222, 67, 67, 0.15);
+    color: #8a1f1f;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    border-left: 3px solid var(--ls-urgent);
+}
+
+/* =============================================================================
+   Footer
+   ============================================================================= */
+
+.ls-footer {
+    padding: 16px;
+    text-align: center;
+    color: var(--ls-muted);
+    font-size: 12px;
+}
+
+/* =============================================================================
+   Modals (identity + custom-bid)
+   ============================================================================= */
+
+.ls-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 31, 26, 0.92);
+    z-index: 1000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-y: auto;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+}
+
+.ls-modal[hidden] { display: none; }
+
+.ls-modal-inner {
+    width: 100%;
+    max-width: 420px;
+    background: var(--ls-bg-secondary);
+    border-radius: 16px;
+    padding: 24px 20px 20px;
+    margin: 20px 0;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+.ls-modal-compact .ls-modal-inner {
+    max-width: 360px;
+}
+
+.ls-modal-brand {
+    text-align: center;
+    margin-bottom: 18px;
+}
+
+.ls-modal-brand .ls-brand-line-large {
+    font-size: 32px;
+}
+
+.ls-modal-lead {
+    text-align: center;
+    color: var(--ls-muted);
+    margin-bottom: 18px;
+    font-size: 15px;
+}
+
+.ls-field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ls-muted);
+}
+
+.ls-field-label:not(:first-of-type) { margin-top: 18px; }
+
+.ls-text-input {
+    width: 100%;
+    background: #0f2b23;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: var(--ls-radius-btn);
+    padding: 12px 14px;
+    font-size: 16px;                     /* iOS zoom guard: ≥16px */
+    outline: none;
+    transition: border-color 120ms ease;
+}
+
+.ls-text-input:focus { border-color: var(--ls-accent); }
+
+.ls-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ls-muted);
+}
+
+/* Emoji grid — 4-wide on phones, 8-wide on larger screens */
+.ls-emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+@media (min-width: 420px) {
+    .ls-emoji-grid { grid-template-columns: repeat(8, 1fr); }
+}
+
+.ls-emoji-btn {
+    aspect-ratio: 1 / 1;
+    min-height: var(--ls-tap-min);
+    font-size: 26px;
+    background: #0f2b23;
+    border: 2px solid transparent;
+    border-radius: var(--ls-radius-btn);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 120ms ease, transform 80ms ease, background 120ms ease;
+}
+
+.ls-emoji-btn:active { transform: scale(0.94); }
+
+.ls-emoji-btn[aria-checked="true"] {
+    border-color: var(--ls-accent);
+    background: #12392f;
+    box-shadow: 0 0 0 2px rgba(63,142,67,0.35);
+}
+
+/* Highlight state used when we want to nudge the user to pick another emoji
+   after a duplicate-identity rejection */
+.ls-emoji-grid.ls-highlight-grid {
+    animation: ls-nudge 420ms ease;
+}
+
+@keyframes ls-nudge {
+    0%, 100% { transform: translateX(0); }
+    20%      { transform: translateX(-6px); }
+    40%      { transform: translateX(6px); }
+    60%      { transform: translateX(-3px); }
+    80%      { transform: translateX(3px); }
+}
+
+.ls-error-banner {
+    margin: 14px 0 0;
+    padding: 10px 12px;
+    background: rgba(222, 67, 67, 0.15);
+    color: #ffb4b4;
+    font-size: 14px;
+    border-radius: 8px;
+    border-left: 3px solid var(--ls-urgent);
+}
+
+.ls-error-banner[hidden] { display: none; }
+
+.ls-primary-btn {
+    width: 100%;
+    min-height: var(--ls-tap-min);
+    padding: 14px;
+    background: var(--ls-accent);
+    color: #fff;
+    font-size: 17px;
+    font-weight: 800;
+    border-radius: var(--ls-radius-btn);
+    margin-top: 22px;
+    transition: background 120ms ease, opacity 120ms ease, transform 80ms ease;
+}
+
+.ls-primary-btn:active:not(:disabled) { transform: scale(0.98); }
+
+.ls-primary-btn:disabled {
+    background: #3a4f48;
+    color: #8a9a92;
+    cursor: not-allowed;
+}
+
+.ls-secondary-btn {
+    flex: 1;
+    min-height: var(--ls-tap-min);
+    padding: 14px;
+    background: transparent;
+    color: var(--ls-muted);
+    font-weight: 700;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: var(--ls-radius-btn);
+}
+
+.ls-btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.ls-btn-row .ls-primary-btn { margin-top: 0; flex: 1; }
+
+.ls-custom-title {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ls-muted);
+    text-align: center;
+    margin-bottom: 4px;
+}
+
+.ls-custom-horse {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 800;
+    margin-bottom: 14px;
+}
+
+/* =============================================================================
+   Locked banner — full-screen takeover when auction_locked fires
+   ============================================================================= */
+
+.ls-locked-banner {
+    position: fixed;
+    inset: 0;
+    background: var(--ls-urgent);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 32px;
+    animation: ls-lockin 420ms ease-out;
+}
+
+.ls-locked-banner[hidden] { display: none; }
+
+@keyframes ls-lockin {
+    from { opacity: 0; transform: scale(1.05); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+.ls-locked-icon { font-size: 72px; margin-bottom: 12px; }
+
+.ls-locked-title {
+    font-size: 34px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    line-height: 1.1;
+}
+
+.ls-locked-sub {
+    margin-top: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    opacity: 0.9;
+}
