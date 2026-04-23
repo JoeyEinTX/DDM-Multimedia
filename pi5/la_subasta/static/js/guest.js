@@ -166,8 +166,15 @@
         app.hidden = false;
         renderIdentityBadge();
         initSocket();
+        // All three reads run in parallel, then one final render + countdown
+        // start so button-enabled state reflects the fully-loaded snapshot
+        // (auctionState, settings, and horses all in).
         Promise.all([refreshSettings(), refreshHorses(), refreshState()])
-            .then(function () { startCountdown(); });
+            .then(function () {
+                renderHorseList();
+                renderIdentityTotal();
+                startCountdown();
+            });
     }
 
     function renderIdentityBadge() {
@@ -209,6 +216,10 @@
         if (resp.ok) {
             state.auctionState = resp.data.state;
             updateLockedBanner();
+            // Buttons depend on auctionState — re-render so they toggle
+            // enabled when we land on OPEN / FINAL_HOUR.
+            renderHorseList();
+            tickCountdown();
         }
     }
 
