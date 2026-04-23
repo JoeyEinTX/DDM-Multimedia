@@ -992,6 +992,86 @@ def test_static_assets_served():
            "la_subasta_identity" in js_body)
 
 
+def test_auction_state_changed_broadcast():
+    """Admin transitions must fire auction_state_changed so live guests
+    see button states update without a page reload."""
+    _reset()
+
+    events = []
+
+    class _StubSocketIO:
+        def emit(self, event, payload, room=None):
+            events.append((event, payload, room))
+
+    from la_subasta import notifications as nots
+    app = _make_app()
+    nots.init_notifications(_StubSocketIO())
+    client = app.test_client()
+    events.clear()
+
+    # NOT_STARTED → OPEN
+    r = client.post("/la-subasta/api/admin/start")
+    _check("admin/start returns 200", r.status_code == 200)
+
+    state_events = [e for e in events if e[0] == "auction_state_changed"]
+    _check("start fired auction_state_changed", len(state_events) == 1,
+           f"got {len(state_events)}")
+    payload = state_events[0][1]
+    _check("auction_state_changed payload has new_state=OPEN",
+           payload.get("new_state") == "OPEN",
+           f"got {payload}")
+    _check("auction_state_changed payload has old_state=NOT_STARTED",
+           payload.get("old_state") == "NOT_STARTED")
+
+    # OPEN → FINAL_HOUR
+    events.clear()
+    r = client.post("/la-subasta/api/admin/final-hour")
+    _check("admin/final-hour returns 200", r.status_code == 200)
+    state_events = [e for e in events if e[0] == "auction_state_changed"]
+    _check("final-hour fired auction_state_changed with new_state=FINAL_HOUR",
+           len(state_events) == 1
+           and state_events[0][1]["new_state"] == "FINAL_HOUR")
+
+    # FINAL_HOUR → LOCKED (also emits auction_locked, so expect both)
+    events.clear()
+    r = client.post("/la-subasta/api/admin/lock")
+    _check("admin/lock returns 200", r.status_code == 200)
+    _check("lock fired auction_state_changed with new_state=LOCKED",
+           any(e[0] == "auction_state_changed"
+               and e[1]["new_state"] == "LOCKED"
+               for e in events))
+    _check("lock still fires auction_locked event",
+           any(e[0] == "auction_locked" for e in events))
+
+    # Results endpoint does LOCKED→RACE_COMPLETE→SETTLED — expect two events
+    events.clear()
+    # Need at least one owned horse for payouts to work; but since the
+    # admin/results requires LOCKED state and we're already there, just
+    # drive it straight through with zero bids (House takes everything).
+    r = client.post("/la-subasta/api/admin/results",
+                    json={"win": 1, "place": 2, "show": 3})
+    _check("admin/results returns 200", r.status_code == 200,
+           f"body={r.get_json()}")
+    transitions_fired = [e[1]["new_state"] for e in events
+                         if e[0] == "auction_state_changed"]
+    _check("results fires RACE_COMPLETE + SETTLED transitions in order",
+           transitions_fired == ["RACE_COMPLETE", "SETTLED"],
+           f"got {transitions_fired}")
+
+    nots.init_notifications(None)
+
+
+def test_guest_js_listens_for_state_changed():
+    """The guest JS must subscribe to auction_state_changed, otherwise the
+    backend broadcast has no client."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+    _check("guest.js listens for auction_state_changed",
+           "auction_state_changed" in js)
+
+
 def test_existing_dashboard_still_loads():
     """Smoke-check the full pi5 app: main.py must import without error and
     the existing / route (dashboard) must still register."""
@@ -1050,6 +1130,8 @@ def main():
     _run("guest UI — page served", test_guest_page_served)
     _run("guest UI — /api/horses shape", test_horses_endpoint_shape)
     _run("guest UI — static assets served", test_static_assets_served)
+    _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
+    _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
 
     _run("existing dashboard still loads", test_existing_dashboard_still_loads)
 

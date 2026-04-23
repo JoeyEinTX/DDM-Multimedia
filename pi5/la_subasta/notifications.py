@@ -57,6 +57,15 @@ def auction_locked(timestamp: float) -> None:
     emit("auction_locked", {"timestamp": timestamp})
 
 
+def auction_state_changed(new_state: str, old_state: Optional[str] = None) -> None:
+    """Broadcast whenever the auction state transitions. Guest UIs use this
+    to re-render bid button enabled/disabled states without a page reload."""
+    emit("auction_state_changed", {
+        "new_state": new_state,
+        "old_state": old_state,
+    })
+
+
 def horse_scratched(horse_id: int) -> None:
     emit("horse_scratched", {"horse_id": horse_id})
 

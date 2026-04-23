@@ -285,10 +285,18 @@ def api_bid_undo():
 # Admin endpoints
 # -----------------------------------------------------------------------------
 
+def _transition_with_broadcast(new_state: AuctionState):
+    """Transition and emit auction_state_changed. Returns (ok, old_state_value)."""
+    old_state = get_state().value
+    transition(new_state)
+    notifications.auction_state_changed(new_state.value, old_state)
+    return old_state
+
+
 @la_subasta_bp.route("/api/admin/start", methods=["POST"])
 def api_admin_start():
     try:
-        transition(AuctionState.OPEN)
+        _transition_with_broadcast(AuctionState.OPEN)
     except ValueError as exc:
         return _err(str(exc), status=409)
     return jsonify({"success": True, "state": get_state().value})
@@ -297,7 +305,7 @@ def api_admin_start():
 @la_subasta_bp.route("/api/admin/final-hour", methods=["POST"])
 def api_admin_final_hour():
     try:
-        transition(AuctionState.FINAL_HOUR)
+        _transition_with_broadcast(AuctionState.FINAL_HOUR)
     except ValueError as exc:
         return _err(str(exc), status=409)
     return jsonify({"success": True, "state": get_state().value})
@@ -306,7 +314,7 @@ def api_admin_final_hour():
 @la_subasta_bp.route("/api/admin/lock", methods=["POST"])
 def api_admin_lock():
     try:
-        transition(AuctionState.LOCKED)
+        _transition_with_broadcast(AuctionState.LOCKED)
     except ValueError as exc:
         return _err(str(exc), status=409)
     payouts.freeze_ownership()
@@ -337,13 +345,13 @@ def api_admin_results():
 
     current = get_state()
     if current == AuctionState.LOCKED:
-        transition(AuctionState.RACE_COMPLETE)
+        _transition_with_broadcast(AuctionState.RACE_COMPLETE)
     elif current != AuctionState.RACE_COMPLETE:
         return _err(f"Cannot enter results from state {current.value}",
                     status=409)
 
     result = payouts.compute_and_persist_payouts(win, place, show)
-    transition(AuctionState.SETTLED)
+    _transition_with_broadcast(AuctionState.SETTLED)
 
     notifications.results_entered(win, place, show)
     notifications.payout_computed(result)

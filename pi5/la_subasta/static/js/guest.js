@@ -600,6 +600,17 @@
             renderHorseList();
         });
 
+        // Every admin-driven state transition fires this. Guest UI uses
+        // it to flip bid-button enabled state live (e.g. admin hits Start →
+        // every guest's buttons enable without a refresh).
+        socket.on('auction_state_changed', function (payload) {
+            if (!payload || !payload.new_state) return;
+            state.auctionState = payload.new_state;
+            updateLockedBanner();
+            tickCountdown();
+            renderHorseList();
+        });
+
         socket.on('settings_changed', function () {
             refreshSettings();
         });
