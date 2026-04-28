@@ -1072,6 +1072,75 @@ def test_guest_js_listens_for_state_changed():
            "auction_state_changed" in js)
 
 
+# -----------------------------------------------------------------------------
+# Phase 2A.5: onboarding flow (splash + how-it-works + help button)
+# -----------------------------------------------------------------------------
+
+def test_onboarding_markup_present():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    r = client.get("/la-subasta/")
+    _check("GET /la-subasta/ returns 200", r.status_code == 200,
+           f"status={r.status_code}")
+    html = r.get_data(as_text=True)
+
+    # Splash screen markup
+    splash_markers = [
+        ('id="ls-splash"',       "splash container"),
+        ('ls-splash-inner',      "splash inner brand block"),
+    ]
+    for marker, label in splash_markers:
+        _check(f"HTML contains splash {label}", marker in html,
+               f"missing marker: {marker!r}")
+
+    # How It Works markup + required copy
+    hiw_markers = [
+        ('id="ls-howitworks"',   "how-it-works container"),
+        ('id="ls-hiw-close"',    "how-it-works close button"),
+        ('id="ls-hiw-vamos"',    "¡VAMOS! button id"),
+        ('¡BIENVENIDOS TO LA SUBASTA!', "bienvenidos title"),
+        ('RENEGADE',             "RENEGADE example horse"),
+        ('COMMANDMENT',          "COMMANDMENT example horse"),
+        ('FURTHER ADO',          "FURTHER ADO example horse"),
+        ('¡VAMOS!',              "VAMOS button text"),
+        ('60%',                  "60% win share"),
+        ('25%',                  "25% place share"),
+        ('15%',                  "15% show share"),
+    ]
+    for marker, label in hiw_markers:
+        _check(f"HTML contains how-it-works {label}", marker in html,
+               f"missing marker: {marker!r}")
+
+    # Persistent "?" help button in the header
+    help_markers = [
+        ('id="ls-help-btn"',     "help button id"),
+        ('aria-label="How it works"', "help button aria-label"),
+    ]
+    for marker, label in help_markers:
+        _check(f"HTML contains help-button {label}", marker in html,
+               f"missing marker: {marker!r}")
+
+
+def test_onboarding_js_state_machine():
+    """Guest JS must reference the la_subasta_onboarded localStorage key
+    and wire the splash + how-it-works + help-button handlers."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+
+    _check("JS uses la_subasta_onboarded key",
+           "la_subasta_onboarded" in js)
+    _check("JS references the splash element",
+           "ls-splash" in js)
+    _check("JS references the how-it-works element",
+           "ls-howitworks" in js)
+    _check("JS references the help button",
+           "ls-help-btn" in js)
+
+
 def test_existing_dashboard_still_loads():
     """Smoke-check the full pi5 app: main.py must import without error and
     the existing / route (dashboard) must still register."""
@@ -1132,6 +1201,10 @@ def main():
     _run("guest UI — static assets served", test_static_assets_served)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
+
+    # Phase 2A.5
+    _run("onboarding — splash + how-it-works + help markup", test_onboarding_markup_present)
+    _run("onboarding — JS state machine wiring", test_onboarding_js_state_machine)
 
     _run("existing dashboard still loads", test_existing_dashboard_still_loads)
 

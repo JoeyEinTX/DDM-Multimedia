@@ -13,6 +13,83 @@
 <body>
 
 <!-- =====================================================================
+     Splash screen — first visit only. Auto-advances after ~2s, or skip
+     on tap. Hidden once onboarding has happened.
+     ===================================================================== -->
+<div id="ls-splash" class="ls-splash" hidden>
+    <div class="ls-splash-inner">
+        <div class="ls-brand-line-small">Derby de Mayo's</div>
+        <div class="ls-brand-line-large ls-splash-large">La Subasta</div>
+    </div>
+</div>
+
+<!-- =====================================================================
+     How It Works — full-screen on first visit (no X, ¡VAMOS! advances to
+     identity modal). Same element re-used as a dismissible modal when the
+     guest taps the "?" help button later (X is shown).
+     ===================================================================== -->
+<div id="ls-howitworks" class="ls-howitworks" role="dialog" aria-labelledby="ls-hiw-title" hidden>
+    <button type="button" id="ls-hiw-close" class="ls-hiw-close" aria-label="Close" hidden>×</button>
+
+    <div class="ls-hiw-scroll">
+        <div class="ls-hiw-content">
+            <h1 id="ls-hiw-title" class="ls-hiw-title">🏇 ¡BIENVENIDOS TO LA SUBASTA!</h1>
+            <p class="ls-hiw-subtitle">You're about to own a piece of the Derby. Here's the deal:</p>
+
+            <div class="ls-hiw-divider">━━━ STEP 1 ━━━</div>
+            <h2 class="ls-hiw-step-title">🎩 BUY YOUR HORSES</h2>
+            <p class="ls-hiw-body">Bid on up to 3 horses. Highest bidder owns each one. If someone outbids you, no harm done — you only pay if you OWN a horse when bidding closes.</p>
+
+            <div class="ls-hiw-divider">━━━ STEP 2 ━━━</div>
+            <h2 class="ls-hiw-step-title">⏰ BIDDING CLOSES AT 5:42 PM</h2>
+            <p class="ls-hiw-body">Whatever horses you own at that moment are YOURS for the race. Time to pay up! (Venmo, Zelle, or cash to Joey.)</p>
+
+            <div class="ls-hiw-divider">━━━ STEP 3 ━━━</div>
+            <h2 class="ls-hiw-step-title">🏇 THE DERBY RUNS AT 5:57 PM</h2>
+            <p class="ls-hiw-body">All bets in. All horses go. May the best caballo win.</p>
+
+            <div class="ls-hiw-divider">━━━ STEP 4 ━━━</div>
+            <h2 class="ls-hiw-step-title">💰 IF YOUR HORSE PLACES, YOU CASH IN</h2>
+            <ul class="ls-hiw-list">
+                <li>🥇 1st place owner = 60% of the total pot</li>
+                <li>🥈 2nd place owner = 25% of the total pot</li>
+                <li>🥉 3rd place owner = 15% of the total pot</li>
+            </ul>
+
+            <div class="ls-hiw-divider">━━━ EXAMPLE ━━━</div>
+            <h2 class="ls-hiw-step-title">📊 IT'S NOT AS COMPLICATED AS IT SOUNDS</h2>
+            <p class="ls-hiw-body">Say the total pot ends up at $400 (everybody's bids combined).</p>
+            <p class="ls-hiw-body">
+                You bid $25 to own RENEGADE.<br>
+                Mike bid $40 to own COMMANDMENT.<br>
+                Sarah bid $15 to own FURTHER ADO.<br>
+                17 other horses get bid on too.
+            </p>
+            <p class="ls-hiw-body">The race runs:</p>
+            <ul class="ls-hiw-list">
+                <li>🥇 Renegade WINS!&nbsp;&nbsp;&nbsp;&nbsp;→ You pocket $240 (60% of $400)</li>
+                <li>🥈 Commandment 2nd!&nbsp;&nbsp; → Mike pockets $100</li>
+                <li>🥉 Further Ado 3rd!&nbsp;&nbsp; → Sarah pockets $60</li>
+            </ul>
+            <p class="ls-hiw-body">Everyone whose horse didn't place loses their bid — that money funded the winners. ¡Así es la vida!</p>
+
+            <div class="ls-hiw-divider">━━━ THE FINE PRINT ━━━</div>
+            <h2 class="ls-hiw-step-title">🌶️</h2>
+            <ul class="ls-hiw-list">
+                <li>Bids start at $1, raises max out at $5 per bump</li>
+                <li>Max 3 horses per person (no whales!)</li>
+                <li>Outbid? You owe nothing. Only owners pay.</li>
+                <li>Don't want to play? Just spectate and cheer for your friends' horses on the big TV.</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="ls-hiw-button-bar">
+        <button type="button" id="ls-hiw-vamos" class="ls-primary-btn ls-hiw-vamos">¡VAMOS! LET'S BID</button>
+    </div>
+</div>
+
+<!-- =====================================================================
      Identity setup modal — shown on first visit, hidden after.
      Blocks the app until the guest registers; no skip, no dismiss.
      ===================================================================== -->
@@ -75,6 +152,7 @@
                     Owes <span id="ls-identity-total">$0</span>
                 </div>
             </div>
+            <button type="button" id="ls-help-btn" class="ls-help-btn" aria-label="How it works">?</button>
         </div>
         <div class="ls-countdown-strip" id="ls-countdown">
             <span class="ls-countdown-icon">⏰</span>

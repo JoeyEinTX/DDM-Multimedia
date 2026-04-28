@@ -24,7 +24,9 @@
         settings: '/la-subasta/api/admin/settings',
     };
 
-    const IDENTITY_KEY = 'la_subasta_identity';
+    const IDENTITY_KEY   = 'la_subasta_identity';
+    const ONBOARDED_KEY  = 'la_subasta_onboarded';
+    const SPLASH_DURATION_MS = 2000;
 
     // Runtime state
     const state = {
@@ -645,16 +647,112 @@
     }
 
     // ---------------------------------------------------------------------
-    // Boot
+    // Onboarding (splash + how-it-works) + persistent help button
     // ---------------------------------------------------------------------
 
-    document.addEventListener('DOMContentLoaded', function () {
+    function isOnboarded() {
+        try {
+            return localStorage.getItem(ONBOARDED_KEY) === 'true';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function markOnboarded() {
+        try { localStorage.setItem(ONBOARDED_KEY, 'true'); } catch (e) { /* ignore */ }
+    }
+
+    function showSplash() {
+        const splash = document.getElementById('ls-splash');
+        if (!splash) return;
+        splash.hidden = false;
+
+        let dismissed = false;
+        const dismiss = function () {
+            if (dismissed) return;
+            dismissed = true;
+            splash.hidden = true;
+            splash.removeEventListener('click', dismiss);
+            showHowItWorksFirstVisit();
+        };
+
+        splash.addEventListener('click', dismiss);
+        setTimeout(dismiss, SPLASH_DURATION_MS);
+    }
+
+    function showHowItWorksFirstVisit() {
+        showHowItWorks(false);
+    }
+
+    function showHowItWorksModal() {
+        showHowItWorks(true);
+    }
+
+    // asModal=false → first-visit screen, no X. ¡VAMOS! marks onboarded
+    //                 and advances to identity flow.
+    // asModal=true  → help modal, X visible. Both X and ¡VAMOS! just close.
+    function showHowItWorks(asModal) {
+        const elem = document.getElementById('ls-howitworks');
+        const closeBtn = document.getElementById('ls-hiw-close');
+        const scrollEl = elem.querySelector('.ls-hiw-scroll');
+        if (!elem) return;
+        closeBtn.hidden = !asModal;
+        elem.classList.toggle('ls-howitworks-modal', !!asModal);
+        elem.hidden = false;
+        if (scrollEl) scrollEl.scrollTop = 0;
+        state.howItWorksModalMode = !!asModal;
+    }
+
+    function closeHowItWorks() {
+        const elem = document.getElementById('ls-howitworks');
+        if (!elem) return;
+        elem.hidden = true;
+        if (state.howItWorksModalMode) {
+            // Modal mode → user is already in the app, scroll position
+            // in the horse list is preserved automatically (the overlay
+            // doesn't move the underlying scroll).
+            return;
+        }
+        // First-visit mode → mark onboarded, then continue to identity
+        markOnboarded();
+        proceedToIdentityFlow();
+    }
+
+    function setupHowItWorksHandlers() {
+        const closeBtn = document.getElementById('ls-hiw-close');
+        const vamosBtn = document.getElementById('ls-hiw-vamos');
+        if (closeBtn) closeBtn.addEventListener('click', closeHowItWorks);
+        if (vamosBtn) vamosBtn.addEventListener('click', closeHowItWorks);
+    }
+
+    function setupHelpButton() {
+        const helpBtn = document.getElementById('ls-help-btn');
+        if (!helpBtn) return;
+        helpBtn.addEventListener('click', showHowItWorksModal);
+    }
+
+    function proceedToIdentityFlow() {
         const stored = loadStoredIdentity();
         if (stored) {
             state.identity = stored;
             bootApp();
         } else {
             setupIdentityModal();
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Boot
+    // ---------------------------------------------------------------------
+
+    document.addEventListener('DOMContentLoaded', function () {
+        setupHowItWorksHandlers();
+        setupHelpButton();
+
+        if (!isOnboarded()) {
+            showSplash();
+        } else {
+            proceedToIdentityFlow();
         }
     });
 })();
