@@ -80,8 +80,13 @@ img { -webkit-user-drag: none; user-drag: none; }
     align-items: center;
     justify-content: center;
     opacity: 0;
-    transition: opacity var(--transition-fade-ms, 600ms) ease-in-out;
-    will-change: opacity;
+    transform: none;
+    clip-path: inset(0 0 0 0);
+    transition:
+        opacity   var(--transition-fade-ms, 600ms) ease-in-out,
+        transform var(--transition-fade-ms, 600ms) ease-in-out,
+        clip-path var(--transition-fade-ms, 600ms) ease-in-out;
+    will-change: opacity, transform, clip-path;
     pointer-events: none;
     background: #000;
 }
@@ -96,6 +101,42 @@ img { -webkit-user-drag: none; user-drag: none; }
     opacity: 0;
     z-index: 1;
 }
+
+/* ---------------------------------------------------------------------
+   Slide transitions (Phase 1.5)
+   Default behavior (no transition class) is crossfade — opacity-only.
+   Each `transition-*` variant overrides the entering / exiting transforms
+   so the slideshow can feel varied without any JS animation libraries.
+
+   IMPORTANT: incoming layer is initialized with the .transition-* class
+   BEFORE its `is-active` flag is set, so its starting state (opacity 0
+   plus the pre-transform) is already applied when the transition begins.
+   --------------------------------------------------------------------- */
+
+/* Crossfade — explicit class, matches the default behavior */
+.slide.transition-crossfade            { opacity: 0; transform: none; }
+.slide.transition-crossfade.is-active  { opacity: 1; transform: none; }
+.slide.transition-crossfade.is-prev    { opacity: 0; transform: none; }
+
+/* Slide left — new slides in from the right, old leaves to the left */
+.slide.transition-slide-left           { opacity: 0; transform: translateX(100%); }
+.slide.transition-slide-left.is-active { opacity: 1; transform: translateX(0); }
+.slide.transition-slide-left.is-prev   { opacity: 0; transform: translateX(-100%); }
+
+/* Slide up — new slides in from the bottom, old leaves to the top */
+.slide.transition-slide-up             { opacity: 0; transform: translateY(100%); }
+.slide.transition-slide-up.is-active   { opacity: 1; transform: translateY(0); }
+.slide.transition-slide-up.is-prev     { opacity: 0; transform: translateY(-100%); }
+
+/* Zoom in — new scales up from 0.88, old fades out and scales slightly past 1 */
+.slide.transition-zoom-in              { opacity: 0; transform: scale(0.88); }
+.slide.transition-zoom-in.is-active    { opacity: 1; transform: scale(1); }
+.slide.transition-zoom-in.is-prev      { opacity: 0; transform: scale(1.05); }
+
+/* Wipe horizontal — clip-path reveals new slide left-to-right */
+.slide.transition-wipe-horizontal              { opacity: 1; clip-path: inset(0 100% 0 0); }
+.slide.transition-wipe-horizontal.is-active    { opacity: 1; clip-path: inset(0 0 0 0); }
+.slide.transition-wipe-horizontal.is-prev      { opacity: 0; clip-path: inset(0 0 0 0); }
 
 /* The inner card frame every slide template lives inside */
 .splash-card {

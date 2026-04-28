@@ -56,6 +56,18 @@
     const MIN_RETRY_MS = 1000;
     const MAX_RETRY_MS = 30000;
 
+    // Transition pool (Phase 1.5). Server-side filtered to weight > 0 only.
+    // Names use underscores in config; we convert to hyphens for CSS classes
+    // (`transition-slide-left`, etc).
+    const TRANSITION_POOL = {{ transitions_json|default('[]')|safe }};
+    const TRANSITION_TOTAL_WEIGHT = TRANSITION_POOL.reduce(
+        (s, t) => s + (t.weight || 0), 0
+    );
+    const TRANSITION_NAMES = [
+        'crossfade', 'slide-left', 'slide-up', 'zoom-in', 'wipe-horizontal'
+    ];
+    const toCssTransition = (name) => String(name || 'crossfade').replace(/_/g, '-');
+
     // ---- DOM ---------------------------------------------------------
     const stage   = document.getElementById('slideshow-stage');
     const layerA  = document.getElementById('slide-layer-a');
@@ -140,8 +152,46 @@
         layer.dataset.slideType = slide.type || '';
     }
 
-    // Swap active/inactive layers with a CSS opacity crossfade.
-    function crossfadeTo(layer) {
+    // Pick a transition type for a slide. Rules (Phase 1.5):
+    //   1. The countdown splash always uses crossfade (other transitions
+    //      distract from the live-updating digits).
+    //   2. Any slide carrying `force_transition` honors it.
+    //   3. Otherwise: weighted random pick from TRANSITION_POOL.
+    //   4. Unknown names fall back to crossfade.
+    function pickTransition(slide) {
+        if (slide && slide.type === 'splash' && slide.splash_id === 'countdown') {
+            return 'crossfade';
+        }
+        if (slide && slide.force_transition) {
+            const t = toCssTransition(slide.force_transition);
+            return TRANSITION_NAMES.includes(t) ? t : 'crossfade';
+        }
+        if (TRANSITION_TOTAL_WEIGHT <= 0) return 'crossfade';
+        let r = Math.random() * TRANSITION_TOTAL_WEIGHT;
+        for (const t of TRANSITION_POOL) {
+            r -= (t.weight || 0);
+            if (r <= 0) {
+                const name = toCssTransition(t.name);
+                return TRANSITION_NAMES.includes(name) ? name : 'crossfade';
+            }
+        }
+        return 'crossfade';
+    }
+
+    // Swap one transition class for another on a layer.
+    function applyTransitionClass(layer, transitionName) {
+        for (const t of TRANSITION_NAMES) {
+            layer.classList.remove('transition-' + t);
+        }
+        layer.classList.add('transition-' + transitionName);
+    }
+
+    // Swap active/inactive layers with the chosen CSS transition.
+    // Both layers must carry the same transition class so the entering
+    // slide animates in while the previous slide animates out coherently.
+    function transitionTo(layer, transitionName) {
+        applyTransitionClass(layer, transitionName);
+        applyTransitionClass(activeLayer, transitionName);
         inactiveLayer = activeLayer;
         activeLayer = layer;
         activeLayer.classList.add('is-active');
@@ -255,11 +305,19 @@
 
         // The next-up layer (currently inactive) becomes the new active.
         loadIntoLayer(inactiveLayer, slide);
-        // Force a layout flush so the opacity transition runs cleanly.
+
+        // Pick the transition for this slide and apply the class to the
+        // entering layer BEFORE the layout flush — so its initial state
+        // (opacity 0 / pre-translate / clipped) is in place when the
+        // transition kicks off.
+        const transitionName = pickTransition(slide);
+        applyTransitionClass(inactiveLayer, transitionName);
+
+        // Force a layout flush so the transition runs cleanly.
         // eslint-disable-next-line no-unused-expressions
         inactiveLayer.offsetHeight;
 
-        crossfadeTo(inactiveLayer);
+        transitionTo(inactiveLayer, transitionName);
         activateSlideBehavior(activeLayer, slide);
 
         if (bootMsg && bootMsg.style.display !== 'none') {

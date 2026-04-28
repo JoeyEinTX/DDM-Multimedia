@@ -21,14 +21,23 @@ TRANSITION_FADE_MS = 600
 
 # ---------------------------------------------------------------------------
 # Trivia category weights (relative; normalized internally)
-# Keys MUST match the top-level keys in content/trivia.json.
+# Keys MUST match the top-level keys in content/trivia.json. Categories present
+# in the JSON but absent here default to weight 0 (effectively muted).
+#
+# Phase 1.5 rebalance: previous split was 70% racing-themed, drowning out the
+# Cinco de Mayo / Mexican cultural content. This split totals to 100 (clean
+# mental math) and lands roughly 50/50 racing-vs-Mexican, with attractions
+# and "did you know" filler at lower weight.
 # ---------------------------------------------------------------------------
 TRIVIA_WEIGHTS = {
-    "chapel_downs": 30,
-    "carry_back": 20,
-    "cinco_de_mayo": 20,
-    "classic_derby": 20,
-    "ddm_attractions": 10,
+    "chapel_downs": 18,
+    "carry_back": 8,
+    "cinco_de_mayo": 18,
+    "mexican_culture": 15,
+    "mexican_horse_racing": 12,
+    "classic_derby": 12,
+    "did_you_know": 10,
+    "ddm_attractions": 7,
 }
 
 # ---------------------------------------------------------------------------
@@ -60,6 +69,36 @@ TARGET_PLAYLIST_LENGTH = 35
 # Roughly the trivia-vs-splash mix in the playlist. 0.7 means ~70% of slides
 # are trivia, ~30% are splash pages. Tune to taste.
 TRIVIA_SPLASH_RATIO = 0.7
+
+# ---------------------------------------------------------------------------
+# Slide transitions (Phase 1.5)
+#
+# Each slide picks a random transition type from TRANSITION_TYPES, biased by
+# TRANSITION_WEIGHTS. All transitions respect TRANSITION_FADE_MS and are
+# CSS-driven (transform / opacity / clip-path) — no JS animation libraries.
+#
+# The countdown splash always uses crossfade regardless of the random pick
+# (other transitions distract from the live-updating digits). Individual
+# splash pages can also force a transition by adding a `force_transition`
+# field to their entry in content/splash_pages.json.
+#
+# To disable a transition for stutter reasons, drop its weight to 0 here.
+# ---------------------------------------------------------------------------
+TRANSITION_TYPES = [
+    "crossfade",
+    "slide_left",
+    "slide_up",
+    "zoom_in",
+    "wipe_horizontal",
+]
+
+TRANSITION_WEIGHTS = {
+    "crossfade":       50,   # Most common — the "default" feel
+    "slide_left":      15,   # Slide in from right
+    "slide_up":        15,   # Slide up from bottom
+    "zoom_in":         10,   # Zoom in from center — good for splash hero moments
+    "wipe_horizontal": 10,   # Horizontal wipe — card-deal feel
+}
 
 # ---------------------------------------------------------------------------
 # DDM 2026 race time (for live countdown calculation)

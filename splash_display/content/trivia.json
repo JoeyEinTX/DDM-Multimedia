@@ -28,7 +28,7 @@
       "id": "cd_pensive",
       "type": "fact",
       "headline": "Pensive Drive",
-      "body": "Named for the 1944 Derby winner. Sire of Ponder. Won the Derby and Preakness, lost the Belmont by half a length. Tragic — died young in a pasture accident at age 8."
+      "body": "Named for the 1944 Derby winner. Sire of Ponder. Won the Derby and Preakness, lost the Belmont by half a length. Tragic — died young at age 8."
     },
     {
       "id": "cd_calumet_reveal",
@@ -37,18 +37,19 @@
       "body": "Whirlaway, Pensive, Ponder, and Citation were ALL Calumet Farm horses — the dominant racing dynasty of the 1940s. Chapel Downs is essentially a Calumet tribute neighborhood. Carry Back is the lone outlier — the rebel mom-and-pop horse in a neighborhood of aristocrats."
     }
   ],
+
   "carry_back": [
     {
       "id": "cb_underdog",
       "type": "qa",
       "question": "What was Carry Back's nickname?",
-      "answer": "'The People's Horse' — a scrawny Florida-bred owned by a husband-and-wife team, raced 21 times as a 2-year-old. Nobody expected him to win anything."
+      "answer": "'The People's Choice.' A small Florida-bred owned by a husband-and-wife team. He raced 21 times as a 2-year-old. Nobody expected him to win anything."
     },
     {
       "id": "cb_belmont",
       "type": "qa",
       "question": "Carry Back won the 1961 Derby and Preakness. Why didn't he win the Triple Crown?",
-      "answer": "He suffered an ankle injury early in the Belmont and faded to 7th. The winner was Sherluck — a 65-1 longshot."
+      "answer": "He suffered an injury during the Belmont and faded to 7th. The race was won by Sherluck — a 65-1 longshot."
     },
     {
       "id": "cb_running_style",
@@ -57,6 +58,7 @@
       "body": "He was a closer — would hang back in the pack and explode in the stretch. The name fit the running style perfectly. In 1975 he was inducted into the National Museum of Racing Hall of Fame."
     }
   ],
+
   "cinco_de_mayo": [
     {
       "id": "cdm_not_independence",
@@ -68,53 +70,310 @@
       "id": "cdm_zaragoza",
       "type": "qa",
       "question": "The general who led Mexico's victory at Puebla was born where?",
-      "answer": "Goliad, TEXAS. Ignacio Zaragoza was a Tejano. The hero of Cinco de Mayo was born on Texas soil."
+      "answer": "Goliad, TEXAS. Ignacio Zaragoza was a Tejano. The hero of Cinco de Mayo was born on Texas soil — at what's now the Zaragoza Birthplace State Historic Site."
     },
     {
       "id": "cdm_civil_war",
       "type": "fact",
-      "headline": "Cinco de Mayo helped win the Civil War",
-      "body": "France was about to back the Confederacy with weapons shipped through Mexico into Texas. The Puebla loss delayed France's plans by a full year — by the time they controlled the border, Grant had won Vicksburg and the South was cut off."
+      "headline": "Cinco de Mayo and the Civil War",
+      "body": "France's defeat at Puebla delayed their plans to support the Confederacy. By the time France controlled Mexico, the Union had won at Vicksburg and Gettysburg. Some historians argue Cinco de Mayo helped tip the scales of the American Civil War."
     },
     {
       "id": "cdm_underdog",
       "type": "qa",
       "question": "How outnumbered was the Mexican army at Puebla?",
-      "answer": "About 4,500 Mexican troops vs 6,000 French — and the French hadn't lost a major battle in 50 years."
+      "answer": "About 4,000 Mexican troops vs 6,000 French — and the French were considered the best army in the world. Mexico won anyway."
     },
     {
       "id": "cdm_us_origin",
       "type": "fact",
-      "headline": "Bigger here than there",
-      "body": "Cinco de Mayo is bigger in the US than in Mexico. The first US celebration was in 1862 — the SAME year as the battle — in Columbia, California, by Mexican immigrants. Mexico itself only celebrates it heavily in Puebla state."
+      "headline": "Born in California",
+      "body": "The first Cinco de Mayo celebration in the US happened in May 1862 — the SAME year as the battle — in the Gold Rush town of Columbia, California. Mexican miners fired rifles, sang patriotic songs, and threw a party. The tradition has been continuous in California since 1863."
+    },
+    {
+      "id": "cdm_zaragoza_died",
+      "type": "fact",
+      "headline": "Zaragoza Never Saw His Holiday",
+      "body": "General Ignacio Zaragoza, the hero of Puebla, died of typhoid fever just four months after his victory. He was 33. The city of Puebla was renamed Puebla de Zaragoza in his honor."
+    },
+    {
+      "id": "cdm_beer_holiday",
+      "type": "qa",
+      "question": "How big is Cinco de Mayo for US beer sales?",
+      "answer": "It rivals Super Bowl Sunday. The holiday's modern US popularity exploded in the 1980s, driven largely by beer marketing campaigns."
+    },
+    {
+      "id": "cdm_mexico_celebration",
+      "type": "fact",
+      "headline": "In Mexico, It's Just Another Day",
+      "body": "Outside Puebla state, most of Mexico treats Cinco de Mayo as a normal workday. There are no parades. Mexican Independence Day in September gets all the fanfare. The party is bigger in Texas than it is in Mexico City."
+    },
+    {
+      "id": "cdm_french_return",
+      "type": "qa",
+      "question": "Did France give up after losing at Puebla?",
+      "answer": "Nope. They came back the next year with 30,000 troops, took Mexico City, and installed Emperor Maximilian. He was executed by firing squad in 1867 when Mexico took the country back."
+    },
+    {
+      "id": "cdm_napoleon_iii",
+      "type": "fact",
+      "headline": "Why France Was There",
+      "body": "Napoleon III invaded Mexico to collect debts and install a puppet empire while the US was busy with the Civil War. He picked a Habsburg archduke named Maximilian to be 'Emperor of Mexico.' It went poorly for everyone involved."
     }
   ],
+
+  "mexican_culture": [
+    {
+      "id": "mc_marigolds",
+      "type": "fact",
+      "headline": "The Flower of Twenty Petals",
+      "body": "Cempasúchil — the Mexican marigold — gets its name from the Nahuatl word 'cempohualxochitl,' meaning 'twenty flowers.' Their bright orange blooms are everywhere at celebrations. Their scent is said to guide spirits home."
+    },
+    {
+      "id": "mc_papel_picado",
+      "type": "fact",
+      "headline": "Papel Picado",
+      "body": "Those colorful tissue-paper banners with cut-out designs are called papel picado — 'perforated paper.' Traditionally cut by hand with chisels, stacked many sheets deep. They represent the element of wind."
+    },
+    {
+      "id": "mc_chiles_64",
+      "type": "fact",
+      "headline": "64 Native Chile Varieties",
+      "body": "Mexico cultivates 64 endemic varieties of chile, from the mild poblano to the searing habanero. Capsicum peppers originated in South America but were cultivated and celebrated in Mesoamerica for thousands of years before European contact."
+    },
+    {
+      "id": "mc_chocolate",
+      "type": "qa",
+      "question": "Where was chocolate-as-we-know-it invented?",
+      "answer": "Mexico. The cacao tree was first domesticated in the Amazon, but the Olmecs of southern Mexico were the first to ferment, roast, and grind cacao beans into a drink — over 3,000 years ago. The Aztecs prized chocolate so highly that cocoa beans were used as currency."
+    },
+    {
+      "id": "mc_tequila_law",
+      "type": "fact",
+      "headline": "Tequila Has Borders",
+      "body": "By Mexican law, tequila can ONLY be made from blue agave grown in five specific Mexican states — primarily Jalisco. Anything else is technically just 'agave spirit.' It's protected internationally, like champagne or scotch."
+    },
+    {
+      "id": "mc_dia_de_muertos",
+      "type": "fact",
+      "headline": "Not the Same as Halloween",
+      "body": "Día de los Muertos is November 1-2, NOT October 31. It's a celebration of remembered ancestors, not spooky scares. UNESCO declared it Intangible Cultural Heritage in 2008."
+    },
+    {
+      "id": "mc_aztec_capital",
+      "type": "qa",
+      "question": "What was Mexico City before the Spanish arrived?",
+      "answer": "Tenochtitlán — the Aztec capital, built on a man-made island in Lake Texcoco. When Spanish conquistadors arrived in 1519, it was bigger than any European city of the time."
+    },
+    {
+      "id": "mc_pinata_origin",
+      "type": "fact",
+      "headline": "The Piñata's Two Origins",
+      "body": "Aztec priests broke decorated clay pots filled with treasures to honor the god Huitzilopochtli — long before the Spanish arrived. A similar tradition existed in 14th-century Italy after Marco Polo brought it from China. Spanish missionaries in the 1500s blended both into the piñata we know today."
+    },
+    {
+      "id": "mc_lucha_libre",
+      "type": "qa",
+      "question": "What's the most iconic mask in Mexican wrestling?",
+      "answer": "El Santo's silver mask. He wore it for nearly 50 years — in the ring, in 50+ films, in public. He briefly removed it on TV on January 26, 1984. He died of a heart attack ten days later."
+    },
+    {
+      "id": "mc_mole",
+      "type": "fact",
+      "headline": "Mole Has 25+ Ingredients",
+      "body": "Mole poblano — the famous chocolate-chile sauce — typically contains 25 to 30 ingredients including chiles, nuts, seeds, spices, and chocolate. Recipes are family secrets, passed down generations and rarely written down."
+    },
+    {
+      "id": "mc_taco_origin",
+      "type": "fact",
+      "headline": "Tacos Predate Spain",
+      "body": "Indigenous peoples in central Mexico used corn tortillas as edible plates and utensils for thousands of years before European contact. The word 'taco' originally meant 'plug' or 'wad' — referring to small charges miners would wrap in paper. The food name stuck."
+    },
+    {
+      "id": "mc_mariachi",
+      "type": "fact",
+      "headline": "Mariachi",
+      "body": "Mariachi originated in western Mexico, particularly Jalisco, in the 19th century. The traje de charro — the embroidered suit and wide-brimmed hat — comes from horseman attire. Mariachi was inscribed on UNESCO's Intangible Cultural Heritage list in 2011."
+    }
+  ],
+
+  "mexican_horse_racing": [
+    {
+      "id": "mhr_no_horses",
+      "type": "qa",
+      "question": "When did horses first arrive in Mexico?",
+      "answer": "1519, with Hernán Cortés. The Aztecs had never seen them. Some accounts say they initially mistook horse-and-rider for a single creature."
+    },
+    {
+      "id": "mhr_charreria",
+      "type": "fact",
+      "headline": "Charrería: Mexico's National Sport",
+      "body": "Declared Mexico's national sport in 1933. Charrería is rodeo's older cousin — a centuries-old tradition of horsemanship, roping, and showmanship. UNESCO inscribed it on the Intangible Cultural Heritage list in 2016."
+    },
+    {
+      "id": "mhr_vaquero",
+      "type": "fact",
+      "headline": "The Original Cowboy",
+      "body": "The Mexican vaquero predates the American cowboy by over 100 years. Spanish ranching traditions arrived in Mexico in the 1500s. Texas cowboys learned the trade from vaqueros — including the lasso, the saddle horn, and chaps."
+    },
+    {
+      "id": "mhr_carreras",
+      "type": "qa",
+      "question": "What's a popular form of horse racing in rural Mexico?",
+      "answer": "Carreras parejeras — straight-line match races between two horses, typically a quarter-mile. Bets are placed informally trackside. Faster, rowdier, and older than American thoroughbred racing."
+    },
+    {
+      "id": "mhr_charro_outfit",
+      "type": "fact",
+      "headline": "The Charro Suit",
+      "body": "The traje de charro — the embroidered suit worn by mariachi musicians and competitive charros — descends from 18th-century horseman attire. Silver buttons, embroidered details, and the wide-brimmed sombrero. Style on horseback."
+    },
+    {
+      "id": "mhr_criollo",
+      "type": "fact",
+      "headline": "The Criollo Horse",
+      "body": "Descended from Spanish horses brought by conquistadors, the Criollo breed adapted over centuries to harsh terrain across Latin America. Famously hardy — two Criollos named Mancha and Gato carried Swiss adventurer Aimé Tschiffely 10,000 miles from Buenos Aires to New York City between 1925 and 1928."
+    },
+    {
+      "id": "mhr_words",
+      "type": "qa",
+      "question": "Which horse-related English words came from Spanish?",
+      "answer": "Lasso (lazo), rodeo, corral, bronco, mustang (from mestengo), ranch (rancho), buckaroo (from vaquero), and even 'lariat' (from la reata). Cowboy culture is bilingual at the root."
+    },
+    {
+      "id": "mhr_escaramuza",
+      "type": "fact",
+      "headline": "Escaramuza",
+      "body": "The all-women's event in charrería. Eight riders in flowing dresses execute precision synchronized maneuvers at full gallop — sidesaddle. Often described as ballet on horseback. It became an official charrería event in 1992."
+    },
+    {
+      "id": "mhr_tequila_state",
+      "type": "qa",
+      "question": "What's the connection between Mexican horse culture and tequila?",
+      "answer": "Jalisco. The state where tequila comes from is also the heartland of charrería and mariachi. Guadalajara — Jalisco's capital — is essentially the cultural capital of charro Mexico."
+    },
+    {
+      "id": "mhr_first_track",
+      "type": "fact",
+      "headline": "Hipódromo de las Américas",
+      "body": "Mexico City's main thoroughbred racetrack opened in 1943 — built during World War II when many US tracks were closed. It hosts the Derby Mexicano and the Handicap de las Américas, two of Latin America's most prestigious races."
+    }
+  ],
+
   "classic_derby": [
     {
       "id": "cd_secretariat",
       "type": "fact",
       "headline": "Secretariat's Record Stands",
-      "body": "Secretariat ran the 1973 Derby in 1:59.40 — still the fastest Kentucky Derby ever. He was the only horse to run each quarter mile FASTER than the last."
+      "body": "Secretariat ran the 1973 Derby in 1:59 2/5 — still the fastest Kentucky Derby ever. He's the only horse to run each quarter mile faster than the last. He started dead last and finished first."
     },
     {
       "id": "cd_juleps",
       "type": "fact",
       "headline": "120,000 Mint Juleps",
-      "body": "Churchill Downs serves 120,000 mint juleps over Derby weekend — using 1,000 lbs of fresh mint and 60,000 lbs of ice."
+      "body": "Churchill Downs serves around 120,000 mint juleps over Derby weekend — using thousands of pounds of fresh mint and tens of thousands of pounds of ice. The mint julep became the official Derby drink in 1938."
     },
     {
       "id": "cd_roses",
       "type": "qa",
       "question": "Why is the Derby called 'The Run for the Roses'?",
-      "answer": "The winning horse is draped in a blanket of 400+ red roses. The tradition started in 1896."
+      "answer": "The winning horse is draped in a blanket of 400+ red roses. Roses became associated with the Derby in 1883, were officially adopted, and the 'Run for the Roses' nickname was coined by sportswriter Bill Corum in 1925."
     },
     {
       "id": "cd_two_minutes",
       "type": "fact",
       "headline": "The Most Exciting Two Minutes in Sports",
-      "body": "The Derby is 1¼ miles and lasts about two minutes. Kentucky Derby horses hit speeds around 37 mph."
+      "body": "The Derby is 1¼ miles and lasts about two minutes. Kentucky Derby horses hit speeds around 37-40 mph. The track length record was set by Secretariat — and never broken in 50+ years."
+    },
+    {
+      "id": "cd_first_derby",
+      "type": "fact",
+      "headline": "The First Kentucky Derby",
+      "body": "Run May 17, 1875. 15 horses, 10,000 spectators. Winner was Aristides — a chestnut colt — ridden by African American jockey Oliver Lewis. 13 of the 15 jockeys in that first race were Black. The trainer, Ansel Williamson, was also African American."
+    },
+    {
+      "id": "cd_jockey_size",
+      "type": "qa",
+      "question": "What's the maximum weight a Kentucky Derby jockey can carry?",
+      "answer": "126 pounds for colts and geldings, 121 pounds for fillies — including the saddle. Jockeys are some of the smallest athletes in major American sport."
+    },
+    {
+      "id": "cd_baffert",
+      "type": "fact",
+      "headline": "Tied for the Record",
+      "body": "Trainer Bob Baffert has 6 Kentucky Derby wins — tied with Ben A. Jones for the all-time record. Baffert trained two Triple Crown winners: American Pharoah in 2015 and Justify in 2018."
+    },
+    {
+      "id": "cd_filly",
+      "type": "qa",
+      "question": "How many fillies have won the Kentucky Derby?",
+      "answer": "Only three. Regret in 1915, Genuine Risk in 1980, and Winning Colors in 1988. The Derby is a colts-and-geldings race — fillies have their own race the day before, the Kentucky Oaks."
+    },
+    {
+      "id": "cd_silks",
+      "type": "fact",
+      "headline": "Jockey Silks Are Registered",
+      "body": "Every jockey silk pattern is registered with The Jockey Club — like trademarks. Some patterns have been in continuous use for over 100 years. Calumet Farm's devil-red and blue is one of the most famous in racing history."
+    },
+    {
+      "id": "cd_my_old_kentucky_home",
+      "type": "fact",
+      "headline": "The Pre-Race Tradition",
+      "body": "Just before each Derby, the crowd sings 'My Old Kentucky Home' as the horses enter the track. The tradition began in 1921. It's the unofficial state song — and an unofficial trigger for tears."
     }
   ],
+
+  "did_you_know": [
+    {
+      "id": "dyk_furlong",
+      "type": "qa",
+      "question": "What's a furlong?",
+      "answer": "1/8 of a mile — about 660 feet. The word comes from Old English 'furh-lang,' meaning 'the length of a furrow' a team of oxen could plow without resting. Racing kept the unit; farming moved on."
+    },
+    {
+      "id": "dyk_horse_speed",
+      "type": "fact",
+      "headline": "Horses Hit 40+ MPH",
+      "body": "A racehorse at full gallop hits around 40 mph. Quarter horses — bred for short bursts — can briefly reach 55. The fastest sprint speed ever recorded by a human is about 27-28 mph (Usain Bolt, 100m world record)."
+    },
+    {
+      "id": "dyk_horse_age",
+      "type": "qa",
+      "question": "How is a Thoroughbred's birthday calculated?",
+      "answer": "Every Thoroughbred officially turns one year older on January 1, regardless of actual birthday. A horse born in May 2024 is 'two years old' on January 1, 2026. It standardizes age classes for racing."
+    },
+    {
+      "id": "dyk_purse",
+      "type": "fact",
+      "headline": "The Derby Purse",
+      "body": "The 2025 Kentucky Derby purse was $5 million — with $3.1 million going to the winner. The 2026 purse is also $5 million. Plus the Garland of Roses, the gold trophy, and a lifetime of bragging rights."
+    },
+    {
+      "id": "dyk_julep_origin",
+      "type": "qa",
+      "question": "Where did the mint julep come from?",
+      "answer": "Originally a medicinal drink in 18th-century Virginia — mint, sugar, water, and bourbon. It became the Derby's official drink in 1938. Tradition says it should be served in a silver or pewter cup with crushed ice."
+    },
+    {
+      "id": "dyk_horseshoes",
+      "type": "fact",
+      "headline": "Aluminum Horseshoes",
+      "body": "Modern racing horseshoes are aluminum and weigh roughly half a pound each. A racehorse wears four. They're replaced every few weeks — by a farrier, the specialized horse-shoe smith. The trade is centuries old."
+    },
+    {
+      "id": "dyk_jockey_career",
+      "type": "qa",
+      "question": "How long does a typical jockey's career last?",
+      "answer": "Around 10-15 years of competitive riding. Top jockeys can race into their 50s, but the physical toll is brutal — the dehydration, the falls, the constant weight management. It's one of the most dangerous jobs in pro sports."
+    },
+    {
+      "id": "dyk_pari_mutuel",
+      "type": "fact",
+      "headline": "How Track Betting Actually Works",
+      "body": "All bets go into a pool. The track takes a cut, and the rest is split among winners proportional to their bets. Odds aren't set by the house — they shift based on what other bettors are doing. It's called pari-mutuel, French for 'mutual betting.'"
+    }
+  ],
+
   "ddm_attractions": [
     {
       "id": "att_la_subasta",
@@ -126,13 +385,13 @@
       "id": "att_la_quiniela",
       "type": "fact",
       "headline": "Coming DDM 2027: La Quiniela",
-      "body": "Live betting with weighted paper tokens and real load cells under each cup. Real-time odds, real-time payouts. The pari-mutuel pool of your dreams."
+      "body": "Live bet tracking is coming to DDM 2027. That's all we're saying."
     },
     {
       "id": "att_derby_dash",
       "type": "fact",
       "headline": "Coming DDM 2027: Derby Dash",
-      "body": "Multiplayer tapping arcade game. Mash buttons. Race horses. Custom controllers. No actual horses harmed."
+      "body": "Hands-on racing. Three players. One winner. The rest is a surprise."
     }
   ]
 }

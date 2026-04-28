@@ -104,13 +104,18 @@ def _trivia_card_to_slide(category: str, card: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _splash_page_to_slide(page: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    slide = {
         "id": f"splash:{page['id']}",
         "type": "splash",
         "template": page["template"],
         "splash_id": page["id"],
         "duration_ms": int(page.get("duration_ms", config.DEFAULT_SPLASH_DURATION_MS)),
     }
+    # Optional per-splash transition override (Phase 1.5). If set, the
+    # frontend uses this transition type instead of the random pick.
+    if "force_transition" in page:
+        slide["force_transition"] = page["force_transition"]
+    return slide
 
 
 def _weighted_choice_no_immediate_repeat(
@@ -132,30 +137,69 @@ def _weighted_choice_no_immediate_repeat(
     return choice  # last attempt; accept the repeat
 
 
+def _weighted_sample_no_replace(
+    pool: List[Tuple[Any, float]], k: int
+) -> List[Any]:
+    """
+    Sample up to k items from `pool` (list of (item, weight)) WITHOUT
+    replacement. Each item appears at most once in the returned list.
+
+    If the pool is exhausted before k items are picked, the pool is refilled
+    once and sampling continues from a fresh shuffle. With ~60 trivia cards
+    and a 35-slide target this should virtually never happen, but the refill
+    keeps the playlist length stable in degenerate cases (e.g. someone
+    truncates trivia.json).
+    """
+    selected: List[Any] = []
+    if not pool or k <= 0:
+        return selected
+
+    while len(selected) < k:
+        # One full pass through a freshly-shuffled copy of the pool, with
+        # weighted-without-replacement picks until either we have enough or
+        # the local pool is empty (then we loop and refill).
+        local = list(pool)
+        while local and len(selected) < k:
+            weights = [w for _, w in local]
+            idx = random.choices(range(len(local)), weights=weights, k=1)[0]
+            selected.append(local[idx][0])
+            local.pop(idx)
+    return selected
+
+
 def build_playlist() -> List[Dict[str, Any]]:
     """
     Build a fresh, weighted, shuffled playlist of approximately
     config.TARGET_PLAYLIST_LENGTH slides.
 
-    The playlist is interleaved: trivia and splash slides are picked
-    independently and then woven together so splashes don't all clump up.
+    Trivia cards are sampled WITHOUT replacement within a single playlist
+    cycle — no individual card repeats. Category weights bias which
+    categories get drawn from more often by assigning each card a per-card
+    weight of (category_weight / category_size), so the sum of card weights
+    in each category equals the configured category weight.
+
+    Splash slides CAN repeat across the playlist (we want to see the
+    countdown frequently), and are picked independently and then interleaved
+    with the trivia run so splashes don't clump.
+
+    Categories are read dynamically from trivia.json — no hard-coded list.
     """
     trivia_data = load_trivia()
     splash_pages = load_splash_pages()
 
-    # Build category -> [slides] for trivia
-    trivia_by_category: Dict[str, List[Dict[str, Any]]] = {
-        cat: [_trivia_card_to_slide(cat, card) for card in cards]
-        for cat, cards in trivia_data.items()
-        if cards  # skip empty categories
-    }
-
-    # Filter category weights to only categories that actually have content.
-    cat_weights = [
-        (cat, float(weight))
-        for cat, weight in config.TRIVIA_WEIGHTS.items()
-        if cat in trivia_by_category and weight > 0
-    ]
+    # --- Trivia pool: per-card weight = category_weight / category_size ----
+    trivia_pool: List[Tuple[Dict[str, Any], float]] = []
+    for cat, cards in trivia_data.items():
+        if not cards:
+            continue
+        cat_weight = float(config.TRIVIA_WEIGHTS.get(cat, 0))
+        if cat_weight <= 0:
+            continue
+        per_card_weight = cat_weight / len(cards)
+        for card in cards:
+            trivia_pool.append(
+                (_trivia_card_to_slide(cat, card), per_card_weight)
+            )
 
     # Splash page lookup by id (config weights are source of truth)
     splash_by_id: Dict[str, Dict[str, Any]] = {p["id"]: p for p in splash_pages}
@@ -169,23 +213,10 @@ def build_playlist() -> List[Dict[str, Any]]:
     trivia_count = max(1, int(round(target * config.TRIVIA_SPLASH_RATIO)))
     splash_count = max(1, target - trivia_count)
 
-    # --- pick trivia slides by weighted category, then random card in cat ---
-    trivia_slides: List[Dict[str, Any]] = []
-    last_card_id: str = ""
-    for _ in range(trivia_count):
-        if not cat_weights:
-            break
-        category = _weighted_choice_no_immediate_repeat(cat_weights)
-        cards_in_cat = trivia_by_category[category]
-        # random card; try to avoid back-to-back repeat of same card id
-        for _try in range(5):
-            card = random.choice(cards_in_cat)
-            if card["id"] != last_card_id:
-                break
-        trivia_slides.append(card)
-        last_card_id = card["id"]
+    # --- Trivia: weighted sample WITHOUT replacement -----------------------
+    trivia_slides = _weighted_sample_no_replace(trivia_pool, trivia_count)
 
-    # --- pick splash slides by weight ---
+    # --- Splash: weighted choice WITH replacement (splashes can repeat) ---
     splash_slides: List[Dict[str, Any]] = []
     last_splash_id: str = ""
     for _ in range(splash_count):
@@ -230,9 +261,18 @@ def root():
 
 @app.route("/display")
 def display():
+    # Build the transition pool the slideshow JS will pick from. We strip out
+    # any zero-weight or unknown-named entries here so the frontend doesn't
+    # have to defend against bad config.
+    transitions = [
+        {"name": name, "weight": int(config.TRANSITION_WEIGHTS.get(name, 0))}
+        for name in config.TRANSITION_TYPES
+        if int(config.TRANSITION_WEIGHTS.get(name, 0)) > 0
+    ]
     return render_template(
         "slideshow.html",
         transition_fade_ms=config.TRANSITION_FADE_MS,
+        transitions_json=json.dumps(transitions),
     )
 
 
