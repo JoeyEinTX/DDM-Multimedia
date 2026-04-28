@@ -1,0 +1,12 @@
+{# Trivia fact card.
+   Server-side rendering uses {{ headline }}/{{ body }} (when /api/slide/<id>
+   is hit). The slideshow JS clones this template via the hidden cache and
+   substitutes __HEADLINE__ / __BODY__ at runtime — those tokens are placed
+   so they appear verbatim in the cloned innerHTML and get replaced before
+   the layer is painted. #}
+<div class="trivia-card">
+    <div class="splash-serape-band"></div>
+    <div class="trivia-eyebrow">DDM Trivia</div>
+    <h1 class="trivia-headline">{{ headline if headline is defined else '__HEADLINE__' }}</h1>
+    <div class="trivia-body">{{ body if body is defined else '__BODY__' }}</div>
+</div>

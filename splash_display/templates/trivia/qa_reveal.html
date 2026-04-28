@@ -1,0 +1,15 @@
+{# Trivia Q&A reveal card.
+   Question is shown first. The slideshow JS adds .is-revealed to
+   .trivia-qa-answer-wrap after question_ms to fade the answer in.
+   __QUESTION__ / __ANSWER__ tokens are substituted by the slideshow JS
+   when this template is cloned from the hidden cache. #}
+<div class="trivia-card">
+    <div class="splash-serape-band"></div>
+    <div class="trivia-eyebrow">DDM Trivia</div>
+    <div class="trivia-qa-question">{{ question if question is defined else '__QUESTION__' }}</div>
+
+    <div class="trivia-qa-answer-wrap">
+        <div class="trivia-qa-answer-eyebrow">Answer</div>
+        <div class="trivia-qa-answer">{{ answer if answer is defined else '__ANSWER__' }}</div>
+    </div>
+</div>

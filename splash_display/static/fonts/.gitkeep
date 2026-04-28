@@ -1,0 +1,2 @@
+# Drop custom font files (woff2/ttf) in this directory and declare @font-face
+# rules in static/css/ddm_style.css. Phase 1 ships system fonts only.

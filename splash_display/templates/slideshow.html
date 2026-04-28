@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+
+{% block title %}DDM Splash Display{% endblock %}
+
+{% block body %}
+<div id="slideshow-stage" class="slideshow-stage" aria-live="polite">
+    {# Two slide layers — we crossfade between them by toggling .is-active #}
+    <div id="slide-layer-a" class="slide" data-layer="a"></div>
+    <div id="slide-layer-b" class="slide" data-layer="b"></div>
+
+    <div id="boot-message" class="boot-message">Loading…</div>
+
+    <div id="debug-overlay" class="debug-overlay">
+        <div class="debug-line"><strong>fps</strong>      <span id="dbg-fps">--</span></div>
+        <div class="debug-line"><strong>slide</strong>    <span id="dbg-slide">--</span></div>
+        <div class="debug-line"><strong>idx</strong>      <span id="dbg-idx">--</span></div>
+        <div class="debug-line"><strong>playlist</strong> <span id="dbg-playlist">0</span></div>
+        <div class="debug-line"><strong>loaded</strong>   <span id="dbg-loaded">--</span></div>
+        <div class="debug-line"><strong>fetches</strong>  <span id="dbg-fetches">0</span></div>
+        <div class="debug-line"><strong>errors</strong>   <span id="dbg-errors">0</span></div>
+    </div>
+</div>
+
+{# Splash templates rendered server-side and stashed in the page so the
+   client doesn't need to round-trip per slide. The slideshow JS pulls
+   the matching template by `splash_id` from this hidden cache. #}
+<div id="splash-template-cache" hidden>
+    {% for splash in [
+        ('countdown',  'splash/countdown.html'),
+        ('la_subasta', 'splash/la_subasta.html'),
+        ('la_quiniela','splash/la_quiniela.html'),
+        ('derby_dash', 'splash/derby_dash.html'),
+        ('ddm_brand',  'splash/ddm_brand.html'),
+    ] %}
+        <template data-splash-id="{{ splash[0] }}">
+            {% include splash[1] %}
+        </template>
+    {% endfor %}
+
+    <template data-trivia="fact">
+        {% include 'trivia/fact_card.html' %}
+    </template>
+    <template data-trivia="qa">
+        {% include 'trivia/qa_reveal.html' %}
+    </template>
+</div>
+
+<script>
+(() => {
+    'use strict';
+
+    // ---- Config (server-injected) -----------------------------------
+    const FADE_MS = {{ transition_fade_ms|default(600) }};
+    const DDM_POST_TIME_ISO = "{{ ddm_post_time_iso }}";
+    const PRELOAD_LEAD_MS = Math.max(150, FADE_MS); // start prep this far before swap
+    const MIN_RETRY_MS = 1000;
+    const MAX_RETRY_MS = 30000;
+
+    // ---- DOM ---------------------------------------------------------
+    const stage   = document.getElementById('slideshow-stage');
+    const layerA  = document.getElementById('slide-layer-a');
+    const layerB  = document.getElementById('slide-layer-b');
+    const bootMsg = document.getElementById('boot-message');
+    const dbg     = document.getElementById('debug-overlay');
+    const dbgFps      = document.getElementById('dbg-fps');
+    const dbgSlide    = document.getElementById('dbg-slide');
+    const dbgIdx      = document.getElementById('dbg-idx');
+    const dbgPlaylist = document.getElementById('dbg-playlist');
+    const dbgLoaded   = document.getElementById('dbg-loaded');
+    const dbgFetches  = document.getElementById('dbg-fetches');
+    const dbgErrors   = document.getElementById('dbg-errors');
+
+    const splashCache = document.getElementById('splash-template-cache');
+    const splashTemplates = {};
+    splashCache.querySelectorAll('template[data-splash-id]').forEach(t => {
+        splashTemplates[t.dataset.splashId] = t.innerHTML;
+    });
+    const triviaFactTpl = splashCache.querySelector('template[data-trivia="fact"]').innerHTML;
+    const triviaQaTpl   = splashCache.querySelector('template[data-trivia="qa"]').innerHTML;
+
+    // ---- State -------------------------------------------------------
+    let playlist = [];
+    let idx = 0;
+    let activeLayer = layerA;
+    let inactiveLayer = layerB;
+    let advanceTimer = null;
+    let revealTimer = null;
+    let fetchAttempts = 0;
+    let fetchErrors = 0;
+    let countdownTickHandle = null;
+
+    // ---- Helpers -----------------------------------------------------
+    function clearTimers() {
+        if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+        if (revealTimer)  { clearTimeout(revealTimer);  revealTimer  = null; }
+    }
+
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // ---- Slide rendering --------------------------------------------
+    // Returns the HTML string for a given slide entry from the playlist.
+    function renderSlideHtml(slide) {
+        if (!slide) return '';
+        if (slide.type === 'splash') {
+            const tplHtml = splashTemplates[slide.splash_id];
+            if (!tplHtml) {
+                console.warn('No template cached for splash id', slide.splash_id);
+                return '<div class="splash-card"><div class="splash-headline">Missing splash</div></div>';
+            }
+            return tplHtml;
+        }
+        if (slide.type === 'trivia_fact') {
+            const data = slide.data || {};
+            return triviaFactTpl
+                .replace(/__HEADLINE__/g, escapeHtml(data.headline))
+                .replace(/__BODY__/g, escapeHtml(data.body));
+        }
+        if (slide.type === 'trivia_qa') {
+            const data = slide.data || {};
+            return triviaQaTpl
+                .replace(/__QUESTION__/g, escapeHtml(data.question))
+                .replace(/__ANSWER__/g, escapeHtml(data.answer));
+        }
+        return '<div class="splash-card"><div class="splash-headline">Unknown slide</div></div>';
+    }
+
+    // Stuff a layer with a slide's HTML and run any per-slide setup
+    // (countdown ticker, etc).
+    function loadIntoLayer(layer, slide) {
+        layer.innerHTML = renderSlideHtml(slide);
+        layer.dataset.slideId = slide.id || '';
+        layer.dataset.slideType = slide.type || '';
+    }
+
+    // Swap active/inactive layers with a CSS opacity crossfade.
+    function crossfadeTo(layer) {
+        inactiveLayer = activeLayer;
+        activeLayer = layer;
+        activeLayer.classList.add('is-active');
+        activeLayer.classList.remove('is-prev');
+        inactiveLayer.classList.remove('is-active');
+        inactiveLayer.classList.add('is-prev');
+    }
+
+    // ---- Per-slide behavior -----------------------------------------
+    function activateSlideBehavior(layer, slide) {
+        // Tear down any countdown from the prior slide on the same layer
+        if (countdownTickHandle) {
+            clearInterval(countdownTickHandle);
+            countdownTickHandle = null;
+        }
+
+        if (slide.type === 'splash' && slide.splash_id === 'countdown') {
+            startCountdown(layer);
+        }
+
+        if (slide.type === 'trivia_qa') {
+            const wrap = layer.querySelector('.trivia-qa-answer-wrap');
+            if (wrap) wrap.classList.remove('is-revealed');
+            const showAfter = Math.max(0, (slide.question_ms || 0));
+            revealTimer = setTimeout(() => {
+                if (wrap) wrap.classList.add('is-revealed');
+            }, showAfter);
+        }
+    }
+
+    // ---- Countdown logic --------------------------------------------
+    // Renders a digit (0-9) into a 5x7 dot grid by toggling .is-on cells.
+    const DIGIT_GLYPHS = {
+        '0': ['01110','10001','10011','10101','11001','10001','01110'],
+        '1': ['00100','01100','00100','00100','00100','00100','01110'],
+        '2': ['01110','10001','00001','00010','00100','01000','11111'],
+        '3': ['11110','00001','00001','01110','00001','00001','11110'],
+        '4': ['00010','00110','01010','10010','11111','00010','00010'],
+        '5': ['11111','10000','11110','00001','00001','10001','01110'],
+        '6': ['00110','01000','10000','11110','10001','10001','01110'],
+        '7': ['11111','00001','00010','00100','01000','01000','01000'],
+        '8': ['01110','10001','10001','01110','10001','10001','01110'],
+        '9': ['01110','10001','10001','01111','00001','00010','01100'],
+    };
+
+    function paintDigit(digitEl, char) {
+        const glyph = DIGIT_GLYPHS[char] || DIGIT_GLYPHS['0'];
+        const cells = digitEl.querySelectorAll('.splash-matrix-cell');
+        // 5 cols × 7 rows = 35 cells expected
+        for (let r = 0; r < 7; r++) {
+            for (let c = 0; c < 5; c++) {
+                const cellIdx = r * 5 + c;
+                const cell = cells[cellIdx];
+                if (!cell) continue;
+                const lit = glyph[r][c] === '1';
+                cell.classList.toggle('is-on', lit);
+            }
+        }
+    }
+
+    function paintNumber(segmentEl, value, width) {
+        const str = String(Math.max(0, value)).padStart(width, '0').slice(-width);
+        const digitEls = segmentEl.querySelectorAll('.splash-matrix-digit');
+        for (let i = 0; i < digitEls.length; i++) {
+            paintDigit(digitEls[i], str[i] || '0');
+        }
+    }
+
+    function startCountdown(layer) {
+        const target = new Date(DDM_POST_TIME_ISO).getTime();
+        const daysSeg = layer.querySelector('[data-countdown="days"]');
+        const hoursSeg = layer.querySelector('[data-countdown="hours"]');
+        const minsSeg = layer.querySelector('[data-countdown="minutes"]');
+        const secsSeg = layer.querySelector('[data-countdown="seconds"]');
+        if (!daysSeg || !hoursSeg || !minsSeg) return;
+
+        function tick() {
+            const now = Date.now();
+            let diffMs = Math.max(0, target - now);
+            const days  = Math.floor(diffMs / (1000 * 60 * 60 * 24)); diffMs -= days * 86400000;
+            const hours = Math.floor(diffMs / (1000 * 60 * 60));      diffMs -= hours * 3600000;
+            const mins  = Math.floor(diffMs / (1000 * 60));           diffMs -= mins * 60000;
+            const secs  = Math.floor(diffMs / 1000);
+
+            paintNumber(daysSeg, days, 3);
+            paintNumber(hoursSeg, hours, 2);
+            paintNumber(minsSeg, mins, 2);
+            if (secsSeg) paintNumber(secsSeg, secs, 2);
+        }
+        tick();
+        countdownTickHandle = setInterval(tick, 1000);
+    }
+
+    // ---- Playlist driver --------------------------------------------
+    function durationFor(slide) {
+        if (!slide) return 8000;
+        if (slide.type === 'trivia_qa') {
+            return (slide.question_ms || 8000) + (slide.answer_ms || 8000);
+        }
+        return slide.duration_ms || 10000;
+    }
+
+    function showSlideAt(i) {
+        clearTimers();
+        if (!playlist.length) {
+            scheduleRefetch();
+            return;
+        }
+        idx = ((i % playlist.length) + playlist.length) % playlist.length;
+        const slide = playlist[idx];
+
+        // The next-up layer (currently inactive) becomes the new active.
+        loadIntoLayer(inactiveLayer, slide);
+        // Force a layout flush so the opacity transition runs cleanly.
+        // eslint-disable-next-line no-unused-expressions
+        inactiveLayer.offsetHeight;
+
+        crossfadeTo(inactiveLayer);
+        activateSlideBehavior(activeLayer, slide);
+
+        if (bootMsg && bootMsg.style.display !== 'none') {
+            bootMsg.style.display = 'none';
+        }
+
+        // Pre-render the next slide a bit early so we can crossfade without flicker.
+        const next = playlist[(idx + 1) % playlist.length];
+        const dwell = durationFor(slide);
+        const advanceIn = Math.max(FADE_MS + 50, dwell);
+
+        // Pre-load: stuff next slide into the not-yet-active layer ~PRELOAD_LEAD_MS early
+        const preloadIn = Math.max(50, advanceIn - PRELOAD_LEAD_MS);
+        setTimeout(() => {
+            // The current inactive layer (= former active) gets the next slide loaded.
+            // Don't overwrite the still-displaying active layer.
+            try { loadIntoLayer(inactiveLayer, next); } catch (e) { console.warn(e); }
+        }, preloadIn);
+
+        advanceTimer = setTimeout(() => {
+            const nextIdx = idx + 1;
+            if (nextIdx >= playlist.length) {
+                // Reshuffle for the next cycle.
+                fetchPlaylist().then(() => showSlideAt(0));
+            } else {
+                showSlideAt(nextIdx);
+            }
+        }, advanceIn);
+
+        updateDebug(slide);
+    }
+
+    // ---- Fetching with exponential backoff --------------------------
+    function backoffMs() {
+        const base = MIN_RETRY_MS * Math.pow(2, Math.min(8, fetchErrors));
+        return Math.min(MAX_RETRY_MS, base);
+    }
+
+    function scheduleRefetch() {
+        const delay = backoffMs();
+        console.warn(`[slideshow] retrying /api/slides in ${delay}ms`);
+        setTimeout(() => fetchPlaylist().then(() => showSlideAt(0)), delay);
+    }
+
+    async function fetchPlaylist() {
+        fetchAttempts += 1;
+        dbgFetches.textContent = String(fetchAttempts);
+        try {
+            const resp = await fetch('/api/slides', { cache: 'no-store' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            if (!Array.isArray(data) || data.length === 0) {
+                throw new Error('Empty playlist');
+            }
+            playlist = data;
+            dbgPlaylist.textContent = String(playlist.length);
+            fetchErrors = 0; // reset backoff
+            return playlist;
+        } catch (err) {
+            fetchErrors += 1;
+            dbgErrors.textContent = String(fetchErrors);
+            console.error('[slideshow] /api/slides failed:', err);
+            scheduleRefetch();
+            return [];
+        }
+    }
+
+    // ---- Debug overlay ----------------------------------------------
+    let frameCount = 0;
+    let fpsLastT = performance.now();
+    function fpsTick(t) {
+        frameCount += 1;
+        if (t - fpsLastT >= 500) {
+            const fps = (frameCount * 1000) / (t - fpsLastT);
+            dbgFps.textContent = fps.toFixed(1);
+            frameCount = 0;
+            fpsLastT = t;
+        }
+        requestAnimationFrame(fpsTick);
+    }
+
+    function updateDebug(slide) {
+        if (!slide) return;
+        dbgSlide.textContent = slide.id || slide.type;
+        dbgIdx.textContent = `${idx + 1}/${playlist.length}`;
+        dbgLoaded.textContent = slide.type;
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'd' || e.key === 'D') {
+            dbg.classList.toggle('is-visible');
+        }
+    });
+
+    // ---- Boot --------------------------------------------------------
+    (async function boot() {
+        requestAnimationFrame(fpsTick);
+        const list = await fetchPlaylist();
+        if (list.length > 0) {
+            showSlideAt(0);
+        }
+    })();
+})();
+</script>
+{% endblock %}

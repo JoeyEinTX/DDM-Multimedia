@@ -1,0 +1,529 @@
+/* =====================================================================
+   DDM Splash Display — Brand styles
+   ---------------------------------------------------------------------
+   Splash-only CSS. Tokens and the serape stripe pattern are adapted from
+   the Pi 5 dashboard, but no protected dashboard class names are used here
+   (.tote-display, .dot-digit, .dot, .tote-clock-container, .results-banner,
+   .results-tote-board are all reserved for the dashboard). Splash-equivalent
+   components below use the `splash-*` prefix.
+   ===================================================================== */
+
+:root {
+    /* DDM brand palette */
+    --ddm-bg-dark:    #0a1f1a;
+    --ddm-bg-mid:     #1a3a30;
+    --ddm-bg-deep:    #061410;
+    --ddm-card-1:     #EDE5CC;     /* warm beige top */
+    --ddm-card-2:     #E4D9B8;     /* warm beige bottom */
+    --ddm-card-ink:   #1a1a1a;
+    --ddm-scarlet:    #DE4343;
+    --ddm-yellow:     #FEC600;
+    --ddm-green:      #3F8E43;
+    --ddm-jade:       #FFFFFF;     /* "jade" placeholder per spec */
+    --ddm-cocoa:      #6F5034;
+    --ddm-orange:     #FF6A13;
+    --ddm-turquoise:  #00B1B7;
+    --ddm-pink:       #F5547C;
+
+    /* Splash-only semantic tokens */
+    --splash-card-bg:        linear-gradient(160deg, var(--ddm-card-1) 0%, var(--ddm-card-2) 100%);
+    --splash-card-border:    rgba(255, 255, 255, 0.7);
+    --splash-card-shadow:    0 6px 28px rgba(0, 0, 0, 0.55);
+    --splash-text-muted:     #555;
+    --splash-text-strong:    #1a1a1a;
+
+    /* Dot-matrix colors (splash-local — NOT the dashboard's amber bulbs) */
+    --splash-dot-off:        rgba(255, 198, 0, 0.10);
+    --splash-dot-on:         #FEC600;
+    --splash-dot-glow:       rgba(254, 198, 0, 0.55);
+}
+
+/* ---------------------------------------------------------------------
+   Reset (kiosk only — TV display, not a general site)
+   --------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: var(--ddm-jade);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+                 Ubuntu, sans-serif;
+    cursor: none;       /* hide cursor on the kiosk */
+    user-select: none;
+}
+
+img { -webkit-user-drag: none; user-drag: none; }
+
+/* ---------------------------------------------------------------------
+   Slideshow stage
+   --------------------------------------------------------------------- */
+.slideshow-stage {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    overflow: hidden;
+}
+
+.slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity var(--transition-fade-ms, 600ms) ease-in-out;
+    will-change: opacity;
+    pointer-events: none;
+    background: #000;
+}
+
+.slide.is-active {
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 2;
+}
+
+.slide.is-prev {
+    opacity: 0;
+    z-index: 1;
+}
+
+/* The inner card frame every slide template lives inside */
+.splash-card {
+    position: relative;
+    width: min(92vw, 1700px);
+    height: min(86vh, 920px);
+    background: var(--splash-card-bg);
+    color: var(--splash-text-strong);
+    border: 1px solid var(--splash-card-border);
+    border-radius: 18px;
+    box-shadow: var(--splash-card-shadow);
+    padding: 64px 80px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+/* Dark variants used by some splash templates */
+.splash-card.splash-card-dark {
+    background: linear-gradient(160deg, var(--ddm-bg-mid) 0%, var(--ddm-bg-dark) 100%);
+    color: var(--ddm-jade);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.splash-card.splash-card-dark .splash-tagline,
+.splash-card.splash-card-dark .splash-subtitle,
+.splash-card.splash-card-dark .splash-tag {
+    color: var(--ddm-jade);
+}
+
+/* ---------------------------------------------------------------------
+   Serape stripe band — splash-local copy of the dashboard pattern
+   --------------------------------------------------------------------- */
+.splash-serape-band {
+    width: 100%;
+    height: 22px;
+    background: linear-gradient(90deg,
+        #DE4343 0px,   #DE4343 12px,
+        #FFFFFF 12px,  #FFFFFF 14px,
+        #FEC600 14px,  #FEC600 23px,
+        #FFFFFF 23px,  #FFFFFF 25px,
+        #FF6A13 25px,  #FF6A13 31px,
+        #FFFFFF 31px,  #FFFFFF 33px,
+        #00B1B7 33px,  #00B1B7 49px,
+        #FFFFFF 49px,  #FFFFFF 51px,
+        #3F8E43 51px,  #3F8E43 57px,
+        #F5547C 57px,  #F5547C 59px,
+        #FFFFFF 59px,  #FFFFFF 62px,
+        #FEC600 62px,  #FEC600 78px,
+        #FFFFFF 78px,  #FFFFFF 80px,
+        #DE4343 80px,  #DE4343 86px,
+        #6F5034 86px,  #6F5034 88px,
+        #FFFFFF 88px,  #FFFFFF 91px,
+        #FF6A13 91px,  #FF6A13 103px,
+        #FFFFFF 103px, #FFFFFF 105px,
+        #00B1B7 105px, #00B1B7 108px,
+        #3F8E43 108px, #3F8E43 120px,
+        #FFFFFF 120px, #FFFFFF 122px,
+        #DE4343 122px, #DE4343 131px,
+        #FFFFFF 131px, #FFFFFF 133px,
+        #FEC600 133px, #FEC600 149px,
+        #F5547C 149px, #F5547C 152px,
+        #FFFFFF 152px, #FFFFFF 155px,
+        #6F5034 155px, #6F5034 161px,
+        #FFFFFF 161px, #FFFFFF 163px,
+        #00B1B7 163px, #00B1B7 172px,
+        #FF6A13 172px, #FF6A13 175px,
+        #FFFFFF 175px, #FFFFFF 178px,
+        #3F8E43 178px, #3F8E43 190px
+    );
+    background-size: 190px 22px;
+    background-repeat: repeat-x;
+}
+
+/* Top/bottom band positioning inside .splash-card */
+.splash-card .splash-serape-band {
+    position: absolute;
+    left: 0;
+    right: 0;
+}
+.splash-card .splash-serape-band--top    { top: 0; }
+.splash-card .splash-serape-band--bottom { bottom: 0; }
+
+/* Animated marquee variant used by ddm_brand */
+.splash-serape-band--scroll {
+    animation: splashSerapeScroll 28s linear infinite;
+}
+@keyframes splashSerapeScroll {
+    from { background-position: 0 0; }
+    to   { background-position: 1900px 0; }
+}
+
+/* ---------------------------------------------------------------------
+   Common splash text components
+   --------------------------------------------------------------------- */
+.splash-hero-logo {
+    max-width: 60%;
+    max-height: 46vh;
+    height: auto;
+    display: block;
+    margin: 0 auto 28px;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.45));
+}
+
+.splash-hero-logo--small {
+    max-height: 32vh;
+}
+
+.splash-headline {
+    font-size: clamp(48px, 7.5vw, 128px);
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--splash-text-strong);
+    line-height: 1.0;
+    margin: 0 0 16px;
+}
+
+.splash-tagline {
+    font-size: clamp(28px, 3.4vw, 56px);
+    font-weight: 700;
+    color: var(--ddm-cocoa);
+    margin: 8px 0;
+}
+
+.splash-subtitle {
+    font-size: clamp(20px, 2.0vw, 34px);
+    font-weight: 500;
+    color: var(--splash-text-muted);
+    max-width: 75%;
+    margin: 12px auto 24px;
+    line-height: 1.35;
+}
+
+.splash-tag {
+    display: inline-block;
+    padding: 10px 22px;
+    border-radius: 999px;
+    background: var(--ddm-scarlet);
+    color: #fff;
+    font-weight: 800;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    font-size: clamp(14px, 1.3vw, 22px);
+    box-shadow: 0 4px 16px rgba(222, 67, 67, 0.45);
+}
+
+.splash-tag--soon {
+    background: var(--ddm-yellow);
+    color: var(--ddm-bg-dark);
+    box-shadow: 0 4px 16px rgba(254, 198, 0, 0.45);
+}
+
+.splash-tag--live {
+    background: var(--ddm-green);
+    box-shadow: 0 4px 16px rgba(63, 142, 67, 0.45);
+}
+
+/* Logo "missing" placeholder — when img fails or hasn't been dropped in */
+.splash-logo-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60%;
+    height: 38vh;
+    margin: 0 auto 28px;
+    border: 3px dashed rgba(0, 0, 0, 0.25);
+    border-radius: 12px;
+    color: rgba(0, 0, 0, 0.45);
+    font-weight: 700;
+    font-size: clamp(20px, 2vw, 32px);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---------------------------------------------------------------------
+   Trivia cards (fact + QA) — bigger, TV-friendly typography
+   --------------------------------------------------------------------- */
+.trivia-card {
+    width: min(88vw, 1500px);
+    max-height: 84vh;
+    background: var(--splash-card-bg);
+    color: var(--splash-text-strong);
+    border-radius: 18px;
+    border: 1px solid var(--splash-card-border);
+    box-shadow: var(--splash-card-shadow);
+    padding: 64px 80px 56px;
+    text-align: left;
+    position: relative;
+    overflow: hidden;
+}
+
+.trivia-card .splash-serape-band {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+}
+
+.trivia-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    font-size: clamp(14px, 1.2vw, 20px);
+    font-weight: 800;
+    color: var(--ddm-scarlet);
+    margin-top: 22px;
+    margin-bottom: 18px;
+}
+
+.trivia-headline {
+    font-size: clamp(42px, 5.4vw, 92px);
+    font-weight: 900;
+    line-height: 1.05;
+    color: var(--splash-text-strong);
+    margin-bottom: 28px;
+}
+
+.trivia-body {
+    font-size: clamp(22px, 2.4vw, 40px);
+    line-height: 1.4;
+    color: #2a2a2a;
+    font-weight: 500;
+}
+
+/* QA reveal: question always shown; answer fades in over it */
+.trivia-qa-question {
+    font-size: clamp(36px, 4.6vw, 78px);
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--splash-text-strong);
+    margin-top: 8px;
+}
+
+.trivia-qa-answer-wrap {
+    margin-top: 36px;
+    padding-top: 28px;
+    border-top: 2px dashed rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    transition: opacity 600ms ease-in-out;
+}
+
+.trivia-qa-answer-wrap.is-revealed {
+    opacity: 1;
+}
+
+.trivia-qa-answer-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    font-size: clamp(14px, 1.1vw, 20px);
+    font-weight: 800;
+    color: var(--ddm-green);
+    margin-bottom: 14px;
+}
+
+.trivia-qa-answer {
+    font-size: clamp(24px, 2.6vw, 44px);
+    line-height: 1.35;
+    color: #1f1f1f;
+    font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------
+   COUNTDOWN — splash-only dot-matrix style (NOT the dashboard's .dot)
+   We use .splash-matrix-* names so we never collide with protected
+   dashboard classes.
+   --------------------------------------------------------------------- */
+.countdown-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 36px;
+    width: 100%;
+}
+
+.countdown-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 8px;
+    font-size: clamp(16px, 1.4vw, 24px);
+    font-weight: 700;
+    color: var(--ddm-yellow);
+    opacity: 0.85;
+}
+
+.countdown-title {
+    font-size: clamp(48px, 6.4vw, 110px);
+    font-weight: 900;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--ddm-jade);
+    text-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+    line-height: 1.0;
+}
+
+.splash-matrix-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 28px 36px;
+    background: var(--ddm-bg-deep);
+    border: 2px solid rgba(254, 198, 0, 0.35);
+    border-radius: 18px;
+    box-shadow:
+        0 12px 32px rgba(0, 0, 0, 0.6),
+        inset 0 -3px 12px rgba(0, 0, 0, 0.55);
+}
+
+.splash-matrix-segment {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.splash-matrix-segment-label {
+    font-size: clamp(14px, 1.1vw, 20px);
+    font-weight: 800;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    color: rgba(254, 198, 0, 0.75);
+}
+
+.splash-matrix-digits {
+    display: flex;
+    gap: 8px;
+}
+
+/* Each digit is a 5x7 dot grid */
+.splash-matrix-digit {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(7, 1fr);
+    gap: 4px;
+    padding: 10px;
+    background: #0a0a0a;
+    border-radius: 6px;
+    border: 1px solid #1f1f1f;
+    width: clamp(70px, 6.5vw, 110px);
+    height: clamp(98px, 9.1vw, 154px);
+}
+
+.splash-matrix-cell {
+    border-radius: 50%;
+    background: var(--splash-dot-off);
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.splash-matrix-cell.is-on {
+    background: var(--splash-dot-on);
+    box-shadow:
+        0 0 6px var(--splash-dot-glow),
+        0 0 12px rgba(254, 198, 0, 0.30);
+}
+
+.splash-matrix-separator {
+    align-self: center;
+    font-size: clamp(40px, 4vw, 72px);
+    color: rgba(254, 198, 0, 0.55);
+    font-weight: 900;
+    line-height: 1;
+}
+
+.countdown-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.countdown-footer-logo {
+    max-height: 14vh;
+    width: auto;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+
+.countdown-footer-text {
+    color: rgba(255, 255, 255, 0.65);
+    font-size: clamp(14px, 1.1vw, 20px);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------------
+   Debug / FPS overlay (toggle with `d`)
+   --------------------------------------------------------------------- */
+.debug-overlay {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.78);
+    color: #80ff80;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #2a2a2a;
+    line-height: 1.4;
+    pointer-events: none;
+    display: none;
+    min-width: 220px;
+}
+
+.debug-overlay.is-visible {
+    display: block;
+}
+
+.debug-overlay .debug-line { white-space: nowrap; }
+.debug-overlay .debug-line strong { color: #ffd97a; }
+
+/* ---------------------------------------------------------------------
+   Loading / error fallbacks
+   --------------------------------------------------------------------- */
+.boot-message {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 18px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    z-index: 0;
+}

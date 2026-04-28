@@ -1,0 +1,26 @@
+[Unit]
+Description=DDM Splash Display Flask server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+# Adjust if you cloned the repo somewhere else.
+WorkingDirectory=/home/pi/DDM-Multimedia/splash_display
+ExecStart=/usr/bin/python3 /home/pi/DDM-Multimedia/splash_display/server.py
+Restart=on-failure
+RestartSec=3
+# Unbuffered so logs flush to journal in real time.
+Environment=PYTHONUNBUFFERED=1
+
+# Reasonable hardening for a kiosk-side daemon. Loosen if you need to write
+# anywhere outside the working directory.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/pi/DDM-Multimedia/splash_display
+
+[Install]
+WantedBy=multi-user.target

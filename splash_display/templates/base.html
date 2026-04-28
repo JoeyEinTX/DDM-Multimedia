@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}DDM Splash Display{% endblock %}</title>
+
+    {# All CSS is local — no CDN. Party network is flaky. #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}" />
+
+    {# Custom fonts (if any) live in static/fonts/ — declare @font-face there. #}
+
+    <style>
+        :root {
+            --transition-fade-ms: {{ transition_fade_ms|default(600) }}ms;
+        }
+    </style>
+
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {% block body %}{% endblock %}
+</body>
+</html>

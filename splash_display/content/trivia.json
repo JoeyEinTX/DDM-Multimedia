@@ -1,0 +1,138 @@
+{
+  "chapel_downs": [
+    {
+      "id": "cd_carry_back",
+      "type": "fact",
+      "headline": "Carry Back Circle",
+      "body": "Named for the 1961 Kentucky Derby winner. A scrappy Florida-bred underdog owned by a husband-and-wife team. Won the Derby and Preakness, then heartbreak at the Belmont. The rebel street in a neighborhood of aristocrats."
+    },
+    {
+      "id": "cd_citation",
+      "type": "fact",
+      "headline": "Citation Drive",
+      "body": "Named for the 1948 Triple Crown winner. First horse ever to earn $1 million. Calumet Farm's crown jewel."
+    },
+    {
+      "id": "cd_whirlaway",
+      "type": "fact",
+      "headline": "Whirlaway Road",
+      "body": "Named for the 1941 Triple Crown winner. Famous for a tail so long it dragged on the ground. Won the Derby by a record-tying 8 lengths."
+    },
+    {
+      "id": "cd_ponder",
+      "type": "fact",
+      "headline": "Ponder Place",
+      "body": "Named for the 1949 Derby winner. Son of Pensive (also a Derby winner). Three generations of Derby champs in one bloodline."
+    },
+    {
+      "id": "cd_pensive",
+      "type": "fact",
+      "headline": "Pensive Drive",
+      "body": "Named for the 1944 Derby winner. Sire of Ponder. Won the Derby and Preakness, lost the Belmont by half a length. Tragic — died young in a pasture accident at age 8."
+    },
+    {
+      "id": "cd_calumet_reveal",
+      "type": "fact",
+      "headline": "The Calumet Connection",
+      "body": "Whirlaway, Pensive, Ponder, and Citation were ALL Calumet Farm horses — the dominant racing dynasty of the 1940s. Chapel Downs is essentially a Calumet tribute neighborhood. Carry Back is the lone outlier — the rebel mom-and-pop horse in a neighborhood of aristocrats."
+    }
+  ],
+  "carry_back": [
+    {
+      "id": "cb_underdog",
+      "type": "qa",
+      "question": "What was Carry Back's nickname?",
+      "answer": "'The People's Horse' — a scrawny Florida-bred owned by a husband-and-wife team, raced 21 times as a 2-year-old. Nobody expected him to win anything."
+    },
+    {
+      "id": "cb_belmont",
+      "type": "qa",
+      "question": "Carry Back won the 1961 Derby and Preakness. Why didn't he win the Triple Crown?",
+      "answer": "He suffered an ankle injury early in the Belmont and faded to 7th. The winner was Sherluck — a 65-1 longshot."
+    },
+    {
+      "id": "cb_running_style",
+      "type": "fact",
+      "headline": "Why 'Carry Back'?",
+      "body": "He was a closer — would hang back in the pack and explode in the stretch. The name fit the running style perfectly. In 1975 he was inducted into the National Museum of Racing Hall of Fame."
+    }
+  ],
+  "cinco_de_mayo": [
+    {
+      "id": "cdm_not_independence",
+      "type": "qa",
+      "question": "Cinco de Mayo is Mexican Independence Day. True or false?",
+      "answer": "FALSE. Independence Day is September 16. Cinco de Mayo commemorates the 1862 Battle of Puebla — when Mexico defeated the French army, considered the best in the world at the time."
+    },
+    {
+      "id": "cdm_zaragoza",
+      "type": "qa",
+      "question": "The general who led Mexico's victory at Puebla was born where?",
+      "answer": "Goliad, TEXAS. Ignacio Zaragoza was a Tejano. The hero of Cinco de Mayo was born on Texas soil."
+    },
+    {
+      "id": "cdm_civil_war",
+      "type": "fact",
+      "headline": "Cinco de Mayo helped win the Civil War",
+      "body": "France was about to back the Confederacy with weapons shipped through Mexico into Texas. The Puebla loss delayed France's plans by a full year — by the time they controlled the border, Grant had won Vicksburg and the South was cut off."
+    },
+    {
+      "id": "cdm_underdog",
+      "type": "qa",
+      "question": "How outnumbered was the Mexican army at Puebla?",
+      "answer": "About 4,500 Mexican troops vs 6,000 French — and the French hadn't lost a major battle in 50 years."
+    },
+    {
+      "id": "cdm_us_origin",
+      "type": "fact",
+      "headline": "Bigger here than there",
+      "body": "Cinco de Mayo is bigger in the US than in Mexico. The first US celebration was in 1862 — the SAME year as the battle — in Columbia, California, by Mexican immigrants. Mexico itself only celebrates it heavily in Puebla state."
+    }
+  ],
+  "classic_derby": [
+    {
+      "id": "cd_secretariat",
+      "type": "fact",
+      "headline": "Secretariat's Record Stands",
+      "body": "Secretariat ran the 1973 Derby in 1:59.40 — still the fastest Kentucky Derby ever. He was the only horse to run each quarter mile FASTER than the last."
+    },
+    {
+      "id": "cd_juleps",
+      "type": "fact",
+      "headline": "120,000 Mint Juleps",
+      "body": "Churchill Downs serves 120,000 mint juleps over Derby weekend — using 1,000 lbs of fresh mint and 60,000 lbs of ice."
+    },
+    {
+      "id": "cd_roses",
+      "type": "qa",
+      "question": "Why is the Derby called 'The Run for the Roses'?",
+      "answer": "The winning horse is draped in a blanket of 400+ red roses. The tradition started in 1896."
+    },
+    {
+      "id": "cd_two_minutes",
+      "type": "fact",
+      "headline": "The Most Exciting Two Minutes in Sports",
+      "body": "The Derby is 1¼ miles and lasts about two minutes. Kentucky Derby horses hit speeds around 37 mph."
+    }
+  ],
+  "ddm_attractions": [
+    {
+      "id": "att_la_subasta",
+      "type": "fact",
+      "headline": "La Subasta",
+      "body": "Tonight's Calcutta auction. Bid on the horse you think will win. Pool the proceeds. Winner takes the purse. The most exciting non-race of the night."
+    },
+    {
+      "id": "att_la_quiniela",
+      "type": "fact",
+      "headline": "Coming DDM 2027: La Quiniela",
+      "body": "Live betting with weighted paper tokens and real load cells under each cup. Real-time odds, real-time payouts. The pari-mutuel pool of your dreams."
+    },
+    {
+      "id": "att_derby_dash",
+      "type": "fact",
+      "headline": "Coming DDM 2027: Derby Dash",
+      "body": "Multiplayer tapping arcade game. Mash buttons. Race horses. Custom controllers. No actual horses harmed."
+    }
+  ]
+}

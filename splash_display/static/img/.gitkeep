@@ -1,0 +1,8 @@
+# Drop logo PNGs in this directory:
+#   ddm_master.png
+#   la_subasta.png
+#   la_quiniela.png
+#   derby_dash.png
+# The splash templates reference them via url_for('static', filename='img/...').
+# If a file is missing, the templates render a "Logo missing" placeholder
+# instead of breaking the slide.

@@ -1,0 +1,74 @@
+{# Countdown splash — live ticking dot-matrix countdown to DDM 2026 post time.
+   The slideshow JS picks this up via <template data-splash-id="countdown">
+   and runs the countdown driver against the [data-countdown="..."] hooks. #}
+<div class="splash-card splash-card-dark">
+    <div class="splash-serape-band splash-serape-band--top"></div>
+
+    <div class="countdown-stage">
+        <div class="countdown-eyebrow">Post Time Countdown</div>
+        <div class="countdown-title">Derby de Mayo 2026</div>
+
+        <div class="splash-matrix-row">
+            <div class="splash-matrix-segment">
+                <div class="splash-matrix-digits" data-countdown="days">
+                    {# 3 digits for days #}
+                    {% for _ in range(3) %}
+                    <div class="splash-matrix-digit">
+                        {% for _ in range(35) %}<div class="splash-matrix-cell"></div>{% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="splash-matrix-segment-label">Days</div>
+            </div>
+
+            <div class="splash-matrix-separator">·</div>
+
+            <div class="splash-matrix-segment">
+                <div class="splash-matrix-digits" data-countdown="hours">
+                    {% for _ in range(2) %}
+                    <div class="splash-matrix-digit">
+                        {% for _ in range(35) %}<div class="splash-matrix-cell"></div>{% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="splash-matrix-segment-label">Hours</div>
+            </div>
+
+            <div class="splash-matrix-separator">·</div>
+
+            <div class="splash-matrix-segment">
+                <div class="splash-matrix-digits" data-countdown="minutes">
+                    {% for _ in range(2) %}
+                    <div class="splash-matrix-digit">
+                        {% for _ in range(35) %}<div class="splash-matrix-cell"></div>{% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="splash-matrix-segment-label">Minutes</div>
+            </div>
+
+            <div class="splash-matrix-separator">·</div>
+
+            <div class="splash-matrix-segment">
+                <div class="splash-matrix-digits" data-countdown="seconds">
+                    {% for _ in range(2) %}
+                    <div class="splash-matrix-digit">
+                        {% for _ in range(35) %}<div class="splash-matrix-cell"></div>{% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="splash-matrix-segment-label">Seconds</div>
+            </div>
+        </div>
+
+        <div class="countdown-footer">
+            <img class="countdown-footer-logo"
+                 src="{{ url_for('static', filename='img/ddm_master.png') }}"
+                 alt="DDM"
+                 onerror="this.style.display='none'" />
+            <div class="countdown-footer-text">Saturday · May 2 · Post Time 6:57 PM ET</div>
+        </div>
+    </div>
+
+    <div class="splash-serape-band splash-serape-band--bottom"></div>
+</div>
