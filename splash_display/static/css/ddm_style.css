@@ -138,7 +138,13 @@ img { -webkit-user-drag: none; user-drag: none; }
 .slide.transition-wipe-horizontal.is-active    { opacity: 1; clip-path: inset(0 0 0 0); }
 .slide.transition-wipe-horizontal.is-prev      { opacity: 0; clip-path: inset(0 0 0 0); }
 
-/* The inner card frame every slide template lives inside */
+/* The inner card frame every slide template lives inside.
+   Phase 1.10: switched from justify-content: center → flex-start with a
+   larger top padding and an explicit gap, so the logo sits in the upper
+   portion of the card with the tagline/badge cluster anchored just below
+   instead of floating in the middle. The cinematic splashes
+   (.countdown-cinematic, .subasta-cinematic) override display:block and
+   reset padding to 0 so this layout doesn't apply to them. */
 .splash-card {
     position: relative;
     width: min(92vw, 1700px);
@@ -148,12 +154,13 @@ img { -webkit-user-drag: none; user-drag: none; }
     border: 1px solid var(--splash-card-border);
     border-radius: 18px;
     box-shadow: var(--splash-card-shadow);
-    padding: 64px 80px;
+    padding: 8vh 80px 64px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 1.5vh;
     text-align: center;
 }
 
@@ -247,7 +254,10 @@ img { -webkit-user-drag: none; user-drag: none; }
     max-height: 60vh;
     height: auto;
     display: block;
-    margin: 0 auto 1.5vh;
+    /* Phase 1.10: margin-bottom dropped to 0 — the .splash-card flex `gap`
+       now controls inter-element spacing. Previously combined gap+margin
+       was double-spacing the logo from the tagline cluster. */
+    margin: 0 auto;
     filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.45));
 }
 
@@ -266,7 +276,9 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 
 .splash-tagline {
-    font-size: clamp(28px, 3.4vw, 56px);
+    /* Phase 1.10: bumped from clamp(28px, 3.4vw, 56px) so the tagline
+       carries enough visual weight under the larger Phase 1.8 logos. */
+    font-size: clamp(36px, 4.5vw, 72px);
     font-weight: 700;
     color: var(--ddm-cocoa);
     margin: 8px 0;
@@ -565,8 +577,11 @@ img { -webkit-user-drag: none; user-drag: none; }
     to {
         top: 50%;
         left: 16.67%;     /* center of left third */
-        height: 30vh;     /* ~40% of 75vh hero size */
-        max-width: 32%;   /* prevent wide logos bleeding into right column */
+        /* Phase 1.10: bumped from height 30vh / max-width 32% to give
+           the resting-state logo enough visual weight to feel co-equal
+           with the right-column countdown cluster. ~49% of card height. */
+        height: 42vh;
+        max-width: 38%;
         transform: translate(-50%, -50%);
     }
 }
@@ -619,17 +634,206 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 
 /* Smaller dot-matrix digits inside the cinematic layout — the base
-   .splash-matrix-* sizing assumes a full-width centered display. */
+   .splash-matrix-* sizing assumes a full-width centered display.
+   Phase 1.10: clamp upper bounds trimmed so the row fits inside the
+   right column even on 1080p with the now-larger left-column logo. */
 .countdown-cinematic .splash-matrix-row {
-    gap: 16px;
-    padding: 20px 26px;
+    gap: 14px;
+    padding: 18px 22px;
 }
 .countdown-cinematic .splash-matrix-digit {
-    width: clamp(48px, 4.4vw, 84px);
-    height: clamp(67px, 6.2vw, 118px);
+    width: clamp(40px, 3.6vw, 70px);
+    height: clamp(56px, 5vw, 98px);
 }
 .countdown-cinematic .splash-matrix-separator {
-    font-size: clamp(30px, 3vw, 56px);
+    font-size: clamp(28px, 2.8vw, 50px);
+}
+
+/* ---------------------------------------------------------------------
+   LA SUBASTA — Phase 1.10 cinematic three-stage primer
+
+   Stage 1 (0–2s):   hero logo, full-screen prominence, no other elements
+   Stage 2 (2–3s):   logo shrinks + slides to left third; COMING SOON
+                     badge fades in below it; right-column Card 1 reveals
+                     with a subtle upward translate + fade
+   Stage 3 (3–26s):  card carousel cycles Card 1 → Card 2 → Card 3 on
+                     the right while the logo + badge stay anchored on
+                     the left
+
+   Timing breakdown (animation duration = 26000ms total slide time):
+     0%      = 0ms    — hero hold begins
+     7.69%   = 2000ms — Stage 2 begins (logo + badge + Card 1 reveal)
+     11.54%  = 3000ms — Stage 2 ends (Card 1 fully visible)
+     45.38%  = 11800ms — Card 1 begins cross-fade out
+     46.92%  = 12200ms — Card 2 fully visible
+     72.31%  = 18800ms — Card 2 begins cross-fade out
+     73.85%  = 19200ms — Card 3 fully visible
+     100%    = 26000ms — slide ends (slideshow advances to next)
+
+   Pause: the slideshow JS toggles `.is-paused` on .subasta-cinematic to
+   freeze every CSS animation in place. CSS-driven only — no JS tick to
+   manage (unlike the countdown).
+   --------------------------------------------------------------------- */
+.subasta-cinematic {
+    /* Override the .splash-card flex layout — children are positioned
+       absolutely so the cinematic can move them around the card. */
+    display: block;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Hero logo — animates from full-screen center to left-third resting. */
+.subasta-hero-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    height: 75vh;
+    width: auto;
+    max-width: 78%;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.45));
+    animation: subastaHeroLogo
+        1000ms cubic-bezier(0.4, 0, 0.2, 1) 2000ms forwards;
+}
+
+@keyframes subastaHeroLogo {
+    from {
+        top: 50%;
+        left: 50%;
+        height: 75vh;
+        max-width: 78%;
+        transform: translate(-50%, -50%);
+    }
+    to {
+        top: 50%;
+        left: 18%;
+        height: 40vh;
+        max-width: 38%;
+        transform: translate(-50%, -50%);
+    }
+}
+
+/* COMING SOON badge — sits below the resting-state logo, fades in
+   alongside the logo's stage-2 zoom. Styled like the existing yellow
+   --soon tag but sized smaller for the constrained left-column slot. */
+.subasta-coming-soon-badge {
+    position: absolute;
+    top: 76%;
+    left: 18%;
+    transform: translate(-50%, 12px);
+    display: inline-block;
+    padding: 8px 18px;
+    border-radius: 999px;
+    background: var(--ddm-yellow);
+    color: var(--ddm-bg-dark);
+    font-weight: 800;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    font-size: clamp(13px, 1.2vw, 22px);
+    box-shadow: 0 4px 16px rgba(254, 198, 0, 0.45);
+    white-space: nowrap;
+    opacity: 0;
+    animation: subastaBadgeReveal
+        1000ms cubic-bezier(0.4, 0, 0.2, 1) 2000ms forwards;
+}
+
+@keyframes subastaBadgeReveal {
+    from { opacity: 0; transform: translate(-50%, 12px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Card stack — defines the right-column box. Cards inside are absolutely
+   positioned and stacked at the same coordinates; only one is visible at
+   a time via opacity keyframes. */
+.subasta-card-stack {
+    position: absolute;
+    top: 6%;
+    bottom: 6%;
+    left: 38%;
+    right: 5%;
+}
+
+.subasta-card {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    transform: translateY(-50%);
+    padding: 5vh 4vw;
+    background: linear-gradient(160deg, #FFF8E1 0%, #F0E2BE 100%);
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    border-radius: 18px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+    color: #1a1a1a;
+    text-align: left;
+    opacity: 0;
+    /* will-change hints help Chromium keep the layer composited so the
+       cross-fades stay smooth on the Pi 5. */
+    will-change: opacity;
+}
+
+.subasta-card-title {
+    font-size: clamp(30px, 3.4vw, 56px);
+    font-weight: 900;
+    line-height: 1.1;
+    color: var(--ddm-scarlet);
+    margin: 0 0 24px;
+    letter-spacing: 0.5px;
+}
+
+.subasta-card-body {
+    font-size: clamp(22px, 2vw, 36px);
+    line-height: 1.4;
+    color: #2a2a2a;
+    font-weight: 500;
+    margin: 0;
+}
+
+/* Each card runs the same 26-second animation, but its keyframes encode
+   when in the slide it's visible. ease-in-out for the cross-fade easing. */
+.subasta-card--1 {
+    animation: subastaCard1 26000ms ease-in-out 0ms forwards;
+}
+@keyframes subastaCard1 {
+    0%      { opacity: 0; }
+    7.69%   { opacity: 0; }   /* hero hold ends */
+    11.54%  { opacity: 1; }   /* fully visible after stage-2 reveal */
+    45.38%  { opacity: 1; }   /* hold through Card 1 dwell */
+    46.92%  { opacity: 0; }   /* cross-faded out */
+    100%    { opacity: 0; }
+}
+
+.subasta-card--2 {
+    animation: subastaCard2 26000ms ease-in-out 0ms forwards;
+}
+@keyframes subastaCard2 {
+    0%      { opacity: 0; }
+    45.38%  { opacity: 0; }
+    46.92%  { opacity: 1; }
+    72.31%  { opacity: 1; }
+    73.85%  { opacity: 0; }
+    100%    { opacity: 0; }
+}
+
+.subasta-card--3 {
+    animation: subastaCard3 26000ms ease-in-out 0ms forwards;
+}
+@keyframes subastaCard3 {
+    0%      { opacity: 0; }
+    72.31%  { opacity: 0; }
+    73.85%  { opacity: 1; }
+    100%    { opacity: 1; }   /* stays visible to end */
+}
+
+/* Pause integration — added by JS togglePause when the slideshow is
+   paused AND the active slide is la_subasta. Freezes every animation in
+   the cinematic at its current frame; remove the class to resume. */
+.subasta-cinematic.is-paused .subasta-hero-logo,
+.subasta-cinematic.is-paused .subasta-coming-soon-badge,
+.subasta-cinematic.is-paused .subasta-card--1,
+.subasta-cinematic.is-paused .subasta-card--2,
+.subasta-cinematic.is-paused .subasta-card--3 {
+    animation-play-state: paused;
 }
 
 /* ---------------------------------------------------------------------

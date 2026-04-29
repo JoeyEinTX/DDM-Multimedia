@@ -257,10 +257,12 @@
     // them); per-slide visual setup that's independent of timers lives
     // here.
     //
-    // Phase 1.9: countdown ticking is now ALSO pause-aware. If we enter
-    // the countdown slide while the slideshow is already paused, we
-    // render the cinematic frozen at stage 1 and don't start the tick —
-    // togglePause() restarts both when the user resumes.
+    // Phase 1.9: countdown ticking is pause-aware. If we enter the
+    // countdown slide while the slideshow is already paused, we render
+    // the cinematic frozen at stage 1 and don't start the tick.
+    //
+    // Phase 1.10: la_subasta has the same pause-on-entry treatment but
+    // is purely CSS-driven, so there's no JS tick to start/skip.
     function activateSlideBehavior(layer, slide) {
         // Tear down any countdown from the prior slide on the same layer
         if (countdownTickHandle) {
@@ -276,6 +278,15 @@
                 if (stageArea) stageArea.classList.add('is-paused');
             } else {
                 startCountdown(layer);
+            }
+        }
+
+        if (slide.type === 'splash' && slide.splash_id === 'la_subasta') {
+            if (isPaused) {
+                // Freeze the subasta cinematic at stage 1 if entering
+                // while paused. CSS handles everything — no JS init.
+                const stageArea = layer.querySelector('.subasta-cinematic');
+                if (stageArea) stageArea.classList.add('is-paused');
             }
         }
 
@@ -455,6 +466,13 @@
                     countdownTickHandle = null;
                 }
             }
+            // Phase 1.10: pausing on la_subasta freezes the cinematic +
+            // card carousel via CSS animation-play-state. No JS tick to
+            // manage — the whole reveal is keyframe-driven.
+            if (slide && slide.type === 'splash' && slide.splash_id === 'la_subasta') {
+                const stageArea = activeLayer.querySelector('.subasta-cinematic');
+                if (stageArea) stageArea.classList.add('is-paused');
+            }
             renderOverlay();
         } else {
             // On resume the slide restarts fresh from 0 — including the
@@ -472,6 +490,13 @@
                 const stageArea = activeLayer.querySelector('.countdown-cinematic');
                 if (stageArea) stageArea.classList.remove('is-paused');
                 startCountdown(activeLayer);
+            }
+            // Phase 1.10: resume la_subasta — CSS animations continue
+            // from the frame they were frozen at, so the current card
+            // stays visible until its remaining dwell elapses.
+            if (slide && slide.type === 'splash' && slide.splash_id === 'la_subasta') {
+                const stageArea = activeLayer.querySelector('.subasta-cinematic');
+                if (stageArea) stageArea.classList.remove('is-paused');
             }
             if (slide) startSlideTimers(slide);
             renderOverlay();
