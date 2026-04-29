@@ -3,6 +3,43 @@
 {% block title %}DDM Splash Display{% endblock %}
 
 {% block body %}
+<style>
+    /* Phase 1.6 playback overlay — keyboard-driven controls indicator.
+       Lives in slideshow.html (not ddm_style.css) because it is
+       slideshow-only and we want this whole feature contained in one
+       file for easy review/rollback. */
+    .playback-overlay {
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        z-index: 9998; /* below debug-overlay (9999) so 'd' overlay always wins */
+        background: rgba(10, 31, 26, 0.7); /* --ddm-bg-dark @ 70% */
+        color: #FFFFFF; /* --ddm-jade */
+        font-family: 'Menlo', 'Consolas', monospace;
+        font-size: 14px;
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        line-height: 1.3;
+        letter-spacing: 0.4px;
+        pointer-events: none;
+        user-select: none;
+        opacity: 0;
+        transition: opacity 200ms ease;
+        white-space: nowrap;
+    }
+    .playback-overlay.is-visible { opacity: 1; }
+    .playback-overlay .playback-icon {
+        display: inline-block;
+        margin-right: 8px;
+        opacity: 0.92;
+    }
+    .playback-overlay.is-paused {
+        background: rgba(222, 67, 67, 0.78); /* --ddm-scarlet tint when paused */
+        border-color: rgba(255, 255, 255, 0.18);
+    }
+</style>
+
 <div id="slideshow-stage" class="slideshow-stage" aria-live="polite">
     {# Two slide layers — we crossfade between them by toggling .is-active #}
     <div id="slide-layer-a" class="slide" data-layer="a"></div>
@@ -18,6 +55,11 @@
         <div class="debug-line"><strong>loaded</strong>   <span id="dbg-loaded">--</span></div>
         <div class="debug-line"><strong>fetches</strong>  <span id="dbg-fetches">0</span></div>
         <div class="debug-line"><strong>errors</strong>   <span id="dbg-errors">0</span></div>
+    </div>
+
+    {# Phase 1.6 playback indicator — keyboard-only controls feedback. #}
+    <div id="playback-overlay" class="playback-overlay" aria-hidden="true">
+        <span id="playback-icon" class="playback-icon">&#9654;</span><span id="playback-status">--</span>
     </div>
 </div>
 
@@ -90,6 +132,11 @@
     const triviaFactTpl = splashCache.querySelector('template[data-trivia="fact"]').innerHTML;
     const triviaQaTpl   = splashCache.querySelector('template[data-trivia="qa"]').innerHTML;
 
+    // Phase 1.6 — playback overlay
+    const playbackOverlay = document.getElementById('playback-overlay');
+    const playbackIcon    = document.getElementById('playback-icon');
+    const playbackStatus  = document.getElementById('playback-status');
+
     // ---- State -------------------------------------------------------
     let playlist = [];
     let idx = 0;
@@ -97,14 +144,18 @@
     let inactiveLayer = layerB;
     let advanceTimer = null;
     let revealTimer = null;
+    let preloadTimer = null;          // Phase 1.6 — tracked so it can be cleared on nav
     let fetchAttempts = 0;
     let fetchErrors = 0;
     let countdownTickHandle = null;
+    let isPaused = false;             // Phase 1.6 — spacebar pauses rotation
+    let overlayHideTimer = null;      // Phase 1.6 — fades the indicator after navigations
 
     // ---- Helpers -----------------------------------------------------
     function clearTimers() {
         if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
         if (revealTimer)  { clearTimeout(revealTimer);  revealTimer  = null; }
+        if (preloadTimer) { clearTimeout(preloadTimer); preloadTimer = null; }
     }
 
     function escapeHtml(str) {
@@ -201,6 +252,10 @@
     }
 
     // ---- Per-slide behavior -----------------------------------------
+    // Visual init only — no pausable timers live here. Countdown ticking
+    // is independent of pause (we want real time to keep elapsing on the
+    // countdown even when the slideshow is paused for review). The QA
+    // reveal timer is pausable and moved to startSlideTimers().
     function activateSlideBehavior(layer, slide) {
         // Tear down any countdown from the prior slide on the same layer
         if (countdownTickHandle) {
@@ -213,12 +268,10 @@
         }
 
         if (slide.type === 'trivia_qa') {
+            // Always start with the answer hidden; reveal is scheduled
+            // by startSlideTimers so pause can suppress it.
             const wrap = layer.querySelector('.trivia-qa-answer-wrap');
             if (wrap) wrap.classList.remove('is-revealed');
-            const showAfter = Math.max(0, (slide.question_ms || 0));
-            revealTimer = setTimeout(() => {
-                if (wrap) wrap.classList.add('is-revealed');
-            }, showAfter);
         }
     }
 
@@ -324,30 +377,122 @@
             bootMsg.style.display = 'none';
         }
 
-        // Pre-render the next slide a bit early so we can crossfade without flicker.
-        const next = playlist[(idx + 1) % playlist.length];
+        // Pausable timers (advance, QA reveal, preload) — no-op when paused.
+        startSlideTimers(slide);
+
+        updateDebug(slide);
+    }
+
+    // Pausable timers for the currently-displayed slide. Called by
+    // showSlideAt() and again on resume from pause. No-op when paused.
+    function startSlideTimers(slide) {
+        if (isPaused || !slide) return;
+
+        // QA reveal — fade the answer in once question_ms has elapsed.
+        if (slide.type === 'trivia_qa') {
+            const wrap = activeLayer.querySelector('.trivia-qa-answer-wrap');
+            const showAfter = Math.max(0, (slide.question_ms || 0));
+            revealTimer = setTimeout(() => {
+                if (wrap) wrap.classList.add('is-revealed');
+            }, showAfter);
+        }
+
         const dwell = durationFor(slide);
         const advanceIn = Math.max(FADE_MS + 50, dwell);
 
-        // Pre-load: stuff next slide into the not-yet-active layer ~PRELOAD_LEAD_MS early
+        // Pre-load: stuff next slide into the not-yet-active layer
+        // ~PRELOAD_LEAD_MS before the swap so the crossfade is flicker-free.
+        const next = playlist[(idx + 1) % playlist.length];
         const preloadIn = Math.max(50, advanceIn - PRELOAD_LEAD_MS);
-        setTimeout(() => {
-            // The current inactive layer (= former active) gets the next slide loaded.
-            // Don't overwrite the still-displaying active layer.
+        preloadTimer = setTimeout(() => {
             try { loadIntoLayer(inactiveLayer, next); } catch (e) { console.warn(e); }
         }, preloadIn);
 
-        advanceTimer = setTimeout(() => {
-            const nextIdx = idx + 1;
-            if (nextIdx >= playlist.length) {
-                // Reshuffle for the next cycle.
-                fetchPlaylist().then(() => showSlideAt(0));
-            } else {
-                showSlideAt(nextIdx);
-            }
-        }, advanceIn);
+        advanceTimer = setTimeout(advanceToNext, advanceIn);
+    }
 
-        updateDebug(slide);
+    function advanceToNext() {
+        const nextIdx = idx + 1;
+        if (nextIdx >= playlist.length) {
+            // End of cycle — reshuffle.
+            fetchPlaylist().then(() => showSlideAt(0));
+        } else {
+            showSlideAt(nextIdx);
+        }
+    }
+
+    // ---- Phase 1.6: keyboard playback controls ----------------------
+    // Spacebar pauses/resumes; arrows step the rotation. Pause stops the
+    // auto-advance timer entirely. Resume restarts the slide's full
+    // duration from 0 — we don't try to remember partial elapsed time.
+
+    function togglePause() {
+        isPaused = !isPaused;
+        if (isPaused) {
+            clearTimers();
+            renderOverlay();
+        } else {
+            const slide = playlist[idx];
+            // On resume the slide restarts fresh from 0 — including the
+            // QA reveal sequence. If the answer was visible at pause time
+            // it will hide and re-fade as the timer cycles again.
+            if (slide && slide.type === 'trivia_qa') {
+                const wrap = activeLayer.querySelector('.trivia-qa-answer-wrap');
+                if (wrap) wrap.classList.remove('is-revealed');
+            }
+            if (slide) startSlideTimers(slide);
+            renderOverlay();
+        }
+    }
+
+    function navigateNext() {
+        if (!playlist.length) return;
+        const isAtEnd = (idx + 1 >= playlist.length);
+        if (isAtEnd) {
+            // Off the end — fetch a fresh shuffled playlist and start at 0.
+            // Pause state is preserved (showSlideAt -> startSlideTimers no-ops if paused).
+            clearTimers();
+            fetchPlaylist().then(() => {
+                if (playlist.length) {
+                    showSlideAt(0);
+                    renderOverlay();
+                }
+            });
+            return;
+        }
+        showSlideAt(idx + 1);
+        renderOverlay();
+    }
+
+    function navigatePrev() {
+        if (!playlist.length) return;
+        // Prev wraps within the current playlist — never re-fetch backward.
+        const targetIdx = idx > 0 ? idx - 1 : playlist.length - 1;
+        showSlideAt(targetIdx);
+        renderOverlay();
+    }
+
+    function renderOverlay() {
+        if (!playbackOverlay) return;
+        const counter = playlist.length ? `Slide ${idx + 1} / ${playlist.length}` : '';
+        if (isPaused) {
+            playbackIcon.innerHTML = '&#9208;'; // ⏸
+            playbackStatus.textContent = counter ? `PAUSED · ${counter}` : 'PAUSED';
+            playbackOverlay.classList.add('is-paused');
+        } else {
+            playbackIcon.innerHTML = '&#9654;'; // ▶
+            playbackStatus.textContent = counter || '--';
+            playbackOverlay.classList.remove('is-paused');
+        }
+        playbackOverlay.classList.add('is-visible');
+
+        // Cancel any pending hide; if not paused, schedule a fresh fade-out.
+        if (overlayHideTimer) { clearTimeout(overlayHideTimer); overlayHideTimer = null; }
+        if (!isPaused) {
+            overlayHideTimer = setTimeout(() => {
+                playbackOverlay.classList.remove('is-visible');
+            }, 2000);
+        }
     }
 
     // ---- Fetching with exponential backoff --------------------------
@@ -407,8 +552,31 @@
     }
 
     document.addEventListener('keydown', (e) => {
+        // Debug overlay (Phase 1)
         if (e.key === 'd' || e.key === 'D') {
             dbg.classList.toggle('is-visible');
+            return;
+        }
+        // Phase 1.6 playback controls
+        if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            togglePause();
+            return;
+        }
+        if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            navigateNext();
+            return;
+        }
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            navigatePrev();
+            return;
+        }
+        if (e.key === 'Escape') {
+            // Reserved for future "exit kiosk" behavior — no-op for now.
+            e.preventDefault();
+            return;
         }
     });
 
