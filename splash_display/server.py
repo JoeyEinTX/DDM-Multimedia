@@ -73,33 +73,94 @@ def load_splash_pages() -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Adaptive durations (Phase 1.7)
+#
+# Trivia dwell scales with word count. Per-card overrides in trivia.json
+# (`duration_ms`, `question_ms`, `answer_ms`) take precedence over these.
+# All formulas are scaled by config.READING_SPEED_MULTIPLIER.
+# ---------------------------------------------------------------------------
+def _word_count(text: str) -> int:
+    return len(text.split()) if text else 0
+
+
+def adaptive_duration(word_count: int) -> int:
+    """Fact-card dwell. Word count is over headline + body."""
+    raw = (
+        config.MIN_DURATION_MS
+        + word_count * config.MS_PER_WORD * config.READING_SPEED_MULTIPLIER
+    )
+    return max(config.MIN_DURATION_MS, min(config.MAX_DURATION_MS, int(raw)))
+
+
+def adaptive_qa_question_duration(word_count: int) -> int:
+    """Q&A question dwell — shown before the answer reveal."""
+    raw = (
+        config.QA_QUESTION_BASE_MS
+        + word_count * config.QA_QUESTION_PER_WORD_MS * config.READING_SPEED_MULTIPLIER
+    )
+    return max(config.QA_QUESTION_BASE_MS, min(config.QA_QUESTION_MAX_MS, int(raw)))
+
+
+def adaptive_qa_answer_duration(word_count: int) -> int:
+    """Q&A answer dwell — faster than fact cards; reader primed by question."""
+    raw = (
+        config.QA_ANSWER_MIN_MS
+        + word_count * config.QA_ANSWER_PER_WORD_MS * config.READING_SPEED_MULTIPLIER
+    )
+    return max(config.QA_ANSWER_MIN_MS, min(config.QA_ANSWER_MAX_MS, int(raw)))
+
+
+# ---------------------------------------------------------------------------
 # Playlist construction
 # ---------------------------------------------------------------------------
 def _trivia_card_to_slide(category: str, card: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a raw trivia card dict to a playlist slide entry."""
+    """
+    Convert a raw trivia card dict to a playlist slide entry.
+
+    Per-card timing overrides (`duration_ms`, `question_ms`, `answer_ms`)
+    in trivia.json beat the adaptive calculation when present. None of the
+    current cards carry these fields, but the override mechanism exists so
+    individual cards can be hand-tuned without touching code.
+    """
     card_type = card.get("type", "fact")
+    card_id = card.get("id", "unknown")
+
     if card_type == "qa":
+        question = card.get("question", "")
+        answer = card.get("answer", "")
+        question_ms = (
+            int(card["question_ms"])
+            if "question_ms" in card
+            else adaptive_qa_question_duration(_word_count(question))
+        )
+        answer_ms = (
+            int(card["answer_ms"])
+            if "answer_ms" in card
+            else adaptive_qa_answer_duration(_word_count(answer))
+        )
         return {
-            "id": f"trivia:{category}:{card.get('id', 'unknown')}",
+            "id": f"trivia:{category}:{card_id}",
             "type": "trivia_qa",
             "category": category,
-            "data": {
-                "question": card.get("question", ""),
-                "answer": card.get("answer", ""),
-            },
-            "question_ms": int(card.get("question_ms", config.DEFAULT_QA_QUESTION_MS)),
-            "answer_ms": int(card.get("answer_ms", config.DEFAULT_QA_ANSWER_MS)),
+            "data": {"question": question, "answer": answer},
+            "question_ms": question_ms,
+            "answer_ms": answer_ms,
         }
+
     # default to fact
+    headline = card.get("headline", "")
+    body = card.get("body", "")
+    duration_ms = (
+        int(card["duration_ms"])
+        if "duration_ms" in card
+        else adaptive_duration(_word_count(headline) + _word_count(body))
+    )
     return {
-        "id": f"trivia:{category}:{card.get('id', 'unknown')}",
+        "id": f"trivia:{category}:{card_id}",
         "type": "trivia_fact",
         "category": category,
-        "data": {
-            "headline": card.get("headline", ""),
-            "body": card.get("body", ""),
-        },
-        "duration_ms": int(card.get("duration_ms", config.DEFAULT_FACT_DURATION_MS)),
+        "data": {"headline": headline, "body": body},
+        "duration_ms": duration_ms,
     }
 
 

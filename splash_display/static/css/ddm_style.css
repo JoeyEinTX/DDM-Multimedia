@@ -235,9 +235,13 @@ img { -webkit-user-drag: none; user-drag: none; }
 /* ---------------------------------------------------------------------
    Common splash text components
    --------------------------------------------------------------------- */
+/* Phase 1.8: bumped from max-width 60% / max-height 46vh to push the rendered
+   logo into the spec'd 55-65% vertical range across all four splash pages.
+   The width constraint is loosened so wide-aspect logos stop being clamped
+   horizontally before they hit the height cap. */
 .splash-hero-logo {
-    max-width: 60%;
-    max-height: 46vh;
+    max-width: 85%;
+    max-height: 60vh;
     height: auto;
     display: block;
     margin: 0 auto 28px;
@@ -245,7 +249,7 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 
 .splash-hero-logo--small {
-    max-height: 32vh;
+    max-height: 38vh;
 }
 
 .splash-headline {
@@ -298,13 +302,15 @@ img { -webkit-user-drag: none; user-drag: none; }
     box-shadow: 0 4px 16px rgba(63, 142, 67, 0.45);
 }
 
-/* Logo "missing" placeholder — when img fails or hasn't been dropped in */
+/* Logo "missing" placeholder — when img fails or hasn't been dropped in.
+   Sized to roughly match the new (Phase 1.8) hero-logo footprint so a
+   missing PNG doesn't visually shrink the whole splash. */
 .splash-logo-placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 60%;
-    height: 38vh;
+    width: 75%;
+    height: 50vh;
     margin: 0 auto 28px;
     border: 3px dashed rgba(0, 0, 0, 0.25);
     border-radius: 12px;

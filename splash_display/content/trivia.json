@@ -372,26 +372,5 @@
       "headline": "How Track Betting Actually Works",
       "body": "All bets go into a pool. The track takes a cut, and the rest is split among winners proportional to their bets. Odds aren't set by the house — they shift based on what other bettors are doing. It's called pari-mutuel, French for 'mutual betting.'"
     }
-  ],
-
-  "ddm_attractions": [
-    {
-      "id": "att_la_subasta",
-      "type": "fact",
-      "headline": "La Subasta",
-      "body": "Tonight's Calcutta auction. Bid on the horse you think will win. Pool the proceeds. Winner takes the purse. The most exciting non-race of the night."
-    },
-    {
-      "id": "att_la_quiniela",
-      "type": "fact",
-      "headline": "Coming DDM 2027: La Quiniela",
-      "body": "Live bet tracking is coming to DDM 2027. That's all we're saying."
-    },
-    {
-      "id": "att_derby_dash",
-      "type": "fact",
-      "headline": "Coming DDM 2027: Derby Dash",
-      "body": "Hands-on racing. Three players. One winner. The rest is a surprise."
-    }
   ]
 }

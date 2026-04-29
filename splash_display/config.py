@@ -9,15 +9,47 @@ file focused on Phase 1 concerns for now.
 """
 
 # ---------------------------------------------------------------------------
-# Timing defaults (overridable per-slide in JSON)
-# All values are milliseconds.
+# Timing — fixed durations
+# Used for slides where reading-time adaptive scaling doesn't apply.
 # ---------------------------------------------------------------------------
-DEFAULT_FACT_DURATION_MS = 10000
-DEFAULT_QA_QUESTION_MS = 8000
-DEFAULT_QA_ANSWER_MS = 8000
 DEFAULT_SPLASH_DURATION_MS = 12000
 COUNTDOWN_DURATION_MS = 15000
 TRANSITION_FADE_MS = 600
+
+# ---------------------------------------------------------------------------
+# Timing — adaptive durations (Phase 1.7)
+#
+# Trivia dwell times scale with word count so short cards aren't held forever
+# and long cards aren't cut off. All formulas are scaled by the global
+# READING_SPEED_MULTIPLIER so the whole show can be slowed/sped uniformly.
+#
+# Per-card overrides take precedence: a card may carry an explicit
+# `duration_ms` (fact) or `question_ms` / `answer_ms` (Q&A) field in
+# trivia.json and that value is used verbatim instead of the adaptive calc.
+#
+# Fact cards: word count = headline + body. Q&A: question and answer scored
+# independently. Q&A answers use a faster curve than fact cards because the
+# reader has been primed by the question phase.
+# ---------------------------------------------------------------------------
+
+# Global read-speed knob — applies to fact cards AND both Q&A phases.
+# 1.0 is baseline; >1.0 holds slides longer; <1.0 speeds them up.
+READING_SPEED_MULTIPLIER = 1.0
+
+# Fact cards (headline + body word count)
+MIN_DURATION_MS = 8000
+MAX_DURATION_MS = 18000
+MS_PER_WORD = 250
+
+# Q&A questions
+QA_QUESTION_BASE_MS = 6000
+QA_QUESTION_PER_WORD_MS = 200
+QA_QUESTION_MAX_MS = 10000
+
+# Q&A answers — faster than fact cards (reader primed by the question)
+QA_ANSWER_MIN_MS = 6000
+QA_ANSWER_PER_WORD_MS = 200
+QA_ANSWER_MAX_MS = 13000
 
 # ---------------------------------------------------------------------------
 # Trivia category weights (relative; normalized internally)
@@ -37,7 +69,9 @@ TRIVIA_WEIGHTS = {
     "mexican_horse_racing": 12,
     "classic_derby": 12,
     "did_you_know": 10,
-    "ddm_attractions": 7,
+    # ddm_attractions removed in Phase 1.8 — its three cards duplicated the
+    # dedicated splash pages (la_subasta / la_quiniela / derby_dash) verbatim.
+    # Sums to 93 now; internal normalization handles the actual distribution.
 }
 
 # ---------------------------------------------------------------------------
