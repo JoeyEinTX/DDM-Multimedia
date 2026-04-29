@@ -1,10 +1,25 @@
-{# Countdown splash — live ticking dot-matrix countdown to DDM 2026 post time.
-   The slideshow JS picks this up via <template data-splash-id="countdown">
-   and runs the countdown driver against the [data-countdown="..."] hooks. #}
-<div class="splash-card splash-card-dark">
+{# Countdown splash — Phase 1.9 cinematic three-stage reveal.
+
+   Stage 1 (0–2s):  hero logo, full-screen prominence, no other elements.
+   Stage 2 (2–3s):  logo shrinks + slides to left third while the right
+                    column fades in with a subtle upward translate.
+   Stage 3 (3s+):   resting two-column layout, dot-matrix digits ticking.
+
+   The cinematic motion is driven entirely by CSS animations (see
+   ddm_style.css → .countdown-cinematic). The slideshow JS picks this
+   up via <template data-splash-id="countdown"> and runs the existing
+   countdown driver against the [data-countdown="..."] hooks. Pause
+   integration: togglePause() in slideshow.html toggles `.is-paused`
+   on .countdown-cinematic to freeze both animations and the live tick. #}
+<div class="splash-card splash-card-dark countdown-cinematic">
     <div class="splash-serape-band splash-serape-band--top"></div>
 
-    <div class="countdown-stage">
+    <img class="countdown-hero-logo"
+         src="{{ url_for('static', filename='img/ddm_master.png') }}"
+         alt="Derby de Mayo"
+         onerror="this.outerHTML='<div class=&quot;splash-logo-placeholder countdown-hero-logo&quot;>Derby de Mayo</div>'" />
+
+    <div class="countdown-right-column">
         <div class="countdown-eyebrow">Post Time Countdown</div>
         <div class="countdown-title">Derby de Mayo 2026</div>
 
@@ -61,13 +76,7 @@
             </div>
         </div>
 
-        <div class="countdown-footer">
-            <img class="countdown-footer-logo"
-                 src="{{ url_for('static', filename='img/ddm_master.png') }}"
-                 alt="DDM"
-                 onerror="this.style.display='none'" />
-            <div class="countdown-footer-text">Saturday · May 2 · Post Time 6:57 PM ET</div>
-        </div>
+        <div class="countdown-footer-text">Saturday · May 2 · Post Time 6:57 PM ET</div>
     </div>
 
     <div class="splash-serape-band splash-serape-band--bottom"></div>

@@ -252,10 +252,15 @@
     }
 
     // ---- Per-slide behavior -----------------------------------------
-    // Visual init only — no pausable timers live here. Countdown ticking
-    // is independent of pause (we want real time to keep elapsing on the
-    // countdown even when the slideshow is paused for review). The QA
-    // reveal timer is pausable and moved to startSlideTimers().
+    // Visual init for the entering slide. The QA reveal timer and the
+    // auto-advance timer live in startSlideTimers (so pause can suppress
+    // them); per-slide visual setup that's independent of timers lives
+    // here.
+    //
+    // Phase 1.9: countdown ticking is now ALSO pause-aware. If we enter
+    // the countdown slide while the slideshow is already paused, we
+    // render the cinematic frozen at stage 1 and don't start the tick —
+    // togglePause() restarts both when the user resumes.
     function activateSlideBehavior(layer, slide) {
         // Tear down any countdown from the prior slide on the same layer
         if (countdownTickHandle) {
@@ -264,7 +269,14 @@
         }
 
         if (slide.type === 'splash' && slide.splash_id === 'countdown') {
-            startCountdown(layer);
+            if (isPaused) {
+                // Slideshow is already paused on entry — render the
+                // cinematic frozen at stage 1 and skip the tick.
+                const stageArea = layer.querySelector('.countdown-cinematic');
+                if (stageArea) stageArea.classList.add('is-paused');
+            } else {
+                startCountdown(layer);
+            }
         }
 
         if (slide.type === 'trivia_qa') {
@@ -428,17 +440,38 @@
 
     function togglePause() {
         isPaused = !isPaused;
+        const slide = playlist[idx];
+
         if (isPaused) {
             clearTimers();
+            // Phase 1.9: when pausing on the countdown slide, freeze the
+            // cinematic CSS animations AND clear the live tick. The tick
+            // restart on resume will recompute from real time.
+            if (slide && slide.type === 'splash' && slide.splash_id === 'countdown') {
+                const stageArea = activeLayer.querySelector('.countdown-cinematic');
+                if (stageArea) stageArea.classList.add('is-paused');
+                if (countdownTickHandle) {
+                    clearInterval(countdownTickHandle);
+                    countdownTickHandle = null;
+                }
+            }
             renderOverlay();
         } else {
-            const slide = playlist[idx];
             // On resume the slide restarts fresh from 0 — including the
             // QA reveal sequence. If the answer was visible at pause time
             // it will hide and re-fade as the timer cycles again.
             if (slide && slide.type === 'trivia_qa') {
                 const wrap = activeLayer.querySelector('.trivia-qa-answer-wrap');
                 if (wrap) wrap.classList.remove('is-revealed');
+            }
+            // Phase 1.9: resume the countdown cinematic from where the
+            // CSS animation was frozen, and restart the tick — which
+            // recomputes from real time, so the digits may visibly
+            // "jump" forward by the pause duration.
+            if (slide && slide.type === 'splash' && slide.splash_id === 'countdown') {
+                const stageArea = activeLayer.querySelector('.countdown-cinematic');
+                if (stageArea) stageArea.classList.remove('is-paused');
+                startCountdown(activeLayer);
             }
             if (slide) startSlideTimers(slide);
             renderOverlay();

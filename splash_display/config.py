@@ -13,7 +13,12 @@ file focused on Phase 1 concerns for now.
 # Used for slides where reading-time adaptive scaling doesn't apply.
 # ---------------------------------------------------------------------------
 DEFAULT_SPLASH_DURATION_MS = 12000
-COUNTDOWN_DURATION_MS = 15000
+# Phase 1.9: bumped from 15000 to 18000 to compensate for the 3-second
+# cinematic intro on the countdown splash — leaves ~15s in the resting
+# state where the digits actually tick. The runtime value is read from
+# splash_pages.json's per-entry duration_ms; this constant is the canonical
+# default for any new splash that doesn't specify its own duration.
+COUNTDOWN_DURATION_MS = 18000
 TRANSITION_FADE_MS = 600
 
 # ---------------------------------------------------------------------------
