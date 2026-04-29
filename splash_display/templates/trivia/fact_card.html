@@ -1,10 +1,15 @@
 {# Trivia fact card.
-   Server-side rendering uses {{ headline }}/{{ body }} (when /api/slide/<id>
-   is hit). The slideshow JS clones this template via the hidden cache and
-   substitutes __HEADLINE__ / __BODY__ at runtime — those tokens are placed
-   so they appear verbatim in the cloned innerHTML and get replaced before
-   the layer is painted. #}
-<div class="trivia-card">
+   Server-side rendering uses {{ headline }}/{{ body }}/{{ category }}
+   (when /api/slide/<id> is hit). The slideshow JS clones this template
+   via the hidden cache and substitutes __HEADLINE__ / __BODY__ /
+   __CATEGORY__ at runtime — those tokens are placed so they appear
+   verbatim in the cloned innerHTML and get replaced before the layer is
+   painted.
+
+   Phase 1.11: trivia-card--{category} modifier class drives a category-
+   specific accent bar (::before) and eyebrow color via CSS — see the
+   .trivia-card--* rules in ddm_style.css. #}
+<div class="trivia-card trivia-card--{{ category if category is defined else '__CATEGORY__' }}">
     <div class="splash-serape-band"></div>
     <div class="trivia-eyebrow">DDM Trivia</div>
     <h1 class="trivia-headline">{{ headline if headline is defined else '__HEADLINE__' }}</h1>

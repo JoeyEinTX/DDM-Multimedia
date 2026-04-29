@@ -1,6 +1,6 @@
 [
   {"id": "countdown",  "template": "splash/countdown.html",  "weight": 25, "duration_ms": 18000},
-  {"id": "la_subasta", "template": "splash/la_subasta.html", "weight": 15, "duration_ms": 26000},
+  {"id": "la_subasta", "template": "splash/la_subasta.html", "weight": 15, "duration_ms": 35000},
   {"id": "la_quiniela","template": "splash/la_quiniela.html","weight": 15, "duration_ms": 12000},
   {"id": "derby_dash", "template": "splash/derby_dash.html", "weight": 15, "duration_ms": 12000},
   {"id": "ddm_brand",  "template": "splash/ddm_brand.html",  "weight": 10, "duration_ms": 12000}

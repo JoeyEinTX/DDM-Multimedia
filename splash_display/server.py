@@ -381,11 +381,13 @@ def api_slide(slide_id: str):
                     "trivia/qa_reveal.html",
                     question=card.get("question", ""),
                     answer=card.get("answer", ""),
+                    category=cat,
                 )
             return render_template(
                 "trivia/fact_card.html",
                 headline=card.get("headline", ""),
                 body=card.get("body", ""),
+                category=cat,
             )
         abort(404)
     except Exception as exc:

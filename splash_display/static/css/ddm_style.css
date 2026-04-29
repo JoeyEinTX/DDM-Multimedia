@@ -25,6 +25,14 @@
     --ddm-turquoise:  #00B1B7;
     --ddm-pink:       #F5547C;
 
+    /* Phase 1.11 semantic aliases — same hex values as the existing tokens
+       above, named per the printed party invitation palette so consuming
+       rules read more like the brand brief than the legacy short names. */
+    --ddm-hot-pink:         #F5547C;
+    --ddm-marigold-orange:  #FF6A13;
+    --ddm-mistletoe-green:  #3F8E43;
+    --ddm-sunflower-yellow: #FEC600;
+
     /* Splash-only semantic tokens */
     --splash-card-bg:        linear-gradient(160deg, var(--ddm-card-1) 0%, var(--ddm-card-2) 100%);
     --splash-card-border:    rgba(255, 255, 255, 0.7);
@@ -338,7 +346,12 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 
 /* ---------------------------------------------------------------------
-   Trivia cards (fact + QA) — bigger, TV-friendly typography
+   Trivia cards (fact + QA) — bigger, TV-friendly typography.
+   Phase 1.11: per-category color-coding via .trivia-card--{category}
+   modifier. The category accent bar is rendered as a ::before pseudo
+   above the existing serape band so guests can identify the content
+   type at a glance. Card body / background / text color all unchanged
+   so legibility doesn't regress.
    --------------------------------------------------------------------- */
 .trivia-card {
     width: min(88vw, 1500px);
@@ -352,6 +365,22 @@ img { -webkit-user-drag: none; user-drag: none; }
     text-align: left;
     position: relative;
     overflow: hidden;
+}
+
+/* Category accent bar — 6px solid color cap above the serape band.
+   Default color is scarlet (matches the legacy eyebrow color); each
+   .trivia-card--{category} rule below overrides it. */
+.trivia-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: var(--ddm-scarlet);
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+    z-index: 2;
 }
 
 .trivia-card .splash-serape-band {
@@ -370,6 +399,31 @@ img { -webkit-user-drag: none; user-drag: none; }
     margin-top: 22px;
     margin-bottom: 18px;
 }
+
+/* Per-category color treatment — accent bar (::before) and "DDM TRIVIA"
+   eyebrow text. Body content, headline, background all stay shared. */
+.trivia-card--chapel_downs::before          { background: var(--ddm-cocoa); }
+.trivia-card--chapel_downs .trivia-eyebrow  { color: var(--ddm-cocoa); }
+
+.trivia-card--carry_back::before            { background: var(--ddm-scarlet); }
+.trivia-card--carry_back .trivia-eyebrow    { color: var(--ddm-scarlet); }
+
+.trivia-card--cinco_de_mayo::before         { background: var(--ddm-mistletoe-green); }
+.trivia-card--cinco_de_mayo .trivia-eyebrow { color: var(--ddm-mistletoe-green); }
+
+.trivia-card--mexican_culture::before          { background: var(--ddm-marigold-orange); }
+.trivia-card--mexican_culture .trivia-eyebrow  { color: var(--ddm-marigold-orange); }
+
+.trivia-card--mexican_horse_racing::before          { background: var(--ddm-sunflower-yellow); }
+.trivia-card--mexican_horse_racing .trivia-eyebrow  { color: var(--ddm-sunflower-yellow); }
+
+/* classic_derby is the only category with two colors — Calumet Farm
+   racing silks energy: cocoa accent bar + scarlet eyebrow text. */
+.trivia-card--classic_derby::before         { background: var(--ddm-cocoa); }
+.trivia-card--classic_derby .trivia-eyebrow { color: var(--ddm-scarlet); }
+
+.trivia-card--did_you_know::before          { background: var(--ddm-turquoise); }
+.trivia-card--did_you_know .trivia-eyebrow  { color: var(--ddm-turquoise); }
 
 .trivia-headline {
     font-size: clamp(42px, 5.4vw, 92px);
@@ -660,15 +714,9 @@ img { -webkit-user-drag: none; user-drag: none; }
                      the right while the logo + badge stay anchored on
                      the left
 
-   Timing breakdown (animation duration = 26000ms total slide time):
-     0%      = 0ms    — hero hold begins
-     7.69%   = 2000ms — Stage 2 begins (logo + badge + Card 1 reveal)
-     11.54%  = 3000ms — Stage 2 ends (Card 1 fully visible)
-     45.38%  = 11800ms — Card 1 begins cross-fade out
-     46.92%  = 12200ms — Card 2 fully visible
-     72.31%  = 18800ms — Card 2 begins cross-fade out
-     73.85%  = 19200ms — Card 3 fully visible
-     100%    = 26000ms — slide ends (slideshow advances to next)
+   Timing breakdown — see the matching block on the @keyframes definitions
+   below for the canonical % values. Total slide time is 35000ms (Phase
+   1.11 pacing — was 26000ms in Phase 1.10).
 
    Pause: the slideshow JS toggles `.is-paused` on .subasta-cinematic to
    freeze every CSS animation in place. CSS-driven only — no JS tick to
@@ -756,14 +804,20 @@ img { -webkit-user-drag: none; user-drag: none; }
 .subasta-card {
     position: absolute;
     top: 50%;
-    left: 0;
-    right: 0;
+    /* Phase 1.11: inset 5% from stack edges so the splash card's cream
+       background is visible around each colored panel — cards read as
+       discrete "explainer cards on a tabletop" rather than full-bleed
+       color blocks. */
+    left: 5%;
+    right: 5%;
     transform: translateY(-50%);
     padding: 5vh 4vw;
+    /* Per-card background colors live on the .subasta-card--N classes
+       below; keep this base rule background-free as a safety fallback. */
     background: linear-gradient(160deg, #FFF8E1 0%, #F0E2BE 100%);
-    border: 1px solid rgba(0, 0, 0, 0.10);
+    border: 1px solid var(--ddm-card-1);
     border-radius: 18px;
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
     color: #1a1a1a;
     text-align: left;
     opacity: 0;
@@ -772,10 +826,41 @@ img { -webkit-user-drag: none; user-drag: none; }
     will-change: opacity;
 }
 
+/* Phase 1.11 per-card colored backgrounds — each card gets a distinct
+   brand-palette panel so the carousel reads as three different beats
+   rather than three identical cards with different copy. Title + body
+   text colors are tuned for legibility against each background. */
+.subasta-card--1 {
+    background: var(--ddm-hot-pink);
+}
+.subasta-card--1 .subasta-card-title,
+.subasta-card--1 .subasta-card-body {
+    color: var(--ddm-card-1);
+}
+
+.subasta-card--2 {
+    background: var(--ddm-turquoise);
+}
+.subasta-card--2 .subasta-card-title,
+.subasta-card--2 .subasta-card-body {
+    color: var(--ddm-card-1);
+}
+
+.subasta-card--3 {
+    background: var(--ddm-marigold-orange);
+}
+.subasta-card--3 .subasta-card-title,
+.subasta-card--3 .subasta-card-body {
+    /* Cocoa over orange — warmth contrast that reads as "grounded
+       wisdom" rather than hype. */
+    color: var(--ddm-cocoa);
+}
+
 .subasta-card-title {
     font-size: clamp(30px, 3.4vw, 56px);
     font-weight: 900;
     line-height: 1.1;
+    /* Color is set per-card above; this is just the legacy fallback. */
     color: var(--ddm-scarlet);
     margin: 0 0 24px;
     letter-spacing: 0.5px;
@@ -789,40 +874,51 @@ img { -webkit-user-drag: none; user-drag: none; }
     margin: 0;
 }
 
-/* Each card runs the same 26-second animation, but its keyframes encode
-   when in the slide it's visible. ease-in-out for the cross-fade easing. */
+/* Each card runs the same 35-second animation, but its keyframes encode
+   when in the slide it's visible. ease-in-out for the cross-fade easing.
+
+   Phase 1.11 timing — slide is now 35000ms total (was 26000ms):
+     0%      = 0ms     — hero hold begins
+     5.71%   = 2000ms  — Stage 2 begins (logo + badge + Card 1 reveal)
+     8.57%   = 3000ms  — Stage 2 ends (Card 1 fully visible)
+     42.29%  = 14800ms — Card 1 begins cross-fade out
+     43.43%  = 15200ms — Card 2 fully visible (cross-fade midpoint @ 15s)
+     70.86%  = 24800ms — Card 2 begins cross-fade out
+     72.00%  = 25200ms — Card 3 fully visible (cross-fade midpoint @ 25s)
+     100%    = 35000ms — slide ends (slideshow advances to next)
+   Card 1 dwell = 12s; Card 2 dwell = 10s; Card 3 dwell = 10s. */
 .subasta-card--1 {
-    animation: subastaCard1 26000ms ease-in-out 0ms forwards;
+    animation: subastaCard1 35000ms ease-in-out 0ms forwards;
 }
 @keyframes subastaCard1 {
     0%      { opacity: 0; }
-    7.69%   { opacity: 0; }   /* hero hold ends */
-    11.54%  { opacity: 1; }   /* fully visible after stage-2 reveal */
-    45.38%  { opacity: 1; }   /* hold through Card 1 dwell */
-    46.92%  { opacity: 0; }   /* cross-faded out */
+    5.71%   { opacity: 0; }   /* hero hold ends */
+    8.57%   { opacity: 1; }   /* fully visible after stage-2 reveal */
+    42.29%  { opacity: 1; }   /* hold through Card 1 dwell (12s) */
+    43.43%  { opacity: 0; }   /* cross-faded out */
     100%    { opacity: 0; }
 }
 
 .subasta-card--2 {
-    animation: subastaCard2 26000ms ease-in-out 0ms forwards;
+    animation: subastaCard2 35000ms ease-in-out 0ms forwards;
 }
 @keyframes subastaCard2 {
     0%      { opacity: 0; }
-    45.38%  { opacity: 0; }
-    46.92%  { opacity: 1; }
-    72.31%  { opacity: 1; }
-    73.85%  { opacity: 0; }
+    42.29%  { opacity: 0; }
+    43.43%  { opacity: 1; }
+    70.86%  { opacity: 1; }   /* hold through Card 2 dwell (10s) */
+    72.00%  { opacity: 0; }
     100%    { opacity: 0; }
 }
 
 .subasta-card--3 {
-    animation: subastaCard3 26000ms ease-in-out 0ms forwards;
+    animation: subastaCard3 35000ms ease-in-out 0ms forwards;
 }
 @keyframes subastaCard3 {
     0%      { opacity: 0; }
-    72.31%  { opacity: 0; }
-    73.85%  { opacity: 1; }
-    100%    { opacity: 1; }   /* stays visible to end */
+    70.86%  { opacity: 0; }
+    72.00%  { opacity: 1; }
+    100%    { opacity: 1; }   /* stays visible to end (10s dwell) */
 }
 
 /* Pause integration — added by JS togglePause when the slideshow is

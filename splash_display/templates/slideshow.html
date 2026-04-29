@@ -182,15 +182,19 @@
         }
         if (slide.type === 'trivia_fact') {
             const data = slide.data || {};
+            // Phase 1.11: __CATEGORY__ feeds the trivia-card--{cat} modifier
+            // class so CSS can drive a per-category accent bar + eyebrow color.
             return triviaFactTpl
                 .replace(/__HEADLINE__/g, escapeHtml(data.headline))
-                .replace(/__BODY__/g, escapeHtml(data.body));
+                .replace(/__BODY__/g, escapeHtml(data.body))
+                .replace(/__CATEGORY__/g, escapeHtml(slide.category || ''));
         }
         if (slide.type === 'trivia_qa') {
             const data = slide.data || {};
             return triviaQaTpl
                 .replace(/__QUESTION__/g, escapeHtml(data.question))
-                .replace(/__ANSWER__/g, escapeHtml(data.answer));
+                .replace(/__ANSWER__/g, escapeHtml(data.answer))
+                .replace(/__CATEGORY__/g, escapeHtml(slide.category || ''));
         }
         return '<div class="splash-card"><div class="splash-headline">Unknown slide</div></div>';
     }
