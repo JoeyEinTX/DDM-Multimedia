@@ -40,6 +40,12 @@
     --splash-text-muted:     #555;
     --splash-text-strong:    #1a1a1a;
 
+    /* Phase 1.13: page-level backdrop gradient — replaces the prior solid
+       black around the splash card with a warm cream-to-marigold diagonal
+       so the cards feel like they're sitting on a brand-colored
+       tablecloth rather than floating in negative space. */
+    --ddm-page-bg: linear-gradient(135deg, #FFF6E5 0%, #FFD89A 50%, #FFB155 100%);
+
     /* Dot-matrix colors (splash-local — NOT the dashboard's amber bulbs) */
     --splash-dot-off:        rgba(255, 198, 0, 0.10);
     --splash-dot-on:         #FEC600;
@@ -61,7 +67,13 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #000;
+    /* Phase 1.13: warm cream-to-marigold backdrop (replaces solid #000) so
+       the gap between the splash card and the screen edge reads as brand
+       atmosphere, not negative space. The gradient lives on body so the
+       fixed .slideshow-stage and .slide layers above can stay transparent
+       — keeps transitions clean (entering slide doesn't drag a backdrop
+       with it during zoom-in / slide-up). */
+    background: var(--ddm-page-bg);
     color: var(--ddm-jade);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
                  Ubuntu, sans-serif;
@@ -77,7 +89,9 @@ img { -webkit-user-drag: none; user-drag: none; }
 .slideshow-stage {
     position: fixed;
     inset: 0;
-    background: #000;
+    /* Phase 1.13: transparent so the body's --ddm-page-bg shows through.
+       The stage no longer paints its own backdrop. */
+    background: transparent;
     overflow: hidden;
 }
 
@@ -96,7 +110,12 @@ img { -webkit-user-drag: none; user-drag: none; }
         clip-path var(--transition-fade-ms, 600ms) ease-in-out;
     will-change: opacity, transform, clip-path;
     pointer-events: none;
-    background: #000;
+    /* Phase 1.13: transparent so the body's --ddm-page-bg shows around
+       the splash card. Previously #000 painted a solid black layer above
+       body. Each slide's visible content (.splash-card / .trivia-card)
+       still has its own opaque background, so cards remain fully
+       composited over the gradient. */
+    background: transparent;
 }
 
 .slide.is-active {
@@ -256,10 +275,16 @@ img { -webkit-user-drag: none; user-drag: none; }
    horizontally before they hit the height cap.
    Phase 1.9: dropped margin-bottom from 28px to 1.5vh so the tagline/badge
    cluster sits ~2vh below the logo instead of looking stranded. CSS-only
-   single-rule change applies uniformly across all four splash templates. */
+   single-rule change applies uniformly across all four splash templates.
+   Phase 1.12: max-height trimmed from 60vh → 52vh to stop the COMING SOON
+   badge from being pushed below the .splash-card frame on 1080p. With the
+   8vh top padding + 1.5vh inter-element gaps + tagline + badge, the prior
+   60vh hero overflowed the 920px card cap by ~50px on la_quiniela /
+   derby_dash. Logo still occupies >50% of card height — visual hero
+   prominence preserved. */
 .splash-hero-logo {
     max-width: 85%;
-    max-height: 60vh;
+    max-height: 52vh;
     height: auto;
     display: block;
     /* Phase 1.10: margin-bottom dropped to 0 — the .splash-card flex `gap`
@@ -390,14 +415,20 @@ img { -webkit-user-drag: none; user-drag: none; }
     top: 0;
 }
 
+/* Phase 1.12: eyebrow bumped ~2x larger so it functions as a real
+   category header instead of footnote text. The Phase 1.11 per-category
+   colors were getting buried at the prior small size. Letter-spacing
+   moved to em units so it scales with the larger font. Margin-bottom
+   bumped to give the headline below proper breathing room at the new
+   eyebrow height. */
 .trivia-eyebrow {
     text-transform: uppercase;
-    letter-spacing: 4px;
-    font-size: clamp(14px, 1.2vw, 20px);
+    letter-spacing: 0.15em;
+    font-size: clamp(20px, 1.8vw, 32px);
     font-weight: 800;
     color: var(--ddm-scarlet);
     margin-top: 22px;
-    margin-bottom: 18px;
+    margin-bottom: 24px;
 }
 
 /* Per-category color treatment — accent bar (::before) and "DDM TRIVIA"
@@ -482,9 +513,10 @@ img { -webkit-user-drag: none; user-drag: none; }
    We use .splash-matrix-* names so we never collide with protected
    dashboard classes.
 
-   Phase 1.9 cinematic layout overrides come further down. The shared text
-   styles below (.countdown-eyebrow / .countdown-title) are reused by the
-   new layout — only positioning and inner spacing changed.
+   Phase 1.9 cinematic layout overrides come further down. The shared
+   .countdown-eyebrow text style below is reused by that layout. Phase
+   1.13: removed the orphaned .countdown-title rule when the redundant
+   "Derby de Mayo 2026" title was dropped from countdown.html.
    --------------------------------------------------------------------- */
 .countdown-eyebrow {
     text-transform: uppercase;
@@ -493,16 +525,6 @@ img { -webkit-user-drag: none; user-drag: none; }
     font-weight: 700;
     color: var(--ddm-yellow);
     opacity: 0.85;
-}
-
-.countdown-title {
-    font-size: clamp(48px, 6.4vw, 110px);
-    font-weight: 900;
-    letter-spacing: 4px;
-    text-transform: uppercase;
-    color: var(--ddm-jade);
-    text-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
-    line-height: 1.0;
 }
 
 .splash-matrix-row {
@@ -572,6 +594,19 @@ img { -webkit-user-drag: none; user-drag: none; }
     color: rgba(254, 198, 0, 0.55);
     font-weight: 900;
     line-height: 1;
+}
+
+/* Phase 1.13: subtitle line identifying the event being counted down to.
+   Slightly larger / less muted than .countdown-footer-text so it reads as
+   "this is what we're waiting for" while the date line below remains a
+   secondary detail. Sits inside .countdown-right-column so the cinematic
+   Stage-2 fade-in still reveals it as part of the right cluster. */
+.countdown-footer-event {
+    color: rgba(255, 255, 255, 0.92);
+    font-size: clamp(20px, 1.8vw, 32px);
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
 }
 
 .countdown-footer-text {
@@ -671,20 +706,24 @@ img { -webkit-user-drag: none; user-drag: none; }
     animation-play-state: paused;
 }
 
-/* Right-column inner sizing — title is a touch smaller than the original
-   center layout because it shares horizontal space with the digit row. */
+/* Right-column inner sizing.
+   Phase 1.13: removed .countdown-title override (title element dropped
+   from the template). Bumped eyebrow margin-bottom 12 → 22 so the
+   eyebrow→scoreboard gap stays comfortable now that the title spacer
+   is gone. Tightened scoreboard margin-bottom 14 → 6 and the footer
+   stack inter-line margin so the footer cluster reads as visually
+   attached to the scoreboard rather than floating below it. */
 .countdown-right-column .countdown-eyebrow {
-    margin-bottom: 12px;
-}
-.countdown-right-column .countdown-title {
-    font-size: clamp(34px, 4.4vw, 78px);
     margin-bottom: 22px;
 }
 .countdown-right-column .splash-matrix-row {
-    margin: 0 auto 14px;
+    margin: 0 auto 6px;
+}
+.countdown-right-column .countdown-footer-event {
+    margin-top: 8px;
 }
 .countdown-right-column .countdown-footer-text {
-    margin-top: 12px;
+    margin-top: 2px;
 }
 
 /* Smaller dot-matrix digits inside the cinematic layout — the base
@@ -703,34 +742,32 @@ img { -webkit-user-drag: none; user-drag: none; }
     font-size: clamp(28px, 2.8vw, 50px);
 }
 
-/* ---------------------------------------------------------------------
-   LA SUBASTA — Phase 1.10 cinematic three-stage primer
+/* ========================================================================
+   DDM 2027 PLANNED RESTORE — La Subasta cinematic primer
+   Archived in Phase 1.12. To restore: uncomment this entire block AND
+   restore templates/splash/_future/la_subasta_cinematic.html to
+   templates/splash/la_subasta.html AND set splash_pages.json duration_ms
+   back to 35000 AND uncomment the la_subasta pause-integration blocks in
+   slideshow.html (search for "DDM 2027 PLANNED RESTORE" markers).
 
-   Stage 1 (0–2s):   hero logo, full-screen prominence, no other elements
-   Stage 2 (2–3s):   logo shrinks + slides to left third; COMING SOON
-                     badge fades in below it; right-column Card 1 reveals
-                     with a subtle upward translate + fade
-   Stage 3 (3–26s):  card carousel cycles Card 1 → Card 2 → Card 3 on
-                     the right while the logo + badge stay anchored on
-                     the left
+   The shared brand color tokens (--ddm-hot-pink, --ddm-turquoise,
+   --ddm-marigold-orange, --ddm-mistletoe-green) referenced by these rules
+   stay live in :root because the trivia category color-coding (Phase
+   1.11) reuses them — they are not exclusive to this cinematic.
 
-   Timing breakdown — see the matching block on the @keyframes definitions
-   below for the canonical % values. Total slide time is 35000ms (Phase
-   1.11 pacing — was 26000ms in Phase 1.10).
+   Inner explanatory comments from Phase 1.10/1.11 were stripped on
+   archive so the wrapping comment doesn't run into nested-comment
+   issues. The narrative is preserved in git history (commits 1e08989
+   and acf15c8 on `main`).
+   ======================================================================== */
 
-   Pause: the slideshow JS toggles `.is-paused` on .subasta-cinematic to
-   freeze every CSS animation in place. CSS-driven only — no JS tick to
-   manage (unlike the countdown).
-   --------------------------------------------------------------------- */
+/*
 .subasta-cinematic {
-    /* Override the .splash-card flex layout — children are positioned
-       absolutely so the cinematic can move them around the card. */
     display: block;
     padding: 0;
     overflow: hidden;
 }
 
-/* Hero logo — animates from full-screen center to left-third resting. */
 .subasta-hero-logo {
     position: absolute;
     top: 50%;
@@ -761,9 +798,6 @@ img { -webkit-user-drag: none; user-drag: none; }
     }
 }
 
-/* COMING SOON badge — sits below the resting-state logo, fades in
-   alongside the logo's stage-2 zoom. Styled like the existing yellow
-   --soon tag but sized smaller for the constrained left-column slot. */
 .subasta-coming-soon-badge {
     position: absolute;
     top: 76%;
@@ -790,9 +824,6 @@ img { -webkit-user-drag: none; user-drag: none; }
     to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* Card stack — defines the right-column box. Cards inside are absolutely
-   positioned and stacked at the same coordinates; only one is visible at
-   a time via opacity keyframes. */
 .subasta-card-stack {
     position: absolute;
     top: 6%;
@@ -804,16 +835,10 @@ img { -webkit-user-drag: none; user-drag: none; }
 .subasta-card {
     position: absolute;
     top: 50%;
-    /* Phase 1.11: inset 5% from stack edges so the splash card's cream
-       background is visible around each colored panel — cards read as
-       discrete "explainer cards on a tabletop" rather than full-bleed
-       color blocks. */
     left: 5%;
     right: 5%;
     transform: translateY(-50%);
     padding: 5vh 4vw;
-    /* Per-card background colors live on the .subasta-card--N classes
-       below; keep this base rule background-free as a safety fallback. */
     background: linear-gradient(160deg, #FFF8E1 0%, #F0E2BE 100%);
     border: 1px solid var(--ddm-card-1);
     border-radius: 18px;
@@ -821,15 +846,9 @@ img { -webkit-user-drag: none; user-drag: none; }
     color: #1a1a1a;
     text-align: left;
     opacity: 0;
-    /* will-change hints help Chromium keep the layer composited so the
-       cross-fades stay smooth on the Pi 5. */
     will-change: opacity;
 }
 
-/* Phase 1.11 per-card colored backgrounds — each card gets a distinct
-   brand-palette panel so the carousel reads as three different beats
-   rather than three identical cards with different copy. Title + body
-   text colors are tuned for legibility against each background. */
 .subasta-card--1 {
     background: var(--ddm-hot-pink);
 }
@@ -851,8 +870,6 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 .subasta-card--3 .subasta-card-title,
 .subasta-card--3 .subasta-card-body {
-    /* Cocoa over orange — warmth contrast that reads as "grounded
-       wisdom" rather than hype. */
     color: var(--ddm-cocoa);
 }
 
@@ -860,7 +877,6 @@ img { -webkit-user-drag: none; user-drag: none; }
     font-size: clamp(30px, 3.4vw, 56px);
     font-weight: 900;
     line-height: 1.1;
-    /* Color is set per-card above; this is just the legacy fallback. */
     color: var(--ddm-scarlet);
     margin: 0 0 24px;
     letter-spacing: 0.5px;
@@ -874,28 +890,15 @@ img { -webkit-user-drag: none; user-drag: none; }
     margin: 0;
 }
 
-/* Each card runs the same 35-second animation, but its keyframes encode
-   when in the slide it's visible. ease-in-out for the cross-fade easing.
-
-   Phase 1.11 timing — slide is now 35000ms total (was 26000ms):
-     0%      = 0ms     — hero hold begins
-     5.71%   = 2000ms  — Stage 2 begins (logo + badge + Card 1 reveal)
-     8.57%   = 3000ms  — Stage 2 ends (Card 1 fully visible)
-     42.29%  = 14800ms — Card 1 begins cross-fade out
-     43.43%  = 15200ms — Card 2 fully visible (cross-fade midpoint @ 15s)
-     70.86%  = 24800ms — Card 2 begins cross-fade out
-     72.00%  = 25200ms — Card 3 fully visible (cross-fade midpoint @ 25s)
-     100%    = 35000ms — slide ends (slideshow advances to next)
-   Card 1 dwell = 12s; Card 2 dwell = 10s; Card 3 dwell = 10s. */
 .subasta-card--1 {
     animation: subastaCard1 35000ms ease-in-out 0ms forwards;
 }
 @keyframes subastaCard1 {
     0%      { opacity: 0; }
-    5.71%   { opacity: 0; }   /* hero hold ends */
-    8.57%   { opacity: 1; }   /* fully visible after stage-2 reveal */
-    42.29%  { opacity: 1; }   /* hold through Card 1 dwell (12s) */
-    43.43%  { opacity: 0; }   /* cross-faded out */
+    5.71%   { opacity: 0; }
+    8.57%   { opacity: 1; }
+    42.29%  { opacity: 1; }
+    43.43%  { opacity: 0; }
     100%    { opacity: 0; }
 }
 
@@ -906,7 +909,7 @@ img { -webkit-user-drag: none; user-drag: none; }
     0%      { opacity: 0; }
     42.29%  { opacity: 0; }
     43.43%  { opacity: 1; }
-    70.86%  { opacity: 1; }   /* hold through Card 2 dwell (10s) */
+    70.86%  { opacity: 1; }
     72.00%  { opacity: 0; }
     100%    { opacity: 0; }
 }
@@ -918,12 +921,9 @@ img { -webkit-user-drag: none; user-drag: none; }
     0%      { opacity: 0; }
     70.86%  { opacity: 0; }
     72.00%  { opacity: 1; }
-    100%    { opacity: 1; }   /* stays visible to end (10s dwell) */
+    100%    { opacity: 1; }
 }
 
-/* Pause integration — added by JS togglePause when the slideshow is
-   paused AND the active slide is la_subasta. Freezes every animation in
-   the cinematic at its current frame; remove the class to resume. */
 .subasta-cinematic.is-paused .subasta-hero-logo,
 .subasta-cinematic.is-paused .subasta-coming-soon-badge,
 .subasta-cinematic.is-paused .subasta-card--1,
@@ -931,6 +931,7 @@ img { -webkit-user-drag: none; user-drag: none; }
 .subasta-cinematic.is-paused .subasta-card--3 {
     animation-play-state: paused;
 }
+*/
 
 /* ---------------------------------------------------------------------
    Debug / FPS overlay (toggle with `d`)

@@ -20,8 +20,11 @@
          onerror="this.outerHTML='<div class=&quot;splash-logo-placeholder countdown-hero-logo&quot;>Derby de Mayo</div>'" />
 
     <div class="countdown-right-column">
+        {# Phase 1.13: removed the redundant "Derby de Mayo 2026" title —
+           brand is already conveyed by the hero logo on the left. The
+           freed vertical space lets the scoreboard rise toward the eyebrow
+           and pulls the footer block tighter to the digits. #}
         <div class="countdown-eyebrow">Post Time Countdown</div>
-        <div class="countdown-title">Derby de Mayo 2026</div>
 
         <div class="splash-matrix-row">
             <div class="splash-matrix-segment">
@@ -76,6 +79,13 @@
             </div>
         </div>
 
+        {# Phase 1.13: footer block — "Kentucky Derby 2026" subtitle line
+           identifies the event being counted down to (replacing the
+           removed Derby de Mayo title), with the date/post-time line
+           below it as a muted detail. Both lines stay inside
+           .countdown-right-column so the cinematic Stage-2 fade-in
+           reveal still applies to the whole cluster as one unit. #}
+        <div class="countdown-footer-event">Kentucky Derby 2026</div>
         <div class="countdown-footer-text">Saturday · May 2 · Post Time 6:57 PM ET</div>
     </div>
 

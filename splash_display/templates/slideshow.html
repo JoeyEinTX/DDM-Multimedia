@@ -285,6 +285,10 @@
             }
         }
 
+        /* DDM 2027 PLANNED RESTORE — la_subasta cinematic pause integration.
+           Archived in Phase 1.12 alongside the cinematic CSS + template.
+           Uncomment when restoring the cinematic for DDM 2027. */
+        /*
         if (slide.type === 'splash' && slide.splash_id === 'la_subasta') {
             if (isPaused) {
                 // Freeze the subasta cinematic at stage 1 if entering
@@ -293,6 +297,7 @@
                 if (stageArea) stageArea.classList.add('is-paused');
             }
         }
+        */
 
         if (slide.type === 'trivia_qa') {
             // Always start with the answer hidden; reveal is scheduled
@@ -470,6 +475,10 @@
                     countdownTickHandle = null;
                 }
             }
+            /* DDM 2027 PLANNED RESTORE — la_subasta pause-path integration.
+               Archived in Phase 1.12. Uncomment to re-enable when the
+               cinematic primer returns for DDM 2027. */
+            /*
             // Phase 1.10: pausing on la_subasta freezes the cinematic +
             // card carousel via CSS animation-play-state. No JS tick to
             // manage — the whole reveal is keyframe-driven.
@@ -477,6 +486,7 @@
                 const stageArea = activeLayer.querySelector('.subasta-cinematic');
                 if (stageArea) stageArea.classList.add('is-paused');
             }
+            */
             renderOverlay();
         } else {
             // On resume the slide restarts fresh from 0 — including the
@@ -495,6 +505,10 @@
                 if (stageArea) stageArea.classList.remove('is-paused');
                 startCountdown(activeLayer);
             }
+            /* DDM 2027 PLANNED RESTORE — la_subasta resume-path integration.
+               Archived in Phase 1.12. Uncomment to re-enable when the
+               cinematic primer returns for DDM 2027. */
+            /*
             // Phase 1.10: resume la_subasta — CSS animations continue
             // from the frame they were frozen at, so the current card
             // stays visible until its remaining dwell elapses.
@@ -502,6 +516,7 @@
                 const stageArea = activeLayer.querySelector('.subasta-cinematic');
                 if (stageArea) stageArea.classList.remove('is-paused');
             }
+            */
             if (slide) startSlideTimers(slide);
             renderOverlay();
         }

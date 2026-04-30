@@ -1,42 +1,12 @@
-{# La Subasta splash — Phase 1.10 cinematic three-stage primer.
-
-   Stage 1 (0–2s):   hero logo, full-screen prominence, no other elements.
-   Stage 2 (2–3s):   logo shrinks + slides to left third; COMING SOON
-                     badge fades in below it; right-column Card 1 reveals.
-   Stage 3 (3–26s):  card carousel cycles Card 1 → Card 2 → Card 3 on the
-                     right while the logo + badge stay anchored on the left.
-
-   The cinematic motion is driven entirely by CSS animations (see
-   ddm_style.css → .subasta-cinematic). Total slide duration is 26000ms,
-   set in content/splash_pages.json. Pause integration: togglePause() in
-   slideshow.html toggles `.is-paused` on .subasta-cinematic to freeze
-   every animation in place; CSS-driven only — no JS tick to manage. #}
-<div class="splash-card subasta-cinematic">
+<div class="splash-card">
     <div class="splash-serape-band splash-serape-band--top"></div>
 
-    <img class="subasta-hero-logo"
+    <img class="splash-hero-logo"
          src="{{ url_for('static', filename='img/la_subasta.png') }}"
          alt="La Subasta"
-         onerror="this.outerHTML='<div class=&quot;splash-logo-placeholder subasta-hero-logo&quot;>La Subasta</div>'" />
+         onerror="this.outerHTML='<div class=&quot;splash-logo-placeholder&quot;>La Subasta</div>'" />
 
-    <div class="subasta-coming-soon-badge">Coming Soon</div>
-
-    <div class="subasta-card-stack">
-        <div class="subasta-card subasta-card--1">
-            <h2 class="subasta-card-title">Wait — Are These Even Legal?</h2>
-            <p class="subasta-card-body">Calcutta auctions are restricted or outright banned in many US states under gambling laws. Wisconsin bans them. Montana and Louisiana require permits. The USGA bans them in amateur golf. Tonight is fine — we're a private gathering, not a public lottery. But maybe don't post the photos.</p>
-        </div>
-
-        <div class="subasta-card subasta-card--2">
-            <h2 class="subasta-card-title">What's a Calcutta Auction?</h2>
-            <p class="subasta-card-body">Each horse is auctioned to the highest bidder. The winning bids form the prize pool. If your horse wins, you take the pool. Strategy meets nerve meets a little luck.</p>
-        </div>
-
-        <div class="subasta-card subasta-card--3">
-            <h2 class="subasta-card-title">The Calcutta Strategy</h2>
-            <p class="subasta-card-body">Longshots are usually undervalued. Favorites are usually overpriced. The pros bid where the math works — not where their heart wants to.</p>
-        </div>
-    </div>
+    <div class="splash-tag splash-tag--soon">Coming Soon</div>
 
     <div class="splash-serape-band splash-serape-band--bottom"></div>
 </div>
