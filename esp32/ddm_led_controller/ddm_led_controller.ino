@@ -1632,13 +1632,12 @@ void animChaos() {
     unsigned long now = millis();
     float deltaT = (float)(now - chaosLastUpdate) / 1000.0f;  // seconds since last update
     chaosLastUpdate = now;
-    (void)deltaT;
 
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
         uint8_t count = CUP_LED_COUNT[cup];
 
         // Advance rotation
-        chaosRotation[cup] += chaosSpeed[cup];
+        chaosRotation[cup] += chaosSpeed[cup] * deltaT * 60.0f;
         if (chaosRotation[cup] >= 1.0f) chaosRotation[cup] -= 1.0f;
 
         uint8_t rotateOffset = (uint8_t)(chaosRotation[cup] * count);
