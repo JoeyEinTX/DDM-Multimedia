@@ -2117,6 +2117,205 @@ function closeAnimationsModal() {
     modal.classList.remove('active');
 }
 
+// =====================================================================
+// Animation Library Modal
+// =====================================================================
+
+let animLibRegistry = {};       // full registry from Flask
+let animLibAssignments = {};    // current slot → animation assignments
+let animLibPreviewSlot = null;  // slot ID currently being previewed
+let animLibPriorMode = null;    // animation running before modal opened
+
+// Open modal — dim cups, load registry and assignments
+async function openAnimLibModal() {
+    // Store current mode before dimming
+    animLibPriorMode = document.getElementById('current-mode')?.textContent.trim() || 'STANDBY';
+
+    // Dim cups while browsing
+    try {
+        await fetch('/api/led/all_off', { method: 'POST' });
+    } catch(e) {}
+
+    document.getElementById('anim-lib-modal').classList.add('active');
+    await loadAnimLib();
+}
+
+function closeAnimLibModal() {
+    document.getElementById('anim-lib-modal').classList.remove('active');
+
+    // Restore prior animation
+    const restore = animLibPriorMode || 'STANDBY';
+    if (restore && restore !== 'DISCONNECTED') {
+        fetch(`/api/animation/${restore}`, { method: 'POST' }).catch(() => {});
+    }
+
+    animLibPreviewSlot = null;
+    animLibPriorMode = null;
+
+    // Clear active state on all preview buttons
+    document.querySelectorAll('.anim-lib-preview-btn.active').forEach(btn => {
+        btn.classList.remove('active');
+    });
+}
+
+// Load registry + assignments from Flask
+async function loadAnimLib() {
+    try {
+        const response = await fetch('/api/animations/registry');
+        const data = await response.json();
+
+        if (data.success) {
+            animLibRegistry = data.registry;
+            animLibAssignments = data.assignments;
+            renderAnimLibSlots();
+        } else {
+            showNotification('Could not load animation library', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading animation library:', error);
+        showNotification('Error loading animation library', 'error');
+    }
+}
+
+// Render all slot rows from registry
+function renderAnimLibSlots() {
+    const states = (animLibRegistry.race_states || []);
+    const animations = (animLibRegistry.animations || {});
+
+    states.forEach(state => {
+        const container = document.getElementById(`slots-${state.id}`);
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        state.slots.forEach(slot => {
+            const currentAnim = animLibAssignments[slot.id] || slot.default;
+
+            // Slot row
+            const row = document.createElement('div');
+            row.className = 'anim-lib-slot-row';
+
+            // Label
+            const label = document.createElement('span');
+            label.className = 'anim-lib-slot-label';
+            label.textContent = slot.label;
+
+            // Dropdown
+            const select = document.createElement('select');
+            select.className = 'anim-lib-select';
+            select.dataset.slotId = slot.id;
+
+            // Populate options — filter to relevant category + ALL
+            Object.entries(animations).forEach(([key, anim]) => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = anim.name;
+                if (key === currentAnim) option.selected = true;
+                select.appendChild(option);
+            });
+
+            // Update description on change
+            select.addEventListener('change', () => {
+                animLibAssignments[slot.id] = select.value;
+                updateSlotDescription(slot.id, select.value);
+            });
+
+            // Preview button
+            const previewBtn = document.createElement('button');
+            previewBtn.className = 'anim-lib-preview-btn';
+            previewBtn.textContent = '▶ Preview';
+            previewBtn.dataset.slotId = slot.id;
+            previewBtn.addEventListener('click', () => {
+                previewAnimation(slot.id, select.value, previewBtn);
+            });
+
+            row.appendChild(label);
+            row.appendChild(select);
+            row.appendChild(previewBtn);
+
+            // Description row
+            const desc = document.createElement('div');
+            desc.className = 'anim-lib-description';
+            desc.id = `anim-desc-${slot.id}`;
+            desc.textContent = animations[currentAnim]?.description || '';
+
+            container.appendChild(row);
+            container.appendChild(desc);
+        });
+    });
+}
+
+// Update description text when dropdown changes
+function updateSlotDescription(slotId, animKey) {
+    const desc = document.getElementById(`anim-desc-${slotId}`);
+    if (desc) {
+        const anim = (animLibRegistry.animations || {})[animKey];
+        desc.textContent = anim?.description || '';
+    }
+}
+
+// Preview an animation on the cups
+async function previewAnimation(slotId, animKey, btnElement) {
+    // Clear previous active button
+    document.querySelectorAll('.anim-lib-preview-btn.active').forEach(btn => {
+        btn.classList.remove('active');
+        btn.textContent = '▶ Preview';
+    });
+
+    animLibPreviewSlot = slotId;
+    btnElement.classList.add('active');
+    btnElement.textContent = '■ Stop';
+
+    // Update preview label
+    const label = document.getElementById('anim-lib-preview-label');
+    const animName = (animLibRegistry.animations || {})[animKey]?.name || animKey;
+    if (label) label.textContent = `Previewing: ${animName}`;
+
+    // Fire animation
+    try {
+        await fetch(`/api/animation/${animKey}`, { method: 'POST' });
+    } catch(e) {
+        showNotification('Could not preview animation', 'error');
+    }
+}
+
+// Save current assignments to Flask
+async function animLibSave() {
+    try {
+        const response = await fetch('/api/animations/assignments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(animLibAssignments)
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification('Animation assignments saved!', 'success');
+        } else {
+            showNotification('Save failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving assignments:', error);
+        showNotification('Save error', 'error');
+    }
+}
+
+// Reset assignments to registry defaults
+async function animLibReset() {
+    const registry = animLibRegistry;
+    const states = registry.race_states || [];
+
+    // Rebuild defaults from registry
+    states.forEach(state => {
+        state.slots.forEach(slot => {
+            animLibAssignments[slot.id] = slot.default;
+        });
+    });
+
+    renderAnimLibSlots();
+    showNotification('Reset to defaults', 'success');
+}
+
 // Animations Modal - Trigger animation and close
 async function triggerAnimation(animName, buttonElement) {
     if (raceControlMode === 'auto') {
