@@ -226,6 +226,18 @@ unsigned long starLastFlicker[NUM_CUPS + 1];   // millis of last flicker per cup
 uint8_t       starFlickerLED[NUM_CUPS + 1];    // which LED is currently flickering
 bool          starFlickering[NUM_CUPS + 1];    // true if cup has an active flicker
 unsigned long starFlickerDuration[NUM_CUPS + 1]; // how long this flicker lasts
+
+// MONEY_RAIN state — gold comets per cup, accelerating over time
+unsigned long moneyRainStart = 0;
+float         moneyRainRotation[NUM_CUPS + 1];
+float         moneyRainBaseSpeed[NUM_CUPS + 1];
+unsigned long moneyRainLastUpdate = 0;
+
+// TENSION_BUILD state — rotating amber->red gradient
+unsigned long tensionBuildStart = 0;
+
+// COUNTDOWN_SPIRAL state — teal clock-hand sweep, accelerating
+unsigned long countdownSpiralStart = 0;
 unsigned long finalizeTime = 0;               // millis when RESULTS:FINALIZE received
 
 // RESULTS_DECEL_MS now derived from P.loserDecelSec
@@ -339,6 +351,11 @@ void animSolarFlare();
 void animBreatheTogether();
 void animRippleOut();
 void animStarfield();
+void animMoneyRain();
+void initMoneyRain();
+void animTensionBuild();
+void animHeartbeatStack();
+void animCountdownSpiral();
 
 /**
  * SETUP - Runs once at startup
@@ -925,6 +942,49 @@ String processCommand(String cmd) {
         return "OK:ANIM:STARFIELD";
     }
 
+    // ANIM:MONEY_RAIN - Gold comets per cup, accelerating over time
+    else if (cmd == "ANIM:MONEY_RAIN") {
+        stopAnimation();
+        initMoneyRain();
+        animStartTime = millis();
+        currentMode = "MONEY_RAIN";
+        currentAnimation = "MONEY_RAIN";
+        animationRunning = true;
+        return "OK:ANIM:MONEY_RAIN";
+    }
+
+    // ANIM:TENSION_BUILD - Rotating gradient amber->red as deadline approaches
+    else if (cmd == "ANIM:TENSION_BUILD") {
+        stopAnimation();
+        tensionBuildStart = millis();
+        animStartTime = millis();
+        currentMode = "TENSION_BUILD";
+        currentAnimation = "TENSION_BUILD";
+        animationRunning = true;
+        return "OK:ANIM:TENSION_BUILD";
+    }
+
+    // ANIM:HEARTBEAT_STACK - Groups of cups pulse in rolling offset waves
+    else if (cmd == "ANIM:HEARTBEAT_STACK") {
+        stopAnimation();
+        animStartTime = millis();
+        currentMode = "HEARTBEAT_STACK";
+        currentAnimation = "HEARTBEAT_STACK";
+        animationRunning = true;
+        return "OK:ANIM:HEARTBEAT_STACK";
+    }
+
+    // ANIM:COUNTDOWN_SPIRAL - Teal clock-hand arc, accelerating sweep
+    else if (cmd == "ANIM:COUNTDOWN_SPIRAL") {
+        stopAnimation();
+        countdownSpiralStart = millis();
+        animStartTime = millis();
+        currentMode = "COUNTDOWN_SPIRAL";
+        currentAnimation = "COUNTDOWN_SPIRAL";
+        animationRunning = true;
+        return "OK:ANIM:COUNTDOWN_SPIRAL";
+    }
+
     // RESULTS:FINALIZE - Begin deceleration of winner chases
     else if (cmd == "RESULTS:FINALIZE") {
         resultsFinalizing = true;
@@ -1096,6 +1156,14 @@ void runAnimation() {
         animRippleOut();
     } else if (currentAnimation == "STARFIELD") {
         animStarfield();
+    } else if (currentAnimation == "MONEY_RAIN") {
+        animMoneyRain();
+    } else if (currentAnimation == "TENSION_BUILD") {
+        animTensionBuild();
+    } else if (currentAnimation == "HEARTBEAT_STACK") {
+        animHeartbeatStack();
+    } else if (currentAnimation == "COUNTDOWN_SPIRAL") {
+        animCountdownSpiral();
     }
 }
 
@@ -1485,6 +1553,185 @@ void animStarfield() {
         FastLED.show();
         updatePowerEstimate();
     }
+}
+
+/**
+ * ANIM:MONEY_RAIN
+ * Gold comets spinning around each ring, accelerating over the first 30s.
+ * Each cup has its own random base speed + phase; all share gold color.
+ */
+void initMoneyRain() {
+    moneyRainStart = millis();
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        moneyRainRotation[cup] = (float)random(0, 100) / 100.0f;
+        moneyRainBaseSpeed[cup] = 0.002f + (float)random(0, 8) / 1000.0f;  // 0.002–0.010
+    }
+    moneyRainLastUpdate = millis();
+}
+
+void animMoneyRain() {
+    unsigned long now = millis();
+    float deltaT = (float)(now - moneyRainLastUpdate) / 1000.0f;
+    moneyRainLastUpdate = now;
+
+    // Speed multiplier ramps 1.0x -> 4.0x over 30 seconds, then holds
+    unsigned long elapsed = now - moneyRainStart;
+    float ramp = (float)elapsed / 30000.0f;
+    if (ramp > 1.0f) ramp = 1.0f;
+    float speedMul = 1.0f + ramp * 3.0f;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        moneyRainRotation[cup] += moneyRainBaseSpeed[cup] * deltaT * 60.0f * speedMul;
+        while (moneyRainRotation[cup] >= 1.0f) moneyRainRotation[cup] -= 1.0f;
+
+        uint8_t rotateOffset = (uint8_t)(moneyRainRotation[cup] * count);
+
+        // Comet: bright head, quick fade tail, dim background
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t brightness;
+            if (i == 0) {
+                brightness = 255;
+            } else if (i < 6) {
+                brightness = (uint8_t)(255.0f * (1.0f - (float)i / 6.0f));
+                brightness = (brightness * brightness) / 255;  // quadratic fade
+            } else {
+                brightness = 6;
+            }
+            pattern[i] = CRGB(255, 215, 0);  // gold
+            pattern[i].nscale8(brightness);
+        }
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:TENSION_BUILD
+ * Rotating gradient on every ring; palette migrates from amber-dominant
+ * toward red-dominant over a 60s cycle, then loops.
+ */
+void animTensionBuild() {
+    unsigned long elapsed = millis() - tensionBuildStart;
+    const float ROTATION_PERIOD_MS = 5000.0f;
+    const float TENSION_RAMP_MS = 60000.0f;
+
+    // Tension factor: 0.0 calm amber -> 1.0 urgent red, sawtooth loop
+    float tension = fmod((float)elapsed, TENSION_RAMP_MS) / TENSION_RAMP_MS;
+
+    // Palette endpoints shift with tension
+    // Bright (peak): amber -> red
+    uint8_t hi_g = (uint8_t)(180.0f - tension * 170.0f);  // 180 -> 10
+    // Dim (trough): warm dim -> deep red
+    uint8_t lo_r = (uint8_t)(160.0f - tension * 40.0f);   // 160 -> 120
+    uint8_t lo_g = (uint8_t)(50.0f - tension * 50.0f);    // 50 -> 0
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Slight per-cup phase offset for depth
+        float cupOffset = (float)(cup - 1) / (float)NUM_CUPS * 0.4f;
+        float rot = fmod(((float)elapsed / ROTATION_PERIOD_MS) + cupOffset, 1.0f);
+        uint8_t rotateOffset = (uint8_t)(rot * count);
+
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            float angle = (float)i / (float)count * 2.0f * PI;
+            float w = (cos(angle) + 1.0f) / 2.0f;  // 0.0 to 1.0
+            uint8_t r = (uint8_t)(lo_r * (1.0f - w) + 255.0f * w);
+            uint8_t g = (uint8_t)(lo_g * (1.0f - w) + (float)hi_g * w);
+            pattern[i] = CRGB(r, g, 0);
+        }
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:HEARTBEAT_STACK
+ * 5 groups of 4 cups each. Each group runs a double-thump heartbeat,
+ * phase-offset from neighbors so the pulse rolls across the mantle.
+ */
+void animHeartbeatStack() {
+    unsigned long elapsed = millis() - animStartTime;
+    const float PERIOD_MS = 1500.0f;
+    const int GROUP_SIZE = 4;
+    const int NUM_GROUPS = NUM_CUPS / GROUP_SIZE;  // 5
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        int groupIdx = (cup - 1) / GROUP_SIZE;
+        // Phase offset per group spans ~70% of the period
+        float groupPhase = (float)groupIdx / (float)NUM_GROUPS * 0.7f;
+        float phase = fmod(((float)elapsed / PERIOD_MS) - groupPhase, 1.0f);
+        if (phase < 0.0f) phase += 1.0f;
+
+        // Double-thump heartbeat envelope
+        float pulse;
+        if (phase < 0.10f) {
+            pulse = phase / 0.10f;                          // sharp rise (lub)
+        } else if (phase < 0.22f) {
+            pulse = 1.0f - (phase - 0.10f) / 0.12f;          // fall
+        } else if (phase < 0.32f) {
+            pulse = (phase - 0.22f) / 0.10f * 0.7f;          // smaller rise (dub)
+        } else if (phase < 0.45f) {
+            pulse = 0.7f - (phase - 0.32f) / 0.13f * 0.7f;   // fall
+        } else {
+            pulse = 0.0f;                                    // rest
+        }
+        if (pulse < 0.0f) pulse = 0.0f;
+
+        uint8_t brightness = 20 + (uint8_t)(pulse * 235);
+        CRGB color = CRGB(0, 200, 80);  // betting green
+        color.nscale8(brightness);
+        setCup(cup, color);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:COUNTDOWN_SPIRAL
+ * Each cup ring runs a single teal "clock hand" sweep. Sweep period
+ * tightens from 4000ms to 800ms over 60s, then holds at the fast rate.
+ */
+void animCountdownSpiral() {
+    unsigned long elapsed = millis() - countdownSpiralStart;
+
+    float ramp = (float)elapsed / 60000.0f;
+    if (ramp > 1.0f) ramp = 1.0f;
+    float period = 4000.0f - ramp * 3200.0f;  // 4000 -> 800
+
+    float rot = fmod((float)elapsed, period) / period;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Hand pattern: bright leading edge, short fade, dim background
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t brightness;
+            if      (i == 0) brightness = 255;
+            else if (i == 1) brightness = 180;
+            else if (i == 2) brightness = 100;
+            else if (i == 3) brightness = 50;
+            else if (i == 4) brightness = 20;
+            else             brightness = 4;   // dim background
+            pattern[i] = CRGB(0, 200, 200);    // teal
+            pattern[i].nscale8(brightness);
+        }
+        uint8_t rotateOffset = (uint8_t)(rot * count);
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
 }
 
 /**

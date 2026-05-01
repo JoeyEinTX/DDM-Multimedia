@@ -50,6 +50,26 @@
       "category": "betting",
       "description": "Fast red urgent breathing pulse"
     },
+    "MONEY_RAIN": {
+      "name": "Money Rain",
+      "category": "betting",
+      "description": "Gold comets spinning around each ring, accelerating over time"
+    },
+    "TENSION_BUILD": {
+      "name": "Tension Build",
+      "category": "betting",
+      "description": "Rotating gradient shifts amber to red as deadline approaches"
+    },
+    "HEARTBEAT_STACK": {
+      "name": "Heartbeat Stack",
+      "category": "betting",
+      "description": "Groups of cups pulse in rolling offset waves across the mantle"
+    },
+    "COUNTDOWN_SPIRAL": {
+      "name": "Countdown Spiral",
+      "category": "betting",
+      "description": "Teal clock-hand arc sweeps faster and faster around each ring"
+    },
     "AT_THE_GATE": {
       "name": "At The Gate",
       "category": "race",
