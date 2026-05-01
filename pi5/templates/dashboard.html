@@ -558,6 +558,53 @@
         </div>
     </div>
 
+    <!-- Animation Library Modal -->
+    <div id="anim-lib-modal" class="modal">
+        <div class="modal-content anim-lib-modal-content">
+            <button class="tuning-modal-close" onclick="closeAnimLibModal()">&times;</button>
+
+            <div class="tuning-modal-header">
+                <h2>🎨 Animation Library</h2>
+                <p class="tuning-subtitle">Assign animations to each race state. Preview by selecting from the dropdown.</p>
+                <p class="anim-lib-preview-label" id="anim-lib-preview-label"></p>
+            </div>
+
+            <div class="tuning-modal-body">
+
+                <!-- Pre-Race -->
+                <div class="anim-lib-group">
+                    <h3 class="tuning-group-title">Pre-Race</h3>
+                    <div class="anim-lib-slots" id="slots-pre_race"></div>
+                </div>
+
+                <!-- Betting Open -->
+                <div class="anim-lib-group">
+                    <h3 class="tuning-group-title">Betting Open</h3>
+                    <div class="anim-lib-slots" id="slots-betting"></div>
+                </div>
+
+                <!-- During Race -->
+                <div class="anim-lib-group">
+                    <h3 class="tuning-group-title">During Race</h3>
+                    <div class="anim-lib-slots" id="slots-race"></div>
+                </div>
+
+                <!-- Results -->
+                <div class="anim-lib-group">
+                    <h3 class="tuning-group-title">Results</h3>
+                    <div class="anim-lib-slots" id="slots-results"></div>
+                </div>
+
+                <!-- Footer -->
+                <div class="tuning-footer">
+                    <button class="btn tuning-btn-reset" onclick="animLibReset()">↺ Reset Defaults</button>
+                    <button class="btn tuning-btn-save" onclick="animLibSave()">💾 Save Assignments</button>
+                </div>
+
+            </div><!-- end tuning-modal-body -->
+        </div>
+    </div>
+
     <!-- Drawer Overlay -->
     <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
 
@@ -572,6 +619,10 @@
             <button class="drawer-item" onclick="openRaceSetupModal(); closeDrawer()">
                 <span class="drawer-icon">⚙️</span>
                 <span class="drawer-label">Race Setup</span>
+            </button>
+            <button class="drawer-item" onclick="openAnimLibModal(); closeDrawer()">
+                <span class="drawer-icon">🎨</span>
+                <span class="drawer-label">Animation Library</span>
             </button>
             <button class="drawer-item" onclick="openTuningModal(); closeDrawer()">
                 <span class="drawer-icon">🎛️</span>
