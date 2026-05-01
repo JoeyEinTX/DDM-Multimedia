@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
                    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED,
-                   PARAMS_FILE, ANTHROPIC_API_KEY, RACE_SETUP_FILE)
+                   PARAMS_FILE, ANTHROPIC_API_KEY, RACE_SETUP_FILE,
+                   ANIMATION_REGISTRY_FILE, ANIMATION_ASSIGNMENTS_FILE)
 from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
@@ -341,6 +342,48 @@ def save_race_setup(data: dict):
         return True
     except Exception as e:
         print(f'[RACE SETUP] Error saving: {e}')
+        return False
+
+
+def load_animation_registry():
+    """Load animation registry from JSON file."""
+    try:
+        if os.path.exists(ANIMATION_REGISTRY_FILE):
+            with open(ANIMATION_REGISTRY_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f'[ANIM REGISTRY] Error loading: {e}')
+    return {'animations': {}, 'race_states': []}
+
+
+def load_animation_assignments():
+    """Load saved animation assignments, falling back to registry defaults."""
+    registry = load_animation_registry()
+    defaults = {}
+    for state in registry.get('race_states', []):
+        for slot in state.get('slots', []):
+            defaults[slot['id']] = slot['default']
+
+    try:
+        if os.path.exists(ANIMATION_ASSIGNMENTS_FILE):
+            with open(ANIMATION_ASSIGNMENTS_FILE, 'r') as f:
+                saved = json.load(f)
+                defaults.update(saved)
+    except Exception as e:
+        print(f'[ANIM ASSIGNMENTS] Error loading: {e}')
+
+    return defaults
+
+
+def save_animation_assignments(assignments: dict):
+    """Save animation assignments to JSON file."""
+    try:
+        os.makedirs(os.path.dirname(ANIMATION_ASSIGNMENTS_FILE), exist_ok=True)
+        with open(ANIMATION_ASSIGNMENTS_FILE, 'w') as f:
+            json.dump(assignments, f, indent=2)
+        return True
+    except Exception as e:
+        print(f'[ANIM ASSIGNMENTS] Error saving: {e}')
         return False
 
 
@@ -723,6 +766,28 @@ def api_race_setup_ai_search():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/animations/registry', methods=['GET'])
+def api_animations_registry():
+    """Return animation registry and current assignments."""
+    registry = load_animation_registry()
+    assignments = load_animation_assignments()
+    return jsonify({
+        'success': True,
+        'registry': registry,
+        'assignments': assignments
+    })
+
+
+@app.route('/api/animations/assignments', methods=['POST'])
+def api_animations_assignments_save():
+    """Save animation assignments."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+    success = save_animation_assignments(data)
+    return jsonify({'success': success})
 
 
 @app.route('/api/reset', methods=['POST'])

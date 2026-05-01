@@ -49,6 +49,10 @@ ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 # Race setup data file
 RACE_SETUP_FILE = os.path.join(os.path.dirname(__file__), 'data', 'race_setup.json')
 
+# Animation library data files
+ANIMATION_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), 'data', 'animation_registry.json')
+ANIMATION_ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), 'data', 'animation_assignments.json')
+
 # Weather API Settings (WeatherAPI.com)
 WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
 WEATHER_LOCATION = "Dallas,TX"

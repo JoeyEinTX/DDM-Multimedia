@@ -1,0 +1,101 @@
+{
+  "animations": {
+    "WELCOME": {
+      "name": "Welcome",
+      "category": "pre_race",
+      "description": "Color cascade with comet and sparkle effects"
+    },
+    "TEST": {
+      "name": "Test",
+      "category": "pre_race",
+      "description": "Sequential cup test 1-20"
+    },
+    "STANDBY": {
+      "name": "Standby",
+      "category": "pre_race",
+      "description": "All cups off"
+    },
+    "BETTING_60": {
+      "name": "60 Min Breathe",
+      "category": "betting",
+      "description": "Slow green breathing pulse"
+    },
+    "BETTING_30": {
+      "name": "30 Min Breathe",
+      "category": "betting",
+      "description": "Medium green breathing pulse"
+    },
+    "FINAL_CALL": {
+      "name": "Final Call",
+      "category": "betting",
+      "description": "Fast red urgent breathing pulse"
+    },
+    "AT_THE_GATE": {
+      "name": "At The Gate",
+      "category": "race",
+      "description": "Rotating white halo on all cups"
+    },
+    "GATES_BURST": {
+      "name": "Gates Burst",
+      "category": "race",
+      "description": "Gate opening sequence with hoofbeat gallop"
+    },
+    "CHAOS": {
+      "name": "Chaos",
+      "category": "race",
+      "description": "20 independent spinning comets"
+    },
+    "FINISH": {
+      "name": "Finish",
+      "category": "race",
+      "description": "Alternating checkered ring pattern"
+    },
+    "HEARTBEAT_COOLDOWN": {
+      "name": "Heartbeat Cooldown",
+      "category": "results",
+      "description": "Decelerating heartbeat 160 to 60 BPM"
+    },
+    "RESULTS_ENTRY": {
+      "name": "Results Entry",
+      "category": "results",
+      "description": "Winner chase with loser heartbeat decel"
+    }
+  },
+  "race_states": [
+    {
+      "id": "pre_race",
+      "label": "Pre-Race",
+      "slots": [
+        { "id": "welcome", "label": "Welcome Animation", "default": "WELCOME" },
+        { "id": "standby", "label": "Standby Animation", "default": "STANDBY" }
+      ]
+    },
+    {
+      "id": "betting",
+      "label": "Betting Open",
+      "slots": [
+        { "id": "betting_60", "label": "60 Min Warning", "default": "BETTING_60" },
+        { "id": "betting_30", "label": "30 Min Warning", "default": "BETTING_30" },
+        { "id": "final_call", "label": "Final Call", "default": "FINAL_CALL" }
+      ]
+    },
+    {
+      "id": "race",
+      "label": "During Race",
+      "slots": [
+        { "id": "at_the_gate", "label": "At The Gate", "default": "AT_THE_GATE" },
+        { "id": "gates_burst", "label": "They're Off", "default": "GATES_BURST" },
+        { "id": "chaos", "label": "During Race", "default": "CHAOS" },
+        { "id": "finish", "label": "Finish", "default": "FINISH" }
+      ]
+    },
+    {
+      "id": "results",
+      "label": "Results",
+      "slots": [
+        { "id": "results_entry", "label": "Set Winners", "default": "RESULTS_ENTRY" },
+        { "id": "cooldown", "label": "Heartbeat", "default": "HEARTBEAT_COOLDOWN" }
+      ]
+    }
+  ]
+}
