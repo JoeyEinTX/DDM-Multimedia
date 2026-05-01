@@ -15,6 +15,26 @@
       "category": "pre_race",
       "description": "All cups off"
     },
+    "SOLAR_FLARE": {
+      "name": "Solar Flare",
+      "category": "pre_race",
+      "description": "Slow rotating warm gradient — deep red through amber to gold"
+    },
+    "BREATHE_TOGETHER": {
+      "name": "Breathe Together",
+      "category": "pre_race",
+      "description": "All 20 cups breathing in perfect sync, warm amber pulse"
+    },
+    "RIPPLE_OUT": {
+      "name": "Ripple Out",
+      "category": "pre_race",
+      "description": "Cool blue-white brightness wave flowing left to right"
+    },
+    "STARFIELD": {
+      "name": "Starfield",
+      "category": "pre_race",
+      "description": "Random white and gold stars flickering across dark cups"
+    },
     "BETTING_60": {
       "name": "60 Min Breathe",
       "category": "betting",

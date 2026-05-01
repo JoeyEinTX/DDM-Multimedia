@@ -212,6 +212,20 @@ unsigned long cupChaseLastStep[NUM_CUPS + 1];  // millis of last chase step per 
 
 unsigned long resultsEntryStart = 0;           // millis when RESULTS_ENTRY triggered
 bool resultsFinalizing = false;                // true after RESULTS:FINALIZE received
+
+// SOLAR_FLARE state
+unsigned long solarFlareStart = 0;
+
+// RIPPLE_OUT state
+int ripplePos = 0;                       // current cup (1-20) of the ripple wave
+unsigned long rippleLastStep = 0;
+#define RIPPLE_STEP_MS 60               // ms between each cup step
+
+// STARFIELD state
+unsigned long starLastFlicker[NUM_CUPS + 1];   // millis of last flicker per cup
+uint8_t       starFlickerLED[NUM_CUPS + 1];    // which LED is currently flickering
+bool          starFlickering[NUM_CUPS + 1];    // true if cup has an active flicker
+unsigned long starFlickerDuration[NUM_CUPS + 1]; // how long this flicker lasts
 unsigned long finalizeTime = 0;               // millis when RESULTS:FINALIZE received
 
 // RESULTS_DECEL_MS now derived from P.loserDecelSec
@@ -321,6 +335,10 @@ void animFinish();
 void animHeartbeatCooldown();
 void animSilks();
 void animResultsEntry();
+void animSolarFlare();
+void animBreatheTogether();
+void animRippleOut();
+void animStarfield();
 
 /**
  * SETUP - Runs once at startup
@@ -858,6 +876,55 @@ String processCommand(String cmd) {
         return "OK:ANIM:RESULTS_ENTRY";
     }
 
+    // ANIM:SOLAR_FLARE - Slow rotating warm gradient across all cup rings
+    else if (cmd == "ANIM:SOLAR_FLARE") {
+        stopAnimation();
+        solarFlareStart = millis();
+        animStartTime = millis();
+        currentMode = "SOLAR_FLARE";
+        currentAnimation = "SOLAR_FLARE";
+        animationRunning = true;
+        return "OK:ANIM:SOLAR_FLARE";
+    }
+
+    // ANIM:BREATHE_TOGETHER - All 20 cups synced slow pulse
+    else if (cmd == "ANIM:BREATHE_TOGETHER") {
+        stopAnimation();
+        animStartTime = millis();
+        currentMode = "BREATHE_TOGETHER";
+        currentAnimation = "BREATHE_TOGETHER";
+        animationRunning = true;
+        return "OK:ANIM:BREATHE_TOGETHER";
+    }
+
+    // ANIM:RIPPLE_OUT - Brightness wave traveling cup 1->20
+    else if (cmd == "ANIM:RIPPLE_OUT") {
+        stopAnimation();
+        animStartTime = millis();
+        ripplePos = 1;
+        rippleLastStep = millis();
+        currentMode = "RIPPLE_OUT";
+        currentAnimation = "RIPPLE_OUT";
+        animationRunning = true;
+        return "OK:ANIM:RIPPLE_OUT";
+    }
+
+    // ANIM:STARFIELD - Random LEDs flickering like stars on dark background
+    else if (cmd == "ANIM:STARFIELD") {
+        stopAnimation();
+        animStartTime = millis();
+        for (int i = 1; i <= NUM_CUPS; i++) {
+            starLastFlicker[i] = millis() + random(0, 2000);  // stagger starts
+            starFlickerLED[i] = random(0, CUP_LED_COUNT[i]);
+            starFlickering[i] = false;
+            starFlickerDuration[i] = 0;
+        }
+        currentMode = "STARFIELD";
+        currentAnimation = "STARFIELD";
+        animationRunning = true;
+        return "OK:ANIM:STARFIELD";
+    }
+
     // RESULTS:FINALIZE - Begin deceleration of winner chases
     else if (cmd == "RESULTS:FINALIZE") {
         resultsFinalizing = true;
@@ -1021,6 +1088,14 @@ void runAnimation() {
         animSilks();
     } else if (currentAnimation == "RESULTS_ENTRY") {
         animResultsEntry();
+    } else if (currentAnimation == "SOLAR_FLARE") {
+        animSolarFlare();
+    } else if (currentAnimation == "BREATHE_TOGETHER") {
+        animBreatheTogether();
+    } else if (currentAnimation == "RIPPLE_OUT") {
+        animRippleOut();
+    } else if (currentAnimation == "STARFIELD") {
+        animStarfield();
     }
 }
 
@@ -1232,6 +1307,184 @@ void animWelcome() {
     }
 
     } // end switch
+}
+
+/**
+ * ANIM:SOLAR_FLARE
+ * Slow rotating warm gradient on every cup ring simultaneously.
+ * Colors shift through deep red → amber → gold → white → gold → amber loop.
+ * Each cup has same rotation but offset slightly for depth.
+ */
+void animSolarFlare() {
+    unsigned long elapsed = millis() - solarFlareStart;
+    const float ROTATION_PERIOD_MS = 4000.0f;  // full rotation every 4 seconds
+
+    // Warm color palette: deep red, orange, amber, gold, pale yellow, white
+    const CRGB warmPalette[] = {
+        CRGB(180, 10,  0),    // deep red
+        CRGB(255, 60,  0),    // orange
+        CRGB(255, 140, 0),    // amber
+        CRGB(255, 200, 0),    // gold
+        CRGB(255, 240, 100),  // pale yellow
+        CRGB(255, 255, 220),  // warm white
+    };
+    const int PALETTE_SIZE = 6;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Slight offset per cup for depth
+        float cupOffset = (float)(cup - 1) / (float)NUM_CUPS * 0.3f;
+        float rotationProgress = fmod(((float)elapsed / ROTATION_PERIOD_MS) + cupOffset, 1.0f);
+        uint8_t rotateOffset = (uint8_t)(rotationProgress * count);
+
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            // Map LED position to palette with smooth interpolation
+            float palPos = ((float)i / (float)count) * (float)(PALETTE_SIZE - 1);
+            int palIdx = (int)palPos;
+            float blend = palPos - palIdx;
+            if (palIdx >= PALETTE_SIZE - 1) palIdx = PALETTE_SIZE - 2;
+
+            CRGB c1 = warmPalette[palIdx];
+            CRGB c2 = warmPalette[palIdx + 1];
+            pattern[i] = CRGB(
+                (uint8_t)(c1.r * (1.0f - blend) + c2.r * blend),
+                (uint8_t)(c1.g * (1.0f - blend) + c2.g * blend),
+                (uint8_t)(c1.b * (1.0f - blend) + c2.b * blend)
+            );
+        }
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:BREATHE_TOGETHER
+ * All 20 cups breathing in perfect sync — slow sine pulse.
+ * Deep amber color, wide brightness range for dramatic effect.
+ */
+void animBreatheTogether() {
+    unsigned long elapsed = millis() - animStartTime;
+    const float PERIOD_MS = 3000.0f;  // 3 second full breath cycle
+
+    float phase = fmod((float)elapsed, PERIOD_MS) / PERIOD_MS;
+    float pulse = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;  // 0.0 to 1.0
+
+    uint8_t brightness = 30 + (uint8_t)(pulse * 225);  // 30->255 (12%->100%)
+
+    CRGB color = CRGB(255, 160, 0);  // warm amber
+    color.nscale8(brightness);
+
+    fill_solid(leds, LED_COUNT, color);
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:RIPPLE_OUT
+ * Brightness wave travels from cup 1->20 continuously.
+ * Each cup lights up fully as the wave passes, then fades back to dim.
+ * Creates a flowing left-to-right shimmer effect.
+ */
+void animRippleOut() {
+    unsigned long now = millis();
+
+    // Advance ripple position
+    if (now - rippleLastStep >= RIPPLE_STEP_MS) {
+        ripplePos++;
+        if (ripplePos > NUM_CUPS) ripplePos = 1;
+        rippleLastStep = now;
+    }
+
+    // Render all cups
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Distance from ripple head (wrapping)
+        int dist = cup - ripplePos;
+        if (dist < 0) dist += NUM_CUPS;
+
+        // Brightness falls off with distance
+        uint8_t brightness;
+        if (dist == 0) {
+            brightness = 255;       // head: full bright
+        } else if (dist == 1) {
+            brightness = 160;       // 1 behind: 63%
+        } else if (dist == 2) {
+            brightness = 80;        // 2 behind: 31%
+        } else if (dist == 3) {
+            brightness = 30;        // 3 behind: 12%
+        } else {
+            brightness = 8;         // tail: dim ambient
+        }
+
+        // Per-LED ring: rotating gradient within each lit cup
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            float angle = (float)i / (float)count * 2.0f * PI;
+            float cosVal = (cos(angle) + 1.0f) / 2.0f;
+            uint8_t ledBright = (uint8_t)((float)brightness * (0.5f + cosVal * 0.5f));
+            pattern[i] = CRGB(100, 180, 255);  // cool blue-white
+            pattern[i].nscale8(ledBright);
+        }
+
+        uint8_t rotateOffset = (uint8_t)(fmod((float)(now) / 800.0f, 1.0f) * count);
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
+    FastLED.show();
+    updatePowerEstimate();
+}
+
+/**
+ * ANIM:STARFIELD
+ * Random individual LEDs flicker briefly across all cups like stars.
+ * Dark background with occasional bright white/gold star flashes.
+ * Each cup manages its own independent star independently.
+ */
+void animStarfield() {
+    unsigned long now = millis();
+    bool needsShow = false;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        if (!starFlickering[cup]) {
+            // Check if it's time to start a new flicker
+            if (now >= starLastFlicker[cup]) {
+                // Pick a random LED to flicker
+                starFlickerLED[cup] = random(0, count);
+                starFlickerDuration[cup] = random(60, 250);  // 60-250ms flicker
+                starFlickering[cup] = true;
+                starLastFlicker[cup] = now;
+
+                // Light up the star LED
+                CRGB starColor = (random(0, 3) == 0)
+                    ? CRGB(255, 215, 0)    // gold star (1 in 3 chance)
+                    : CRGB(255, 255, 255); // white star
+                setCupLED(cup, starFlickerLED[cup], starColor);
+                needsShow = true;
+            }
+        } else {
+            // Check if flicker duration has elapsed
+            if (now - starLastFlicker[cup] >= starFlickerDuration[cup]) {
+                // Turn off the star
+                setCupLED(cup, starFlickerLED[cup], CRGB(0, 0, 0));
+                starFlickering[cup] = false;
+                // Schedule next star: random delay 200ms-3000ms
+                starLastFlicker[cup] = now + random(200, 3000);
+                needsShow = true;
+            }
+        }
+    }
+
+    if (needsShow) {
+        FastLED.show();
+        updatePowerEstimate();
+    }
 }
 
 /**
