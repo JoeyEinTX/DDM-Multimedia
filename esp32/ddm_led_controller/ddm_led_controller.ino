@@ -292,6 +292,8 @@ void connectWiFi();
 String processCommand(String cmd);
 CRGB hexToRGB(String hex);
 void setCup(uint8_t cupNumber, CRGB color);
+void setCupLED(uint8_t cupNumber, uint8_t offset, CRGB color);
+void setCupRing(uint8_t cupNumber, CRGB* pattern, uint8_t rotateOffset = 0);
 void blinkStatus(int times);
 void printBanner();
 void updatePowerEstimate();
@@ -314,6 +316,7 @@ void animRaceStart();
 void animAtTheGate();
 void animGatesBurst();
 void animChaos();
+void initChaosState();
 void animFinish();
 void animHeartbeatCooldown();
 void animSilks();
@@ -796,6 +799,7 @@ String processCommand(String cmd) {
     
     // ANIM:CHAOS - Random madness
     else if (cmd == "ANIM:CHAOS") {
+        initChaosState();
         currentMode = "CHAOS";
         currentAnimation = "CHAOS";
         animationRunning = true;
@@ -1391,19 +1395,40 @@ void animRaceStart() {
 }
 
 /**
- * ANIM:AT_THE_GATE - Steady bright white with slow gentle breathe
- * All 20 cups glow white, slow sine pulse 85%→100% brightness
- * Builds tension while horses load into the gate
+ * ANIM:AT_THE_GATE - Rotating halo
+ * Smooth cosine brightness gradient spinning around each cup ring
+ * One full revolution every 3 seconds; all cups rotate in sync
  */
 void animAtTheGate() {
-    unsigned long elapsed = millis() - animStartTime;
-    // Slow breathe: 3 second cycle, 55%→100% brightness
-    // sin() period = 2π × 477 ≈ 3000ms
-    float breathe = (sin(elapsed / (float)P.atGatePeriodMs) + 1.0f) / 2.0f;
-    uint8_t brightness = P.atGateMinBright + (uint8_t)(breathe * (255 - P.atGateMinBright));
-    CRGB color = CRGB(255, 255, 255);
-    color.nscale8(brightness);
-    fill_solid(leds, LED_COUNT, color);
+    unsigned long now = millis();
+    unsigned long elapsed = now - animStartTime;
+
+    // Rotation: one full revolution every 3 seconds
+    // rotateOffset advances every (3000 / maxLEDs) ms
+    const float ROTATION_PERIOD_MS = 3000.0f;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Calculate rotate offset for this cup — all cups rotate at same speed
+        float rotationProgress = fmod((float)elapsed, ROTATION_PERIOD_MS) / ROTATION_PERIOD_MS;
+        uint8_t rotateOffset = (uint8_t)(rotationProgress * count);
+
+        // Build gradient pattern: bright arc on one side, dim on the other
+        // Uses a cosine curve for smooth transition
+        CRGB pattern[32];  // max possible LEDs
+        for (uint8_t i = 0; i < count; i++) {
+            float angle = (float)i / (float)count * 2.0f * PI;
+            // cos gives -1 to 1, remap to minBright → 255
+            float cosVal = (cos(angle) + 1.0f) / 2.0f;  // 0.0 to 1.0
+            uint8_t brightness = P.atGateMinBright + (uint8_t)(cosVal * (255 - P.atGateMinBright));
+            pattern[i] = CRGB(255, 255, 255);
+            pattern[i].nscale8(brightness);
+        }
+
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
     FastLED.show();
     updatePowerEstimate();
 }
@@ -1582,48 +1607,86 @@ void animGatesBurst() {
 }
 
 /**
- * ANIM:CHAOS - Random cups, random colors, fast chaotic energy
+ * ANIM:CHAOS - Per-cup spinning arcs
+ * Each cup gets a randomly seeded rotation speed and color and spins
+ * its own arc independently. Frame-rate independent via deltaT.
  */
-void animChaos() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 60) return; // Very fast
-    lastUpdate = millis();
-    
-    // Random 5 cups each frame
-    FastLED.clear();
-    for (int i = 0; i < 5; i++) {
-        int cup = random(1, 21);
-        CRGB colors[] = {COLOR_GOLD, COLOR_RED, COLOR_AMBER, COLOR_GREEN, COLOR_WHITE};
-        CRGB color = colors[random(0, 5)];
-        setCup(cup, color);
+
+// Chaos animation state
+float chaosRotation[NUM_CUPS + 1];      // current rotation angle per cup (0.0-1.0)
+float chaosSpeed[NUM_CUPS + 1];         // rotation speed per cup
+CRGB  chaosColor[NUM_CUPS + 1];         // arc color per cup
+unsigned long chaosLastUpdate = 0;
+
+void initChaosState() {
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        chaosRotation[cup] = (float)random(0, 100) / 100.0f;
+        chaosSpeed[cup] = 0.003f + (float)random(0, 15) / 1000.0f;  // 0.003 to 0.018
+        // Pick a random color from DDM palette
+        chaosColor[cup] = DDM_PALETTE[random(0, DDM_PALETTE_SIZE)];
     }
-    
+    chaosLastUpdate = millis();
+}
+
+void animChaos() {
+    unsigned long now = millis();
+    float deltaT = (float)(now - chaosLastUpdate) / 1000.0f;  // seconds since last update
+    chaosLastUpdate = now;
+    (void)deltaT;
+
+    for (int cup = 1; cup <= NUM_CUPS; cup++) {
+        uint8_t count = CUP_LED_COUNT[cup];
+
+        // Advance rotation
+        chaosRotation[cup] += chaosSpeed[cup];
+        if (chaosRotation[cup] >= 1.0f) chaosRotation[cup] -= 1.0f;
+
+        uint8_t rotateOffset = (uint8_t)(chaosRotation[cup] * count);
+
+        // Build arc pattern: bright leading edge, long dim tail, dark background
+        CRGB pattern[32];
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t brightness;
+            if (i == 0) {
+                brightness = 255;  // head
+            } else if (i < 8) {
+                // Tail fade over first 8 LEDs
+                brightness = (uint8_t)(255.0f * (1.0f - (float)i / 8.0f));
+                brightness = (brightness * brightness) / 255;  // quadratic fade
+            } else {
+                brightness = 8;  // dark background
+            }
+            pattern[i] = chaosColor[cup];
+            pattern[i].nscale8(brightness);
+        }
+
+        setCupRing(cup, pattern, rotateOffset);
+    }
+
     FastLED.show();
     updatePowerEstimate();
 }
 
 /**
- * ANIM:FINISH - Green/white checkered flag pattern (celebration!)
- * Alternates green and white every 500ms — full brightness, no cups off.
+ * ANIM:FINISH - Per-LED green/white checker within each cup ring
+ * Odd LEDs one color, even LEDs another, swapped every 500ms.
  */
 void animFinish() {
-    static unsigned long lastUpdate = 0;
-    if (millis() - lastUpdate < 500) return; // Alternate every 500ms
-    lastUpdate = millis();
-    
+    unsigned long elapsed = millis() - animStartTime;
+    bool phase = (elapsed / 500) % 2 == 0;
+
+    CRGB colorA = phase ? CRGB(0, 255, 0) : CRGB(255, 255, 255);
+    CRGB colorB = phase ? CRGB(255, 255, 255) : CRGB(0, 255, 0);
+
     for (int cup = 1; cup <= NUM_CUPS; cup++) {
-        if (animStep % 2 == 0) {
-            // Even step: odd cups = green, even cups = white
-            setCup(cup, (cup % 2 == 1) ? COLOR_GREEN : COLOR_WHITE);
-        } else {
-            // Odd step: even cups = green, odd cups = white
-            setCup(cup, (cup % 2 == 0) ? COLOR_GREEN : COLOR_WHITE);
+        uint8_t count = CUP_LED_COUNT[cup];
+        for (uint8_t i = 0; i < count; i++) {
+            setCupLED(cup, i, (i % 2 == 0) ? colorA : colorB);
         }
     }
-    
+
     FastLED.show();
     updatePowerEstimate();
-    animStep++;
 }
 
 /**
@@ -1943,6 +2006,25 @@ void setCup(uint8_t cupNumber, CRGB color) {
 
     for (int i = startIdx; i < startIdx + count; i++) {
         leds[i] = color;
+    }
+}
+
+// Set a single LED within a cup by offset (0 = first LED of that cup)
+void setCupLED(uint8_t cupNumber, uint8_t offset, CRGB color) {
+    if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
+    if (offset >= CUP_LED_COUNT[cupNumber]) return;
+    leds[CUP_START_INDEX[cupNumber] + offset] = color;
+}
+
+// Set all LEDs in a cup from a pattern array
+// pattern[] must have CUP_LED_COUNT[cupNumber] entries
+// If rotateOffset > 0, the pattern is rotated around the ring
+void setCupRing(uint8_t cupNumber, CRGB* pattern, uint8_t rotateOffset) {
+    if (cupNumber < 1 || cupNumber > NUM_CUPS) return;
+    uint8_t count = CUP_LED_COUNT[cupNumber];
+    for (uint8_t i = 0; i < count; i++) {
+        uint8_t src = (i + rotateOffset) % count;
+        leds[CUP_START_INDEX[cupNumber] + i] = pattern[src];
     }
 }
 
