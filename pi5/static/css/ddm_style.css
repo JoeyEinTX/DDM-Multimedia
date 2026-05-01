@@ -2746,3 +2746,107 @@ body {
     margin: 0 8px;
     color: #333333;
 }
+
+/* ── Animation Library Modal ── */
+.anim-lib-modal-content {
+    width: 580px;
+    max-width: 95vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.anim-lib-preview-label {
+    font-size: 0.78em;
+    color: #D4A000;
+    margin: 4px 0 0 0;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    min-height: 16px;
+}
+
+.anim-lib-group {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.anim-lib-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Each slot row: label on left, dropdown + preview button on right */
+.anim-lib-slot-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.anim-lib-slot-label {
+    font-size: 0.82em;
+    color: #aaaaaa;
+    white-space: nowrap;
+}
+
+.anim-lib-select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #ffffff;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+    min-width: 180px;
+}
+
+.anim-lib-select:focus {
+    outline: none;
+    border-color: #D4A000;
+}
+
+.anim-lib-select option {
+    background: #1a1a1a;
+    color: #ffffff;
+}
+
+.anim-lib-preview-btn {
+    padding: 6px 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #cccccc;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.anim-lib-preview-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: #D4A000;
+    color: #D4A000;
+}
+
+.anim-lib-preview-btn.active {
+    background: rgba(212, 160, 0, 0.15);
+    border-color: #D4A000;
+    color: #D4A000;
+}
+
+.anim-lib-description {
+    font-size: 0.72em;
+    color: #555555;
+    grid-column: 2 / 4;
+    padding-left: 2px;
+    font-style: italic;
+}
