@@ -1,0 +1,57 @@
+{# Phase 1.14 — Live race roster slide.
+   Server-renders the latest race_poller snapshot when this slide is built
+   into the playlist. If get_race_data() returns None or no horses, the
+   slide is skipped entirely (see _splash_page_to_slide in server.py).
+
+   Context:
+     horses_left   — list of horse dicts, post positions 1-10
+     horses_right  — list of horse dicts, post positions 11-20
+     post_time     — human-readable post time (e.g. "6:57 PM ET")
+     race_state    — "pre-race" | "running" | "post-race" | "unknown"
+     winner        — winning post position number, or None
+     is_stale      — bool: payload is older than RACE_DATA_STALENESS_S
+     minutes_ago   — int minutes since last_updated (only used if is_stale) #}
+<div class="splash-card horse-roster">
+    <div class="splash-serape-band splash-serape-band--top splash-serape-band--scroll"></div>
+
+    <div class="horse-roster-eyebrow">DERBY 2026 — POST TIME {{ post_time or '6:57 PM ET' }}</div>
+
+    <div class="horse-roster-grid">
+        <div class="horse-roster-column">
+            {% for horse in horses_left %}
+            <div class="horse-roster-row{% if race_state == 'post-race' and winner == horse.number %} horse-roster-row--winner{% endif %}">
+                {% if race_state == 'post-race' and horse.finish %}
+                <span class="horse-finish">{{ horse.finish }}</span>
+                {% endif %}
+                <span class="horse-number">{{ horse.number }}</span>
+                <span class="horse-name">{{ horse.name }}</span>
+                <span class="horse-odds">{{ horse.odds or '—' }}</span>
+                {% if race_state == 'post-race' and winner == horse.number %}
+                <span class="horse-winner-tag">★ WINNER</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="horse-roster-column">
+            {% for horse in horses_right %}
+            <div class="horse-roster-row{% if race_state == 'post-race' and winner == horse.number %} horse-roster-row--winner{% endif %}">
+                {% if race_state == 'post-race' and horse.finish %}
+                <span class="horse-finish">{{ horse.finish }}</span>
+                {% endif %}
+                <span class="horse-number">{{ horse.number }}</span>
+                <span class="horse-name">{{ horse.name }}</span>
+                <span class="horse-odds">{{ horse.odds or '—' }}</span>
+                {% if race_state == 'post-race' and winner == horse.number %}
+                <span class="horse-winner-tag">★ WINNER</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% if is_stale %}
+    <div class="horse-roster-staleness">Last updated {{ minutes_ago }} min ago</div>
+    {% endif %}
+
+    <div class="splash-serape-band splash-serape-band--bottom splash-serape-band--scroll"></div>
+</div>

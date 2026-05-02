@@ -976,3 +976,128 @@ img { -webkit-user-drag: none; user-drag: none; }
     text-transform: uppercase;
     z-index: 0;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Phase 1.14 — Horse roster (Churchill Downs tote-board aesthetic)
+   Sibling visual to the countdown: dark teal field, sunflower-yellow
+   accents, two-column scoreboard layout for the 20 post positions.
+   ────────────────────────────────────────────────────────────────────── */
+.horse-roster.splash-card {
+    background: var(--ddm-bg-dark);
+    color: var(--ddm-jade);
+    padding: 7vh 6vw 6vh;
+    justify-content: flex-start;
+    overflow: hidden;
+}
+
+.horse-roster-eyebrow {
+    color: var(--ddm-yellow);
+    font-size: clamp(20px, 1.8vw, 32px);
+    letter-spacing: 8px;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 3vh;
+    text-align: center;
+    opacity: 0.9;
+}
+
+.horse-roster-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 4vw;
+    row-gap: 0;
+    width: 100%;
+    flex: 1 1 auto;
+    align-items: stretch;
+    align-content: center;
+}
+
+.horse-roster-column {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.horse-roster-row {
+    display: grid;
+    grid-template-columns: auto 50px 1fr 80px auto;
+    align-items: center;
+    column-gap: 16px;
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(254, 198, 0, 0.18);
+    font-size: clamp(28px, 2.5vw, 44px);
+    line-height: 1.1;
+    min-height: 50px;
+}
+
+.horse-roster-row:last-child {
+    border-bottom: none;
+}
+
+/* Optional finish-position prefix (post-race). Empty cell pre-race so the
+   columns line up identically across rows. */
+.horse-finish {
+    grid-column: 1;
+    color: var(--ddm-yellow);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    min-width: 1.2em;
+    text-align: right;
+    opacity: 0.85;
+}
+
+.horse-number {
+    grid-column: 2;
+    color: var(--ddm-yellow);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    font-family: 'Courier New', ui-monospace, monospace;
+}
+
+.horse-name {
+    grid-column: 3;
+    color: var(--ddm-jade);
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.horse-odds {
+    grid-column: 4;
+    color: var(--ddm-yellow);
+    opacity: 0.85;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Courier New', ui-monospace, monospace;
+}
+
+.horse-winner-tag {
+    grid-column: 5;
+    color: var(--ddm-scarlet);
+    font-weight: 800;
+    font-size: 0.7em;
+    letter-spacing: 2px;
+    margin-left: 8px;
+    white-space: nowrap;
+}
+
+.horse-roster-row--winner {
+    background: rgba(254, 198, 0, 0.15);
+    border-radius: 4px;
+}
+.horse-roster-row--winner .horse-name {
+    color: var(--ddm-yellow);
+}
+
+.horse-roster-staleness {
+    position: absolute;
+    bottom: 4vh;
+    right: 3vw;
+    font-size: 16px;
+    color: rgba(255, 255, 255, 0.45);
+    letter-spacing: 1px;
+    font-style: italic;
+}

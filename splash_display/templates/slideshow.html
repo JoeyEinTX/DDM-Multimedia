@@ -172,6 +172,10 @@
     // Returns the HTML string for a given slide entry from the playlist.
     function renderSlideHtml(slide) {
         if (!slide) return '';
+        // Phase 1.14 — server-rendered slides (e.g. horse_roster) ship their
+        // HTML inline in the playlist payload so live data isn't bottlenecked
+        // by the once-per-/display splash template cache.
+        if (slide.html) return slide.html;
         if (slide.type === 'splash') {
             const tplHtml = splashTemplates[slide.splash_id];
             if (!tplHtml) {

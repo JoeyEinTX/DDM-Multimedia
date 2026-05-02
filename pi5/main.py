@@ -1,6 +1,6 @@
 # main.py - Flask app entry point for DDM Horse Dashboard
 
-from flask import Flask, render_template, jsonify, request, Response
+from flask import Flask, render_template, jsonify, request, Response, make_response
 from flask_socketio import SocketIO, emit
 import sys
 import os
@@ -816,6 +816,84 @@ def api_animations_assignments_save():
         return jsonify({'success': False, 'error': 'No data provided'}), 400
     success = save_animation_assignments(data)
     return jsonify({'success': success})
+
+
+@app.route('/api/race', methods=['GET'])
+def api_race():
+    """Read-only race roster for external displays (splash Pi).
+
+    Combines the persisted race-setup file (horse names, post time) with the
+    live RacingDataService state (race phase, winners). Always returns HTTP 200
+    with CORS headers — empty horses array if the AI pull never ran.
+    """
+    from datetime import datetime, timezone
+
+    # Live race state -> 4-value API contract
+    state_str = 'pre-race'
+    winner = None
+    finish_map = {}  # post position -> finish (1=win, 2=place, 3=show)
+    try:
+        live = racing_service.get_state()
+        live_state = (live or {}).get('state', '')
+        if live_state == 'RUNNING':
+            state_str = 'running'
+        elif live_state in ('FINISHED', 'OFFICIAL'):
+            state_str = 'post-race'
+            winner = live.get('win')
+            if live.get('win'):   finish_map[int(live['win'])]   = 1
+            if live.get('place'): finish_map[int(live['place'])] = 2
+            if live.get('show'):  finish_map[int(live['show'])]  = 3
+        elif live_state in ('DORMANT', 'ENTRIES_LOADED', 'BETTING_OPEN',
+                            'BETTING_CLOSING', 'AT_THE_POST'):
+            state_str = 'pre-race'
+        else:
+            state_str = 'unknown'
+    except Exception as e:
+        print(f'[/api/race] live state lookup failed: {e}')
+
+    # Persisted setup (horse names by post position, post_time)
+    setup = load_race_setup() or {}
+    setup_horses = setup.get('horses', {}) or {}
+
+    # Convert {"1": "Sovereignty", ...} -> [{number, name, odds, finish}, ...]
+    horses = []
+    for n in range(1, 21):
+        name = (setup_horses.get(str(n)) or '').strip()
+        if not name:
+            continue  # skip unfilled positions
+        horses.append({
+            'number': n,
+            'name': name,
+            'odds': None,            # TODO: surface once odds source exists
+            'finish': finish_map.get(n),
+        })
+
+    if not horses:
+        state_str = 'unknown'
+
+    # Format post_time HH:MM (24h) -> "6:57 PM ET" for splash display.
+    pt_raw = (setup.get('post_time') or '').strip()
+    post_time_human = ''
+    if pt_raw:
+        try:
+            hh, mm = pt_raw.split(':')
+            h = int(hh); m = int(mm)
+            suffix = 'AM' if h < 12 else 'PM'
+            h12 = h % 12 or 12
+            post_time_human = f'{h12}:{m:02d} {suffix} ET'
+        except Exception:
+            post_time_human = pt_raw  # fall back to raw string
+
+    payload = {
+        'race_state': state_str,
+        'post_time': post_time_human,
+        'last_updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'horses': horses,
+        'winner': winner,
+    }
+    response = make_response(jsonify(payload))
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 
 @app.route('/api/reset', methods=['POST'])

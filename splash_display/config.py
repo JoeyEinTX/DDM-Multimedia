@@ -90,11 +90,12 @@ TRIVIA_WEIGHTS = {
 # listed here defaults to weight 0 (effectively disabled).
 # ---------------------------------------------------------------------------
 SPLASH_WEIGHTS = {
-    "countdown": 25,
-    "la_subasta": 15,
-    "la_quiniela": 15,
-    "derby_dash": 15,
-    "ddm_brand": 10,
+    "countdown":     30,
+    "horse_roster":  30,   # Phase 1.14 — high weight; auto-skipped when no race data
+    "ddm_brand":     15,
+    "la_subasta":     8,
+    "la_quiniela":    8,
+    "derby_dash":     8,
 }
 
 # ---------------------------------------------------------------------------
@@ -152,3 +153,12 @@ DDM_2026_POST_TIME_ISO = "2026-05-02T18:57:00-04:00"
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5000
 DEBUG = False
+
+# ---------------------------------------------------------------------------
+# Dashboard Pi integration (Phase 1.14)
+# Live race roster is fetched from the dashboard Pi every POLL_INTERVAL_S
+# (race_poller.py). If unreachable, the horse_roster splash silently drops
+# from rotation until the next successful poll.
+# ---------------------------------------------------------------------------
+DASHBOARD_RACE_URL = "http://joeydevpi.local:5000/api/race"
+RACE_DATA_STALENESS_S = 300  # 5 minutes — past this, slide shows "Last updated N min ago"
