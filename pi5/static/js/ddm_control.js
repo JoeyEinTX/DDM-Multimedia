@@ -1674,10 +1674,12 @@ async function openRaceSetupModal() {
     document.getElementById('race-setup-modal').classList.add('active');
     generateHorseGrid();
     await loadRaceSetup();
+    startOddsPollingStatusWatcher();
 }
 
 function closeRaceSetupModal() {
     document.getElementById('race-setup-modal').classList.remove('active');
+    stopOddsPollingStatusWatcher();
 }
 
 // Generate the 20-horse entry grid
@@ -1856,6 +1858,109 @@ async function raceSetupAISearch() {
         }
     } finally {
         if (btn) btn.disabled = false;
+    }
+}
+
+// =====================================================================
+// Auto-poll odds (Anthropic web search every N seconds, server-side)
+// =====================================================================
+let oddsPollingStatusTimer = null;
+
+async function toggleOddsPolling() {
+    const btn = document.getElementById('odds-polling-btn');
+    if (!btn) return;
+    const currentlyOn = btn.dataset.polling === 'true';
+    const endpoint = currentlyOn
+        ? '/api/race-setup/stop-odds-polling'
+        : '/api/race-setup/start-odds-polling';
+    const body = currentlyOn ? null : JSON.stringify({ interval: 300 });
+
+    btn.disabled = true;
+    try {
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            showNotification(data.error || 'Odds polling toggle failed', 'error');
+        } else {
+            showNotification(currentlyOn ? 'Odds polling stopped' : 'Odds polling started', 'success');
+        }
+    } catch (e) {
+        console.error('Odds polling toggle error:', e);
+        showNotification('Connection error', 'error');
+    } finally {
+        btn.disabled = false;
+        await refreshOddsPollingStatus();
+    }
+}
+
+async function refreshOddsPollingStatus() {
+    try {
+        const resp = await fetch('/api/race-setup/odds-status');
+        const data = await resp.json();
+        applyOddsPollingStatus(data);
+    } catch (e) {
+        // silent — status panel just won't update
+    }
+}
+
+function applyOddsPollingStatus(data) {
+    const btn = document.getElementById('odds-polling-btn');
+    const statusEl = document.getElementById('odds-polling-status');
+    const lastEl = document.getElementById('odds-polling-last');
+    if (!btn || !statusEl) return;
+
+    const polling = !!data.polling;
+    btn.dataset.polling = polling ? 'true' : 'false';
+    btn.classList.toggle('active', polling);
+
+    if (polling) {
+        const minutes = Math.round((data.interval || 300) / 60);
+        statusEl.textContent = `Polling every ${minutes} min`;
+        statusEl.className = 'odds-polling-status active';
+    } else {
+        statusEl.textContent = 'Polling off';
+        statusEl.className = 'odds-polling-status';
+    }
+
+    if (lastEl) {
+        if (data.last_update) {
+            const d = new Date(data.last_update);
+            const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            lastEl.textContent = `Last update ${time}`;
+        } else {
+            lastEl.textContent = '';
+        }
+    }
+}
+
+// Listen for live odds updates pushed from the server poller
+if (typeof socket !== 'undefined' && socket && socket.on) {
+    socket.on('odds_update', (payload) => {
+        if (payload && payload.last_update) {
+            const lastEl = document.getElementById('odds-polling-last');
+            if (lastEl) {
+                const d = new Date(payload.last_update);
+                const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                lastEl.textContent = `Last update ${time}`;
+            }
+        }
+    });
+}
+
+// Refresh status when the race-setup modal opens, then every 30s while it's open
+function startOddsPollingStatusWatcher() {
+    refreshOddsPollingStatus();
+    if (oddsPollingStatusTimer) clearInterval(oddsPollingStatusTimer);
+    oddsPollingStatusTimer = setInterval(refreshOddsPollingStatus, 30000);
+}
+function stopOddsPollingStatusWatcher() {
+    if (oddsPollingStatusTimer) {
+        clearInterval(oddsPollingStatusTimer);
+        oddsPollingStatusTimer = null;
     }
 }
 

@@ -9,7 +9,7 @@ import json
 import queue
 import time
 from datetime import datetime
-from threading import Lock
+from threading import Lock, Thread, Event
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -699,6 +699,47 @@ def api_race_setup_save():
     return jsonify({'success': success})
 
 
+def _extract_json_from_text(text: str):
+    """Robustly extract a JSON object from text returned by Claude.
+
+    Handles markdown fences (```json ... ``` or plain ``` ... ```), prose
+    surrounding the object, and falls back to the outermost {...} span if a
+    direct json.loads fails. Returns the parsed dict or None on failure.
+    """
+    if not text:
+        return None
+    cleaned = text.strip()
+
+    # Strip markdown fences if present
+    if '```json' in cleaned:
+        try:
+            start = cleaned.index('```json') + 7
+            end = cleaned.index('```', start)
+            cleaned = cleaned[start:end].strip()
+        except ValueError:
+            pass
+    elif '```' in cleaned:
+        try:
+            start = cleaned.index('```') + 3
+            end = cleaned.index('```', start)
+            cleaned = cleaned[start:end].strip()
+        except ValueError:
+            pass
+
+    # Try direct parse, then fall back to outermost-brace span
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        brace_start = cleaned.find('{')
+        brace_end = cleaned.rfind('}')
+        if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+            try:
+                return json.loads(cleaned[brace_start:brace_end + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
 @app.route('/api/race-setup/ai-search', methods=['POST'])
 def api_race_setup_ai_search():
     """Use Anthropic API with web search to find current Kentucky Derby entries."""
@@ -741,30 +782,7 @@ def api_race_setup_ai_search():
 
         print(f"[AI Search] Raw text: {result_text[:1000]}")
 
-        # Clean the response aggressively
-        result_text = result_text.strip()
-
-        # Remove markdown fences
-        if '```json' in result_text:
-            start = result_text.index('```json') + 7
-            end = result_text.index('```', start)
-            result_text = result_text[start:end].strip()
-        elif '```' in result_text:
-            start = result_text.index('```') + 3
-            end = result_text.index('```', start)
-            result_text = result_text[start:end].strip()
-
-        # Find JSON object in text
-        parsed = None
-        try:
-            parsed = json.loads(result_text)
-        except json.JSONDecodeError:
-            brace_start = result_text.find('{')
-            brace_end = result_text.rfind('}')
-            if brace_start != -1 and brace_end != -1:
-                json_str = result_text[brace_start:brace_end + 1]
-                parsed = json.loads(json_str)
-
+        parsed = _extract_json_from_text(result_text)
         if not parsed:
             raise ValueError('Could not extract JSON from AI response')
 
@@ -794,6 +812,146 @@ def api_race_setup_ai_search():
             'success': False,
             'error': str(e)
         }), 500
+
+
+# =====================================================================
+# Odds polling — background thread fetches Kentucky Derby odds via
+# Anthropic web search at a configurable interval, persists into the
+# race-setup file, and broadcasts via Socket.IO.
+# =====================================================================
+odds_polling_thread = None
+odds_polling_stop_event = Event()
+odds_polling_interval = 300
+odds_last_update = None
+
+
+def _fetch_odds_from_anthropic():
+    """One-shot odds fetch. Returns dict {"1": "5-2", ...} or None."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=2048,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search'}],
+            messages=[{
+                'role': 'user',
+                'content': (
+                    'Search for the latest 2026 Kentucky Derby odds. '
+                    'Return ONLY a JSON object with no other text. '
+                    'Format: {"odds": {"1": "5-2", "2": "8-1", "3": "15-1", ...}} '
+                    'where keys are post positions 1-20 and values are the '
+                    'current odds as a string. Use "" for scratched or '
+                    'unknown horses.'
+                )
+            }]
+        )
+        result_text = ''
+        for block in response.content:
+            if hasattr(block, 'text') and block.text:
+                result_text += block.text
+        parsed = _extract_json_from_text(result_text)
+        if not parsed:
+            return None
+        # Accept either {"odds": {...}} or a bare {"1": "...", ...}
+        odds = parsed.get('odds') if isinstance(parsed, dict) and 'odds' in parsed else parsed
+        if not isinstance(odds, dict):
+            return None
+        # Coerce keys to strings, values to strings, and clamp to 1-20
+        cleaned = {}
+        for k, v in odds.items():
+            try:
+                n = int(str(k).strip())
+            except (TypeError, ValueError):
+                continue
+            if 1 <= n <= 20:
+                cleaned[str(n)] = str(v).strip() if v is not None else ''
+        return cleaned
+    except Exception as e:
+        print(f'[Odds Poll] Anthropic call failed: {e}')
+        return None
+
+
+def poll_odds():
+    """Daemon target — polls every `odds_polling_interval` seconds until the
+    stop event is set. Each successful poll merges new odds into race_setup
+    JSON and emits a Socket.IO `odds_update` event.
+    """
+    global odds_last_update
+    print('[Odds Poll] thread started')
+    while not odds_polling_stop_event.is_set():
+        odds = _fetch_odds_from_anthropic()
+        if odds:
+            try:
+                setup = load_race_setup() or {}
+                setup['odds'] = odds
+                save_race_setup(setup)
+                odds_last_update = datetime.utcnow().isoformat() + 'Z'
+                socketio.emit('odds_update', {'odds': odds, 'last_update': odds_last_update})
+                print(f'[Odds Poll] Updated odds at {odds_last_update}')
+            except Exception as e:
+                print(f'[Odds Poll] Persist/emit failed: {e}')
+        else:
+            print('[Odds Poll] No odds returned this cycle')
+        # Responsive shutdown: tick once per second up to the interval
+        for _ in range(int(odds_polling_interval)):
+            if odds_polling_stop_event.is_set():
+                break
+            time.sleep(1)
+    print('[Odds Poll] thread exiting')
+
+
+@app.route('/api/race-setup/start-odds-polling', methods=['POST'])
+def api_start_odds_polling():
+    global odds_polling_thread, odds_polling_interval
+    if not ANTHROPIC_API_KEY:
+        return jsonify({'success': False, 'error': 'ANTHROPIC_API_KEY not configured'}), 503
+    if odds_polling_thread is not None and odds_polling_thread.is_alive():
+        return jsonify({'success': False, 'error': 'Odds polling already running'}), 409
+    body = request.get_json(silent=True) or {}
+    try:
+        interval = int(body.get('interval', 300))
+    except (TypeError, ValueError):
+        interval = 300
+    odds_polling_interval = max(60, interval)  # floor at 60s to avoid hammering
+    odds_polling_stop_event.clear()
+    odds_polling_thread = Thread(target=poll_odds, name='odds-poller', daemon=True)
+    odds_polling_thread.start()
+    return jsonify({'success': True, 'interval': odds_polling_interval})
+
+
+@app.route('/api/race-setup/stop-odds-polling', methods=['POST'])
+def api_stop_odds_polling():
+    global odds_polling_thread
+    if odds_polling_thread is None or not odds_polling_thread.is_alive():
+        return jsonify({'success': True, 'message': 'Polling not running'})
+    odds_polling_stop_event.set()
+    return jsonify({'success': True})
+
+
+@app.route('/api/race-setup/odds-status', methods=['GET'])
+def api_odds_status():
+    polling = odds_polling_thread is not None and odds_polling_thread.is_alive()
+    next_update = None
+    if polling and odds_last_update:
+        try:
+            last_dt = datetime.strptime(odds_last_update, '%Y-%m-%dT%H:%M:%S.%fZ')
+        except ValueError:
+            try:
+                last_dt = datetime.strptime(odds_last_update, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                last_dt = None
+        if last_dt is not None:
+            from datetime import timedelta
+            next_update = (last_dt + timedelta(seconds=odds_polling_interval)).isoformat() + 'Z'
+    return jsonify({
+        'polling': polling,
+        'interval': odds_polling_interval,
+        'last_update': odds_last_update,
+        'next_update': next_update,
+    })
 
 
 @app.route('/api/animations/registry', methods=['GET'])
@@ -851,9 +1009,10 @@ def api_race():
     except Exception as e:
         print(f'[/api/race] live state lookup failed: {e}')
 
-    # Persisted setup (horse names by post position, post_time)
+    # Persisted setup (horse names by post position, post_time, odds)
     setup = load_race_setup() or {}
     setup_horses = setup.get('horses', {}) or {}
+    setup_odds = setup.get('odds', {}) or {}
 
     # Convert {"1": "Sovereignty", ...} -> [{number, name, odds, finish}, ...]
     horses = []
@@ -861,10 +1020,11 @@ def api_race():
         name = (setup_horses.get(str(n)) or '').strip()
         if not name:
             continue  # skip unfilled positions
+        odds_str = (setup_odds.get(str(n)) or '').strip()
         horses.append({
             'number': n,
             'name': name,
-            'odds': None,            # TODO: surface once odds source exists
+            'odds': odds_str or None,
             'finish': finish_map.get(n),
         })
 

@@ -361,6 +361,17 @@
                     <span class="race-setup-ai-status" id="ai-search-status"></span>
                 </div>
 
+                <!-- Auto-poll odds -->
+                <div class="race-setup-actions odds-polling-row">
+                    <button class="btn odds-polling-btn" id="odds-polling-btn"
+                            onclick="toggleOddsPolling()"
+                            data-polling="false">
+                        💰 Auto-Poll Odds
+                    </button>
+                    <span class="odds-polling-status" id="odds-polling-status">Polling off</span>
+                    <span class="odds-polling-last" id="odds-polling-last"></span>
+                </div>
+
                 <!-- Footer -->
                 <div class="tuning-footer">
                     <button class="btn tuning-btn-reset" onclick="raceSetupClear()">✕ Clear</button>

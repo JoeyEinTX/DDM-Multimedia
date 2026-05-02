@@ -2734,6 +2734,53 @@ body {
     color: #ef4444;
 }
 
+/* ── Auto-poll odds toggle (in Race Setup modal) ── */
+.odds-polling-row {
+    margin-top: -4px;
+}
+
+.odds-polling-btn {
+    background: rgba(212, 160, 0, 0.12);
+    border-color: #D4A000;
+    color: #ffd86b;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+
+.odds-polling-btn:hover:not(:disabled) {
+    background: rgba(212, 160, 0, 0.22);
+}
+
+.odds-polling-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.odds-polling-btn.active {
+    background: rgba(34, 197, 94, 0.18);
+    border-color: #22c55e;
+    color: #86efac;
+}
+
+.odds-polling-status {
+    font-size: 0.82em;
+    color: #888888;
+    font-style: italic;
+}
+
+.odds-polling-status.active {
+    color: #22c55e;
+    font-style: normal;
+    font-weight: 600;
+}
+
+.odds-polling-last {
+    font-size: 0.78em;
+    color: #666666;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
 .copyright-bar {
     text-align: center;
     padding: 12px 0;
