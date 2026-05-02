@@ -3,7 +3,20 @@
     "allow": [
       "Bash(ssh:*)",
       "WebSearch",
-      "Bash(ls -la \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*Logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*DDM*)"
+      "Bash(ls -la \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*Logo* \"D:/VSCode/DDM Multimedia/pi5/static/css/\"*DDM*)",
+      "Bash(powershell -Command \"Get-Process git* 2>$null | Format-Table Id,ProcessName\")",
+      "Bash(python -m la_subasta.test_smoke)",
+      "Bash(PYTHONIOENCODING=utf-8 python -m la_subasta.test_smoke)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('server.py'\\).read\\(\\)\\); ast.parse\\(open\\('config.py'\\).read\\(\\)\\); print\\('OK: python syntax'\\)\")",
+      "Bash(python -c \"import json; json.load\\(open\\('content/trivia.json'\\)\\); json.load\\(open\\('content/splash_pages.json'\\)\\); print\\('OK: json valid'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('splash_display/content/trivia.json',encoding='utf-8'\\)\\); print\\('categories:', list\\(d.keys\\(\\)\\)\\); print\\('counts:', {k:len\\(v\\) for k,v in d.items\\(\\)}\\); print\\('total:', sum\\(len\\(v\\) for v in d.values\\(\\)\\)\\)\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\('pi5/data/animation_registry.json'\\)\\); names=['MONEY_RAIN','TENSION_BUILD','HEARTBEAT_STACK','COUNTDOWN_SPIRAL']; print\\('all present:', all\\(n in d['animations'] for n in names\\)\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('pi5/main.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
