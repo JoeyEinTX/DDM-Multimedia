@@ -16,7 +16,12 @@
       "Bash(git push *)",
       "Bash(python -c \"import json; d=json.load\\(open\\('splash_display/content/trivia.json',encoding='utf-8'\\)\\); print\\('categories:', list\\(d.keys\\(\\)\\)\\); print\\('counts:', {k:len\\(v\\) for k,v in d.items\\(\\)}\\); print\\('total:', sum\\(len\\(v\\) for v in d.values\\(\\)\\)\\)\")",
       "Bash(python -c \"import json; d=json.load\\(open\\('pi5/data/animation_registry.json'\\)\\); names=['MONEY_RAIN','TENSION_BUILD','HEARTBEAT_STACK','COUNTDOWN_SPIRAL']; print\\('all present:', all\\(n in d['animations'] for n in names\\)\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('pi5/main.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('pi5/main.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(xargs grep *)",
+      "Bash(xargs ls *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('splash_display/server.py'\\).read\\(\\)\\); ast.parse\\(open\\('splash_display/race_poller.py'\\).read\\(\\)\\); ast.parse\\(open\\('splash_display/config.py'\\).read\\(\\)\\); ast.parse\\(open\\('pi5/main.py'\\).read\\(\\)\\); print\\('all OK'\\)\")",
+      "Bash(python -c \"import json; json.load\\(open\\('splash_display/content/splash_pages.json'\\)\\); print\\('JSON OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('pi5/main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
     ]
   }
 }
