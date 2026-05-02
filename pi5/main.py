@@ -714,8 +714,8 @@ def api_race_setup_ai_search():
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
         response = client.messages.create(
-            model='claude-opus-4-5',
-            max_tokens=1024,
+            model='claude-sonnet-4-6',
+            max_tokens=4096,
             tools=[{
                 'type': 'web_search_20250305',
                 'name': 'web_search'
@@ -723,35 +723,63 @@ def api_race_setup_ai_search():
             messages=[{
                 'role': 'user',
                 'content': (
-                    'Search for the current official Kentucky Derby 2026 entries and post positions. '
-                    'Return ONLY a JSON object with no other text, no markdown, no explanation. '
-                    'Format: {"race_name": "Kentucky Derby 2026", "post_time": "18:57", '
-                    '"horses": {"1": "Horse Name", "2": "Horse Name", ..., "20": "Horse Name"}} '
-                    'Use empty string "" for any post positions not yet assigned. '
-                    'Post time should be in 24-hour HH:MM format (Kentucky Derby runs ~6:57 PM ET). '
-                    'Include all 20 post positions even if not all are filled.'
+                    'Search the web for the 2026 Kentucky Derby entries, post positions, and post time. '
+                    'After searching, respond with ONLY a JSON object and absolutely nothing else. '
+                    'No explanation, no markdown fences, no commentary before or after. '
+                    'Just raw JSON in this exact format:\n'
+                    '{"race_name":"Kentucky Derby 2026","post_time":"18:57","horses":{"1":"HorseName","2":"HorseName","3":"HorseName","4":"HorseName","5":"HorseName","6":"HorseName","7":"HorseName","8":"HorseName","9":"HorseName","10":"HorseName","11":"HorseName","12":"HorseName","13":"HorseName","14":"HorseName","15":"HorseName","16":"HorseName","17":"HorseName","18":"HorseName","19":"HorseName","20":"HorseName"}}\n'
+                    'Replace HorseName with actual horse names. Use "" for unfilled positions. Post time in 24hr HH:MM format.'
                 )
             }]
         )
 
-        # Extract text from response
+        # Extract text from ALL content blocks
         result_text = ''
         for block in response.content:
-            if block.type == 'text':
+            if hasattr(block, 'text') and block.text:
                 result_text += block.text
 
-        # Clean and parse JSON
+        print(f"[AI Search] Raw text: {result_text[:1000]}")
+
+        # Clean the response aggressively
         result_text = result_text.strip()
-        # Strip markdown code fences if present
-        if result_text.startswith('```'):
-            lines = result_text.split('\n')
-            result_text = '\n'.join(lines[1:-1])
 
-        parsed = json.loads(result_text)
+        # Remove markdown fences
+        if '```json' in result_text:
+            start = result_text.index('```json') + 7
+            end = result_text.index('```', start)
+            result_text = result_text[start:end].strip()
+        elif '```' in result_text:
+            start = result_text.index('```') + 3
+            end = result_text.index('```', start)
+            result_text = result_text[start:end].strip()
 
-        # Validate structure
+        # Find JSON object in text
+        parsed = None
+        try:
+            parsed = json.loads(result_text)
+        except json.JSONDecodeError:
+            brace_start = result_text.find('{')
+            brace_end = result_text.rfind('}')
+            if brace_start != -1 and brace_end != -1:
+                json_str = result_text[brace_start:brace_end + 1]
+                parsed = json.loads(json_str)
+
+        if not parsed:
+            raise ValueError('Could not extract JSON from AI response')
+
+        # Normalize the response - handle different JSON structures
+        # If the response wrapped horses in a sub-key, extract it
         if 'horses' not in parsed:
-            raise ValueError('Response missing horses field')
+            # Look for horses in nested structure
+            for key, value in parsed.items():
+                if isinstance(value, dict) and 'horses' in value:
+                    parsed = value
+                    break
+                elif isinstance(value, dict) and any(k.isdigit() for k in value.keys()):
+                    # Found the horses dict directly
+                    parsed = {'race_name': 'Kentucky Derby 2026', 'post_time': '18:57', 'horses': value}
+                    break
 
         return jsonify({'success': True, 'data': parsed})
 
