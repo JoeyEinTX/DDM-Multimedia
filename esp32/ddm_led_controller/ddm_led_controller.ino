@@ -2181,21 +2181,25 @@ void animChaos() {
 
 /**
  * ANIM:CHAOS_CLASSIC
- * Original chaos animation: random cup lights up in a random color every 60ms.
- * Simple, fast, unpredictable. Uses solid cup colors (no per-LED ring addressing).
+ * Original chaos animation: 5 random cups lit per frame from the DDM palette,
+ * refreshed every 60ms. Simple, fast, unpredictable.
  */
 void animChaosClassic() {
-    unsigned long now = millis();
-    static unsigned long lastStep = 0;
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate < 60) return; // Very fast
+    lastUpdate = millis();
 
-    if (now - lastStep >= 60) {
-        lastStep = now;
+    // Random 5 cups each frame
+    FastLED.clear();
+    for (int i = 0; i < 5; i++) {
         int cup = random(1, NUM_CUPS + 1);
-        CRGB color = CRGB(random(0, 256), random(0, 256), random(0, 256));
+        CRGB colors[] = {COLOR_GOLD, COLOR_RED, COLOR_AMBER, COLOR_GREEN, COLOR_WHITE};
+        CRGB color = colors[random(0, 5)];
         setCup(cup, color);
-        FastLED.show();
-        updatePowerEstimate();
     }
+
+    FastLED.show();
+    updatePowerEstimate();
 }
 
 /**

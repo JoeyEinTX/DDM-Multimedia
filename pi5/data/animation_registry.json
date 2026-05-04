@@ -88,7 +88,7 @@
     "CHAOS_CLASSIC": {
       "name": "Chaos Classic",
       "category": "race",
-      "description": "Original chaos: random cups flash random colors at 60ms intervals"
+      "description": "Original chaos: 5 random cups per frame in DDM palette colors, 60ms refresh"
     },
     "FINISH": {
       "name": "Finish",
