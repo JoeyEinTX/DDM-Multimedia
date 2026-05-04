@@ -85,6 +85,11 @@
       "category": "race",
       "description": "20 independent spinning comets"
     },
+    "CHAOS_CLASSIC": {
+      "name": "Chaos Classic",
+      "category": "race",
+      "description": "Original chaos: random cups flash random colors at 60ms intervals"
+    },
     "FINISH": {
       "name": "Finish",
       "category": "race",
@@ -125,7 +130,7 @@
       "slots": [
         { "id": "at_the_gate", "label": "At The Gate", "default": "AT_THE_GATE" },
         { "id": "gates_burst", "label": "They're Off", "default": "GATES_BURST" },
-        { "id": "chaos", "label": "During Race", "default": "CHAOS" },
+        { "id": "chaos", "label": "During Race", "default": "CHAOS_CLASSIC" },
         { "id": "finish", "label": "Finish", "default": "FINISH" }
       ]
     },

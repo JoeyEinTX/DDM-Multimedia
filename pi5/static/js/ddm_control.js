@@ -2328,14 +2328,26 @@ let animLibAssignments = {};    // current slot → animation assignments
 let animLibPreviewSlot = null;  // slot ID currently being previewed
 let animLibPriorMode = null;    // animation running before modal opened
 
-// Open modal — dim cups, load registry and assignments
 async function openAnimLibModal() {
-    // Store current mode before dimming
-    animLibPriorMode = document.getElementById('current-mode')?.textContent.trim() || 'STANDBY';
+    // Capture current mode BEFORE dimming — read from hidden span
+    const modeEl = document.getElementById('current-mode');
+    animLibPriorMode = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
 
-    // Dim cups while browsing
+    // Sanitize — if mode is unknown or disconnected, restore to STANDBY
+    const knownModes = [
+        'WELCOME','STANDBY','TEST','BETTING_60','BETTING_30','FINAL_CALL',
+        'AT_THE_GATE','GATES_BURST','CHAOS','CHAOS_CLASSIC','FINISH',
+        'RESULTS_ENTRY','HEARTBEAT_COOLDOWN','SOLAR_FLARE','BREATHE_TOGETHER',
+        'RIPPLE_OUT','STARFIELD','MONEY_RAIN','TENSION_BUILD',
+        'HEARTBEAT_STACK','COUNTDOWN_SPIRAL'
+    ];
+    if (!knownModes.includes(animLibPriorMode)) {
+        animLibPriorMode = 'STANDBY';
+    }
+
+    // Dim cups
     try {
-        await fetch('/api/led/all_off', { method: 'POST' });
+        await fetch('/api/animation/STANDBY', { method: 'POST' });
     } catch(e) {}
 
     document.getElementById('anim-lib-modal').classList.add('active');
@@ -2345,19 +2357,22 @@ async function openAnimLibModal() {
 function closeAnimLibModal() {
     document.getElementById('anim-lib-modal').classList.remove('active');
 
+    // Clear all preview button states
+    document.querySelectorAll('.anim-lib-preview-btn.active').forEach(btn => {
+        btn.classList.remove('active');
+        btn.textContent = '▶ Preview';
+    });
+
+    // Clear preview label
+    const label = document.getElementById('anim-lib-preview-label');
+    if (label) label.textContent = '';
+
     // Restore prior animation
     const restore = animLibPriorMode || 'STANDBY';
-    if (restore && restore !== 'DISCONNECTED') {
-        fetch(`/api/animation/${restore}`, { method: 'POST' }).catch(() => {});
-    }
+    fetch(`/api/animation/${restore}`, { method: 'POST' }).catch(() => {});
 
     animLibPreviewSlot = null;
     animLibPriorMode = null;
-
-    // Clear active state on all preview buttons
-    document.querySelectorAll('.anim-lib-preview-btn.active').forEach(btn => {
-        btn.classList.remove('active');
-    });
 }
 
 // Load registry + assignments from Flask
@@ -2456,24 +2471,36 @@ function updateSlotDescription(slotId, animKey) {
     }
 }
 
-// Preview an animation on the cups
 async function previewAnimation(slotId, animKey, btnElement) {
-    // Clear previous active button
+    const isCurrentlyPreviewing = btnElement.classList.contains('active');
+
+    // Clear all active preview buttons
     document.querySelectorAll('.anim-lib-preview-btn.active').forEach(btn => {
         btn.classList.remove('active');
         btn.textContent = '▶ Preview';
     });
 
+    // Clear preview label
+    const label = document.getElementById('anim-lib-preview-label');
+
+    if (isCurrentlyPreviewing) {
+        // User hit Stop — go dark, don't restore prior animation yet
+        animLibPreviewSlot = null;
+        if (label) label.textContent = '';
+        try {
+            await fetch('/api/animation/STANDBY', { method: 'POST' });
+        } catch(e) {}
+        return;
+    }
+
+    // Start new preview
     animLibPreviewSlot = slotId;
     btnElement.classList.add('active');
     btnElement.textContent = '■ Stop';
 
-    // Update preview label
-    const label = document.getElementById('anim-lib-preview-label');
     const animName = (animLibRegistry.animations || {})[animKey]?.name || animKey;
     if (label) label.textContent = `Previewing: ${animName}`;
 
-    // Fire animation
     try {
         await fetch(`/api/animation/${animKey}`, { method: 'POST' });
     } catch(e) {

@@ -342,6 +342,7 @@ void animRaceStart();
 void animAtTheGate();
 void animGatesBurst();
 void animChaos();
+void animChaosClassic();
 void initChaosState();
 void animFinish();
 void animHeartbeatCooldown();
@@ -842,6 +843,16 @@ String processCommand(String cmd) {
         animStep = 0;
         return "OK:ANIM:CHAOS";
     }
+
+    // ANIM:CHAOS_CLASSIC - Original chaos: random cups, random colors, 60ms interval
+    else if (cmd == "ANIM:CHAOS_CLASSIC") {
+        stopAnimation();
+        animStartTime = millis();
+        currentMode = "CHAOS_CLASSIC";
+        currentAnimation = "CHAOS_CLASSIC";
+        animationRunning = true;
+        return "OK:ANIM:CHAOS_CLASSIC";
+    }
     
     // ANIM:FINISH - Checkered flag pattern
     else if (cmd == "ANIM:FINISH") {
@@ -1140,6 +1151,8 @@ void runAnimation() {
         animGatesBurst();
     } else if (currentAnimation == "CHAOS") {
         animChaos();
+    } else if (currentAnimation == "CHAOS_CLASSIC") {
+        animChaosClassic();
     } else if (currentAnimation == "FINISH") {
         animFinish();
     } else if (currentAnimation == "HEARTBEAT_COOLDOWN") {
@@ -2164,6 +2177,25 @@ void animChaos() {
 
     FastLED.show();
     updatePowerEstimate();
+}
+
+/**
+ * ANIM:CHAOS_CLASSIC
+ * Original chaos animation: random cup lights up in a random color every 60ms.
+ * Simple, fast, unpredictable. Uses solid cup colors (no per-LED ring addressing).
+ */
+void animChaosClassic() {
+    unsigned long now = millis();
+    static unsigned long lastStep = 0;
+
+    if (now - lastStep >= 60) {
+        lastStep = now;
+        int cup = random(1, NUM_CUPS + 1);
+        CRGB color = CRGB(random(0, 256), random(0, 256), random(0, 256));
+        setCup(cup, color);
+        FastLED.show();
+        updatePowerEstimate();
+    }
 }
 
 /**
