@@ -1151,6 +1151,57 @@ def api_status():
     return jsonify(status)
 
 
+@app.route('/api/esp32/config', methods=['GET'])
+def api_esp32_config_get():
+    """Return the ESP32 client's current IP and port."""
+    return jsonify({'ip': esp32.ip, 'port': esp32.port})
+
+
+@app.route('/api/esp32/config', methods=['POST'])
+def api_esp32_config_set():
+    """Update the ESP32 client's IP, persist to config.py, and ping to verify."""
+    import re
+
+    data = request.get_json(silent=True) or {}
+    new_ip = (data.get('ip') or '').strip()
+
+    ip_pattern = re.compile(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+    match = ip_pattern.match(new_ip)
+    if not match or any(int(o) > 255 for o in match.groups()):
+        return jsonify({'success': False, 'error': 'Invalid IP address'}), 400
+
+    esp32.ip = new_ip
+
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.py')
+    persisted = False
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            contents = f.read()
+        new_contents, count = re.subn(
+            r'^ESP32_IP\s*=.*$',
+            f'ESP32_IP = "{new_ip}"',
+            contents,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if count == 1:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(new_contents)
+            persisted = True
+    except OSError as e:
+        print(f"[ESP32 CONFIG] Failed to persist IP to config.py: {e}")
+
+    connected = esp32.ping()
+
+    return jsonify({
+        'success': True,
+        'connected': connected,
+        'persisted': persisted,
+        'ip': esp32.ip,
+        'port': esp32.port,
+    })
+
+
 @app.route('/api/weather', methods=['GET'])
 def api_weather():
     """Get weather forecast with caching - returns 12 hours starting from current hour"""

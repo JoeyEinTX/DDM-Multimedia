@@ -450,6 +450,103 @@ function closeDeviceModal() {
     modal.classList.remove('active');
 }
 
+// Basic dotted-quad IP validator (each octet 0-255)
+function isValidIPv4(ip) {
+    if (typeof ip !== 'string') return false;
+    const parts = ip.trim().split('.');
+    if (parts.length !== 4) return false;
+    for (const p of parts) {
+        if (!/^\d{1,3}$/.test(p)) return false;
+        const n = parseInt(p, 10);
+        if (n < 0 || n > 255) return false;
+    }
+    return true;
+}
+
+// Set the small status indicator next to the Update button
+function setEsp32ConfigStatus(state, message) {
+    const el = document.getElementById('esp32-config-status');
+    if (!el) return;
+    el.classList.remove('ok', 'fail', 'pending');
+    if (state === 'ok') {
+        el.textContent = '✓';
+        el.classList.add('ok');
+    } else if (state === 'fail') {
+        el.textContent = '✗';
+        el.classList.add('fail');
+    } else if (state === 'pending') {
+        el.textContent = '…';
+        el.classList.add('pending');
+    } else {
+        el.textContent = '';
+    }
+    if (message) el.title = message;
+}
+
+// Fetch current ESP32 IP/port and pre-populate the inputs
+async function loadEsp32Config() {
+    try {
+        const response = await fetch('/api/esp32/config');
+        const data = await response.json();
+        const ipInput = document.getElementById('esp32-ip-input');
+        const portInput = document.getElementById('esp32-port-display');
+        if (ipInput && data.ip) ipInput.value = data.ip;
+        if (portInput && data.port != null) portInput.value = String(data.port);
+        setEsp32ConfigStatus('');
+    } catch (error) {
+        console.error('Error loading ESP32 config:', error);
+    }
+}
+
+// Send a new IP to the server, then show ✓ / ✗ based on PING result
+async function updateEsp32Config() {
+    const ipInput = document.getElementById('esp32-ip-input');
+    if (!ipInput) return;
+    const newIp = ipInput.value.trim();
+
+    if (!isValidIPv4(newIp)) {
+        showNotification('Invalid IP address', 'error');
+        setEsp32ConfigStatus('fail', 'Invalid IP format');
+        return;
+    }
+
+    setEsp32ConfigStatus('pending');
+    try {
+        const response = await fetch('/api/esp32/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ip: newIp})
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            setEsp32ConfigStatus('fail', data.error || 'Update failed');
+            showNotification(data.error || 'ESP32 update failed', 'error');
+            return;
+        }
+
+        if (data.connected) {
+            setEsp32ConfigStatus('ok', 'PING succeeded');
+            showNotification(`ESP32 updated to ${data.ip} — connected`, 'success');
+        } else {
+            setEsp32ConfigStatus('fail', 'PING failed');
+            showNotification(`ESP32 IP saved (${data.ip}) but PING failed`, 'error');
+        }
+
+        // Refresh status panel so the device list reflects the new IP
+        if (typeof esp32Info !== 'undefined') {
+            esp32Info.ip = data.ip;
+        }
+        if (typeof checkESP32Status === 'function') {
+            checkESP32Status();
+        }
+    } catch (error) {
+        console.error('Error updating ESP32 config:', error);
+        setEsp32ConfigStatus('fail', 'Network error');
+        showNotification('Connection error updating ESP32', 'error');
+    }
+}
+
 // Send command to ESP32
 async function sendCommand(command, buttonElement, toggle = false) {
     // If toggle mode and button is already active, turn it off
@@ -2822,6 +2919,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Get system status
     getSystemStatus();
+
+    // Pre-populate ESP32 IP config field
+    loadEsp32Config();
     
     // Connect to SSE stream for real-time results
     connectResultsStream();
