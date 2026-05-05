@@ -74,12 +74,16 @@
     ':': ['00000','00100','00100','00000','00100','00100','00000'],
 } %}
 
-{# Render a string as a row of dot-matrix character tiles. `length` is a
-   hard cap — strings longer than that are truncated, shorter strings
-   render at their natural width (no padding). Unknown characters fall
-   back to the blank tile so the row never throws. #}
-{%- macro tote_text(s, length) -%}
-{%- set s = (s|string|upper)[:length] -%}
+{# Render a string as a row of dot-matrix character tiles at FIXED width.
+   `width` is both the truncation cap AND the pad-to length — strings
+   shorter than `width` are padded with trailing spaces (which render as
+   all-unlit tiles), so every row uses the same number of tile slots
+   regardless of name/odds length. Phase 1.18: this is what makes the
+   rendered surface read as one continuous LED grid instead of isolated
+   words floating in black void. Unknown characters fall back to the
+   blank tile so the row never throws. #}
+{%- macro tote_text(s, width) -%}
+{%- set s = (s|string|upper)[:width].ljust(width) -%}
 <span class="splash-tote-text">
 {%- for ch in s -%}
 {%- set pattern = _DOT_PATTERNS.get(ch, _DOT_PATTERNS[' ']) -%}
@@ -113,7 +117,10 @@
 {%- endmacro -%}
 
 <div class="splash-card splash-tote-slide">
-    <div class="splash-serape-band splash-serape-band--top splash-serape-band--scroll"></div>
+    {# Phase 1.18 brand framing — Treatment A: static serape bands top/bottom
+       (no --scroll modifier; on a busy data slide the moving stripes were
+       visually noisy). Brand-family kinship with the other splash cards. #}
+    <div class="splash-serape-band splash-serape-band--top"></div>
 
     <div class="splash-tote-eyebrow">DERBY 2026 &mdash; POST TIME {{ post_time or '6:57 PM ET' }}</div>
 
@@ -128,9 +135,17 @@
         </div>
     </div>
 
+    {# Phase 1.18 brand framing — Treatment B: subtle DDM brand mark in the
+       bottom-LEFT corner (staleness lives bottom-right). Quiet enough to
+       not compete with the data; gives the slide an identifiable owner. #}
+    <img class="splash-tote-brand"
+         src="{{ url_for('static', filename='img/ddm_master.png') }}"
+         alt="DDM"
+         onerror="this.style.display='none'" />
+
     {% if is_stale %}
     <div class="splash-tote-staleness">Last updated {{ minutes_ago }} min ago</div>
     {% endif %}
 
-    <div class="splash-serape-band splash-serape-band--bottom splash-serape-band--scroll"></div>
+    <div class="splash-serape-band splash-serape-band--bottom"></div>
 </div>

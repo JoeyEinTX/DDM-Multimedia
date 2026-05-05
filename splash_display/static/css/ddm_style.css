@@ -1021,17 +1021,21 @@ img { -webkit-user-drag: none; user-drag: none; }
     opacity: 0.9;
 }
 
-/* The dark LED panel — parallels pi5's .results-tote-board */
+/* The dark LED panel — parallels pi5's .results-tote-board.
+   Phase 1.18 (Treatment C): border bumped from 2px @ 0.35 → 3px @ 0.55
+   so the gold frame reads as an intentional "tote-board sitting in a
+   casino" bezel rather than a faint hairline. Same brand color
+   (--ddm-yellow), just more visible. */
 .splash-tote-board {
     flex: 1 1 auto;
     width: 100%;
     background: var(--ddm-bg-deep);
-    border: 2px solid rgba(254, 198, 0, 0.35);
-    border-radius: 8px;
+    border: 3px solid rgba(254, 198, 0, 0.55);
+    border-radius: 10px;
     padding: 18px 22px;
     box-shadow:
-        0 4px 12px rgba(0, 0, 0, 0.55),
-        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+        0 6px 18px rgba(0, 0, 0, 0.6),
+        inset 0 -2px 10px rgba(0, 0, 0, 0.35);
     overflow: hidden;
 }
 
@@ -1053,15 +1057,19 @@ img { -webkit-user-drag: none; user-drag: none; }
     gap: 4px;
 }
 
-/* Single horse row — saddle | name (dot-matrix) | odds (dot-matrix). */
+/* Single horse row — saddle | name (dot-matrix) | odds (dot-matrix).
+   Phase 1.18: min-height bumped 38 → 44 to match the larger 4px-cell
+   tiles. Name + odds slots both render fixed-width tile counts (see
+   the tote_text macro in horse_roster.html), so the rendered surface
+   reads as one continuous LED grid with no black gaps. */
 .splash-tote-row {
     display: grid;
-    grid-template-columns: 36px 1fr auto;
+    grid-template-columns: auto auto 1fr auto;
     align-items: center;
     column-gap: 12px;
-    padding: 4px 2px;
+    padding: 5px 2px;
     border-bottom: 1px solid rgba(254, 198, 0, 0.10);
-    min-height: 38px;
+    min-height: 44px;
 }
 
 .splash-tote-row:last-child {
@@ -1070,17 +1078,19 @@ img { -webkit-user-drag: none; user-drag: none; }
 
 /* Saddle cloth square — color-coded by race state. Default is a neutral
    cream chip; the --win / --place / --show modifiers switch to the
-   official tote-board colors when the race is over. */
+   official tote-board colors when the race is over.
+   Phase 1.18: bumped from 36×30 → 40×34 / font 18 → 20 to keep
+   proportional with the larger dot-matrix tiles. */
 .splash-saddle {
-    width: 36px;
-    height: 30px;
+    width: 40px;
+    height: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: 4px;
     font-family: 'Arial Black', 'Helvetica Inserat', Arial, sans-serif;
     font-weight: 900;
-    font-size: 18px;
+    font-size: 20px;
     letter-spacing: -1px;
     background: var(--ddm-card-2);
     color: #1a1a1a;
@@ -1090,7 +1100,10 @@ img { -webkit-user-drag: none; user-drag: none; }
 .splash-saddle--place { background: var(--ddm-yellow); color: #1a1a1a; }
 .splash-saddle--show  { background: #f5f5f0; color: #1a1a1a; }
 
-/* Wrapper for a sequence of dot-matrix character tiles (one "word"). */
+/* Wrapper for a sequence of dot-matrix character tiles (one "word").
+   Phase 1.18: width is set by the tote_text macro at the call site
+   (18 tiles for names, 5 for odds), so unlit space tiles fill any
+   remaining slots — gives the slide a continuous LED-grid feel. */
 .splash-tote-text {
     display: inline-flex;
     align-items: center;
@@ -1099,13 +1112,17 @@ img { -webkit-user-drag: none; user-drag: none; }
     overflow: hidden;
 }
 
-/* Single 5×7 character tile. Independent of pi5's .dot-digit. */
+/* Single 5×7 character tile. Independent of pi5's .dot-digit.
+   Phase 1.18: cell 3px → 4px (33% bump), padding 2 → 3, gap stays at
+   1px. Tile footprint grows from ~23×31 to ~30×40 — text is much
+   easier to read at TV-across-room distance and the rows now fill
+   the available vertical space. */
 .splash-tote-digit {
     display: grid;
-    grid-template-columns: repeat(5, 3px);
-    grid-template-rows: repeat(7, 3px);
+    grid-template-columns: repeat(5, 4px);
+    grid-template-rows: repeat(7, 4px);
     gap: 1px;
-    padding: 2px;
+    padding: 3px;
     background: #0c0c0c;
     border-radius: 2px;
     flex-shrink: 0;
@@ -1113,10 +1130,10 @@ img { -webkit-user-drag: none; user-drag: none; }
 
 /* Individual dot — unlit socket by default. */
 .splash-tote-cell {
-    width: 3px;
-    height: 3px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.06);
 }
 
 /* Lit dot — golden amber to match the LED-tote-board aesthetic. */
@@ -1124,7 +1141,24 @@ img { -webkit-user-drag: none; user-drag: none; }
     background: #D4A000;
     box-shadow:
         0 0 2px rgba(212, 160, 0, 0.85),
-        0 0 4px rgba(212, 160, 0, 0.45);
+        0 0 5px rgba(212, 160, 0, 0.5);
+}
+
+/* Phase 1.18 Treatment B — DDM brand mark in bottom-LEFT corner.
+   Quiet (~70% opacity, drop shadow for legibility on dark bg) so it
+   never competes with the data, but gives the slide an identifiable
+   owner. Sits diagonally opposite the staleness indicator (which
+   lives bottom-right) so the two never overlap. */
+.splash-tote-brand {
+    position: absolute;
+    bottom: 3vh;
+    left: 3vw;
+    width: clamp(70px, 6vw, 110px);
+    height: auto;
+    opacity: 0.7;
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55));
+    pointer-events: none;
+    user-select: none;
 }
 
 /* Bottom-right indicator when race_poller payload is older than
