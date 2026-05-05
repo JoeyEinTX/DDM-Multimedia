@@ -1010,21 +1010,26 @@ img { -webkit-user-drag: none; user-drag: none; }
     overflow: hidden;
 }
 
-/* Phase 1.19 hero block — replaces the .splash-tote-eyebrow text from
-   Phase 1.17. DDM master logo is now the slide's lead element with the
-   post time directly below it (rendered in the viewer's local timezone
-   by _build_horse_roster_context — so a Central-time kiosk sees
+/* Phase 1.20 hero block — switched from a centered vertical stack
+   (Phase 1.19) to a horizontal "scoreboard with branding" row: bigger
+   DDM master logo on the LEFT, post time on the RIGHT, vertically
+   aligned. The post time is still rendered in the viewer's local
+   timezone by _build_horse_roster_context (so a Central kiosk sees
    "Post Time 5:57 PM CDT" while the underlying ISO is in EDT). */
 .splash-tote-hero {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    justify-content: space-between;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 1.6vh;
+    width: 100%;
+    padding: 0 4vw;
+    margin-bottom: 1vh;
 }
 
 .splash-tote-hero-logo {
-    height: clamp(80px, 9vh, 130px);
+    /* Bumped from clamp(80, 9vh, 130) — horizontal layout permits more
+       height without crowding the post-time text below. */
+    height: clamp(100px, 13vh, 180px);
     width: auto;
     filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.55));
 }
@@ -1036,7 +1041,7 @@ img { -webkit-user-drag: none; user-drag: none; }
     text-transform: uppercase;
     font-weight: 700;
     opacity: 0.9;
-    text-align: center;
+    text-align: right;
 }
 
 /* The dark LED panel — parallels pi5's .results-tote-board.
@@ -1076,15 +1081,15 @@ img { -webkit-user-drag: none; user-drag: none; }
 }
 
 /* Single horse row — saddle | name (dot-matrix) | odds (dot-matrix).
-   Phase 1.18: min-height bumped 38 → 44 to match the larger 4px-cell
-   tiles. Name + odds slots both render fixed-width tile counts (see
-   the tote_text macro in horse_roster.html), so the rendered surface
-   reads as one continuous LED grid with no black gaps. */
+   Phase 1.20: switched from CSS Grid to Flex with a 1px gap. The 1px
+   gap matches the inter-tile gap inside .splash-tote-text, so the last
+   name tile and the first odds tile abut as if they were part of the
+   same continuous LED grid. The saddle keeps a slightly wider visual
+   breath via .splash-saddle margin-right (see below). */
 .splash-tote-row {
-    display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    display: flex;
     align-items: center;
-    column-gap: 12px;
+    gap: 1px;
     padding: 5px 2px;
     border-bottom: 1px solid rgba(254, 198, 0, 0.10);
     min-height: 44px;
@@ -1115,6 +1120,12 @@ img { -webkit-user-drag: none; user-drag: none; }
     background: var(--ddm-card-2);
     color: #1a1a1a;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    /* Phase 1.20: extra breathing space between the colored saddle chip
+       and the start of the LED grid. The row's 1px flex gap matches the
+       inter-tile spacing inside .splash-tote-text — so name and odds tiles
+       touch flush across the boundary, but the saddle gets its own beat. */
+    margin-right: 9px;
+    flex-shrink: 0;
 }
 
 /* Per-position color classes — official Churchill Downs saddle cloths.

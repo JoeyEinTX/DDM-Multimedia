@@ -75,15 +75,25 @@
 } %}
 
 {# Render a string as a row of dot-matrix character tiles at FIXED width.
-   `width` is both the truncation cap AND the pad-to length — strings
-   shorter than `width` are padded with trailing spaces (which render as
-   all-unlit tiles), so every row uses the same number of tile slots
-   regardless of name/odds length. Phase 1.18: this is what makes the
-   rendered surface read as one continuous LED grid instead of isolated
-   words floating in black void. Unknown characters fall back to the
-   blank tile so the row never throws. #}
-{%- macro tote_text(s, width) -%}
-{%- set s = (s|string|upper)[:width].ljust(width) -%}
+   `width` is both the cap AND the pad-to length — strings shorter than
+   `width` are padded with blank tiles (rendered as all-unlit dots), so
+   every row uses the same number of tile slots regardless of length.
+
+   `justify` (default 'left') controls padding direction:
+     * 'left'  → name slot — pad blanks on the RIGHT, content sticks left;
+                  long strings truncate from the right (s[:width])
+     * 'right' → odds slot — pad blanks on the LEFT, content sticks right;
+                  long strings keep the rightmost chars (s[-width:]),
+                  so a stray "100-1" (5 chars in a 4-char slot) renders
+                  as "00-1" rather than dropping the trailing "1".
+
+   Unknown chars fall back to the blank tile so the macro never throws. #}
+{%- macro tote_text(s, width, justify='left') -%}
+{%- if justify == 'right' -%}
+  {%- set s = (s|string|upper)[-width:].rjust(width) -%}
+{%- else -%}
+  {%- set s = (s|string|upper)[:width].ljust(width) -%}
+{%- endif -%}
 <span class="splash-tote-text">
 {%- for ch in s -%}
 {%- set pattern = _DOT_PATTERNS.get(ch, _DOT_PATTERNS[' ']) -%}
@@ -98,15 +108,18 @@
 </span>
 {%- endmacro -%}
 
-{# Single horse row. Phase 1.19:
-   * Saddle cloth uses .splash-saddle--pos-N for the official Kentucky
-     Derby position color (1=red, 2=white, 3=blue, ... 20=fuchsia).
-   * Post-race finishes layer a glowing OUTLINE on top of the position
-     color (gold for win, silver for place, bronze for show) so the
-     position color stays visible — handled by .splash-saddle--win/
-     --place/--show in CSS, no markup change beyond the modifier name.
-   * Name slot reduced from 18 → 14 chars so 5-char odds fit in the
-     row without horizontal overflow at 4px cell sizing. #}
+{# Single horse row. Phase 1.20 changes from 1.19:
+   * Name slot widened 14 → 17 chars (the recovered space comes from
+     shrinking odds to 4 chars + dropping the row's grid column-gap to
+     a 1px flex gap — see .splash-tote-row in CSS).
+   * Odds slot 5 → 4 chars, RIGHT-justified — odds tiles align on
+     their right edge across all rows. Donerail's 91-1 in 1913 is the
+     all-time longest-odds Derby winner; 4 chars fits "55-1" / "9-1" /
+     null comfortably and the macro left-truncates the rare "100-1"
+     case so the trailing tile is preserved.
+   Phase 1.19 saddle treatment is unchanged: .splash-saddle--pos-N for
+   the official Derby color + a layered .splash-saddle--win/--place/
+   --show ring for post-race results. #}
 {%- macro tote_row(horse) -%}
 {%- set saddle_mod = '' -%}
 {%- if race_state == 'post-race' -%}
@@ -117,8 +130,8 @@
 {%- endif -%}
 <div class="splash-tote-row">
     <div class="splash-saddle splash-saddle--pos-{{ horse.number }}{{ saddle_mod }}">{{ '%02d' | format(horse.number) }}</div>
-    {{ tote_text(horse.name or '', 14) }}
-    {{ tote_text(horse.odds or '-', 5) }}
+    {{ tote_text(horse.name or '', 17) }}
+    {{ tote_text(horse.odds or '-', 4, 'right') }}
 </div>
 {%- endmacro -%}
 
