@@ -1009,18 +1009,29 @@ img { -webkit-user-drag: none; user-drag: none; }
     width: 100%;
     flex: 1 1 auto;
     align-items: stretch;
-    align-content: center;
+    /* Phase 1.16: was `center` — combined with the column's
+       justify-content: center, the grid was redistributing extra
+       vertical space across the rows and visually spreading them
+       apart. `stretch` lets the grid use its full available height
+       naturally so the columns can pack from the top. */
+    align-content: stretch;
 }
 
 .horse-roster-column {
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    /* Phase 1.16: was `center` — see .horse-roster-grid above. Rows
+       now pack from the top of the column with consistent spacing,
+       leaving any leftover space as a single buffer at the bottom. */
+    justify-content: flex-start;
 }
 
 .horse-roster-row {
     display: grid;
-    grid-template-columns: auto 50px 1fr 80px auto;
+    /* Phase 1.16: odds column bumped 80px → 120px so two-digit odds
+       like "55-1" / "50-1" / "38-1" fit on a single line at the
+       current font size (clamp 28-44px) instead of wrapping mid-string. */
+    grid-template-columns: auto 50px 1fr 120px auto;
     align-items: center;
     column-gap: 16px;
     padding: 8px 4px;
