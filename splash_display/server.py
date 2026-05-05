@@ -206,10 +206,33 @@ def _build_horse_roster_context() -> Dict[str, Any] | None:
     except Exception as e:  # noqa: BLE001
         log.debug("staleness calc failed: %s", e)
 
+    # Phase 1.19: convert post_time_iso (RFC 3339 with TZ offset) to the
+    # splash Pi's local timezone, e.g. "5:57 PM CDT" for a Central kiosk.
+    # Falls back silently to whatever the dashboard sent in post_time if
+    # the ISO field is missing or unparseable.
+    post_time_display = (data.get("post_time") or "").strip()
+    iso = (data.get("post_time_iso") or "").strip()
+    if iso:
+        try:
+            dt = datetime.fromisoformat(iso)
+            local_dt = dt.astimezone()  # system local TZ, DST-aware
+            hour = local_dt.hour % 12 or 12
+            ampm = "PM" if local_dt.hour >= 12 else "AM"
+            # strftime('%Z') returns short abbreviations on Linux ('CDT')
+            # but full names on Windows ('Central Daylight Time'). Squeeze
+            # multi-word names to their initial letters so the splash UI
+            # stays compact regardless of host platform.
+            tz = local_dt.strftime("%Z") or ""
+            if " " in tz:
+                tz = "".join(w[0] for w in tz.split() if w and w[0].isalpha())
+            post_time_display = f"{hour}:{local_dt.minute:02d} {ampm} {tz}".strip()
+        except (ValueError, TypeError) as e:
+            log.debug("post_time_iso parse failed: %s", e)
+
     return {
         "horses_left": horses_left,
         "horses_right": horses_right,
-        "post_time": data.get("post_time") or "",
+        "post_time": post_time_display,
         "race_state": data.get("race_state") or "unknown",
         "winner": data.get("winner"),
         "is_stale": is_stale,

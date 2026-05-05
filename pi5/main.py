@@ -1032,8 +1032,12 @@ def api_race():
         state_str = 'unknown'
 
     # Format post_time HH:MM (24h) -> "6:57 PM ET" for splash display.
+    # Phase 1.19: also emit post_time_iso (RFC 3339 with -04:00 EDT offset
+    # for DDM 2026 race day) so the splash side can convert to viewer's
+    # local timezone. Existing post_time string field stays for fallback.
     pt_raw = (setup.get('post_time') or '').strip()
     post_time_human = ''
+    post_time_iso = ''
     if pt_raw:
         try:
             hh, mm = pt_raw.split(':')
@@ -1041,12 +1045,17 @@ def api_race():
             suffix = 'AM' if h < 12 else 'PM'
             h12 = h % 12 or 12
             post_time_human = f'{h12}:{m:02d} {suffix} ET'
+            # DDM 2026 race day = Saturday May 2, 2026, EDT (-04:00).
+            # Hardcoded for now; future enhancement is to pull the date
+            # from race-setup config alongside the time-of-day.
+            post_time_iso = f'2026-05-02T{h:02d}:{m:02d}:00-04:00'
         except Exception:
             post_time_human = pt_raw  # fall back to raw string
 
     payload = {
         'race_state': state_str,
         'post_time': post_time_human,
+        'post_time_iso': post_time_iso,
         'last_updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'horses': horses,
         'winner': winner,

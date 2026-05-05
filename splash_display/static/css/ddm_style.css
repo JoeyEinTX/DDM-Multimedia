@@ -1010,15 +1010,33 @@ img { -webkit-user-drag: none; user-drag: none; }
     overflow: hidden;
 }
 
-.splash-tote-eyebrow {
+/* Phase 1.19 hero block — replaces the .splash-tote-eyebrow text from
+   Phase 1.17. DDM master logo is now the slide's lead element with the
+   post time directly below it (rendered in the viewer's local timezone
+   by _build_horse_roster_context — so a Central-time kiosk sees
+   "Post Time 5:57 PM CDT" while the underlying ISO is in EDT). */
+.splash-tote-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.6vh;
+}
+
+.splash-tote-hero-logo {
+    height: clamp(80px, 9vh, 130px);
+    width: auto;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.55));
+}
+
+.splash-tote-post-time {
     color: var(--ddm-yellow);
-    font-size: clamp(20px, 1.8vw, 32px);
-    letter-spacing: 8px;
+    font-size: clamp(20px, 2vw, 32px);
+    letter-spacing: 4px;
     text-transform: uppercase;
-    font-weight: 600;
-    margin-bottom: 2vh;
-    text-align: center;
+    font-weight: 700;
     opacity: 0.9;
+    text-align: center;
 }
 
 /* The dark LED panel — parallels pi5's .results-tote-board.
@@ -1076,11 +1094,13 @@ img { -webkit-user-drag: none; user-drag: none; }
     border-bottom: none;
 }
 
-/* Saddle cloth square — color-coded by race state. Default is a neutral
-   cream chip; the --win / --place / --show modifiers switch to the
-   official tote-board colors when the race is over.
-   Phase 1.18: bumped from 36×30 → 40×34 / font 18 → 20 to keep
-   proportional with the larger dot-matrix tiles. */
+/* Saddle cloth square — color-coded by post position using the official
+   Kentucky Derby palette. Phase 1.19: ported the same hex values used
+   by the pi5 dashboard's spectator board (its SADDLE_CLOTHS table in
+   ddm_control.js) so the splash display stays visually consistent
+   with the dashboard. Pi5 file unchanged — the values are independently
+   re-stated here under .splash-* names.
+   Dimensions (40×34, font 20) preserved from Phase 1.18. */
 .splash-saddle {
     width: 40px;
     height: 34px;
@@ -1096,9 +1116,50 @@ img { -webkit-user-drag: none; user-drag: none; }
     color: #1a1a1a;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
 }
-.splash-saddle--win   { background: #1d4ed8; color: #ffffff; }
-.splash-saddle--place { background: var(--ddm-yellow); color: #1a1a1a; }
-.splash-saddle--show  { background: #f5f5f0; color: #1a1a1a; }
+
+/* Per-position color classes — official Churchill Downs saddle cloths.
+   Each rule sets background + contrasting text. White / khaki / light-blue
+   positions also carry a thin dark border so they don't disappear into
+   the cream splash background or any future light-bg variant. */
+.splash-saddle--pos-1  { background: #E31837; color: #FFFFFF; }
+.splash-saddle--pos-2  { background: #FFFFFF; color: #000000; border: 1px solid rgba(0, 0, 0, 0.35); }
+.splash-saddle--pos-3  { background: #0033A0; color: #FFFFFF; }
+.splash-saddle--pos-4  { background: #FFCD00; color: #000000; }
+.splash-saddle--pos-5  { background: #00843D; color: #FFFFFF; }
+.splash-saddle--pos-6  { background: #000000; color: #FFD700; }
+.splash-saddle--pos-7  { background: #FF6600; color: #000000; }
+.splash-saddle--pos-8  { background: #FF69B4; color: #000000; }
+.splash-saddle--pos-9  { background: #40E0D0; color: #000000; }
+.splash-saddle--pos-10 { background: #663399; color: #FFFFFF; }
+.splash-saddle--pos-11 { background: #808080; color: #E31837; }
+.splash-saddle--pos-12 { background: #32CD32; color: #000000; }
+.splash-saddle--pos-13 { background: #8B4513; color: #FFFFFF; }
+.splash-saddle--pos-14 { background: #800000; color: #FFCD00; }
+.splash-saddle--pos-15 { background: #C4B7A6; color: #000000; border: 1px solid rgba(0, 0, 0, 0.25); }
+.splash-saddle--pos-16 { background: #87CEEB; color: #E31837; border: 1px solid rgba(0, 0, 0, 0.25); }
+.splash-saddle--pos-17 { background: #000080; color: #FFFFFF; }
+.splash-saddle--pos-18 { background: #228B22; color: #FFCD00; }
+.splash-saddle--pos-19 { background: #00008B; color: #E31837; }
+.splash-saddle--pos-20 { background: #FF00FF; color: #FFCD00; }
+
+/* Post-race result accents — LAYER on top of the position color rather
+   than replace it (so position identity stays visible at a glance).
+   Outline lives outside the box so it doesn't shift layout. */
+.splash-saddle--win {
+    outline: 3px solid #FFD700;
+    outline-offset: 2px;
+    box-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.4),
+        0 0 12px 4px rgba(255, 215, 0, 0.55);
+}
+.splash-saddle--place {
+    outline: 3px solid #C0C0C0;
+    outline-offset: 2px;
+}
+.splash-saddle--show {
+    outline: 3px solid #CD7F32;
+    outline-offset: 2px;
+}
 
 /* Wrapper for a sequence of dot-matrix character tiles (one "word").
    Phase 1.18: width is set by the tote_text macro at the call site
@@ -1144,22 +1205,10 @@ img { -webkit-user-drag: none; user-drag: none; }
         0 0 5px rgba(212, 160, 0, 0.5);
 }
 
-/* Phase 1.18 Treatment B — DDM brand mark in bottom-LEFT corner.
-   Quiet (~70% opacity, drop shadow for legibility on dark bg) so it
-   never competes with the data, but gives the slide an identifiable
-   owner. Sits diagonally opposite the staleness indicator (which
-   lives bottom-right) so the two never overlap. */
-.splash-tote-brand {
-    position: absolute;
-    bottom: 3vh;
-    left: 3vw;
-    width: clamp(70px, 6vw, 110px);
-    height: auto;
-    opacity: 0.7;
-    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.55));
-    pointer-events: none;
-    user-select: none;
-}
+/* (Phase 1.18 .splash-tote-brand bottom-left brand mark removed in
+   Phase 1.19 — replaced by the .splash-tote-hero block at the top of
+   the slide, where the DDM logo gets full-sized hero treatment paired
+   with the post time below it.) */
 
 /* Bottom-right indicator when race_poller payload is older than
    RACE_DATA_STALENESS_S — sits over the splash-card padding. */

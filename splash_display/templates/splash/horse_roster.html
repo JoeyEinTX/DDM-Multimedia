@@ -98,9 +98,15 @@
 </span>
 {%- endmacro -%}
 
-{# Single horse row. Saddle cloth color-codes by race state:
-   pre-race / running → neutral cream, post-race winner → blue,
-   post-race place (finish 2) → yellow, post-race show (finish 3) → white. #}
+{# Single horse row. Phase 1.19:
+   * Saddle cloth uses .splash-saddle--pos-N for the official Kentucky
+     Derby position color (1=red, 2=white, 3=blue, ... 20=fuchsia).
+   * Post-race finishes layer a glowing OUTLINE on top of the position
+     color (gold for win, silver for place, bronze for show) so the
+     position color stays visible — handled by .splash-saddle--win/
+     --place/--show in CSS, no markup change beyond the modifier name.
+   * Name slot reduced from 18 → 14 chars so 5-char odds fit in the
+     row without horizontal overflow at 4px cell sizing. #}
 {%- macro tote_row(horse) -%}
 {%- set saddle_mod = '' -%}
 {%- if race_state == 'post-race' -%}
@@ -110,19 +116,30 @@
   {%- endif -%}
 {%- endif -%}
 <div class="splash-tote-row">
-    <div class="splash-saddle{{ saddle_mod }}">{{ '%02d' | format(horse.number) }}</div>
-    {{ tote_text(horse.name or '', 18) }}
+    <div class="splash-saddle splash-saddle--pos-{{ horse.number }}{{ saddle_mod }}">{{ '%02d' | format(horse.number) }}</div>
+    {{ tote_text(horse.name or '', 14) }}
     {{ tote_text(horse.odds or '-', 5) }}
 </div>
 {%- endmacro -%}
 
 <div class="splash-card splash-tote-slide">
-    {# Phase 1.18 brand framing — Treatment A: static serape bands top/bottom
-       (no --scroll modifier; on a busy data slide the moving stripes were
-       visually noisy). Brand-family kinship with the other splash cards. #}
+    {# Phase 1.18 brand framing: static serape bands top/bottom for
+       brand-family kinship with the other splash cards. #}
     <div class="splash-serape-band splash-serape-band--top"></div>
 
-    <div class="splash-tote-eyebrow">DERBY 2026 &mdash; POST TIME {{ post_time or '6:57 PM ET' }}</div>
+    {# Phase 1.19 hero block: DDM master logo + post time, replaces
+       the Phase 1.17/1.18 text eyebrow. The post time is rendered in
+       the splash Pi's local timezone by _build_horse_roster_context
+       (so a Central kiosk sees "5:57 PM CDT" while the underlying
+       ISO is in EDT). Falls back to the dashboard's pre-formatted
+       post_time string if post_time_iso is missing/unparseable. #}
+    <div class="splash-tote-hero">
+        <img class="splash-tote-hero-logo"
+             src="{{ url_for('static', filename='img/ddm_master.png') }}"
+             alt="Derby de Mayo"
+             onerror="this.style.display='none'" />
+        <div class="splash-tote-post-time">Post Time {{ post_time or '6:57 PM ET' }}</div>
+    </div>
 
     <div class="splash-tote-board">
         <div class="splash-tote-grid">
@@ -134,14 +151,6 @@
             </div>
         </div>
     </div>
-
-    {# Phase 1.18 brand framing — Treatment B: subtle DDM brand mark in the
-       bottom-LEFT corner (staleness lives bottom-right). Quiet enough to
-       not compete with the data; gives the slide an identifiable owner. #}
-    <img class="splash-tote-brand"
-         src="{{ url_for('static', filename='img/ddm_master.png') }}"
-         alt="DDM"
-         onerror="this.style.display='none'" />
 
     {% if is_stale %}
     <div class="splash-tote-staleness">Last updated {{ minutes_ago }} min ago</div>
