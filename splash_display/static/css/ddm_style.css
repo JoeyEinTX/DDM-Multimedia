@@ -982,132 +982,158 @@ img { -webkit-user-drag: none; user-drag: none; }
    Sibling visual to the countdown: dark teal field, sunflower-yellow
    accents, two-column scoreboard layout for the 20 post positions.
    ────────────────────────────────────────────────────────────────────── */
-.horse-roster.splash-card {
+/* ---------------------------------------------------------------------
+   HORSE ROSTER — Phase 1.17 dot-matrix tote-board rebuild
+
+   The Phase 1.14–1.16 .horse-roster-* / .horse-name / .horse-odds /
+   .horse-finish / .horse-winner-tag rules have been REMOVED in favor
+   of an authentic LED-tote-board look modeled on the pi5 dashboard's
+   spectator results board.
+
+   Naming uses a `splash-tote-*` prefix so it never collides with the
+   protected pi5 classes (.dot-digit, .dot, .results-tote-board,
+   .saddle-cloth) — those are reserved for the dashboard. The patterns
+   are independently re-implemented here from scratch.
+
+   Sizing budget: 10 rows per column, 2 columns, fit inside one
+   .splash-card (max ~86vh / 920px tall). Cell width 3px keeps each
+   5×7 character tile to ~23×31px so names stay legible across-the-
+   room while a full 10-row column fits without clipping.
+   --------------------------------------------------------------------- */
+
+/* Slide-level chrome — dark background, matches the spectator vibe */
+.splash-tote-slide.splash-card {
     background: var(--ddm-bg-dark);
     color: var(--ddm-jade);
-    padding: 7vh 6vw 6vh;
+    padding: 6vh 4vw 5vh;
     justify-content: flex-start;
     overflow: hidden;
 }
 
-.horse-roster-eyebrow {
+.splash-tote-eyebrow {
     color: var(--ddm-yellow);
     font-size: clamp(20px, 1.8vw, 32px);
     letter-spacing: 8px;
     text-transform: uppercase;
     font-weight: 600;
-    margin-bottom: 3vh;
+    margin-bottom: 2vh;
     text-align: center;
     opacity: 0.9;
 }
 
-.horse-roster-grid {
+/* The dark LED panel — parallels pi5's .results-tote-board */
+.splash-tote-board {
+    flex: 1 1 auto;
+    width: 100%;
+    background: var(--ddm-bg-deep);
+    border: 2px solid rgba(254, 198, 0, 0.35);
+    border-radius: 8px;
+    padding: 18px 22px;
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.55),
+        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+.splash-tote-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    column-gap: 4vw;
+    column-gap: 3vw;
     row-gap: 0;
     width: 100%;
-    flex: 1 1 auto;
+    height: 100%;
     align-items: stretch;
-    /* Phase 1.16: was `center` — combined with the column's
-       justify-content: center, the grid was redistributing extra
-       vertical space across the rows and visually spreading them
-       apart. `stretch` lets the grid use its full available height
-       naturally so the columns can pack from the top. */
     align-content: stretch;
 }
 
-.horse-roster-column {
+.splash-tote-column {
     display: flex;
     flex-direction: column;
-    /* Phase 1.16: was `center` — see .horse-roster-grid above. Rows
-       now pack from the top of the column with consistent spacing,
-       leaving any leftover space as a single buffer at the bottom. */
     justify-content: flex-start;
+    gap: 4px;
 }
 
-.horse-roster-row {
+/* Single horse row — saddle | name (dot-matrix) | odds (dot-matrix). */
+.splash-tote-row {
     display: grid;
-    /* Phase 1.16: odds column bumped 80px → 120px so two-digit odds
-       like "55-1" / "50-1" / "38-1" fit on a single line at the
-       current font size (clamp 28-44px) instead of wrapping mid-string. */
-    grid-template-columns: auto 50px 1fr 120px auto;
+    grid-template-columns: 36px 1fr auto;
     align-items: center;
-    column-gap: 16px;
-    padding: 8px 4px;
-    border-bottom: 1px solid rgba(254, 198, 0, 0.18);
-    font-size: clamp(28px, 2.5vw, 44px);
-    line-height: 1.1;
-    min-height: 50px;
+    column-gap: 12px;
+    padding: 4px 2px;
+    border-bottom: 1px solid rgba(254, 198, 0, 0.10);
+    min-height: 38px;
 }
 
-.horse-roster-row:last-child {
+.splash-tote-row:last-child {
     border-bottom: none;
 }
 
-/* Optional finish-position prefix (post-race). Empty cell pre-race so the
-   columns line up identically across rows. */
-.horse-finish {
-    grid-column: 1;
-    color: var(--ddm-yellow);
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-    min-width: 1.2em;
-    text-align: right;
-    opacity: 0.85;
-}
-
-.horse-number {
-    grid-column: 2;
-    color: var(--ddm-yellow);
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    font-family: 'Courier New', ui-monospace, monospace;
-}
-
-.horse-name {
-    grid-column: 3;
-    color: var(--ddm-jade);
-    font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-
-.horse-odds {
-    grid-column: 4;
-    color: var(--ddm-yellow);
-    opacity: 0.85;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-family: 'Courier New', ui-monospace, monospace;
-}
-
-.horse-winner-tag {
-    grid-column: 5;
-    color: var(--ddm-scarlet);
-    font-weight: 800;
-    font-size: 0.7em;
-    letter-spacing: 2px;
-    margin-left: 8px;
-    white-space: nowrap;
-}
-
-.horse-roster-row--winner {
-    background: rgba(254, 198, 0, 0.15);
+/* Saddle cloth square — color-coded by race state. Default is a neutral
+   cream chip; the --win / --place / --show modifiers switch to the
+   official tote-board colors when the race is over. */
+.splash-saddle {
+    width: 36px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 4px;
+    font-family: 'Arial Black', 'Helvetica Inserat', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: -1px;
+    background: var(--ddm-card-2);
+    color: #1a1a1a;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
 }
-.horse-roster-row--winner .horse-name {
-    color: var(--ddm-yellow);
+.splash-saddle--win   { background: #1d4ed8; color: #ffffff; }
+.splash-saddle--place { background: var(--ddm-yellow); color: #1a1a1a; }
+.splash-saddle--show  { background: #f5f5f0; color: #1a1a1a; }
+
+/* Wrapper for a sequence of dot-matrix character tiles (one "word"). */
+.splash-tote-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex-wrap: nowrap;
+    overflow: hidden;
 }
 
-.horse-roster-staleness {
+/* Single 5×7 character tile. Independent of pi5's .dot-digit. */
+.splash-tote-digit {
+    display: grid;
+    grid-template-columns: repeat(5, 3px);
+    grid-template-rows: repeat(7, 3px);
+    gap: 1px;
+    padding: 2px;
+    background: #0c0c0c;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+/* Individual dot — unlit socket by default. */
+.splash-tote-cell {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Lit dot — golden amber to match the LED-tote-board aesthetic. */
+.splash-tote-cell.is-on {
+    background: #D4A000;
+    box-shadow:
+        0 0 2px rgba(212, 160, 0, 0.85),
+        0 0 4px rgba(212, 160, 0, 0.45);
+}
+
+/* Bottom-right indicator when race_poller payload is older than
+   RACE_DATA_STALENESS_S — sits over the splash-card padding. */
+.splash-tote-staleness {
     position: absolute;
-    bottom: 4vh;
+    bottom: 3vh;
     right: 3vw;
-    font-size: 16px;
+    font-size: 14px;
     color: rgba(255, 255, 255, 0.45);
     letter-spacing: 1px;
     font-style: italic;

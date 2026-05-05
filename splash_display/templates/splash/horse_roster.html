@@ -1,7 +1,16 @@
-{# Phase 1.14 — Live race roster slide.
+{# Phase 1.17 — Live race roster as a dot-matrix LED tote board.
+
    Server-renders the latest race_poller snapshot when this slide is built
    into the playlist. If get_race_data() returns None or no horses, the
    slide is skipped entirely (see _splash_page_to_slide in server.py).
+
+   Visual model: matches the pi5 dashboard's spectator results board —
+   golden-on-black 5×7 dot-matrix character tiles for horse names and
+   odds, color-coded saddle cloth squares for each post position. The
+   pi5 source patterns are READ-ONLY; this template independently
+   re-implements them under .splash-tote-* CSS classes (see
+   ddm_style.css → Phase 1.17 horse roster block) so nothing in pi5/
+   ever has to change.
 
    Context:
      horses_left   — list of horse dicts, post positions 1-10
@@ -10,47 +19,117 @@
      race_state    — "pre-race" | "running" | "post-race" | "unknown"
      winner        — winning post position number, or None
      is_stale      — bool: payload is older than RACE_DATA_STALENESS_S
-     minutes_ago   — int minutes since last_updated (only used if is_stale) #}
-<div class="splash-card horse-roster">
+     minutes_ago   — int minutes since last_updated (only used if is_stale)
+#}
+
+{# 5×7 bitmap glyph table — one entry per character we expect to render
+   (uppercase letters, digits, hyphen for odds, space for padding, plus
+   a few punctuation chars for safety). Each row is a 5-character string
+   of '0' / '1'; '1' = lit cell, '0' = unlit. Same encoding as the
+   countdown's DIGIT_GLYPHS in slideshow.html (Phase 1) — Jinja can't
+   evaluate Python `&` bitwise so the patterns are pre-expanded.
+   Slashed-zero distinguishes 0 from O, matching the authentic
+   tote-board look used by the pi5 dashboard's spectator board. #}
+{% set _DOT_PATTERNS = {
+    '0': ['01110','10001','10011','10101','11001','10001','01110'],
+    '1': ['00100','01100','00100','00100','00100','00100','01110'],
+    '2': ['01110','10001','00001','00010','00100','01000','11111'],
+    '3': ['01110','10001','00001','00110','00001','10001','01110'],
+    '4': ['00010','00110','01010','10010','11111','00010','00010'],
+    '5': ['11111','10000','11110','00001','00001','10001','01110'],
+    '6': ['00110','01000','10000','11110','10001','10001','01110'],
+    '7': ['11111','00001','00010','00100','01000','01000','01000'],
+    '8': ['01110','10001','10001','01110','10001','10001','01110'],
+    '9': ['01110','10001','10001','01111','00001','00010','01100'],
+    'A': ['01110','10001','10001','11111','10001','10001','10001'],
+    'B': ['11110','10001','10001','11110','10001','10001','11110'],
+    'C': ['01110','10001','10000','10000','10000','10001','01110'],
+    'D': ['11100','10010','10001','10001','10001','10010','11100'],
+    'E': ['11111','10000','10000','11110','10000','10000','11111'],
+    'F': ['11111','10000','10000','11110','10000','10000','10000'],
+    'G': ['01110','10001','10000','10111','10001','10001','01111'],
+    'H': ['10001','10001','10001','11111','10001','10001','10001'],
+    'I': ['01110','00100','00100','00100','00100','00100','01110'],
+    'J': ['00111','00010','00010','00010','00010','10010','01100'],
+    'K': ['10001','10010','10100','11000','10100','10010','10001'],
+    'L': ['10000','10000','10000','10000','10000','10000','11111'],
+    'M': ['10001','11011','10101','10101','10001','10001','10001'],
+    'N': ['10001','11001','10101','10011','10001','10001','10001'],
+    'O': ['01110','10001','10001','10001','10001','10001','01110'],
+    'P': ['11110','10001','10001','11110','10000','10000','10000'],
+    'Q': ['01110','10001','10001','10001','10101','10010','01101'],
+    'R': ['11110','10001','10001','11110','10100','10010','10001'],
+    'S': ['01110','10001','10000','01110','00001','10001','01110'],
+    'T': ['11111','00100','00100','00100','00100','00100','00100'],
+    'U': ['10001','10001','10001','10001','10001','10001','01110'],
+    'V': ['10001','10001','10001','10001','10001','01010','00100'],
+    'W': ['10001','10001','10001','10101','10101','10101','01010'],
+    'X': ['10001','10001','01010','00100','01010','10001','10001'],
+    'Y': ['10001','10001','01010','00100','00100','00100','00100'],
+    'Z': ['11111','00001','00010','00100','01000','10000','11111'],
+    ' ': ['00000','00000','00000','00000','00000','00000','00000'],
+    '-': ['00000','00000','00000','11111','00000','00000','00000'],
+    "'": ['00100','00100','00000','00000','00000','00000','00000'],
+    '.': ['00000','00000','00000','00000','00000','00100','00000'],
+    ':': ['00000','00100','00100','00000','00100','00100','00000'],
+} %}
+
+{# Render a string as a row of dot-matrix character tiles. `length` is a
+   hard cap — strings longer than that are truncated, shorter strings
+   render at their natural width (no padding). Unknown characters fall
+   back to the blank tile so the row never throws. #}
+{%- macro tote_text(s, length) -%}
+{%- set s = (s|string|upper)[:length] -%}
+<span class="splash-tote-text">
+{%- for ch in s -%}
+{%- set pattern = _DOT_PATTERNS.get(ch, _DOT_PATTERNS[' ']) -%}
+<span class="splash-tote-digit">
+{%- for row in range(7) -%}
+{%- for col in range(5) -%}
+<span class="splash-tote-cell{% if pattern[row][col] == '1' %} is-on{% endif %}"></span>
+{%- endfor -%}
+{%- endfor -%}
+</span>
+{%- endfor -%}
+</span>
+{%- endmacro -%}
+
+{# Single horse row. Saddle cloth color-codes by race state:
+   pre-race / running → neutral cream, post-race winner → blue,
+   post-race place (finish 2) → yellow, post-race show (finish 3) → white. #}
+{%- macro tote_row(horse) -%}
+{%- set saddle_mod = '' -%}
+{%- if race_state == 'post-race' -%}
+  {%- if winner is not none and winner == horse.number -%}{%- set saddle_mod = ' splash-saddle--win' -%}
+  {%- elif horse.finish == 2 -%}{%- set saddle_mod = ' splash-saddle--place' -%}
+  {%- elif horse.finish == 3 -%}{%- set saddle_mod = ' splash-saddle--show' -%}
+  {%- endif -%}
+{%- endif -%}
+<div class="splash-tote-row">
+    <div class="splash-saddle{{ saddle_mod }}">{{ '%02d' | format(horse.number) }}</div>
+    {{ tote_text(horse.name or '', 18) }}
+    {{ tote_text(horse.odds or '-', 5) }}
+</div>
+{%- endmacro -%}
+
+<div class="splash-card splash-tote-slide">
     <div class="splash-serape-band splash-serape-band--top splash-serape-band--scroll"></div>
 
-    <div class="horse-roster-eyebrow">DERBY 2026 — POST TIME {{ post_time or '6:57 PM ET' }}</div>
+    <div class="splash-tote-eyebrow">DERBY 2026 &mdash; POST TIME {{ post_time or '6:57 PM ET' }}</div>
 
-    <div class="horse-roster-grid">
-        <div class="horse-roster-column">
-            {% for horse in horses_left %}
-            <div class="horse-roster-row{% if race_state == 'post-race' and winner == horse.number %} horse-roster-row--winner{% endif %}">
-                {% if race_state == 'post-race' and horse.finish %}
-                <span class="horse-finish">{{ horse.finish }}</span>
-                {% endif %}
-                <span class="horse-number">{{ horse.number }}</span>
-                <span class="horse-name">{{ horse.name }}</span>
-                <span class="horse-odds">{{ horse.odds or '—' }}</span>
-                {% if race_state == 'post-race' and winner == horse.number %}
-                <span class="horse-winner-tag">★ WINNER</span>
-                {% endif %}
+    <div class="splash-tote-board">
+        <div class="splash-tote-grid">
+            <div class="splash-tote-column">
+                {% for horse in horses_left %}{{ tote_row(horse) }}{% endfor %}
             </div>
-            {% endfor %}
-        </div>
-        <div class="horse-roster-column">
-            {% for horse in horses_right %}
-            <div class="horse-roster-row{% if race_state == 'post-race' and winner == horse.number %} horse-roster-row--winner{% endif %}">
-                {% if race_state == 'post-race' and horse.finish %}
-                <span class="horse-finish">{{ horse.finish }}</span>
-                {% endif %}
-                <span class="horse-number">{{ horse.number }}</span>
-                <span class="horse-name">{{ horse.name }}</span>
-                <span class="horse-odds">{{ horse.odds or '—' }}</span>
-                {% if race_state == 'post-race' and winner == horse.number %}
-                <span class="horse-winner-tag">★ WINNER</span>
-                {% endif %}
+            <div class="splash-tote-column">
+                {% for horse in horses_right %}{{ tote_row(horse) }}{% endfor %}
             </div>
-            {% endfor %}
         </div>
     </div>
 
     {% if is_stale %}
-    <div class="horse-roster-staleness">Last updated {{ minutes_ago }} min ago</div>
+    <div class="splash-tote-staleness">Last updated {{ minutes_ago }} min ago</div>
     {% endif %}
 
     <div class="splash-serape-band splash-serape-band--bottom splash-serape-band--scroll"></div>
