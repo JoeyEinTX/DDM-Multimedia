@@ -24,6 +24,7 @@ from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 from la_subasta import la_subasta_bp, init_la_subasta
+from la_quiniela import la_quiniela_bp, init_la_quiniela
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -1327,6 +1328,11 @@ print("Racing data service initialised (mock mode)")
 init_la_subasta(socketio=socketio, racing_service=racing_service)
 app.register_blueprint(la_subasta_bp)
 print("La Subasta initialised (/la-subasta)")
+
+# La Quiniela live-betting POC: raw WebSocket at /ws/la-quiniela + test API
+init_la_quiniela(app)
+app.register_blueprint(la_quiniela_bp)
+print("La Quiniela initialised (/ws/la-quiniela, /api/la-quiniela/*)")
 
 
 # ---------------------------------------------------------------------------
