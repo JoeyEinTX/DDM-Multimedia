@@ -93,9 +93,26 @@ SPLASH_WEIGHTS = {
     "countdown":     30,
     "horse_roster":  30,   # Phase 1.14 — high weight; auto-skipped when no race data
     "ddm_brand":     15,
-    "la_subasta":     8,
+    # Phase 1.21: la_subasta single-slide superseded by the 5-slide
+    # "How La Subasta Works" mini-series below. Commented (not deleted)
+    # so emergency rollback is just uncommenting this line + commenting
+    # the 5 mini-series entries. The la_subasta.html template + its
+    # splash_pages.json entry both stay in place — only the weight gates
+    # whether the slide appears in the playlist.
+    # "la_subasta":     8,
     "la_quiniela":    8,
     "derby_dash":     8,
+
+    # Phase 1.21 La Subasta primer mini-series — 5 sequential slides
+    # teaching the auction format passively as guests pass the TV.
+    # Each weight matches the old single la_subasta slot (8); the
+    # series collectively gets 5x that weight per spec ("meaningful
+    # presence without dominating"). Joey can rebalance.
+    "la_subasta_intro": 8,
+    "la_subasta_step1": 8,
+    "la_subasta_step2": 8,
+    "la_subasta_step3": 8,
+    "la_subasta_step4": 8,
 }
 
 # ---------------------------------------------------------------------------

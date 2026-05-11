@@ -1,0 +1,206 @@
+{# Slide 4 of 5 — Step 3: the race runs. 3 SVG horse silhouettes
+   gallop left-to-right; the lead horse pulls ahead, crosses a
+   finish line on the right, and a confetti burst (DDM palette
+   only) explodes at the finish. Accent: Sunflower Yellow. #}
+<style>
+    .s-step3 { position: relative; }
+    .s-step3::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 60%, rgba(254, 198, 0, 0.16) 0%, transparent 65%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .s-step3 .s-step3-headline,
+    .s-step3 .s-step3-sub {
+        position: absolute;
+        left: 0; right: 0;
+        text-align: center;
+        opacity: 0;
+        z-index: 5;
+    }
+    .s-step3 .s-step3-headline {
+        top: 11vh;
+        font-size: clamp(38px, 4.6vw, 84px);
+        animation: subastaEduFadeUp 600ms ease-out 800ms forwards;
+    }
+    .s-step3 .s-step3-sub {
+        bottom: 9vh;
+        animation: subastaEduFadeUp 600ms ease-out 6500ms forwards;
+    }
+
+    /* Race track band — dark stripe across mid-slide */
+    .s-step3-track {
+        position: absolute;
+        top: 42%;
+        left: 0;
+        right: 0;
+        height: 30%;
+        background: linear-gradient(180deg,
+            rgba(111, 80, 52, 0.18) 0%,
+            rgba(111, 80, 52, 0.32) 50%,
+            rgba(111, 80, 52, 0.18) 100%);
+        border-top: 2px dashed rgba(254, 198, 0, 0.35);
+        border-bottom: 2px dashed rgba(254, 198, 0, 0.35);
+        z-index: 2;
+    }
+
+    /* Finish line — vertical black-and-white checker on the right */
+    .s-step3-finish {
+        position: absolute;
+        top: 42%;
+        right: 6%;
+        width: 18px;
+        height: 30%;
+        background:
+            repeating-linear-gradient(0deg, #FFFFFF 0 18px, #1a1a1a 18px 36px);
+        box-shadow: 0 0 14px rgba(255, 255, 255, 0.4);
+        z-index: 3;
+    }
+
+    /* Horse silhouettes — SVG-based, galloping right via translateX */
+    .s-step3-horse {
+        position: absolute;
+        height: clamp(60px, 8vh, 120px);
+        width: auto;
+        left: -180px;
+        z-index: 4;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+    }
+    .s-step3-horse--1 {
+        top: 44%;
+        animation:
+            s-step3-gallop-1 4500ms cubic-bezier(0.4, 0, 0.6, 1) 1500ms forwards,
+            s-step3-bob 350ms ease-in-out 1500ms infinite alternate;
+        color: #FF6A13;  /* color is applied via SVG fill currentColor */
+    }
+    .s-step3-horse--2 {
+        top: 53%;
+        animation:
+            s-step3-gallop-2 4000ms cubic-bezier(0.4, 0, 0.6, 1) 1500ms forwards,
+            s-step3-bob 400ms ease-in-out 1500ms infinite alternate;
+        color: #00B1B7;
+    }
+    .s-step3-horse--3 {
+        top: 62%;
+        animation:
+            s-step3-gallop-3 4400ms cubic-bezier(0.4, 0, 0.6, 1) 1500ms forwards,
+            s-step3-bob 380ms ease-in-out 1500ms infinite alternate;
+        color: #F5547C;
+    }
+
+    /* Lead horse (#2 — turquoise) finishes at ~5500ms; others finish
+       slightly behind. translateX values target the finish line. */
+    @keyframes s-step3-gallop-1 {
+        0%   { transform: translateX(0); }
+        100% { transform: translateX(calc(82vw - 240px)); }
+    }
+    @keyframes s-step3-gallop-2 {
+        0%   { transform: translateX(0); }
+        100% { transform: translateX(calc(85vw - 240px)); }
+    }
+    @keyframes s-step3-gallop-3 {
+        0%   { transform: translateX(0); }
+        100% { transform: translateX(calc(80vw - 240px)); }
+    }
+    @keyframes s-step3-bob {
+        from { transform-origin: center; }
+        to   { transform-origin: center; }
+    }
+    /* Combined translateX (gallop) + Y bob via SVG inner ribbon — */
+    /* Simpler: separate inner span for vertical bob on the SVG */
+    .s-step3-horse svg {
+        animation: s-step3-svg-bob 250ms ease-in-out infinite alternate;
+    }
+    @keyframes s-step3-svg-bob {
+        from { transform: translateY(0); }
+        to   { transform: translateY(-6px); }
+    }
+
+    /* Confetti burst at the finish line at ~5600ms */
+    .s-step3-confetti {
+        position: absolute;
+        top: 50%;
+        right: 8%;
+        width: 0;
+        height: 0;
+        z-index: 6;
+        opacity: 0;
+        animation: s-step3-confetti-show 0.1s linear 5500ms forwards;
+    }
+    @keyframes s-step3-confetti-show { to { opacity: 1; } }
+
+    .s-step3-confetti span {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        opacity: 0;
+        animation: s-step3-confetti-fly 1500ms ease-out 5500ms forwards;
+    }
+    /* 12 confetti pieces, DDM palette only, fanning outward */
+    .s-step3-confetti span:nth-child(1)  { background: #DE4343; --tx: -120px; --ty: -90px;  }
+    .s-step3-confetti span:nth-child(2)  { background: #FEC600; --tx:  -80px; --ty: -130px; }
+    .s-step3-confetti span:nth-child(3)  { background: #3F8E43; --tx:    0px; --ty: -150px; }
+    .s-step3-confetti span:nth-child(4)  { background: #00B1B7; --tx:   80px; --ty: -130px; }
+    .s-step3-confetti span:nth-child(5)  { background: #F5547C; --tx:  120px; --ty: -90px;  }
+    .s-step3-confetti span:nth-child(6)  { background: #FF6A13; --tx:  140px; --ty: -20px;  }
+    .s-step3-confetti span:nth-child(7)  { background: #DE4343; --tx:  120px; --ty:  60px;  }
+    .s-step3-confetti span:nth-child(8)  { background: #FEC600; --tx:   60px; --ty:  100px; }
+    .s-step3-confetti span:nth-child(9)  { background: #3F8E43; --tx:    0px; --ty:  120px; }
+    .s-step3-confetti span:nth-child(10) { background: #00B1B7; --tx:  -60px; --ty:  100px; }
+    .s-step3-confetti span:nth-child(11) { background: #F5547C; --tx: -120px; --ty:   60px; }
+    .s-step3-confetti span:nth-child(12) { background: #FF6A13; --tx: -140px; --ty:  -20px; }
+
+    @keyframes s-step3-confetti-fly {
+        0%   { opacity: 1; transform: translate(0, 0) rotate(0); }
+        100% { opacity: 0; transform: translate(var(--tx), var(--ty)) rotate(540deg); }
+    }
+</style>
+
+<div class="splash-card subasta-edu s-step3">
+    <div class="subasta-edu-papel subasta-edu-papel--top"></div>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <div class="subasta-edu-badge">Step 3 of 4</div>
+
+    <h2 class="subasta-edu-headline s-step3-headline">🏁 ¡Vamos! The Derby runs 🏁</h2>
+
+    <div class="s-step3-track"></div>
+    <div class="s-step3-finish"></div>
+
+    {# Three horse silhouettes — minimalist SVG, fill: currentColor so the
+       per-horse color comes from the wrapper class. #}
+    <div class="s-step3-horse s-step3-horse--1">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" height="100%" width="auto">
+            <path fill="currentColor" d="M30 100 L40 60 Q50 35 80 30 L130 25 Q165 22 185 35 L210 50 L220 45 L228 55 L218 62 L200 60 L195 72 L210 78 L208 86 L188 84 L180 95 L195 100 L190 110 L160 105 L155 90 L130 95 L120 110 L100 108 L95 95 L70 100 L62 112 L48 110 L42 95 Z"/>
+            <circle cx="190" cy="42" r="3" fill="#1a1a1a"/>
+        </svg>
+    </div>
+    <div class="s-step3-horse s-step3-horse--2">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" height="100%" width="auto">
+            <path fill="currentColor" d="M30 100 L40 60 Q50 35 80 30 L130 25 Q165 22 185 35 L210 50 L220 45 L228 55 L218 62 L200 60 L195 72 L210 78 L208 86 L188 84 L180 95 L195 100 L190 110 L160 105 L155 90 L130 95 L120 110 L100 108 L95 95 L70 100 L62 112 L48 110 L42 95 Z"/>
+            <circle cx="190" cy="42" r="3" fill="#1a1a1a"/>
+        </svg>
+    </div>
+    <div class="s-step3-horse s-step3-horse--3">
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" height="100%" width="auto">
+            <path fill="currentColor" d="M30 100 L40 60 Q50 35 80 30 L130 25 Q165 22 185 35 L210 50 L220 45 L228 55 L218 62 L200 60 L195 72 L210 78 L208 86 L188 84 L180 95 L195 100 L190 110 L160 105 L155 90 L130 95 L120 110 L100 108 L95 95 L70 100 L62 112 L48 110 L42 95 Z"/>
+            <circle cx="190" cy="42" r="3" fill="#1a1a1a"/>
+        </svg>
+    </div>
+
+    <div class="s-step3-confetti">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+    </div>
+
+    <p class="subasta-edu-subtitle s-step3-sub">May the best caballo win.</p>
+
+    <div class="subasta-edu-papel subasta-edu-papel--bottom"></div>
+</div>

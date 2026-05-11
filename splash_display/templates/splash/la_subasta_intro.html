@@ -1,0 +1,87 @@
+{# Slide 1 of 5 — La Subasta primer: "What is it?" intro hero.
+   Phase 1.21. Standalone slide; reads on its own when caught mid-cycle.
+   Shared chrome (papel picado, marigolds, badge, headline/subtitle
+   styling) lives in ddm_style.css under .subasta-edu-* classes;
+   slide-specific animation lives inline below. CSS-only — no JS,
+   since innerHTML-injected <script> tags don't reliably execute. #}
+<style>
+    .s-intro {
+        position: relative;
+    }
+    .s-intro .s-intro-stack {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 6vh 6vw;
+        gap: 2.4vh;
+        z-index: 5;
+        text-align: center;
+    }
+    .s-intro .s-intro-logo {
+        height: clamp(110px, 14vh, 200px);
+        width: auto;
+        filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.55));
+        opacity: 0;
+        transform: translateY(-30px) scale(0.92);
+        animation: s-intro-logo 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 500ms forwards;
+    }
+    @keyframes s-intro-logo {
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    /* Headline letters drop in word-by-word with stagger. Word 1 starts
+       at 1.5s, then ~0.18s per word (5 words). Each letter inside a word
+       fires together via grouped delay. */
+    .s-intro .s-intro-headline {
+        max-width: 92%;
+        line-height: 1.05;
+    }
+    .s-intro .s-intro-word {
+        display: inline-block;
+        margin: 0 0.18em;
+    }
+    /* Word-level entry delays */
+    .s-intro .s-intro-word--1 .subasta-edu-letter { animation-delay: 1500ms; }
+    .s-intro .s-intro-word--2 .subasta-edu-letter { animation-delay: 1800ms; }
+    .s-intro .s-intro-word--3 .subasta-edu-letter { animation-delay: 2100ms; }
+    .s-intro .s-intro-word--4 .subasta-edu-letter { animation-delay: 2400ms; }
+    .s-intro .s-intro-word--5 .subasta-edu-letter { animation-delay: 2700ms; }
+
+    .s-intro .s-intro-subtitle-1,
+    .s-intro .s-intro-subtitle-2 {
+        opacity: 0;
+        animation: subastaEduFadeUp 600ms ease-out forwards;
+    }
+    .s-intro .s-intro-subtitle-1 { animation-delay: 3500ms; }
+    .s-intro .s-intro-subtitle-2 { animation-delay: 3900ms; color: var(--ddm-yellow); font-weight: 700; }
+</style>
+
+<div class="splash-card subasta-edu s-intro">
+    <div class="subasta-edu-papel subasta-edu-papel--top"></div>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+
+    <div class="s-intro-stack">
+        <img class="s-intro-logo"
+             src="{{ url_for('static', filename='img/la_subasta.png') }}"
+             alt="La Subasta"
+             onerror="this.style.display='none'" />
+
+        <h1 class="subasta-edu-headline s-intro-headline">
+            <span class="s-intro-word s-intro-word--1"><span class="subasta-edu-letter subasta-edu-letter--red">O</span><span class="subasta-edu-letter subasta-edu-letter--yellow">W</span><span class="subasta-edu-letter subasta-edu-letter--green">N</span></span>
+            <span class="s-intro-word s-intro-word--2"><span class="subasta-edu-letter subasta-edu-letter--cyan">A</span></span>
+            <span class="s-intro-word s-intro-word--3"><span class="subasta-edu-letter subasta-edu-letter--pink">P</span><span class="subasta-edu-letter subasta-edu-letter--orange">I</span><span class="subasta-edu-letter subasta-edu-letter--red">E</span><span class="subasta-edu-letter subasta-edu-letter--yellow">C</span><span class="subasta-edu-letter subasta-edu-letter--green">E</span></span>
+            <span class="s-intro-word s-intro-word--4"><span class="subasta-edu-letter subasta-edu-letter--cream">O</span><span class="subasta-edu-letter subasta-edu-letter--cream">F</span></span>
+            <span class="s-intro-word s-intro-word--5"><span class="subasta-edu-letter subasta-edu-letter--cyan">T</span><span class="subasta-edu-letter subasta-edu-letter--pink">H</span><span class="subasta-edu-letter subasta-edu-letter--orange">E</span><span class="subasta-edu-letter subasta-edu-letter--yellow"> </span><span class="subasta-edu-letter subasta-edu-letter--red">D</span><span class="subasta-edu-letter subasta-edu-letter--yellow">E</span><span class="subasta-edu-letter subasta-edu-letter--green">R</span><span class="subasta-edu-letter subasta-edu-letter--cyan">B</span><span class="subasta-edu-letter subasta-edu-letter--pink">Y</span></span>
+        </h1>
+
+        <p class="subasta-edu-subtitle s-intro-subtitle-1">Bid on caballos. Win the pesos pool.</p>
+        <p class="subasta-edu-subtitle s-intro-subtitle-2">¡Es así de simple, amigos!</p>
+    </div>
+
+    <div class="subasta-edu-papel subasta-edu-papel--bottom"></div>
+</div>

@@ -1232,3 +1232,151 @@ img { -webkit-user-drag: none; user-drag: none; }
     letter-spacing: 1px;
     font-style: italic;
 }
+
+
+/* =====================================================================
+   LA SUBASTA "How It Works" mini-series (Phase 1.21) — shared chrome.
+   5 slides under templates/splash/la_subasta_intro/step1..4.html each
+   carry their own scoped <style> for slide-specific animations; the
+   common festive backdrop, step badge, and headline/subtitle styling
+   live here so the 5 templates stay readable and stylistically locked.
+   ===================================================================== */
+
+/* Slide root — overrides .splash-card flex centering so each slide can
+   use absolute positioning for its cinematic content. */
+.subasta-edu {
+    display: block;
+    padding: 0;
+    background:
+        radial-gradient(ellipse at 30% 20%, rgba(111, 80, 52, 0.22) 0%, transparent 55%),
+        radial-gradient(ellipse at 70% 80%, rgba(63, 142, 67, 0.18) 0%, transparent 55%),
+        linear-gradient(180deg, #0a1f1a 0%, #061410 100%);
+    color: #FFFFFF;
+    overflow: hidden;
+}
+
+/* Papel picado banner — full DDM palette in repeating bands. Subtle
+   vertical flutter loop. Read clearly from across the room as
+   "festive Mexican stripe" without trying to fake real cut-outs. */
+.subasta-edu-papel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: repeating-linear-gradient(
+        90deg,
+        #DE4343 0 36px,
+        #FEC600 36px 72px,
+        #3F8E43 72px 108px,
+        #00B1B7 108px 144px,
+        #F5547C 144px 180px,
+        #FF6A13 180px 216px
+    );
+    transform-origin: center;
+    animation: subastaEduPapel 3.5s ease-in-out infinite;
+    z-index: 4;
+}
+.subasta-edu-papel--top    { top: 0; }
+.subasta-edu-papel--bottom { bottom: 0; }
+@keyframes subastaEduPapel {
+    0%, 100% { transform: scaleY(1); }
+    50%      { transform: scaleY(0.92); }
+}
+
+/* Floating marigold orbs in each corner — 4 of them, looped float. */
+.subasta-edu-marigold {
+    position: absolute;
+    width: clamp(60px, 7vw, 110px);
+    height: clamp(60px, 7vw, 110px);
+    background: radial-gradient(circle, #FF6A13 0%, #FFD700 55%, transparent 78%);
+    border-radius: 50%;
+    opacity: 0.32;
+    pointer-events: none;
+    z-index: 1;
+    animation: subastaEduFloat 11s ease-in-out infinite;
+}
+.subasta-edu-marigold:nth-of-type(1) { top: 8%;     left: 4%;  animation-delay: 0s;   }
+.subasta-edu-marigold:nth-of-type(2) { bottom: 14%; left: 6%;  animation-delay: 2.7s; }
+.subasta-edu-marigold:nth-of-type(3) { top: 14%;    right: 5%; animation-delay: 5.5s; }
+.subasta-edu-marigold:nth-of-type(4) { bottom: 10%; right: 4%; animation-delay: 8s;   }
+@keyframes subastaEduFloat {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(-14px) rotate(10deg); }
+}
+
+/* Step N OF 4 pill — top-left corner, slides in from left on entry. */
+.subasta-edu-badge {
+    position: absolute;
+    top: 4vh;
+    left: 4vw;
+    padding: 9px 18px;
+    background: var(--ddm-yellow);
+    color: var(--ddm-bg-dark);
+    font-family: 'Impact', 'Arial Black', sans-serif;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-size: clamp(13px, 1.3vw, 22px);
+    border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    z-index: 6;
+    transform: translateX(-160%);
+    opacity: 0;
+    animation: subastaEduBadge 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 300ms forwards;
+}
+@keyframes subastaEduBadge {
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* Headline + subtitle text shared across all 5 slides. Per-slide
+   layouts position .subasta-edu-content; this just nails the type. */
+.subasta-edu-headline {
+    font-family: 'Impact', 'Helvetica Inserat', 'Arial Black', sans-serif;
+    font-weight: 900;
+    font-size: clamp(46px, 5.6vw, 104px);
+    line-height: 1.02;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #FFFFFF;
+    text-shadow:
+        2px 2px 0 #6F5034,
+        4px 4px 0 rgba(0, 0, 0, 0.55),
+        0 0 24px rgba(254, 198, 0, 0.35);
+    margin: 0;
+}
+
+/* Headline letter wrappers — used by Slide 1 multi-color treatment +
+   any other slide that wants per-letter coloring. */
+.subasta-edu-letter {
+    display: inline-block;
+    transform: translateY(-40px) rotate(-6deg);
+    opacity: 0;
+    animation: subastaEduLetterDrop 600ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes subastaEduLetterDrop {
+    to { transform: translateY(0) rotate(0deg); opacity: 1; }
+}
+.subasta-edu-letter--red    { color: #DE4343; }
+.subasta-edu-letter--yellow { color: #FEC600; }
+.subasta-edu-letter--green  { color: #3F8E43; }
+.subasta-edu-letter--cyan   { color: #00B1B7; }
+.subasta-edu-letter--pink   { color: #F5547C; }
+.subasta-edu-letter--orange { color: #FF6A13; }
+.subasta-edu-letter--cream  { color: #EDE5CC; }
+
+.subasta-edu-subtitle {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 500;
+    font-size: clamp(22px, 2.3vw, 40px);
+    color: rgba(255, 255, 255, 0.92);
+    line-height: 1.35;
+    max-width: 80%;
+    text-align: center;
+    margin: 0;
+}
+
+/* Generic fade-in-up for content blocks. */
+@keyframes subastaEduFadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+}

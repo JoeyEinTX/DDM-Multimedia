@@ -1,0 +1,218 @@
+{# Slide 3 of 5 — Step 2: bidding closes. A digital countdown clock
+   compresses 0:30 → 0:00, the screen flashes red, a lock icon SLAMS
+   shut over the clock, brief screen shake, then headline + subtitle.
+   Accent: Scarlet Red (urgency / lockdown). #}
+<style>
+    .s-step2 { position: relative; }
+
+    /* Soft red wash to lock in the slide accent. */
+    .s-step2::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 40%, rgba(222, 67, 67, 0.18) 0%, transparent 65%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    /* Red flash overlay that fires at 0:00 — covers the whole slide
+       briefly to telegraph the "thunk". */
+    .s-step2-flash {
+        position: absolute;
+        inset: 0;
+        background: #DE4343;
+        opacity: 0;
+        z-index: 8;
+        pointer-events: none;
+        animation: s-step2-flash 250ms ease-out 4000ms forwards;
+    }
+    @keyframes s-step2-flash {
+        0%   { opacity: 0; }
+        30%  { opacity: 0.55; }
+        100% { opacity: 0; }
+    }
+
+    /* Whole-content shake when the lock lands. */
+    .s-step2 .s-step2-content {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 9vh 6vw 6vh;
+        gap: 2.4vh;
+        z-index: 5;
+        text-align: center;
+        animation: s-step2-shake 350ms ease-out 4100ms;
+    }
+    @keyframes s-step2-shake {
+        0%, 100% { transform: translate(0, 0); }
+        20% { transform: translate(-6px, 4px); }
+        40% { transform: translate(5px, -3px); }
+        60% { transform: translate(-4px, 2px); }
+        80% { transform: translate(3px, -2px); }
+    }
+
+    /* Clock face — large digital readout in dot-matrix amber on dark. */
+    .s-step2-clock {
+        position: relative;
+        width: clamp(280px, 30vw, 460px);
+        height: clamp(180px, 20vh, 280px);
+        background: #061410;
+        border: 4px solid var(--ddm-yellow);
+        border-radius: 18px;
+        box-shadow:
+            0 12px 32px rgba(0, 0, 0, 0.6),
+            inset 0 -3px 12px rgba(0, 0, 0, 0.4),
+            0 0 24px rgba(254, 198, 0, 0.25);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transform: scale(0.85);
+        animation: s-step2-clock-in 500ms cubic-bezier(0.34, 1.56, 0.64, 1) 800ms forwards;
+    }
+    @keyframes s-step2-clock-in {
+        to { opacity: 1; transform: scale(1); }
+    }
+
+    /* Stacked countdown numbers — only one visible at a time via
+       opacity keyframes. Times below are absolute (relative to slide
+       start, not animation start). */
+    .s-step2-num {
+        position: absolute;
+        font-family: 'Impact', 'Arial Black', sans-serif;
+        font-weight: 900;
+        font-size: clamp(80px, 11vw, 180px);
+        line-height: 1;
+        color: var(--ddm-yellow);
+        letter-spacing: 8px;
+        text-shadow:
+            0 0 12px rgba(254, 198, 0, 0.7),
+            0 0 28px rgba(254, 198, 0, 0.45);
+        opacity: 0;
+        font-variant-numeric: tabular-nums;
+    }
+    /* Compressed countdown: 0:30 → 0:20 → 0:10 → 0:05 → 0:01 → 0:00,
+       exponential ease (slow start, fast finish for tension). */
+    .s-step2-num--30 { animation: s-step2-num 700ms ease-out 1300ms forwards; }
+    .s-step2-num--20 { animation: s-step2-num 600ms ease-out 2000ms forwards; }
+    .s-step2-num--10 { animation: s-step2-num 500ms ease-out 2600ms forwards; }
+    .s-step2-num--05 { animation: s-step2-num 400ms ease-out 3100ms forwards; }
+    .s-step2-num--01 { animation: s-step2-num 300ms ease-out 3500ms forwards; }
+    .s-step2-num--00 {
+        color: #DE4343;
+        text-shadow: 0 0 14px rgba(222, 67, 67, 0.85), 0 0 30px rgba(222, 67, 67, 0.5);
+        animation: s-step2-num-final 4000ms ease-out 3800ms forwards;
+    }
+    @keyframes s-step2-num {
+        0% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { opacity: 0; }
+    }
+    @keyframes s-step2-num-final {
+        0% { opacity: 0; }
+        5% { opacity: 1; }
+        100% { opacity: 1; }
+    }
+
+    /* Lock icon — slams down over the clock at 0:00. SVG-free CSS lock
+       built from a body + shackle. */
+    .s-step2-lock {
+        position: absolute;
+        width: clamp(70px, 8vw, 120px);
+        height: clamp(70px, 8vw, 120px);
+        z-index: 6;
+        opacity: 0;
+        transform: translateY(-160px) scale(1.4) rotate(-12deg);
+        animation: s-step2-lock-slam 350ms cubic-bezier(0.55, 0, 0.55, 1.6) 4000ms forwards,
+                   s-step2-lock-pulse 1.4s ease-in-out 5000ms infinite;
+    }
+    .s-step2-lock-body {
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100%;
+        height: 60%;
+        background: linear-gradient(180deg, #FEC600 0%, #B88A00 100%);
+        border-radius: 12px;
+        border: 3px solid #6F5034;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+    }
+    .s-step2-lock-shackle {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 60%;
+        height: 55%;
+        border: 8px solid #1a1a1a;
+        border-bottom: none;
+        border-radius: 50% 50% 0 0;
+        box-sizing: border-box;
+    }
+    .s-step2-lock-keyhole {
+        position: absolute;
+        bottom: 18%;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 14%;
+        height: 26%;
+        background: #1a1a1a;
+        border-radius: 50% 50% 12% 12%;
+    }
+    @keyframes s-step2-lock-slam {
+        to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
+    }
+    @keyframes s-step2-lock-pulse {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-3px) scale(1.04); }
+    }
+
+    /* Headline + subtitle */
+    .s-step2 .s-step2-headline,
+    .s-step2 .s-step2-sub {
+        opacity: 0;
+        animation: subastaEduFadeUp 600ms ease-out forwards;
+    }
+    .s-step2 .s-step2-headline {
+        font-size: clamp(38px, 4.6vw, 84px);
+        animation-delay: 4600ms;
+    }
+    .s-step2 .s-step2-sub { animation-delay: 5500ms; }
+</style>
+
+<div class="splash-card subasta-edu s-step2">
+    <div class="subasta-edu-papel subasta-edu-papel--top"></div>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <div class="subasta-edu-badge">Step 2 of 4</div>
+
+    <div class="s-step2-content">
+        <div class="s-step2-clock">
+            <span class="s-step2-num s-step2-num--30">0:30</span>
+            <span class="s-step2-num s-step2-num--20">0:20</span>
+            <span class="s-step2-num s-step2-num--10">0:10</span>
+            <span class="s-step2-num s-step2-num--05">0:05</span>
+            <span class="s-step2-num s-step2-num--01">0:01</span>
+            <span class="s-step2-num s-step2-num--00">0:00</span>
+
+            <div class="s-step2-lock">
+                <div class="s-step2-lock-shackle"></div>
+                <div class="s-step2-lock-body">
+                    <div class="s-step2-lock-keyhole"></div>
+                </div>
+            </div>
+        </div>
+
+        <h2 class="subasta-edu-headline s-step2-headline">Bidding locks 30 min before post</h2>
+        <p class="subasta-edu-subtitle s-step2-sub">Your caballos are yours. The pesos pool is set.</p>
+    </div>
+
+    <div class="s-step2-flash"></div>
+    <div class="subasta-edu-papel subasta-edu-papel--bottom"></div>
+</div>
