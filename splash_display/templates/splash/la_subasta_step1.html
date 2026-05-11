@@ -1,0 +1,274 @@
+{# Slide 2 of 5 — Step 1: bid on caballos. Phone mockup centered with
+   3 horse cards; an animated finger taps +$3 on the middle horse,
+   the bid number swaps from $5 → $8, and a "👑 You're leading"
+   chip pops on the leading card. CSS-only animation.
+   Accent: Mistletoe Green (action / "go bid"). #}
+<style>
+    .s-step1 { position: relative; }
+    .s-step1::after {
+        /* subtle green wash to lock in the per-slide accent */
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 75%, rgba(63, 142, 67, 0.16) 0%, transparent 60%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .s-step1 .s-step1-content {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 9vh 4vw 6vh;
+        gap: 2.4vh;
+        z-index: 5;
+        text-align: center;
+    }
+
+    /* Phone shell */
+    .s-step1-phone {
+        position: relative;
+        width: clamp(280px, 30vw, 460px);
+        background: #1a3a30;
+        border: 4px solid var(--ddm-cocoa);
+        border-radius: 28px;
+        padding: 10px 10px 14px;
+        box-shadow:
+            0 18px 40px rgba(0, 0, 0, 0.6),
+            inset 0 0 0 2px rgba(255, 255, 255, 0.05);
+        opacity: 0;
+        transform: translateY(60px) scale(0.92);
+        animation: s-step1-phone 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 800ms forwards;
+    }
+    @keyframes s-step1-phone {
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* Top serape strip inside phone "header" */
+    .s-step1-phone-header {
+        height: 14px;
+        margin: -2px -4px 10px;
+        border-radius: 6px;
+        background: repeating-linear-gradient(
+            90deg,
+            #DE4343 0 18px, #FEC600 18px 36px, #3F8E43 36px 54px,
+            #00B1B7 54px 72px, #F5547C 72px 90px, #FF6A13 90px 108px
+        );
+    }
+
+    /* Each horse card */
+    .s-step1-card {
+        background: linear-gradient(160deg, #EDE5CC 0%, #E4D9B8 100%);
+        border-radius: 12px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        display: grid;
+        grid-template-columns: 32px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        font-family: 'Inter', system-ui, sans-serif;
+        color: #1a1a1a;
+        position: relative;
+    }
+    .s-step1-card:last-child { margin-bottom: 0; }
+
+    .s-step1-saddle {
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 900;
+        font-size: 16px;
+        color: #fff;
+        font-family: 'Arial Black', sans-serif;
+    }
+    .s-step1-saddle--1 { background: #E31837; }
+    .s-step1-saddle--7 { background: #FF6600; color: #000; }
+    .s-step1-saddle--12 { background: #32CD32; color: #000; }
+
+    .s-step1-name {
+        font-weight: 800;
+        font-size: clamp(14px, 1.3vw, 22px);
+        text-align: left;
+        letter-spacing: 0.3px;
+    }
+    .s-step1-bid {
+        font-weight: 900;
+        font-size: clamp(15px, 1.4vw, 24px);
+        color: var(--ddm-mistletoe-green);
+        font-variant-numeric: tabular-nums;
+        position: relative;
+        min-width: 40px;
+        text-align: right;
+    }
+    .s-step1-bid .s-step1-bid--old,
+    .s-step1-bid .s-step1-bid--new {
+        display: inline-block;
+        position: absolute;
+        right: 0;
+    }
+    .s-step1-bid .s-step1-bid--old { animation: s-step1-bid-out 200ms ease-out 2400ms forwards; }
+    .s-step1-bid .s-step1-bid--new { opacity: 0; animation: s-step1-bid-in 240ms cubic-bezier(0.34, 1.56, 0.64, 1) 2500ms forwards; }
+    @keyframes s-step1-bid-out { to { opacity: 0; transform: translateY(-6px); } }
+    @keyframes s-step1-bid-in  { from { opacity: 0; transform: translateY(8px) scale(1.2); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+    /* Bid buttons row */
+    .s-step1-buttons {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .s-step1-btn {
+        flex: 1;
+        padding: 6px 0;
+        background: var(--ddm-mistletoe-green);
+        color: #fff;
+        border-radius: 8px;
+        font-family: 'Inter', sans-serif;
+        font-weight: 800;
+        font-size: clamp(13px, 1.2vw, 20px);
+        letter-spacing: 0.3px;
+        text-align: center;
+        position: relative;
+    }
+
+    /* Highlighted +$3 button on the middle card pulses just before the tap */
+    .s-step1-card--target .s-step1-btn--3 {
+        animation: s-step1-btn-pulse 600ms ease-out 1900ms;
+    }
+    @keyframes s-step1-btn-pulse {
+        0%, 100% { background: var(--ddm-mistletoe-green); transform: scale(1); }
+        50% { background: var(--ddm-yellow); color: #1a1a1a; transform: scale(1.05); }
+    }
+
+    /* "👑 You're leading" chip — pops on the middle card after bid lands */
+    .s-step1-leading {
+        position: absolute;
+        top: -10px;
+        right: -8px;
+        padding: 4px 10px;
+        background: var(--ddm-yellow);
+        color: var(--ddm-bg-dark);
+        font-weight: 800;
+        font-size: clamp(10px, 1vw, 16px);
+        letter-spacing: 0.5px;
+        border-radius: 999px;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        transform: scale(0.6);
+        animation: s-step1-leading 500ms cubic-bezier(0.34, 1.56, 0.64, 1) 2800ms forwards;
+    }
+    @keyframes s-step1-leading {
+        to { opacity: 1; transform: scale(1); }
+    }
+
+    /* Animated finger that taps the +$3 button */
+    .s-step1-finger {
+        position: absolute;
+        bottom: 18%;
+        left: 50%;
+        width: 38px;
+        height: 38px;
+        background: radial-gradient(circle at 35% 30%, #fff 0%, #ddd 50%, #888 100%);
+        border-radius: 50%;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+        transform: translate(-50%, 0) scale(0.5);
+        opacity: 0;
+        z-index: 7;
+        animation: s-step1-finger 1200ms cubic-bezier(0.4, 0, 0.2, 1) 1700ms forwards;
+    }
+    @keyframes s-step1-finger {
+        0%   { opacity: 0; transform: translate(-50%, -40px) scale(0.6); }
+        45%  { opacity: 1; transform: translate(-50%, 0) scale(0.85); }
+        55%  { opacity: 1; transform: translate(-50%, 12px) scale(0.7); }
+        70%  { opacity: 1; transform: translate(-50%, 0) scale(0.85); }
+        100% { opacity: 0; transform: translate(-50%, -16px) scale(0.6); }
+    }
+
+    /* Headline + subtitle */
+    .s-step1 .s-step1-headline,
+    .s-step1 .s-step1-sub {
+        opacity: 0;
+        animation: subastaEduFadeUp 600ms ease-out forwards;
+    }
+    .s-step1 .s-step1-headline {
+        font-size: clamp(38px, 4.5vw, 80px);
+        animation-delay: 3500ms;
+    }
+    .s-step1 .s-step1-sub { animation-delay: 4500ms; }
+
+    /* Phone wobble after content settles */
+    .s-step1-phone {
+        animation:
+            s-step1-phone 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 800ms forwards,
+            s-step1-wobble 1.6s ease-in-out 7000ms infinite;
+    }
+    @keyframes s-step1-wobble {
+        0%, 100% { transform: rotate(0); }
+        50%      { transform: rotate(-1.5deg); }
+    }
+</style>
+
+<div class="splash-card subasta-edu s-step1">
+    <div class="subasta-edu-papel subasta-edu-papel--top"></div>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <div class="subasta-edu-badge">Step 1 of 4</div>
+
+    <div class="s-step1-content">
+        <div class="s-step1-phone">
+            <div class="s-step1-phone-header"></div>
+
+            <div class="s-step1-card">
+                <div class="s-step1-saddle s-step1-saddle--1">1</div>
+                <div class="s-step1-name">RENEGADE</div>
+                <div class="s-step1-bid">$12</div>
+                <div class="s-step1-buttons">
+                    <div class="s-step1-btn">+$1</div>
+                    <div class="s-step1-btn">+$3</div>
+                    <div class="s-step1-btn">+$5</div>
+                </div>
+            </div>
+
+            <div class="s-step1-card s-step1-card--target">
+                <div class="s-step1-leading">👑 You're Leading</div>
+                <div class="s-step1-saddle s-step1-saddle--7">7</div>
+                <div class="s-step1-name">POTENTE</div>
+                <div class="s-step1-bid">
+                    <span class="s-step1-bid--old">$5</span>
+                    <span class="s-step1-bid--new">$8</span>
+                </div>
+                <div class="s-step1-buttons">
+                    <div class="s-step1-btn">+$1</div>
+                    <div class="s-step1-btn s-step1-btn--3">+$3</div>
+                    <div class="s-step1-btn">+$5</div>
+                </div>
+            </div>
+
+            <div class="s-step1-card">
+                <div class="s-step1-saddle s-step1-saddle--12">12</div>
+                <div class="s-step1-name">ALBUS</div>
+                <div class="s-step1-bid">$3</div>
+                <div class="s-step1-buttons">
+                    <div class="s-step1-btn">+$1</div>
+                    <div class="s-step1-btn">+$3</div>
+                    <div class="s-step1-btn">+$5</div>
+                </div>
+            </div>
+
+            <div class="s-step1-finger"></div>
+        </div>
+
+        <h2 class="subasta-edu-headline s-step1-headline">Bid on up to 3 caballos</h2>
+        <p class="subasta-edu-subtitle s-step1-sub">Highest bidder owns each horse. Outbid? You owe nada — only owners pay.</p>
+    </div>
+
+    <div class="subasta-edu-papel subasta-edu-papel--bottom"></div>
+</div>

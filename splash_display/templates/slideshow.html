@@ -68,11 +68,16 @@
    the matching template by `splash_id` from this hidden cache. #}
 <div id="splash-template-cache" hidden>
     {% for splash in [
-        ('countdown',  'splash/countdown.html'),
-        ('la_subasta', 'splash/la_subasta.html'),
-        ('la_quiniela','splash/la_quiniela.html'),
-        ('derby_dash', 'splash/derby_dash.html'),
-        ('ddm_brand',  'splash/ddm_brand.html'),
+        ('countdown',         'splash/countdown.html'),
+        ('la_subasta',        'splash/la_subasta.html'),
+        ('la_quiniela',       'splash/la_quiniela.html'),
+        ('derby_dash',        'splash/derby_dash.html'),
+        ('ddm_brand',         'splash/ddm_brand.html'),
+        ('la_subasta_intro',  'splash/la_subasta_intro.html'),
+        ('la_subasta_step1',  'splash/la_subasta_step1.html'),
+        ('la_subasta_step2',  'splash/la_subasta_step2.html'),
+        ('la_subasta_step3',  'splash/la_subasta_step3.html'),
+        ('la_subasta_step4',  'splash/la_subasta_step4.html'),
     ] %}
         <template data-splash-id="{{ splash[0] }}">
             {% include splash[1] %}

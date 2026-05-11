@@ -1,0 +1,199 @@
+{# Slide 5 of 5 — Step 4: winners cash in. Three-tier podium centered;
+   trophies pop in (3rd, 2nd, 1st with biggest pop + glow); percentage
+   labels fade in below each tier; gold pesos rain from the top
+   continuously through the end. Accent: Gold + multi (victory). #}
+<style>
+    .s-step4 { position: relative; }
+    .s-step4::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 70%, rgba(254, 198, 0, 0.18) 0%, transparent 65%);
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    /* Raining pesos — 14 falling coins with staggered delays.
+       continuous from 3500ms to slide end. */
+    .s-step4-rain {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        overflow: hidden;
+    }
+    .s-step4-rain span {
+        position: absolute;
+        top: -40px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #FFE066 0%, #FEC600 50%, #B88A00 100%);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        opacity: 0;
+        animation: s-step4-fall 2.6s linear infinite;
+    }
+    .s-step4-rain span:nth-child(1)  { left:  6%; animation-delay: 3.5s; }
+    .s-step4-rain span:nth-child(2)  { left: 13%; animation-delay: 4.0s; }
+    .s-step4-rain span:nth-child(3)  { left: 20%; animation-delay: 3.7s; }
+    .s-step4-rain span:nth-child(4)  { left: 27%; animation-delay: 4.4s; }
+    .s-step4-rain span:nth-child(5)  { left: 35%; animation-delay: 3.6s; }
+    .s-step4-rain span:nth-child(6)  { left: 43%; animation-delay: 4.2s; }
+    .s-step4-rain span:nth-child(7)  { left: 50%; animation-delay: 3.8s; }
+    .s-step4-rain span:nth-child(8)  { left: 58%; animation-delay: 4.5s; }
+    .s-step4-rain span:nth-child(9)  { left: 65%; animation-delay: 3.9s; }
+    .s-step4-rain span:nth-child(10) { left: 72%; animation-delay: 4.3s; }
+    .s-step4-rain span:nth-child(11) { left: 80%; animation-delay: 3.7s; }
+    .s-step4-rain span:nth-child(12) { left: 87%; animation-delay: 4.6s; }
+    .s-step4-rain span:nth-child(13) { left: 94%; animation-delay: 4.1s; }
+    .s-step4-rain span:nth-child(14) { left: 40%; animation-delay: 5.0s; }
+    @keyframes s-step4-fall {
+        0%   { opacity: 0; transform: translateY(0) rotate(0); }
+        10%  { opacity: 1; }
+        90%  { opacity: 0.8; }
+        100% { opacity: 0; transform: translateY(85vh) rotate(180deg); }
+    }
+
+    /* Podium block container, centered horizontally, sits in lower mid */
+    .s-step4-podium {
+        position: absolute;
+        bottom: 26vh;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        z-index: 5;
+    }
+    .s-step4-tier {
+        position: relative;
+        width: clamp(110px, 12vw, 180px);
+        background: linear-gradient(180deg, #FEC600 0%, #B88A00 100%);
+        border: 3px solid #6F5034;
+        border-radius: 8px 8px 0 0;
+        box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.3),
+                    0 6px 16px rgba(0, 0, 0, 0.5);
+        text-align: center;
+        opacity: 0;
+        transform: translateY(80px);
+        animation: s-step4-tier-in 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 800ms forwards;
+    }
+    .s-step4-tier--1 { height: clamp(150px, 18vh, 240px); order: 2; }
+    .s-step4-tier--2 { height: clamp(115px, 14vh, 190px); order: 1; }
+    .s-step4-tier--3 { height: clamp( 90px, 11vh, 150px); order: 3; }
+    @keyframes s-step4-tier-in { to { opacity: 1; transform: translateY(0); } }
+
+    .s-step4-rank {
+        position: absolute;
+        top: 12px;
+        left: 0; right: 0;
+        font-family: 'Impact', sans-serif;
+        font-size: clamp(40px, 4vw, 64px);
+        font-weight: 900;
+        color: var(--ddm-bg-dark);
+        letter-spacing: 1px;
+    }
+    .s-step4-pct {
+        position: absolute;
+        bottom: 12px;
+        left: 0; right: 0;
+        font-family: 'Impact', sans-serif;
+        font-size: clamp(28px, 2.8vw, 48px);
+        font-weight: 900;
+        color: var(--ddm-bg-dark);
+    }
+
+    /* Trophies pop in on top of each tier */
+    .s-step4-trophy {
+        position: absolute;
+        top: -46px;
+        left: 50%;
+        transform: translateX(-50%) scale(0);
+        font-size: clamp(38px, 4vw, 64px);
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+    }
+    .s-step4-tier--3 .s-step4-trophy {
+        animation: s-step4-trophy-pop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) 1500ms forwards;
+    }
+    .s-step4-tier--2 .s-step4-trophy {
+        animation: s-step4-trophy-pop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) 2000ms forwards;
+    }
+    .s-step4-tier--1 .s-step4-trophy {
+        animation: s-step4-trophy-pop-big 500ms cubic-bezier(0.34, 1.56, 0.64, 1) 2500ms forwards,
+                   s-step4-trophy-glow 1.6s ease-in-out 3000ms infinite;
+    }
+    @keyframes s-step4-trophy-pop {
+        to { transform: translateX(-50%) scale(1); }
+    }
+    @keyframes s-step4-trophy-pop-big {
+        0%   { transform: translateX(-50%) scale(0); }
+        70%  { transform: translateX(-50%) scale(1.25); }
+        100% { transform: translateX(-50%) scale(1.1); }
+    }
+    @keyframes s-step4-trophy-glow {
+        0%, 100% { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5)); }
+        50%      { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5))
+                            drop-shadow(0 0 18px rgba(254, 198, 0, 0.8)); }
+    }
+
+    /* Headline + tagline */
+    .s-step4-headline,
+    .s-step4-tagline {
+        position: absolute;
+        left: 0; right: 0;
+        text-align: center;
+        opacity: 0;
+        z-index: 6;
+    }
+    .s-step4-headline {
+        bottom: 11vh;
+        font-size: clamp(38px, 4.8vw, 88px);
+        animation: subastaEduFadeUp 600ms ease-out 4000ms forwards;
+    }
+    .s-step4-tagline {
+        bottom: 5vh;
+        color: var(--ddm-yellow);
+        font-weight: 700;
+        font-style: italic;
+        animation: subastaEduFadeUp 600ms ease-out 5000ms forwards;
+    }
+</style>
+
+<div class="splash-card subasta-edu s-step4">
+    <div class="subasta-edu-papel subasta-edu-papel--top"></div>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <span class="subasta-edu-marigold"></span>
+    <div class="subasta-edu-badge">Step 4 of 4</div>
+
+    <div class="s-step4-rain">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+        <span></span><span></span>
+    </div>
+
+    <div class="s-step4-podium">
+        <div class="s-step4-tier s-step4-tier--2">
+            <div class="s-step4-trophy">🥈</div>
+            <div class="s-step4-rank">2</div>
+            <div class="s-step4-pct">25%</div>
+        </div>
+        <div class="s-step4-tier s-step4-tier--1">
+            <div class="s-step4-trophy">🥇</div>
+            <div class="s-step4-rank">1</div>
+            <div class="s-step4-pct">60%</div>
+        </div>
+        <div class="s-step4-tier s-step4-tier--3">
+            <div class="s-step4-trophy">🥉</div>
+            <div class="s-step4-rank">3</div>
+            <div class="s-step4-pct">15%</div>
+        </div>
+    </div>
+
+    <h2 class="subasta-edu-headline s-step4-headline">Own a winner, cash in big</h2>
+    <p class="subasta-edu-subtitle s-step4-tagline">¡Buena suerte!</p>
+
+    <div class="subasta-edu-papel subasta-edu-papel--bottom"></div>
+</div>
