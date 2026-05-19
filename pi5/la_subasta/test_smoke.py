@@ -992,6 +992,34 @@ def test_static_assets_served():
            "la_subasta_identity" in js_body)
 
 
+def test_guest_js_no_dollar_currency():
+    """2027 funny-money mode: guest.js must not emit any '$' currency
+    symbols anywhere — neither as string literals, template-literal
+    interpolation markers, nor inline copy. All amount displays go through
+    the new pesos() formatter."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+
+    _check("guest.js contains zero '$' characters",
+           "$" not in js,
+           f"found {js.count('$')} occurrence(s) of '$'")
+
+    # The new pesos formatter must be defined and referenced
+    _check("guest.js defines pesos() helper",
+           "function pesos(" in js,
+           "missing pesos() function definition")
+    _check("guest.js calls pesos() at least once",
+           js.count("pesos(") >= 2,  # 1 definition + >=1 call
+           f"only {js.count('pesos(')} occurrences of pesos(")
+
+    # Spot-check that previously dollar-prefixed strings now use pesos copy
+    _check("guest.js uses ' pesos' in amount strings",
+           " pesos" in js,
+           "no ' pesos' string-literal substring found")
+
+
 def test_auction_state_changed_broadcast():
     """Admin transitions must fire auction_state_changed so live guests
     see button states update without a page reload."""
@@ -1556,6 +1584,8 @@ def main():
     _run("guest UI — page served", test_guest_page_served)
     _run("guest UI — /api/horses shape", test_horses_endpoint_shape)
     _run("guest UI — static assets served", test_static_assets_served)
+    _run("guest UI — no '$' currency in guest.js (2027 pesos mode)",
+         test_guest_js_no_dollar_currency)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
 

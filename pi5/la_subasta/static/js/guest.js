@@ -4,7 +4,7 @@
    Responsibilities:
      - Identity modal on first visit; persist to localStorage
      - Render horse list from /la-subasta/api/horses
-     - Place bids with +$1 / +$3 / +$5 / custom; disable out-of-range buttons
+     - Place bids with +1 / +3 / +5 / custom; disable out-of-range buttons
      - Live updates via SocketIO (bid_placed, horse_scratched, auction_locked,
        settings_changed)
      - Countdown strip (refreshes every 30s)
@@ -61,6 +61,11 @@
         });
         const data = await resp.json().catch(() => ({}));
         return { ok: resp.ok, status: resp.status, data };
+    }
+
+    // 2027 funny-money formatter — singular "1 peso", plural elsewhere
+    function pesos(n) {
+        return n === 1 ? '1 peso' : n + ' pesos';
     }
 
     // ---------------------------------------------------------------------
@@ -254,7 +259,7 @@
         card.dataset.horseId = horse.horse_id;
         card.innerHTML = `
             <div class="ls-card-top">
-                <div class="ls-saddle-cloth" data-role="saddle-cloth">${horse.saddle_cloth}</div>
+                <div class="ls-saddle-cloth" data-role="saddle-cloth"></div>
                 <div class="ls-horse-info">
                     <div class="ls-horse-name" data-role="name"></div>
                     <div class="ls-jockey" data-role="jockey"></div>
@@ -306,7 +311,7 @@
 
         leader.classList.remove('ls-you-leading', 'ls-no-bids');
         if (horse.current_high_bid) {
-            bidAmountEl.textContent = '$' + currentAmt;
+            bidAmountEl.textContent = pesos(currentAmt);
             bidAmountEl.hidden = false;
             bidEmptyEl.hidden = true;
 
@@ -321,8 +326,8 @@
         } else {
             bidAmountEl.hidden = true;
             bidEmptyEl.hidden = false;
-            bidEmptyEl.textContent = 'No bids yet — open at $' + state.settings.MIN_BID;
-            leader.textContent = 'No bids yet — open at $' + state.settings.MIN_BID;
+            bidEmptyEl.textContent = 'No bids yet — open at ' + pesos(state.settings.MIN_BID);
+            leader.textContent = 'No bids yet — open at ' + pesos(state.settings.MIN_BID);
             leader.classList.add('ls-no-bids');
         }
 
@@ -371,9 +376,12 @@
                 if (openingAmount > minBid + maxRaise) disabled = true;
             }
             btn.disabled = disabled;
+            // Tight mobile buttons → bare numerals. "+1 / +3 / +5" for raises;
+            // "Bid N" for openings (N = first-bid amount). Surrounding card
+            // copy makes the pesos unit unambiguous.
             btn.textContent = currentAmt > 0
-                ? ('+$' + delta + ' = $' + nextAmt)
-                : ('Bid $' + (minBid + (delta - 1)));
+                ? ('+' + delta)
+                : ('Bid ' + (minBid + (delta - 1)));
         });
     }
 
@@ -477,7 +485,7 @@
         input.min = minAllowed;
         input.max = maxAllowed;
         input.value = minAllowed;
-        hint.textContent = 'Enter $' + minAllowed + '–$' + maxAllowed;
+        hint.textContent = 'Enter ' + minAllowed + '–' + maxAllowed + ' pesos';
         err.hidden = true;
         modal.hidden = false;
         setTimeout(function () { input.focus(); input.select(); }, 50);
@@ -491,7 +499,7 @@
         async function onSubmit() {
             const val = parseInt(input.value, 10);
             if (isNaN(val) || val < minAllowed || val > maxAllowed) {
-                err.textContent = 'Amount must be $' + minAllowed + '–$' + maxAllowed;
+                err.textContent = 'Amount must be ' + minAllowed + '–' + maxAllowed + ' pesos';
                 err.hidden = false;
                 return;
             }
@@ -525,7 +533,8 @@
                 total += h.current_high_bid.amount;
             }
         });
-        totalEl.textContent = '$' + total;
+        // HTML wraps the span as "Bid <span>N</span> pesos", so emit a bare number
+        totalEl.textContent = total;
     }
 
     // ---------------------------------------------------------------------
