@@ -44,7 +44,7 @@ models.DB_PATH = _TMP_DB
 from la_subasta import bidding, payouts, settings  # noqa: E402
 from la_subasta.models import init_db, reset_db_for_tests  # noqa: E402
 from la_subasta.state_machine import (  # noqa: E402
-    AuctionState, transition, get_state,
+    AuctionState, transition, get_state, get_state_row,
 )
 from la_subasta.blueprint import la_subasta_bp, init_la_subasta  # noqa: E402
 
@@ -1141,6 +1141,313 @@ def test_onboarding_js_state_machine():
            "ls-help-btn" in js)
 
 
+# -----------------------------------------------------------------------------
+# Phase 1.6: admin reset endpoint (testing only)
+# -----------------------------------------------------------------------------
+
+def _populate_for_reset_test(client):
+    """Helper: register two bidders, place bids on 3 horses, scratch 1, lock+settle."""
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    bob = client.post("/la-subasta/api/register",
+                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+
+    # Walk the bid ladder so multiple bid rows exist per horse
+    for horse_id, amount in [(1, 5), (2, 3), (3, 2)]:
+        for i in range(1, amount + 1):
+            actor = alice if i % 2 == 1 else bob
+            r = client.post("/la-subasta/api/bid",
+                            json={"bidder_id": actor["id"],
+                                  "horse_id": horse_id, "amount": i})
+            assert r.status_code == 200, f"setup bid failed: {r.get_json()}"
+
+    bidding.scratch_horse(7)  # also flips horse_state row to scratched=1
+    # Lock + enter results so ownership + payouts rows exist
+    r = client.post("/la-subasta/api/admin/lock")
+    assert r.status_code == 200, r.get_json()
+    r = client.post("/la-subasta/api/admin/results",
+                    json={"win": 1, "place": 2, "show": 3})
+    assert r.status_code == 200, r.get_json()
+    return alice, bob
+
+
+def _row_count(table):
+    from la_subasta.models import get_conn
+    return get_conn().execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
+
+
+def test_reset_missing_confirm():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _populate_for_reset_test(client)
+
+    r = client.post("/la-subasta/api/admin/reset?scope=bids")
+    _check("POST without confirm returns 400", r.status_code == 400,
+           f"status={r.status_code} body={r.get_json()}")
+    body = r.get_json()
+    _check("missing-confirm error mentions TESTING",
+           "TESTING" in (body.get("error") or ""),
+           f"got {body}")
+
+    # And data should be untouched
+    _check("bids untouched when confirm missing", _row_count("bids") > 0)
+
+
+def test_reset_wrong_confirm():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _populate_for_reset_test(client)
+
+    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=WRONG")
+    _check("POST with confirm=WRONG returns 400", r.status_code == 400)
+    # Case sensitivity — lowercase "testing" must also fail
+    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=testing")
+    _check("POST with confirm=testing (lowercase) returns 400",
+           r.status_code == 400)
+    _check("bids untouched when confirm wrong", _row_count("bids") > 0)
+
+
+def test_reset_invalid_scope():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _populate_for_reset_test(client)
+
+    r = client.post("/la-subasta/api/admin/reset?scope=bogus&confirm=TESTING")
+    _check("invalid scope returns 400", r.status_code == 400)
+    body = r.get_json()
+    _check("invalid scope error names the allowed values",
+           all(s in (body.get("error") or "") for s in ("bids", "full", "state")),
+           f"got {body}")
+
+    # Missing scope param entirely
+    r = client.post("/la-subasta/api/admin/reset?confirm=TESTING")
+    _check("missing scope returns 400", r.status_code == 400)
+    _check("data still intact after invalid scope", _row_count("bids") > 0)
+
+
+def test_reset_bids_wipes_state_data_keeps_bidders():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    alice, bob = _populate_for_reset_test(client)
+
+    bids_before = _row_count("bids")
+    own_before = _row_count("ownership")
+    pay_before = _row_count("payouts")
+    bidders_before = _row_count("bidders")
+    _check("setup placed >0 bids", bids_before > 0, f"got {bids_before}")
+    _check("setup created ownership rows", own_before > 0)
+    _check("setup created payout rows", pay_before > 0)
+    _check("setup created >=2 real bidders + House",
+           bidders_before >= 3, f"got {bidders_before}")
+
+    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=TESTING")
+    _check("scope=bids returns 200", r.status_code == 200, f"body={r.get_json()}")
+    body = r.get_json()
+    _check("response.success = True", body.get("success") is True)
+    _check("response.scope = 'bids'", body.get("scope") == "bids")
+    _check("response.auction_state = NOT_STARTED",
+           body.get("auction_state") == "NOT_STARTED")
+    _check("response.deleted.bids matches table count",
+           body["deleted"]["bids"] == bids_before,
+           f"got {body['deleted']['bids']} expected {bids_before}")
+    _check("response.deleted.ownership matches",
+           body["deleted"]["ownership"] == own_before)
+    _check("response.deleted.payouts matches",
+           body["deleted"]["payouts"] == pay_before)
+    _check("response.deleted.bidders = 0 for scope=bids",
+           body["deleted"]["bidders"] == 0)
+
+    # Verify SQL state
+    _check("bids table empty after scope=bids", _row_count("bids") == 0)
+    _check("ownership empty after scope=bids", _row_count("ownership") == 0)
+    _check("payouts empty after scope=bids", _row_count("payouts") == 0)
+    _check("bidders preserved after scope=bids",
+           _row_count("bidders") == bidders_before)
+
+    # State should be NOT_STARTED with total_pot=0
+    state_row = get_state_row()
+    _check("auction_state.state = NOT_STARTED after scope=bids",
+           state_row["state"] == "NOT_STARTED")
+    _check("auction_state.total_pot = 0 after scope=bids",
+           state_row["total_pot"] == 0)
+
+    # Scratched flags cleared
+    _check("scratched horse 7 unscratched after scope=bids",
+           not bidding.is_horse_scratched(7))
+
+
+def test_reset_full_removes_everything_keeps_house():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    alice, bob = _populate_for_reset_test(client)
+
+    real_bidders_before = len(bidding.list_bidders(include_house=False))
+    _check("real bidders >= 2 before reset", real_bidders_before >= 2,
+           f"got {real_bidders_before}")
+
+    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
+    _check("scope=full returns 200", r.status_code == 200, f"body={r.get_json()}")
+    body = r.get_json()
+    _check("scope=full response.scope = 'full'", body.get("scope") == "full")
+    _check("scope=full response.deleted.bidders == real bidder count",
+           body["deleted"]["bidders"] == real_bidders_before,
+           f"got {body['deleted']['bidders']} expected {real_bidders_before}")
+
+    _check("no real bidders left after scope=full",
+           len(bidding.list_bidders(include_house=False)) == 0)
+    # House row survives
+    all_bidders = bidding.list_bidders(include_house=True)
+    identities = {b["identity"] for b in all_bidders}
+    _check("House bidder identity present after scope=full",
+           "The House 🎩" in identities, f"got {identities}")
+    _check("exactly 1 bidder (House) after scope=full",
+           len(all_bidders) == 1, f"got {len(all_bidders)}")
+
+    # The cached house_bidder_id() must still resolve to a real row
+    from la_subasta.models import house_bidder_id, get_conn
+    hid = house_bidder_id()
+    row = get_conn().execute(
+        "SELECT id, identity FROM bidders WHERE id = ?", (hid,),
+    ).fetchone()
+    _check("house_bidder_id() resolves to surviving House row after reset_full",
+           row is not None and row["identity"] == "The House 🎩",
+           f"got {dict(row) if row else None}")
+
+    # Bids/ownership/payouts also gone (reset_full calls reset_bids first)
+    _check("bids empty after scope=full", _row_count("bids") == 0)
+    _check("ownership empty after scope=full", _row_count("ownership") == 0)
+    _check("payouts empty after scope=full", _row_count("payouts") == 0)
+
+
+def test_reset_state_only_changes_auction_state():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    alice, bob = _populate_for_reset_test(client)
+
+    bids_before = _row_count("bids")
+    own_before = _row_count("ownership")
+    pay_before = _row_count("payouts")
+    bidders_before = _row_count("bidders")
+    state_before = get_state().value
+    _check("auction not in NOT_STARTED before reset_state",
+           state_before != "NOT_STARTED", f"got {state_before}")
+
+    r = client.post("/la-subasta/api/admin/reset?scope=state&confirm=TESTING")
+    _check("scope=state returns 200", r.status_code == 200, f"body={r.get_json()}")
+    body = r.get_json()
+    _check("scope=state response.scope = 'state'", body.get("scope") == "state")
+    _check("scope=state response.auction_state = NOT_STARTED",
+           body.get("auction_state") == "NOT_STARTED")
+    _check("scope=state reports 0 deletions in every category",
+           all(body["deleted"][k] == 0
+               for k in ("bids", "ownership", "payouts", "bidders")),
+           f"got {body['deleted']}")
+
+    # Nothing else changed
+    _check("bids unchanged after scope=state",
+           _row_count("bids") == bids_before)
+    _check("ownership unchanged after scope=state",
+           _row_count("ownership") == own_before)
+    _check("payouts unchanged after scope=state",
+           _row_count("payouts") == pay_before)
+    _check("bidders unchanged after scope=state",
+           _row_count("bidders") == bidders_before)
+    _check("auction state IS NOT_STARTED after scope=state",
+           get_state().value == "NOT_STARTED")
+
+
+def test_reset_preserves_settings_and_audit():
+    """Reset should leave admin tunables + audit log alone."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # Set an override and trigger an audit entry
+    from la_subasta import settings as _settings
+    _settings.set_setting("HOUSE_FUND_LABEL", "ResetTest Fund")
+    audit_before = len(_settings.get_audit_log(limit=500))
+    _check("override + audit entry present pre-reset",
+           _settings.get_setting("HOUSE_FUND_LABEL") == "ResetTest Fund"
+           and audit_before >= 1, f"audit_before={audit_before}")
+
+    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
+    _check("scope=full returns 200", r.status_code == 200)
+
+    _check("HOUSE_FUND_LABEL override preserved after scope=full reset",
+           _settings.get_setting("HOUSE_FUND_LABEL") == "ResetTest Fund")
+    audit_after = len(_settings.get_audit_log(limit=500))
+    _check("audit log preserved (>= entries before reset)",
+           audit_after >= audit_before, f"before={audit_before} after={audit_after}")
+
+
+def test_reset_broadcasts_auction_reset_event():
+    """SocketIO 'auction_reset' fires with {scope, timestamp} payload."""
+    _reset()
+
+    events = []
+
+    class _StubSocketIO:
+        def emit(self, event, payload, room=None):
+            events.append((event, payload, room))
+
+    from la_subasta import notifications as nots
+    app = _make_app()
+    nots.init_notifications(_StubSocketIO())
+    client = app.test_client()
+    _populate_for_reset_test(client)
+    events.clear()
+
+    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=TESTING")
+    _check("scope=bids POST returns 200", r.status_code == 200)
+
+    reset_events = [e for e in events if e[0] == "auction_reset"]
+    _check("auction_reset event emitted exactly once for scope=bids",
+           len(reset_events) == 1, f"got {len(reset_events)}")
+    payload = reset_events[0][1]
+    _check("auction_reset payload includes scope='bids'",
+           payload.get("scope") == "bids", f"got {payload}")
+    _check("auction_reset payload includes numeric timestamp",
+           isinstance(payload.get("timestamp"), (int, float))
+           and payload["timestamp"] > 0,
+           f"got {payload}")
+
+    # Verify scope=full and scope=state also fire with matching scope strings
+    events.clear()
+    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
+    assert r.status_code == 200, r.get_json()
+    reset_events = [e for e in events if e[0] == "auction_reset"]
+    _check("auction_reset fires for scope=full with matching scope",
+           len(reset_events) == 1 and reset_events[0][1]["scope"] == "full",
+           f"got {reset_events}")
+
+    events.clear()
+    r = client.post("/la-subasta/api/admin/reset?scope=state&confirm=TESTING")
+    assert r.status_code == 200, r.get_json()
+    reset_events = [e for e in events if e[0] == "auction_reset"]
+    _check("auction_reset fires for scope=state with matching scope",
+           len(reset_events) == 1 and reset_events[0][1]["scope"] == "state",
+           f"got {reset_events}")
+
+    nots.init_notifications(None)
+
+
+def test_reset_route_registered():
+    """The endpoint must be addressable under the la-subasta prefix."""
+    _reset()
+    app = _make_app()
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    _check("/la-subasta/api/admin/reset route registered",
+           "/la-subasta/api/admin/reset" in rules,
+           f"sample rules: {sorted(r for r in rules if 'admin' in r)}")
+
+
 def test_existing_dashboard_still_loads():
     """Smoke-check the full pi5 app: main.py must import without error and
     the existing / route (dashboard) must still register."""
@@ -1205,6 +1512,22 @@ def main():
     # Phase 2A.5
     _run("onboarding — splash + how-it-works + help markup", test_onboarding_markup_present)
     _run("onboarding — JS state machine wiring", test_onboarding_js_state_machine)
+
+    # Phase 1.6 — admin reset (testing only)
+    _run("reset — missing confirm rejected", test_reset_missing_confirm)
+    _run("reset — wrong confirm rejected", test_reset_wrong_confirm)
+    _run("reset — invalid scope rejected", test_reset_invalid_scope)
+    _run("reset — scope=bids wipes state data, keeps bidders",
+         test_reset_bids_wipes_state_data_keeps_bidders)
+    _run("reset — scope=full removes everything except House",
+         test_reset_full_removes_everything_keeps_house)
+    _run("reset — scope=state only flips auction_state",
+         test_reset_state_only_changes_auction_state)
+    _run("reset — preserves settings overrides + audit log",
+         test_reset_preserves_settings_and_audit)
+    _run("reset — auction_reset SocketIO event payload",
+         test_reset_broadcasts_auction_reset_event)
+    _run("reset — endpoint route registered", test_reset_route_registered)
 
     _run("existing dashboard still loads", test_existing_dashboard_still_loads)
 

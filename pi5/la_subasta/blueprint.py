@@ -8,7 +8,7 @@ import time
 
 from flask import Blueprint, jsonify, render_template, request
 
-from la_subasta import bidding, notifications, payouts, settings
+from la_subasta import bidding, notifications, payouts, reset, settings
 from la_subasta.bidding import BidError
 from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR, NUM_HORSES
 from la_subasta.models import init_db
@@ -485,4 +485,51 @@ def api_admin_settings_audit():
     return jsonify({
         "success": True,
         "audit": settings.get_audit_log(limit=limit),
+    })
+
+
+# -----------------------------------------------------------------------------
+# Admin reset (testing only — Phase 1.6)
+# -----------------------------------------------------------------------------
+#
+# Three-scope wipe for clearing La Subasta state between test runs without
+# touching SQL directly. Guarded by ?confirm=TESTING so a stray POST can't
+# nuke real data. settings_audit_log and auction_overrides are preserved by
+# design (test should not lose audit trail or admin tunables).
+#
+# TODO Phase 3: once the admin login/role system lands, wrap this endpoint
+# with an `is_admin` check. For now the testing guard alone keeps the surface
+# narrow; there is no production deployment to worry about yet.
+
+_RESET_SCOPES = {"bids", "full", "state"}
+
+
+@la_subasta_bp.route("/api/admin/reset", methods=["POST"])
+def api_admin_reset():
+    confirm = request.args.get("confirm", "")
+    if confirm != "TESTING":
+        return _err(
+            "Missing or invalid confirm parameter (must be exactly 'TESTING')"
+        )
+
+    scope = request.args.get("scope", "")
+    if scope not in _RESET_SCOPES:
+        return _err(
+            f"Invalid scope: {scope!r}. Must be one of: bids, full, state"
+        )
+
+    if scope == "bids":
+        deleted = reset.reset_bids()
+    elif scope == "full":
+        deleted = reset.reset_full()
+    else:  # scope == "state"
+        deleted = reset.reset_state()
+
+    notifications.auction_reset(scope=scope, timestamp=time.time())
+
+    return jsonify({
+        "success": True,
+        "scope": scope,
+        "deleted": deleted,
+        "auction_state": AuctionState.NOT_STARTED.value,
     })
