@@ -1123,6 +1123,56 @@ def test_onboarding_markup_present():
                f"missing marker: {marker!r}")
 
 
+def test_onboarding_2027_pesos_copy():
+    """DDM 2027 soft launch — funny-money copy must replace the old dollar
+    framing. Asserts new pesos phrases present and old dollar/payment
+    phrases absent."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    r = client.get("/la-subasta/")
+    _check("GET /la-subasta/ returns 200", r.status_code == 200)
+    html = r.get_data(as_text=True)
+
+    # Required 2027 phrases — these are the verification markers from spec.
+    # Case-insensitive: the heading "30 MIN BEFORE POST TIME" satisfies the
+    # "30 min before post time" requirement; we don't care about CSS casing.
+    html_lc = html.lower()
+    required_phrases = [
+        "100 pesos",
+        "pesos pool",
+        "trophy",
+        "tequila",
+        "30 min before post time",
+        "soft launch",
+        "funny money",
+        "everyone starts with 100 pesos",
+        "bid on up to 3 caballos",
+        "pesos pool locked in",
+    ]
+    for phrase in required_phrases:
+        _check(f"HTML contains 2027 copy {phrase!r}",
+               phrase.lower() in html_lc,
+               f"missing: {phrase!r}")
+
+    # Forbidden phrases — all the old 2026 dollar/payment framing
+    forbidden_phrases = [
+        "$",
+        "Venmo",
+        "Zelle",
+        "5:42",
+        "5:57",
+        "pay up",
+        "Owes",
+        "total pot",
+    ]
+    for phrase in forbidden_phrases:
+        _check(f"HTML no longer contains old phrase {phrase!r}",
+               phrase not in html,
+               f"still present: {phrase!r}")
+
+
 def test_onboarding_js_state_machine():
     """Guest JS must reference the la_subasta_onboarded localStorage key
     and wire the splash + how-it-works + help-button handlers."""
@@ -1511,6 +1561,7 @@ def main():
 
     # Phase 2A.5
     _run("onboarding — splash + how-it-works + help markup", test_onboarding_markup_present)
+    _run("onboarding — 2027 pesos copy", test_onboarding_2027_pesos_copy)
     _run("onboarding — JS state machine wiring", test_onboarding_js_state_machine)
 
     # Phase 1.6 — admin reset (testing only)
