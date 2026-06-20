@@ -1170,8 +1170,7 @@ def test_onboarding_2027_pesos_copy():
     required_phrases = [
         "100 pesos",
         "pesos pool",
-        "trophy",
-        "tequila",
+        "Every owner pays their winning bid",
         "30 min before post time",
         "soft launch",
         "funny money",
@@ -1183,6 +1182,14 @@ def test_onboarding_2027_pesos_copy():
         _check(f"HTML contains 2027 copy {phrase!r}",
                phrase.lower() in html_lc,
                f"missing: {phrase!r}")
+
+    # 2027: physical-prize framing removed — no championship/trophy/tequila
+    # promise until Joey finalizes the prize structure. Case-insensitive so
+    # any re-introduction (CHAMPIONSHIP, Trophy, etc.) is caught.
+    for phrase in ("championship", "trophy", "tequila"):
+        _check(f"HTML no longer promises a physical prize {phrase!r}",
+               phrase not in html_lc,
+               f"still present: {phrase!r}")
 
     # Forbidden phrases — all the old 2026 dollar/payment framing
     forbidden_phrases = [
