@@ -157,6 +157,27 @@
         font-style: italic;
         animation: subastaEduFadeUp 600ms ease-out 5000ms forwards;
     }
+
+    /* Pool-source subtitle — sits above the podium so guests read WHERE
+       the pesos pool comes from before the 60/25/15 split appears. Small
+       caps, serape-beige; fades in early (before the tiers rise). */
+    .s-step4-poolnote {
+        position: absolute;
+        top: 20vh;
+        left: 0; right: 0;
+        text-align: center;
+        z-index: 6;
+        margin: 0;
+        font-family: 'Impact', 'Arial Black', sans-serif;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: clamp(2px, 0.4vw, 6px);
+        font-size: clamp(20px, 2.5vw, 44px);
+        color: var(--ddm-card-1);            /* warm serape-beige #EDE5CC */
+        text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        animation: subastaEduFadeUp 600ms ease-out 400ms forwards;
+    }
 </style>
 
 <div class="splash-card subasta-edu s-step4">
@@ -173,6 +194,8 @@
         <span></span><span></span><span></span><span></span>
         <span></span><span></span>
     </div>
+
+    <p class="s-step4-poolnote">EVERY OWNER PAYS INTO THE POOL</p>
 
     <div class="s-step4-podium">
         <div class="s-step4-tier s-step4-tier--2">
