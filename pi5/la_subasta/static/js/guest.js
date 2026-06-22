@@ -376,11 +376,11 @@
                 if (openingAmount > minBid + maxRaise) disabled = true;
             }
             btn.disabled = disabled;
-            // Tight mobile buttons → bare numerals. "+1 / +3 / +5" for raises;
-            // "Bid N" for openings (N = first-bid amount). Surrounding card
-            // copy makes the pesos unit unambiguous.
+            // Raise buttons show the delta and the resulting total in pesos
+            // ("+3 = 6 pesos"); opening buttons read "Bid N" (N = first-bid
+            // amount). Surrounding card copy makes the pesos unit unambiguous.
             btn.textContent = currentAmt > 0
-                ? ('+' + delta)
+                ? ('+' + delta + ' = ' + pesos(nextAmt))
                 : ('Bid ' + (minBid + (delta - 1)));
         });
     }

@@ -1020,6 +1020,41 @@ def test_guest_js_no_dollar_currency():
            "no ' pesos' string-literal substring found")
 
 
+def test_guest_2027_pesos_button_format():
+    """2027 follow-up: no user-facing '$N' patterns remain in guest.js, the
+    bid buttons use the pesos-only label format, and the guest.html footer
+    shows 2027 (not 2026)."""
+    import re
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+
+    # No user-facing dollar-amount pattern like "$5" anywhere
+    m = re.search(r"\$\d", js)
+    _check("guest.js has no '$N' currency pattern",
+           m is None,
+           f"found {m.group(0)!r} at index {m.start()}" if m else "")
+
+    # Opening (pre-bid) buttons read "Bid N"; raise (post-bid) buttons read
+    # "+N = <total> pesos" via the pesos() formatter.
+    _check("guest.js opening buttons use 'Bid ' prefix",
+           "'Bid '" in js,
+           "missing \"'Bid '\" opening-button label")
+    _check("guest.js raise buttons use '+N = <total> pesos' format",
+           "' = ' + pesos(nextAmt)" in js,
+           "missing raise-button pesos-total label")
+
+    # Footer year bumped 2026 -> 2027
+    html = client.get("/la-subasta/").get_data(as_text=True)
+    _check("guest.html footer shows 'La Subasta 2027'",
+           "La Subasta 2027" in html,
+           "footer not updated to 2027")
+    _check("guest.html footer no longer shows 'La Subasta 2026'",
+           "La Subasta 2026" not in html,
+           "stale 'La Subasta 2026' still present")
+
+
 def test_auction_state_changed_broadcast():
     """Admin transitions must fire auction_state_changed so live guests
     see button states update without a page reload."""
@@ -1593,6 +1628,8 @@ def main():
     _run("guest UI — static assets served", test_static_assets_served)
     _run("guest UI — no '$' currency in guest.js (2027 pesos mode)",
          test_guest_js_no_dollar_currency)
+    _run("guest UI — 2027 pesos button format + footer year",
+         test_guest_2027_pesos_button_format)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
 
