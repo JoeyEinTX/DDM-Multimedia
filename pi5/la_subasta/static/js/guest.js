@@ -751,10 +751,232 @@
     }
 
     // ---------------------------------------------------------------------
+    // Dev panel (development/testing only — gated by ?dev=1)
+    //
+    // Markup is always present in the page but hidden; we reveal it only when
+    // dev mode is active. ?dev=1 enables AND persists (localStorage
+    // la_subasta_dev_mode='1') so the panel survives in-app navigation that
+    // drops the query string; ?dev=0 disables and clears the flag.
+    // ---------------------------------------------------------------------
+
+    const DEV_KEY = 'la_subasta_dev_mode';
+    let devPollInterval = null;
+
+    function isDevMode() {
+        let params;
+        try { params = new URLSearchParams(window.location.search); }
+        catch (e) { params = null; }
+        const flag = params ? params.get('dev') : null;
+        if (flag === '1') {
+            try { localStorage.setItem(DEV_KEY, '1'); } catch (e) { /* ignore */ }
+            return true;
+        }
+        if (flag === '0') {
+            try { localStorage.removeItem(DEV_KEY); } catch (e) { /* ignore */ }
+            return false;
+        }
+        try { return localStorage.getItem(DEV_KEY) === '1'; }
+        catch (e) { return false; }
+    }
+
+    function devToast(msg) {
+        const el = document.getElementById('ls-dev-toast');
+        if (!el) return;
+        el.textContent = msg;
+        el.hidden = false;
+        clearTimeout(devToast._t);
+        devToast._t = setTimeout(function () { el.hidden = true; }, 2500);
+    }
+
+    function devRenderIdentity() {
+        const el = document.getElementById('ls-dev-identity');
+        if (!el) return;
+        const id = state.identity || loadStoredIdentity();
+        el.textContent = id ? id.identity : 'Not registered';
+    }
+
+    async function devRefreshStatus() {
+        const resp = await getJSON(API.state);
+        if (!resp.ok) return;
+        const d = resp.data || {};
+        const set = function (elId, val) {
+            const el = document.getElementById(elId);
+            if (el) el.textContent = (val === undefined || val === null) ? '—' : val;
+        };
+        set('ls-dev-state', d.state);
+        set('ls-dev-pot', d.total_pot);
+        set('ls-dev-bidders', d.num_bidders);
+        set('ls-dev-bids', d.num_bids);
+        devRenderIdentity();
+    }
+
+    function devStartPolling() {
+        devRefreshStatus();
+        if (devPollInterval) clearInterval(devPollInterval);
+        devPollInterval = setInterval(devRefreshStatus, 2000);
+    }
+
+    function devStopPolling() {
+        if (devPollInterval) { clearInterval(devPollInterval); devPollInterval = null; }
+    }
+
+    function devExpand() {
+        const fab = document.getElementById('ls-dev-fab');
+        const panel = document.getElementById('ls-dev-panel');
+        if (panel) panel.hidden = false;
+        if (fab) fab.hidden = true;
+        devStartPolling();
+    }
+
+    function devCollapse() {
+        const fab = document.getElementById('ls-dev-fab');
+        const panel = document.getElementById('ls-dev-panel');
+        if (panel) panel.hidden = true;
+        if (fab) fab.hidden = false;
+        devStopPolling();
+    }
+
+    // Populate the 3 result <select>s from the live horse list; default to the
+    // top-3 by saddle cloth for quick testing (operator can change any of them).
+    async function devOpenResultsModal() {
+        const modal = document.getElementById('ls-dev-results-modal');
+        const err = document.getElementById('ls-dev-results-error');
+        const selWin = document.getElementById('ls-dev-win');
+        const selPlace = document.getElementById('ls-dev-place');
+        const selShow = document.getElementById('ls-dev-show');
+        if (!modal) return;
+
+        const resp = await getJSON(API.horses);
+        const horses = ((resp.ok && resp.data.horses) ? resp.data.horses : [])
+            .slice().sort(function (a, b) { return a.saddle_cloth - b.saddle_cloth; });
+
+        const optionsHTML = horses.map(function (h) {
+            const label = '#' + h.saddle_cloth + (h.name ? ' ' + h.name : '');
+            return '<option value="' + h.horse_id + '">' + label + '</option>';
+        }).join('');
+        [selWin, selPlace, selShow].forEach(function (sel) {
+            if (sel) sel.innerHTML = optionsHTML;
+        });
+        if (horses[0] && selWin)   selWin.value   = horses[0].horse_id;
+        if (horses[1] && selPlace) selPlace.value = horses[1].horse_id;
+        if (horses[2] && selShow)  selShow.value  = horses[2].horse_id;
+
+        if (err) err.hidden = true;
+        modal.hidden = false;
+    }
+
+    async function devSubmitResults() {
+        const modal = document.getElementById('ls-dev-results-modal');
+        const err = document.getElementById('ls-dev-results-error');
+        const win = parseInt(document.getElementById('ls-dev-win').value, 10);
+        const place = parseInt(document.getElementById('ls-dev-place').value, 10);
+        const show = parseInt(document.getElementById('ls-dev-show').value, 10);
+        if (new Set([win, place, show]).size !== 3) {
+            if (err) { err.textContent = 'Win, place, show must all differ'; err.hidden = false; }
+            return;
+        }
+        const resp = await postJSON('/la-subasta/api/admin/results',
+            { win: win, place: place, show: show });
+        if (resp.ok && resp.data.success) {
+            if (modal) modal.hidden = true;
+            devToast('Results submitted, payouts computed');
+            devRefreshStatus();
+        } else if (err) {
+            err.textContent = (resp.data && resp.data.error) || 'Results rejected';
+            err.hidden = false;
+        }
+    }
+
+    async function devHandleAction(action) {
+        const ADMIN = '/la-subasta/api/admin/';
+        if (action === 'open') {
+            const r = await postJSON(ADMIN + 'start', {});
+            devToast(r.ok && r.data.success ? 'Auction opened'
+                     : ((r.data && r.data.error) || 'Open failed'));
+            devRefreshStatus();
+        } else if (action === 'final-hour') {
+            const r = await postJSON(ADMIN + 'transition', { state: 'FINAL_HOUR' });
+            devToast(r.ok && r.data.success ? 'Forced FINAL_HOUR'
+                     : ((r.data && r.data.error) || 'Transition failed'));
+            devRefreshStatus();
+        } else if (action === 'lock') {
+            const r = await postJSON(ADMIN + 'lock', {});
+            devToast(r.ok && r.data.success ? 'Auction locked'
+                     : ((r.data && r.data.error) || 'Lock failed'));
+            devRefreshStatus();
+        } else if (action === 'results') {
+            devOpenResultsModal();
+        } else if (action === 'reset-bids') {
+            if (!window.confirm('Reset all bids? (Keeps bidders.)')) return;
+            const r = await postJSON(ADMIN + 'reset?scope=bids&confirm=TESTING', {});
+            if (r.ok && r.data.success) {
+                devToast('Bids reset');
+                setTimeout(function () { location.reload(); }, 600);
+            } else devToast((r.data && r.data.error) || 'Reset failed');
+        } else if (action === 'reset-full') {
+            if (!window.confirm('Full reset? This wipes bidders too.')) return;
+            const r = await postJSON(ADMIN + 'reset?scope=full&confirm=TESTING', {});
+            if (r.ok && r.data.success) {
+                try { localStorage.removeItem(IDENTITY_KEY); } catch (e) { /* ignore */ }
+                devToast('Full reset complete');
+                setTimeout(function () { location.reload(); }, 600);
+            } else devToast((r.data && r.data.error) || 'Reset failed');
+        } else if (action === 'clear-identity') {
+            if (!window.confirm("Clear identity? You'll need to re-register.")) return;
+            try {
+                localStorage.removeItem(IDENTITY_KEY);
+                localStorage.removeItem(ONBOARDED_KEY);
+            } catch (e) { /* ignore */ }
+            location.reload();
+        } else if (action === 'scratch' || action === 'unscratch') {
+            const input = document.getElementById('ls-dev-horse');
+            const horseId = parseInt(input ? input.value : '', 10);
+            if (isNaN(horseId)) { devToast('Enter a horse #'); return; }
+            const r = await postJSON(ADMIN + action, { horse_id: horseId });
+            if (r.ok && r.data.success) {
+                devToast('Horse #' + horseId + ' ' + action + 'ed');
+                refreshHorses();
+                devRefreshStatus();
+            } else devToast((r.data && r.data.error) || (action + ' failed'));
+        }
+    }
+
+    function setupDevPanel() {
+        const root = document.getElementById('ls-dev');
+        if (!root) return;
+        if (!isDevMode()) return;            // stays hidden for real guests
+        root.hidden = false;                 // reveal the collapsed 🐛 fab
+
+        const fab = document.getElementById('ls-dev-fab');
+        const closeBtn = document.getElementById('ls-dev-close');
+        if (fab) fab.addEventListener('click', devExpand);
+        if (closeBtn) closeBtn.addEventListener('click', devCollapse);
+
+        const panel = document.getElementById('ls-dev-panel');
+        if (panel) {
+            panel.addEventListener('click', function (e) {
+                const btn = e.target.closest('[data-dev-action]');
+                if (btn) devHandleAction(btn.dataset.devAction);
+            });
+        }
+
+        const rcancel = document.getElementById('ls-dev-results-cancel');
+        const rsubmit = document.getElementById('ls-dev-results-submit');
+        if (rcancel) rcancel.addEventListener('click', function () {
+            const m = document.getElementById('ls-dev-results-modal');
+            if (m) m.hidden = true;
+        });
+        if (rsubmit) rsubmit.addEventListener('click', devSubmitResults);
+
+        devRenderIdentity();
+    }
+
+    // ---------------------------------------------------------------------
     // Boot
     // ---------------------------------------------------------------------
 
     document.addEventListener('DOMContentLoaded', function () {
+        setupDevPanel();
         setupHowItWorksHandlers();
         setupHelpButton();
 

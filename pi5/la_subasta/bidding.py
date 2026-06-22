@@ -114,6 +114,28 @@ def list_bidders(event_year: int = EVENT_YEAR,
     return [dict(r) for r in rows]
 
 
+def count_bidders(event_year: int = EVENT_YEAR,
+                  include_house: bool = False) -> int:
+    """Number of registered bidders (House sentinel excluded by default)."""
+    return len(list_bidders(event_year, include_house))
+
+
+def count_bids(event_year: int = EVENT_YEAR,
+               include_voided: bool = True) -> int:
+    """Total bids placed for the event year (voided rows counted by default)."""
+    if include_voided:
+        row = get_conn().execute(
+            "SELECT COUNT(*) AS c FROM bids WHERE event_year = ?",
+            (event_year,),
+        ).fetchone()
+    else:
+        row = get_conn().execute(
+            "SELECT COUNT(*) AS c FROM bids WHERE event_year = ? AND voided = 0",
+            (event_year,),
+        ).fetchone()
+    return row["c"]
+
+
 # -----------------------------------------------------------------------------
 # Horse / bid queries
 # -----------------------------------------------------------------------------
@@ -180,6 +202,25 @@ def scratch_horse(horse_id: int, event_year: int = EVENT_YEAR) -> None:
             VALUES (?, 1, datetime('now'), ?)
             ON CONFLICT(horse_id, event_year) DO UPDATE SET
                 scratched = 1, scratched_at = datetime('now')
+            """,
+            (horse_id, event_year),
+        )
+
+
+def unscratch_horse(horse_id: int, event_year: int = EVENT_YEAR) -> None:
+    """Clear a horse's scratched flag — the reverse of scratch_horse().
+
+    Used by the dev/admin tooling to undo an accidental scratch. Writes a
+    horse_state row with scratched=0 (creating one if absent) so the change
+    is idempotent whether or not the horse was previously scratched.
+    """
+    with write_txn() as conn:
+        conn.execute(
+            """
+            INSERT INTO horse_state (horse_id, scratched, scratched_at, event_year)
+            VALUES (?, 0, NULL, ?)
+            ON CONFLICT(horse_id, event_year) DO UPDATE SET
+                scratched = 0, scratched_at = NULL
             """,
             (horse_id, event_year),
         )

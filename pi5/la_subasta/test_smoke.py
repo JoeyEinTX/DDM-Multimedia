@@ -1055,6 +1055,167 @@ def test_guest_2027_pesos_button_format():
            "stale 'La Subasta 2026' still present")
 
 
+# -----------------------------------------------------------------------------
+# Dev panel (dev/testing-only floating panel, gated by ?dev=1)
+# -----------------------------------------------------------------------------
+
+def test_dev_panel_markup_and_gating():
+    """The dev panel markup is ALWAYS rendered (so the localStorage dev flag
+    can keep it visible across navigation), but ships hidden by default and is
+    revealed only by guest.js when dev mode is active. We assert the markup is
+    present + hidden-by-default and that guest.js carries the ?dev=1 / ?dev=0
+    detection wiring — JS-driven visibility itself isn't exercised here (no JS
+    engine in this harness)."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    html_plain = client.get("/la-subasta/").get_data(as_text=True)
+    html_dev = client.get("/la-subasta/?dev=1").get_data(as_text=True)
+
+    # Markup present regardless of the query param (JS-gated, not server-gated)
+    for label, html in (("no query", html_plain), ("?dev=1", html_dev)):
+        _check(f"dev panel container present ({label})",
+               'id="ls-dev"' in html, "missing #ls-dev")
+        _check(f"dev panel hidden by default ({label})",
+               '<div id="ls-dev" class="ls-dev" hidden>' in html,
+               "#ls-dev not hidden by default")
+
+    # Required panel chrome + controls
+    markers = [
+        ('id="ls-dev-fab"',                 "collapsed bug fab"),
+        ('id="ls-dev-panel"',               "expanded panel"),
+        ('🐛 DEV PANEL',                    "panel title"),
+        ('id="ls-dev-state"',               "status: state"),
+        ('id="ls-dev-pot"',                 "status: pot"),
+        ('id="ls-dev-bidders"',             "status: bidders"),
+        ('id="ls-dev-bids"',                "status: bids placed"),
+        ('data-dev-action="open"',          "open auction button"),
+        ('data-dev-action="final-hour"',    "force final-hour button"),
+        ('data-dev-action="lock"',          "lock button"),
+        ('data-dev-action="results"',       "set results button"),
+        ('data-dev-action="reset-bids"',    "reset bids button"),
+        ('data-dev-action="reset-full"',    "reset full button"),
+        ('data-dev-action="clear-identity"', "clear identity button"),
+        ('data-dev-action="scratch"',       "scratch button"),
+        ('data-dev-action="unscratch"',     "unscratch button"),
+        ('id="ls-dev-results-modal"',       "results modal"),
+        ('id="ls-dev-toast"',               "toast element"),
+    ]
+    for marker, lbl in markers:
+        _check(f"dev panel markup has {lbl}", marker in html_dev,
+               f"missing marker: {marker!r}")
+
+    # guest.js dev-mode detection + wiring
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+    js_markers = [
+        ("la_subasta_dev_mode", "localStorage dev flag"),
+        ("URLSearchParams",     "URL param parse"),
+        ("get('dev')",          "reads ?dev param"),
+        ("function setupDevPanel(", "dev panel setup"),
+        ("/la-subasta/api/admin/", "admin endpoint base"),
+        ("'transition'",           "transition action wired"),
+        ("'unscratch'",            "unscratch action wired"),
+    ]
+    for marker, lbl in js_markers:
+        _check(f"guest.js dev wiring: {lbl}", marker in js,
+               f"missing in guest.js: {marker!r}")
+
+
+def test_admin_unscratch_endpoint():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # Scratch then unscratch horse 5
+    r = client.post("/la-subasta/api/admin/scratch", json={"horse_id": 5})
+    _check("scratch returns 200", r.status_code == 200)
+    _check("horse 5 scratched after scratch", bidding.is_horse_scratched(5))
+
+    r = client.post("/la-subasta/api/admin/unscratch", json={"horse_id": 5})
+    _check("unscratch returns 200", r.status_code == 200,
+           f"body={r.get_json()}")
+    _check("unscratch response success", r.get_json().get("success") is True)
+    _check("horse 5 NOT scratched after unscratch",
+           not bidding.is_horse_scratched(5))
+
+    # Unscratch is idempotent on an already-active horse
+    r = client.post("/la-subasta/api/admin/unscratch", json={"horse_id": 9})
+    _check("unscratch never-scratched horse still 200", r.status_code == 200)
+    _check("horse 9 remains active", not bidding.is_horse_scratched(9))
+
+    # Validation
+    r = client.post("/la-subasta/api/admin/unscratch", json={"horse_id": 999})
+    _check("unscratch out-of-range rejected", r.status_code == 400)
+    r = client.post("/la-subasta/api/admin/unscratch", json={"horse_id": "x"})
+    _check("unscratch non-int rejected", r.status_code == 400)
+
+
+def test_admin_transition_endpoint():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # Force OPEN from NOT_STARTED
+    r = client.post("/la-subasta/api/admin/transition", json={"state": "OPEN"})
+    _check("transition->OPEN returns 200", r.status_code == 200,
+           f"body={r.get_json()}")
+    _check("transition->OPEN sets state OPEN",
+           r.get_json().get("state") == "OPEN")
+
+    # Force FINAL_HOUR (the dev panel's "Force FINAL_HOUR")
+    r = client.post("/la-subasta/api/admin/transition",
+                    json={"state": "FINAL_HOUR"})
+    _check("transition->FINAL_HOUR returns 200", r.status_code == 200)
+    _check("state is FINAL_HOUR", get_state().value == "FINAL_HOUR")
+
+    # force=True allows non-linear jumps (e.g. back to NOT_STARTED)
+    r = client.post("/la-subasta/api/admin/transition",
+                    json={"state": "NOT_STARTED"})
+    _check("transition->NOT_STARTED (forced backward) returns 200",
+           r.status_code == 200)
+    _check("state is NOT_STARTED", get_state().value == "NOT_STARTED")
+
+    # Invalid target rejected
+    r = client.post("/la-subasta/api/admin/transition", json={"state": "BOGUS"})
+    _check("invalid transition target rejected", r.status_code == 400)
+    r = client.post("/la-subasta/api/admin/transition", json={})
+    _check("missing transition target rejected", r.status_code == 400)
+
+
+def test_state_includes_bidder_and_bid_counts():
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    data = client.get("/la-subasta/api/state").get_json()
+    _check("/api/state has num_bidders field", "num_bidders" in data)
+    _check("/api/state has num_bids field", "num_bids" in data)
+    _check("fresh auction: num_bidders == 0", data.get("num_bidders") == 0,
+           f"got {data.get('num_bidders')}")
+    _check("fresh auction: num_bids == 0", data.get("num_bids") == 0,
+           f"got {data.get('num_bids')}")
+
+    # Register 2 bidders, place 3 bids, recount
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    bob = client.post("/la-subasta/api/register",
+                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+    client.post("/la-subasta/api/bid",
+                json={"bidder_id": alice["id"], "horse_id": 1, "amount": 1})
+    client.post("/la-subasta/api/bid",
+                json={"bidder_id": bob["id"], "horse_id": 1, "amount": 2})
+    client.post("/la-subasta/api/bid",
+                json={"bidder_id": alice["id"], "horse_id": 2, "amount": 1})
+
+    data = client.get("/la-subasta/api/state").get_json()
+    _check("num_bidders == 2 after 2 registrations (House excluded)",
+           data.get("num_bidders") == 2, f"got {data.get('num_bidders')}")
+    _check("num_bids == 3 after 3 bids", data.get("num_bids") == 3,
+           f"got {data.get('num_bids')}")
+
+
 def test_auction_state_changed_broadcast():
     """Admin transitions must fire auction_state_changed so live guests
     see button states update without a page reload."""
@@ -1630,6 +1791,14 @@ def main():
          test_guest_js_no_dollar_currency)
     _run("guest UI — 2027 pesos button format + footer year",
          test_guest_2027_pesos_button_format)
+    _run("dev panel — markup present + hidden-by-default + JS gating",
+         test_dev_panel_markup_and_gating)
+    _run("dev panel — /api/admin/unscratch endpoint",
+         test_admin_unscratch_endpoint)
+    _run("dev panel — /api/admin/transition endpoint",
+         test_admin_transition_endpoint)
+    _run("dev panel — /api/state includes num_bidders + num_bids",
+         test_state_includes_bidder_and_bid_counts)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
 

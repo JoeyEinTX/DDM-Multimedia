@@ -201,6 +201,99 @@
     </div>
 </div>
 
+<!-- =====================================================================
+     DEV PANEL — development/testing only. Always in the DOM but hidden by
+     default; guest.js reveals it ONLY in dev mode (?dev=1 in the URL,
+     persisted across in-app navigation as localStorage la_subasta_dev_mode).
+     Real guests never see it. Append ?dev=0 to disable and clear the flag.
+     Kept JS-gated (not server-gated) precisely so the localStorage flag can
+     keep it visible on later page loads that lack the ?dev=1 query param.
+     ===================================================================== -->
+<div id="ls-dev" class="ls-dev" hidden>
+    <!-- Collapsed: 44px circular bug button -->
+    <button type="button" id="ls-dev-fab" class="ls-dev-fab" aria-label="Open dev panel" title="Dev panel">🐛</button>
+
+    <!-- Expanded: full panel -->
+    <div id="ls-dev-panel" class="ls-dev-panel" role="dialog" aria-label="Dev panel" hidden>
+        <div class="ls-dev-header">
+            <span class="ls-dev-title">🐛 DEV PANEL</span>
+            <button type="button" id="ls-dev-close" class="ls-dev-x" aria-label="Collapse dev panel">✕</button>
+        </div>
+
+        <div class="ls-dev-body">
+            <section class="ls-dev-section">
+                <div class="ls-dev-section-title">Status <span class="ls-dev-live">(live)</span></div>
+                <div class="ls-dev-status">
+                    <div>State: <span id="ls-dev-state">—</span></div>
+                    <div>Pot: <span id="ls-dev-pot">—</span> pesos</div>
+                    <div>Bidders: <span id="ls-dev-bidders">—</span></div>
+                    <div>Bids placed: <span id="ls-dev-bids">—</span></div>
+                </div>
+            </section>
+            <div class="ls-dev-divider" aria-hidden="true"></div>
+
+            <section class="ls-dev-section">
+                <div class="ls-dev-section-title">State controls</div>
+                <button type="button" class="ls-dev-btn" data-dev-action="open">▶ Open Auction</button>
+                <button type="button" class="ls-dev-btn" data-dev-action="final-hour">⏰ Force FINAL_HOUR</button>
+                <button type="button" class="ls-dev-btn" data-dev-action="lock">⏸ Lock Auction</button>
+                <button type="button" class="ls-dev-btn" data-dev-action="results">🏁 Set Race Results</button>
+            </section>
+            <div class="ls-dev-divider" aria-hidden="true"></div>
+
+            <section class="ls-dev-section">
+                <div class="ls-dev-section-title">Data controls</div>
+                <button type="button" class="ls-dev-btn ls-dev-btn--warn" data-dev-action="reset-bids">🧹 Reset bids only</button>
+                <button type="button" class="ls-dev-btn ls-dev-btn--danger" data-dev-action="reset-full">🔥 Reset full</button>
+            </section>
+            <div class="ls-dev-divider" aria-hidden="true"></div>
+
+            <section class="ls-dev-section">
+                <div class="ls-dev-section-title">Me</div>
+                <div class="ls-dev-me" id="ls-dev-identity">Not registered</div>
+                <button type="button" class="ls-dev-btn" data-dev-action="clear-identity">👤 Clear my identity</button>
+            </section>
+            <div class="ls-dev-divider" aria-hidden="true"></div>
+
+            <section class="ls-dev-section">
+                <div class="ls-dev-section-title">Horse actions</div>
+                <label class="ls-dev-field" for="ls-dev-horse">Horse #
+                    <input type="number" id="ls-dev-horse" class="ls-dev-input"
+                           min="1" max="{{ num_horses }}" value="1" inputmode="numeric">
+                </label>
+                <div class="ls-dev-btn-row">
+                    <button type="button" class="ls-dev-btn" data-dev-action="scratch">🐴 Scratch</button>
+                    <button type="button" class="ls-dev-btn" data-dev-action="unscratch">✅ Unscratch</button>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<!-- Dev: Set Race Results modal — populated from /api/horses -->
+<div id="ls-dev-results-modal" class="ls-modal ls-modal-compact" role="dialog" aria-modal="true" hidden>
+    <div class="ls-modal-inner">
+        <div class="ls-custom-title">🏁 Set Race Results</div>
+        <label class="ls-dev-field" for="ls-dev-win">Win
+            <select id="ls-dev-win" class="ls-dev-input"></select>
+        </label>
+        <label class="ls-dev-field" for="ls-dev-place">Place
+            <select id="ls-dev-place" class="ls-dev-input"></select>
+        </label>
+        <label class="ls-dev-field" for="ls-dev-show">Show
+            <select id="ls-dev-show" class="ls-dev-input"></select>
+        </label>
+        <div id="ls-dev-results-error" class="ls-error-banner" role="alert" hidden></div>
+        <div class="ls-btn-row">
+            <button type="button" class="ls-secondary-btn" id="ls-dev-results-cancel">Cancel</button>
+            <button type="button" class="ls-primary-btn" id="ls-dev-results-submit">Submit</button>
+        </div>
+    </div>
+</div>
+
+<!-- Dev: transient toast -->
+<div id="ls-dev-toast" class="ls-dev-toast" role="status" aria-live="polite" hidden></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <script src="{{ url_for('la_subasta.static', filename='js/guest.js') }}"></script>
 </body>

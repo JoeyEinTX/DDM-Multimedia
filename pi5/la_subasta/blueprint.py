@@ -136,6 +136,8 @@ def api_state():
         "event_year": EVENT_YEAR,
         "emoji_palette": EMOJI_PALETTE,
         "num_horses": NUM_HORSES,
+        "num_bidders": bidding.count_bidders(),
+        "num_bids": bidding.count_bids(),
     })
 
 
@@ -311,6 +313,33 @@ def api_admin_final_hour():
     return jsonify({"success": True, "state": get_state().value})
 
 
+@la_subasta_bp.route("/api/admin/transition", methods=["POST"])
+def api_admin_transition():
+    """Dev/admin: force the auction state machine to an arbitrary state.
+
+    Body JSON: {"state": "OPEN" | "FINAL_HOUR" | "LOCKED" | "NOT_STARTED" | ...}
+
+    Uses force=True so it can jump in any direction — this is the dev panel's
+    "Force FINAL_HOUR" convenience, not the normal lifecycle path. Lock-only
+    side effects (ownership freeze, payout computation) still run only through
+    their dedicated /api/admin/lock and /api/admin/results endpoints; this
+    endpoint changes the state row and broadcasts, nothing more.
+    """
+    data = request.get_json(silent=True) or {}
+    target = data.get("state")
+    try:
+        new_state = AuctionState(target)
+    except ValueError:
+        valid = ", ".join(s.value for s in AuctionState)
+        return _err(f"Invalid state {target!r}. Must be one of: {valid}")
+
+    old_state = get_state().value
+    transition(new_state, force=True)
+    notifications.auction_state_changed(new_state.value, old_state)
+    return jsonify({"success": True, "state": get_state().value,
+                    "previous_state": old_state})
+
+
 @la_subasta_bp.route("/api/admin/lock", methods=["POST"])
 def api_admin_lock():
     try:
@@ -386,6 +415,20 @@ def api_admin_scratch():
         return _err(f"Invalid horse_id: {horse_id}")
     bidding.scratch_horse(horse_id)
     notifications.horse_scratched(horse_id)
+    return jsonify({"success": True, "horse_id": horse_id})
+
+
+@la_subasta_bp.route("/api/admin/unscratch", methods=["POST"])
+def api_admin_unscratch():
+    """Clear a horse's scratched flag (dev/admin reversal of /scratch)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        horse_id = int(data.get("horse_id"))
+    except (TypeError, ValueError):
+        return _err("horse_id must be an integer")
+    if horse_id < 1 or horse_id > NUM_HORSES:
+        return _err(f"Invalid horse_id: {horse_id}")
+    bidding.unscratch_horse(horse_id)
     return jsonify({"success": True, "horse_id": horse_id})
 
 

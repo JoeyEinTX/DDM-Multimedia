@@ -818,3 +818,182 @@ input {
     transform: scale(0.94);
     background: #234c40;
 }
+
+/* =============================================================================
+   DEV PANEL (dev/testing only) — floating bottom-right, gated by ?dev=1.
+   Intentionally styled distinct from the prod UI (dashed yellow border,
+   scarlet header) so it reads unmistakably as a developer tool.
+   ============================================================================= */
+
+.ls-dev {
+    position: fixed;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 9999;                       /* float above all app UI + modals */
+    font-family: var(--ls-font);
+}
+
+/* Collapsed — 44px circular bug tap target */
+.ls-dev-fab {
+    width: var(--ls-tap-min);
+    height: var(--ls-tap-min);
+    border-radius: 50%;
+    background: var(--ls-bg-primary);
+    border: 2px dashed var(--ls-gold);
+    font-size: 22px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.ls-dev-fab:active { transform: scale(0.94); }
+
+/* Expanded panel */
+.ls-dev-panel {
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(80vh, 640px);
+    display: flex;
+    flex-direction: column;
+    background: var(--ls-bg-primary);
+    border: 2px dashed var(--ls-gold);
+    border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+}
+
+.ls-dev-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--ls-urgent);        /* scarlet header bar */
+    color: #fff;
+}
+.ls-dev-title {
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+}
+.ls-dev-x {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ls-dev-x:active { background: rgba(0, 0, 0, 0.2); }
+
+.ls-dev-body {
+    padding: 10px 12px 12px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ls-dev-section { display: flex; flex-direction: column; gap: 6px; }
+.ls-dev-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ls-gold);
+}
+.ls-dev-live { color: var(--ls-muted); font-weight: 500; letter-spacing: 0; }
+
+/* Section dividers as thin serape stripes (reuses brand stripe gradient) */
+.ls-dev-divider {
+    height: 3px;
+    margin: 10px 0;
+    border-radius: 2px;
+    background:
+        linear-gradient(to right,
+            var(--ls-urgent)    0%,   var(--ls-urgent)    25%,
+            var(--ls-gold)     25%,   var(--ls-gold)     50%,
+            var(--ls-turquoise) 50%,   var(--ls-turquoise) 75%,
+            var(--ls-hot-pink) 75%,   var(--ls-hot-pink)  100%
+        );
+    opacity: 0.85;
+}
+
+/* Live status block — monospace */
+.ls-dev-status {
+    font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas,
+                 'Liberation Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ls-text);
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+.ls-dev-status span { color: var(--ls-gold); font-weight: 700; }
+
+/* Dev buttons — full width, clearly NOT prod bid buttons */
+.ls-dev-btn {
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--ls-bg-secondary);
+    color: var(--ls-text);
+    border: 1px solid var(--ls-gold);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+}
+.ls-dev-btn:active { transform: scale(0.98); background: #234c40; }
+.ls-dev-btn--warn   { border-color: var(--ls-gold); }
+.ls-dev-btn--danger { border-color: var(--ls-urgent); color: #ffd7d7; }
+.ls-dev-btn--danger:active { background: #3a1414; }
+
+.ls-dev-btn-row { display: flex; gap: 6px; }
+.ls-dev-btn-row .ls-dev-btn { text-align: center; }
+
+.ls-dev-me {
+    font-size: 13px;
+    color: var(--ls-muted);
+    padding: 2px 0;
+}
+
+.ls-dev-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ls-text);
+}
+.ls-dev-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--ls-bg-secondary);
+    color: var(--ls-text);
+    border: 1px solid var(--ls-divider);
+    font-size: 14px;
+}
+
+/* Toast */
+.ls-dev-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 10000;
+    max-width: 80vw;
+    padding: 10px 16px;
+    border-radius: 10px;
+    background: var(--ls-bg-secondary);
+    color: var(--ls-text);
+    border: 2px dashed var(--ls-gold);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+}
