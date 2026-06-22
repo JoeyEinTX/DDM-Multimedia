@@ -157,33 +157,46 @@ def _connect(path: str) -> sqlite3.Connection:
     return conn
 
 
-# One shared connection per process. SQLite + WAL handles concurrent access
-# well enough for the ~20 guest peak load.
-_conn: sqlite3.Connection = None  # type: ignore[assignment]
+# One sqlite3 connection PER THREAD (thread-local). A single shared connection
+# is NOT safe under the concurrent access the SocketIO server produces
+# (multiple guests + the 2s dev-panel /api/state poll): concurrent use of one
+# connection raises sqlite3 SQLITE_MISUSE ("bad parameter or other API misuse")
+# and can return torn rows. WAL mode lets each thread hold its own connection
+# to the same file and still see the others' committed writes.
+_local = threading.local()
+
+
+def _open_for_thread(path: str) -> sqlite3.Connection:
+    """(Re)open the calling thread's connection at `path`, closing any prior one."""
+    old = getattr(_local, "conn", None)
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+    conn = _connect(path)
+    _local.conn = conn
+    _local.path = path
+    return conn
 
 
 def init_db(path: str = None) -> sqlite3.Connection:
     """
     Create la_subasta.db (if missing) and apply schema.
 
-    Idempotent — safe to call on every server start. Returns the shared
-    connection. Does NOT create or touch the dashboard's horses table.
+    Idempotent — safe to call on every server start. Returns the calling
+    thread's connection. Schema is file-level, so connections opened later on
+    other threads (via get_conn) see the same tables. Does NOT create or touch
+    the dashboard's horses table.
     """
-    global _conn, _house_bidder_id
+    global _house_bidder_id
     if path is None:
         path = _db_path()
-    # Close any prior connection so file handles don't leak (matters on Windows
-    # where an open SQLite handle prevents the file from being deleted).
-    if _conn is not None:
-        try:
-            _conn.close()
-        except Exception:
-            pass
-    _conn = _connect(path)
-    _conn.executescript(SCHEMA_SQL)
+    conn = _open_for_thread(path)
+    conn.executescript(SCHEMA_SQL)
     _house_bidder_id = None  # force re-lookup after schema apply
-    _ensure_house_bidder(_conn)
-    return _conn
+    _ensure_house_bidder(conn)
+    return conn
 
 
 # -----------------------------------------------------------------------------
@@ -225,10 +238,33 @@ def house_bidder_id() -> int:
 
 
 def get_conn() -> sqlite3.Connection:
-    """Return the shared connection. init_db() must have been called first."""
-    if _conn is None:
-        return init_db()
-    return _conn
+    """Return this thread's connection, opening one if needed.
+
+    Each thread gets its own connection (keyed on the current DB path so tests
+    that repoint config.DB_PATH transparently reconnect). init_db() applies the
+    schema; a fresh thread's first call here opens against the existing file.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is None or getattr(_local, "path", None) != _db_path():
+        conn = _open_for_thread(_db_path())
+    return conn
+
+
+def close_conn() -> None:
+    """Close and drop the calling thread's connection, if any.
+
+    Lets worker threads release their file handle deterministically — matters
+    on Windows, where a lingering open SQLite handle blocks deleting the file
+    in reset_db_for_tests().
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _local.conn = None
+    _local.path = None
 
 
 @contextmanager
@@ -255,15 +291,11 @@ def write_txn():
 
 def reset_db_for_tests(path: str = None) -> sqlite3.Connection:
     """Drop and recreate all tables. Only for smoke tests / sandbox."""
-    global _conn
     if path is None:
         path = _db_path()
-    if _conn is not None:
-        try:
-            _conn.close()
-        except Exception:
-            pass
-        _conn = None
+    # Close the calling thread's connection so the file can be removed on
+    # Windows (an open SQLite handle blocks deletion).
+    close_conn()
     # Remove db + any WAL/SHM sidecar files so the fresh DB starts empty.
     for suffix in ("", "-wal", "-shm"):
         candidate = path + suffix

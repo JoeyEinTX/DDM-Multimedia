@@ -115,6 +115,103 @@ def test_state_endpoint():
            data and isinstance(data.get("emoji_palette"), list))
 
 
+def test_state_endpoint_pot_data_shapes():
+    """Regression for the /api/state 500 (sqlite InterfaceError via
+    total_pot()). total_pot() loops every horse calling current_high_bid();
+    confirm /api/state returns 200 with a correct pot across bid shapes:
+    empty DB, some horses bid + some not (gaps), and all bids voided."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # (1) No bids — empty DB
+    r = client.get("/la-subasta/api/state")
+    _check("no bids: /api/state 200", r.status_code == 200,
+           f"status={r.status_code} body={r.get_json()}")
+    _check("no bids: total_pot == 0", r.get_json().get("total_pot") == 0,
+           f"got {r.get_json().get('total_pot')}")
+
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    bob = client.post("/la-subasta/api/register",
+                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+
+    # (2) Some horses bid, most don't — the loop must skip the no-bid gaps
+    bid_ids = []
+    for bidder, horse, amt in [(alice, 1, 1), (bob, 2, 3), (alice, 5, 1)]:
+        resp = client.post("/la-subasta/api/bid",
+                           json={"bidder_id": bidder["id"], "horse_id": horse,
+                                 "amount": amt})
+        bid_ids.append(resp.get_json()["bid"]["bid_id"])
+    r = client.get("/la-subasta/api/state")
+    _check("some bids w/ gaps: /api/state 200", r.status_code == 200,
+           f"status={r.status_code} body={r.get_json()}")
+    _check("some bids w/ gaps: total_pot == 1+3+1 == 5",
+           r.get_json().get("total_pot") == 5,
+           f"got {r.get_json().get('total_pot')}")
+
+    # (3) Void every bid → no active high bids → pot back to 0 cleanly
+    #     (the shared-connection bug also produced 'float += None' here)
+    for bid_id in bid_ids:
+        vr = client.post("/la-subasta/api/admin/void", json={"bid_id": bid_id})
+        assert vr.status_code == 200, vr.get_json()
+    r = client.get("/la-subasta/api/state")
+    _check("all bids voided: /api/state 200", r.status_code == 200,
+           f"status={r.status_code} body={r.get_json()}")
+    _check("all bids voided: total_pot == 0",
+           r.get_json().get("total_pot") == 0,
+           f"got {r.get_json().get('total_pot')}")
+
+
+def test_state_endpoint_concurrent_no_sqlite_misuse():
+    """Regression for the actual root cause: concurrent /api/state requests
+    used to raise sqlite3 InterfaceError ('bad parameter or other API misuse')
+    because every thread shared ONE sqlite connection (total_pot() fires ~20-40
+    execute() calls per request). With per-thread connections, concurrent
+    reads must all succeed. This test reliably reproduced the 500 before the
+    fix."""
+    import threading
+    from la_subasta.models import close_conn
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    bob = client.post("/la-subasta/api/register",
+                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+    client.post("/la-subasta/api/bid",
+                json={"bidder_id": alice["id"], "horse_id": 1, "amount": 1})
+    client.post("/la-subasta/api/bid",
+                json={"bidder_id": bob["id"], "horse_id": 2, "amount": 1})
+
+    errors = []
+    statuses = []
+
+    def worker():
+        try:
+            c2 = app.test_client()
+            for _ in range(120):
+                statuses.append(c2.get("/la-subasta/api/state").status_code)
+        except Exception as exc:                       # pragma: no cover
+            errors.append(repr(exc))
+        finally:
+            close_conn()   # release this worker thread's sqlite handle
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    _check("concurrent /api/state: no exceptions raised",
+           not errors, f"errors: {errors[:3]}")
+    _check("concurrent /api/state: every response was 200",
+           bool(statuses) and all(s == 200 for s in statuses),
+           f"non-200: {sorted(set(s for s in statuses if s != 200))}")
+
+
 def test_register_endpoint():
     _reset()
     app = _make_app()
@@ -1765,6 +1862,10 @@ def main():
     print(f"La Subasta Phase 1 smoke test\n  DB: {_TMP_DB}")
 
     _run("state endpoint", test_state_endpoint)
+    _run("state endpoint — total_pot across bid shapes (regression)",
+         test_state_endpoint_pot_data_shapes)
+    _run("state endpoint — concurrent reads, no sqlite MISUSE (regression)",
+         test_state_endpoint_concurrent_no_sqlite_misuse)
     _run("registration + uniqueness", test_register_endpoint)
     _run("bid validation", test_bid_validation)
     _run("bid undo (10s window)", test_bid_undo)
