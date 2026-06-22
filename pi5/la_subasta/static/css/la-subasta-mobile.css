@@ -849,6 +849,12 @@ input {
 }
 .ls-dev-fab:active { transform: scale(0.94); }
 
+/* The `display: flex` on the fab/panel below outranks the UA [hidden] rule
+   (a class selector beats the presentational hidden hint), so the hidden
+   attribute alone wouldn't hide them. Restore it explicitly. */
+.ls-dev-panel[hidden] { display: none !important; }
+.ls-dev-fab[hidden]   { display: none !important; }
+
 /* Expanded panel */
 .ls-dev-panel {
     width: min(320px, calc(100vw - 24px));
