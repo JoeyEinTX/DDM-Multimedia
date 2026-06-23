@@ -1125,6 +1125,42 @@ def test_static_assets_served():
            "la_subasta_identity" in js_body)
 
 
+def test_api_responses_are_no_store():
+    """Dynamic API responses must send Cache-Control: no-store so browsers
+    can't render stale auction state (e.g. a scratched horse) from cache.
+    Static assets (CSS/JS) and the guest HTML page must NOT be no-store —
+    they should still cache/revalidate normally."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # Every dynamic API endpoint is no-store
+    for path in ("/la-subasta/api/state",
+                 "/la-subasta/api/horses",
+                 "/la-subasta/api/bidders"):
+        resp = client.get(path)
+        cc = resp.headers.get("Cache-Control", "")
+        _check(f"{path} returns 200", resp.status_code == 200,
+               f"status={resp.status_code}")
+        _check(f"{path} Cache-Control includes no-store", "no-store" in cc,
+               f"got Cache-Control={cc!r}")
+
+    # Static assets are NOT made no-store (still cacheable / revalidate)
+    css_cc = client.get(
+        "/la-subasta/static/css/la-subasta-mobile.css").headers.get("Cache-Control", "")
+    js_cc = client.get(
+        "/la-subasta/static/js/guest.js").headers.get("Cache-Control", "")
+    _check("CSS response is NOT no-store", "no-store" not in css_cc,
+           f"got Cache-Control={css_cc!r}")
+    _check("JS response is NOT no-store", "no-store" not in js_cc,
+           f"got Cache-Control={js_cc!r}")
+
+    # The guest HTML page is also not forced no-store by the API handler
+    html_cc = client.get("/la-subasta/").headers.get("Cache-Control", "")
+    _check("guest HTML page is NOT no-store", "no-store" not in html_cc,
+           f"got Cache-Control={html_cc!r}")
+
+
 def test_guest_js_no_dollar_currency():
     """2027 funny-money mode: guest.js must not emit any '$' currency
     symbols anywhere — neither as string literals, template-literal
@@ -1926,6 +1962,8 @@ def main():
     _run("guest UI — /api/horses scratched flag round-trip (regression)",
          test_horses_scratched_flag_roundtrip)
     _run("guest UI — static assets served", test_static_assets_served)
+    _run("api — dynamic responses are no-store (cache hardening)",
+         test_api_responses_are_no_store)
     _run("guest UI — no '$' currency in guest.js (2027 pesos mode)",
          test_guest_js_no_dollar_currency)
     _run("guest UI — 2027 pesos button format + footer year",

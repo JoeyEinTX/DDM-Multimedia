@@ -30,6 +30,23 @@ la_subasta_bp = Blueprint(
 
 
 # -----------------------------------------------------------------------------
+# Cache control
+# -----------------------------------------------------------------------------
+
+@la_subasta_bp.after_request
+def _no_store_api_responses(response):
+    """Stop browsers/proxies from caching dynamic API responses so a client
+    can never render stale auction state (e.g. a scratched horse) served from
+    cache. Scoped to /la-subasta/api/* only — static assets (CSS/JS) and the
+    guest HTML page are left to cache normally."""
+    if request.path.startswith("/la-subasta/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"          # HTTP/1.0 proxies
+        response.headers["Expires"] = "0"
+    return response
+
+
+# -----------------------------------------------------------------------------
 # Init — called from main.py at app startup
 # -----------------------------------------------------------------------------
 
