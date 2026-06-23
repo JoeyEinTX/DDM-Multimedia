@@ -376,11 +376,11 @@
                 if (openingAmount > minBid + maxRaise) disabled = true;
             }
             btn.disabled = disabled;
-            // Raise buttons show the delta and the resulting total in pesos
-            // ("+3 = 6 pesos"); opening buttons read "Bid N" (N = first-bid
+            // Raise buttons show just the resulting total ("New Bid 6") — no
+            // delta math to parse; opening buttons read "Bid N" (N = first-bid
             // amount). Surrounding card copy makes the pesos unit unambiguous.
             btn.textContent = currentAmt > 0
-                ? ('+' + delta + ' = ' + pesos(nextAmt))
+                ? ('New Bid ' + nextAmt)
                 : ('Bid ' + (minBid + (delta - 1)));
         });
     }

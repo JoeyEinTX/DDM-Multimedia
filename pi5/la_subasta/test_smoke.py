@@ -1206,13 +1206,16 @@ def test_guest_2027_pesos_button_format():
            f"found {m.group(0)!r} at index {m.start()}" if m else "")
 
     # Opening (pre-bid) buttons read "Bid N"; raise (post-bid) buttons read
-    # "+N = <total> pesos" via the pesos() formatter.
+    # "New Bid X" (just the resulting total — no delta math to parse).
     _check("guest.js opening buttons use 'Bid ' prefix",
            "'Bid '" in js,
            "missing \"'Bid '\" opening-button label")
-    _check("guest.js raise buttons use '+N = <total> pesos' format",
-           "' = ' + pesos(nextAmt)" in js,
-           "missing raise-button pesos-total label")
+    _check("guest.js raise buttons use 'New Bid X' format",
+           "'New Bid ' + nextAmt" in js,
+           "missing raise-button 'New Bid' label")
+    _check("guest.js no longer uses the old '+N = X pesos' raise label",
+           "' = ' + pesos(nextAmt)" not in js,
+           "stale '+N = X pesos' raise label still present")
 
     # Footer year bumped 2026 -> 2027
     html = client.get("/la-subasta/").get_data(as_text=True)
