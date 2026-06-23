@@ -1055,6 +1055,42 @@ def test_horses_endpoint_shape():
            horse7["current_leader_bidder_id"] == alice["id"])
 
 
+def test_horses_scratched_flag_roundtrip():
+    """A client that loads /api/horses AFTER a scratch (the 'window B opened
+    later' case) must see scratched=true — the flag is sourced from the
+    horse_state table, not only the live SocketIO broadcast. Unscratch must
+    flip it back to false on the next fresh load."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    def horse_scratched(horse_id):
+        # Fresh request each call = a client connecting now (e.g. window B)
+        horses = app.test_client().get("/la-subasta/api/horses").get_json()["horses"]
+        h = next(h for h in horses if h["horse_id"] == horse_id)
+        return h["scratched"]
+
+    # Every horse exposes the flag, default false
+    horses = client.get("/la-subasta/api/horses").get_json()["horses"]
+    _check("every horse has a 'scratched' field",
+           all("scratched" in h for h in horses))
+    _check("horse 5 not scratched initially", horse_scratched(5) is False)
+
+    # Scratch via the API, then read fresh (simulates window B opened after)
+    r = client.post("/la-subasta/api/admin/scratch", json={"horse_id": 5})
+    _check("scratch returns 200", r.status_code == 200)
+    _check("fresh /api/horses shows horse 5 scratched=true",
+           horse_scratched(5) is True)
+    _check("only the scratched horse is flagged (horse 6 still false)",
+           horse_scratched(6) is False)
+
+    # Unscratch, read fresh again
+    r = client.post("/la-subasta/api/admin/unscratch", json={"horse_id": 5})
+    _check("unscratch returns 200", r.status_code == 200)
+    _check("fresh /api/horses shows horse 5 scratched=false after unscratch",
+           horse_scratched(5) is False)
+
+
 def test_static_assets_served():
     _reset()
     app = _make_app()
@@ -1887,6 +1923,8 @@ def main():
     # Phase 2A
     _run("guest UI — page served", test_guest_page_served)
     _run("guest UI — /api/horses shape", test_horses_endpoint_shape)
+    _run("guest UI — /api/horses scratched flag round-trip (regression)",
+         test_horses_scratched_flag_roundtrip)
     _run("guest UI — static assets served", test_static_assets_served)
     _run("guest UI — no '$' currency in guest.js (2027 pesos mode)",
          test_guest_js_no_dollar_currency)
