@@ -28,6 +28,13 @@
     const ONBOARDED_KEY  = 'la_subasta_onboarded';
     const SPLASH_DURATION_MS = 2000;
 
+    // Backoff schedule for the initial horse load. That fetch goes out moments
+    // after the registration POST, which on a phone freshly joined to the event
+    // Wi-Fi is exactly when the connection is least settled. One blip used to
+    // strand the guest on "Waiting for horses…" until they manually refreshed.
+    const HORSE_RETRY_DELAYS_MS = [800, 1600, 3200, 6000];
+    const HORSE_RECOVERY_POLL_MS = 10000;
+
     // Runtime state
     const state = {
         identity: null,          // { bidder_id, name, emoji, identity }
@@ -40,26 +47,75 @@
         auctionState: 'NOT_STARTED',
         countdownInterval: null,
         settingsRefreshedAt: 0,
+        horseLoadFailed: false,  // drives the placeholder copy
+        horseLoadInFlight: null, // de-dupes concurrent retry loops
+        horseRecoveryPoll: null,
     };
 
     // ---------------------------------------------------------------------
+    // Diagnostics
+    //
+    // Guests hit this page from a phone, where nobody is going to open a
+    // network inspector. Every failure we recover from — or deliberately
+    // ignore — gets a labelled console line, so the next "it's stuck" report
+    // can be read off a remote console instead of guessed at.
+    // ---------------------------------------------------------------------
+
+    const LOG_PREFIX = '[la-subasta]';
+
+    function logInfo(msg) {
+        try { console.log(LOG_PREFIX + ' ' + msg); } catch (e) { /* ignore */ }
+    }
+
+    function logWarn(msg, err) {
+        try {
+            if (err === undefined) console.warn(LOG_PREFIX + ' ' + msg);
+            else console.warn(LOG_PREFIX + ' ' + msg, err);
+        } catch (e) { /* ignore */ }
+    }
+
+    function sleep(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    // ---------------------------------------------------------------------
     // Fetch helpers
+    //
+    // Neither of these ever rejects. A network-layer failure (offline, DNS,
+    // reset connection, captive-portal interception) resolves as
+    // { ok: false, status: 0 } so one blip can't tear down an await chain and
+    // vanish as an unhandled rejection — which is precisely how the initial
+    // horse fetch used to die silently.
     // ---------------------------------------------------------------------
 
     async function getJSON(url) {
-        const resp = await fetch(url, { credentials: 'same-origin' });
+        let resp;
+        try {
+            resp = await fetch(url, { credentials: 'same-origin' });
+        } catch (err) {
+            logWarn('GET ' + url + ' failed at the network layer', err);
+            return { ok: false, status: 0, data: {}, networkError: true };
+        }
         const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) logWarn('GET ' + url + ' returned HTTP ' + resp.status);
         return { ok: resp.ok, status: resp.status, data };
     }
 
     async function postJSON(url, body) {
-        const resp = await fetch(url, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body || {}),
-        });
+        let resp;
+        try {
+            resp = await fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {}),
+            });
+        } catch (err) {
+            logWarn('POST ' + url + ' failed at the network layer', err);
+            return { ok: false, status: 0, data: {}, networkError: true };
+        }
         const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) logWarn('POST ' + url + ' returned HTTP ' + resp.status);
         return { ok: resp.ok, status: resp.status, data };
     }
 
@@ -86,8 +142,16 @@
         return null;
     }
 
+    // Some private-browsing modes throw on setItem. That must not abort
+    // registration — the guest can still bid this session, they just get the
+    // modal again next visit. Previously the throw skipped bootApp() entirely.
     function storeIdentity(identity) {
-        localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+        try {
+            localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+        } catch (e) {
+            logWarn('Could not persist identity to localStorage — ' +
+                    'continuing without it', e);
+        }
     }
 
     function setupIdentityModal() {
@@ -176,7 +240,18 @@
         // All three reads run in parallel, then one final render + countdown
         // start so button-enabled state reflects the fully-loaded snapshot
         // (auctionState, settings, and horses all in).
-        Promise.all([refreshSettings(), refreshHorses(), refreshState()])
+        //
+        // Nothing in here may reject. It used to: a single failed /api/horses
+        // rejected the Promise.all, which skipped this .then() entirely — no
+        // final render, no countdown, no console trace, and no retry. The list
+        // then stayed empty forever, because every socket handler bails on an
+        // unknown horse_id. That was the "Waiting for horses… until you
+        // refresh" bug. The .catch() is a backstop; the reads themselves now
+        // resolve on failure rather than throwing.
+        Promise.all([refreshSettings(), loadHorsesWithRetry(), refreshState()])
+            .catch(function (err) {
+                logWarn('Boot read rejected unexpectedly', err);
+            })
             .then(function () {
                 renderHorseList();
                 renderIdentityTotal();
@@ -195,39 +270,125 @@
 
     async function refreshSettings() {
         const resp = await getJSON(API.settings);
-        if (!resp.ok || !resp.data.settings) return;
-        state.settings.MAX_RAISE = resp.data.settings.MAX_RAISE.value;
-        state.settings.MIN_BID   = resp.data.settings.MIN_BID.value;
+        const s = resp.ok && resp.data.settings;
+        // Guard every field we dereference — a partial payload used to throw a
+        // TypeError here and take the whole boot chain down with it.
+        if (!s || !s.MAX_RAISE || !s.MIN_BID) {
+            logWarn('Settings refresh failed (status ' + resp.status +
+                    ') — keeping MAX_RAISE=' + state.settings.MAX_RAISE +
+                    ' MIN_BID=' + state.settings.MIN_BID);
+            return false;
+        }
+        state.settings.MAX_RAISE = s.MAX_RAISE.value;
+        state.settings.MIN_BID   = s.MIN_BID.value;
         state.settingsRefreshedAt = Date.now();
         // Re-render to update button disabled states
         renderHorseList();
+        return true;
     }
 
     // ---------------------------------------------------------------------
     // Horses
     // ---------------------------------------------------------------------
 
+    // Resolves true only when the fetch succeeded AND produced at least one
+    // horse — that is what the retry loop below keys off. A failed fetch leaves
+    // whatever is already on screen alone rather than blanking it.
     async function refreshHorses() {
         const resp = await getJSON(API.horses);
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            state.horseLoadFailed = true;
+            logWarn('Horse list fetch failed (status ' + resp.status +
+                    ') — keeping the horses already on screen');
+            return false;
+        }
+        const horses = resp.data.horses || [];
+        if (horses.length === 0) {
+            logWarn('Horse list fetch returned zero horses');
+        }
         state.horses = {};
-        (resp.data.horses || []).forEach(function (h) {
+        horses.forEach(function (h) {
             state.horses[h.horse_id] = h;
         });
+        state.horseLoadFailed = horses.length === 0;
         renderHorseList();
         renderIdentityTotal();
+        return horses.length > 0;
+    }
+
+    // The initial load is the one fetch that must not fail quietly: if
+    // state.horses stays empty, nothing else can repopulate it (every socket
+    // handler early-returns on an unknown horse_id), so the guest sits on the
+    // placeholder until they manually reload. Retry with backoff, then hand off
+    // to a slow poll so the list heals itself whenever the network returns.
+    //
+    // Concurrent callers share one in-flight loop — socket events can call this
+    // too, and a retry storm on a struggling connection helps nobody.
+    function loadHorsesWithRetry() {
+        if (!state.horseLoadInFlight) {
+            state.horseLoadInFlight = runHorseLoadRetries().then(function (ok) {
+                state.horseLoadInFlight = null;
+                return ok;
+            });
+        }
+        return state.horseLoadInFlight;
+    }
+
+    async function runHorseLoadRetries() {
+        const attempts = HORSE_RETRY_DELAYS_MS.length + 1;
+        for (let i = 0; i < attempts; i++) {
+            if (await refreshHorses()) {
+                if (i > 0) logInfo('Horse list loaded on attempt ' + (i + 1));
+                stopHorseRecoveryPoll();
+                return true;
+            }
+            const delay = HORSE_RETRY_DELAYS_MS[i];
+            if (delay === undefined) break;
+            logWarn('Horse list still empty after attempt ' + (i + 1) + ' of ' +
+                    attempts + ' — retrying in ' + delay + 'ms');
+            renderHorseList();   // swap the placeholder to the retrying copy
+            await sleep(delay);
+        }
+        logWarn('Horse list empty after ' + attempts +
+                ' attempts — switching to a ' + HORSE_RECOVERY_POLL_MS +
+                'ms recovery poll');
+        renderHorseList();
+        startHorseRecoveryPoll();
+        return false;
+    }
+
+    function startHorseRecoveryPoll() {
+        if (state.horseRecoveryPoll) return;
+        state.horseRecoveryPoll = setInterval(function () {
+            refreshHorses().then(function (ok) {
+                if (!ok) return;
+                logInfo('Horse list recovered on the background poll');
+                stopHorseRecoveryPoll();
+                renderIdentityTotal();
+            });
+        }, HORSE_RECOVERY_POLL_MS);
+    }
+
+    function stopHorseRecoveryPoll() {
+        if (!state.horseRecoveryPoll) return;
+        clearInterval(state.horseRecoveryPoll);
+        state.horseRecoveryPoll = null;
     }
 
     async function refreshState() {
         const resp = await getJSON(API.state);
-        if (resp.ok) {
-            state.auctionState = resp.data.state;
-            updateLockedBanner();
-            // Buttons depend on auctionState — re-render so they toggle
-            // enabled when we land on OPEN / FINAL_HOUR.
-            renderHorseList();
-            tickCountdown();
+        if (!resp.ok) {
+            logWarn('Auction state fetch failed (status ' + resp.status +
+                    ') — staying on ' + state.auctionState);
+            return false;
         }
+        state.auctionState = resp.data.state;
+        updateLockedBanner();
+        // Buttons depend on auctionState — re-render so they toggle
+        // enabled when we land on OPEN / FINAL_HOUR.
+        renderHorseList();
+        tickCountdown();
+        return true;
     }
 
     function renderHorseList() {
@@ -236,7 +397,13 @@
             .sort(function (a, b) { return a.horse_id - b.horse_id; });
 
         if (horses.length === 0) {
-            list.innerHTML = '<div class="ls-placeholder">Waiting for horses…</div>';
+            // Distinguish "haven't loaded yet" from "the load failed and we're
+            // retrying" — otherwise a stuck page is indistinguishable from a
+            // slow one, which is what made the original bug so hard to spot.
+            const copy = state.horseLoadFailed
+                ? 'Trouble loading horses — retrying…'
+                : 'Waiting for horses…';
+            list.innerHTML = '<div class="ls-placeholder">' + copy + '</div>';
             return;
         }
 
@@ -576,13 +743,35 @@
     // SocketIO
     // ---------------------------------------------------------------------
 
+    // Live events reference horses by id. If our list is empty the guest is in
+    // the stuck state, so treat any incoming event as a cue to re-fetch —
+    // a second chance to recover without a manual reload.
+    function horseFromEvent(horseId) {
+        const h = state.horses[horseId];
+        if (!h && Object.keys(state.horses).length === 0) {
+            logWarn('Live event for horse ' + horseId +
+                    ' but the horse list is empty — re-fetching');
+            loadHorsesWithRetry();
+        }
+        return h;
+    }
+
     function initSocket() {
-        if (!window.io) return;
+        if (!window.io) {
+            logWarn('socket.io client unavailable — live updates are off, ' +
+                    'falling back to fetch-on-load only');
+            return;
+        }
         const socket = io();
         state.socket = socket;
 
+        socket.on('connect', function () { logInfo('socket connected'); });
+        socket.on('connect_error', function (err) {
+            logWarn('socket connect_error', err);
+        });
+
         socket.on('bid_placed', function (payload) {
-            const h = state.horses[payload.horse_id];
+            const h = horseFromEvent(payload.horse_id);
             if (!h) return;
             h.current_high_bid = {
                 amount: payload.amount,
@@ -597,7 +786,7 @@
         });
 
         socket.on('horse_scratched', function (payload) {
-            const h = state.horses[payload.horse_id];
+            const h = horseFromEvent(payload.horse_id);
             if (!h) return;
             h.scratched = true;
             renderHorseList();
@@ -627,7 +816,7 @@
         });
 
         socket.on('bid_voided', function (payload) {
-            const h = state.horses[payload.horse_id];
+            const h = horseFromEvent(payload.horse_id);
             if (!h) return;
             if (payload.new_high_bid) {
                 h.current_high_bid = {

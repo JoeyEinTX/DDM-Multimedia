@@ -1468,6 +1468,133 @@ def test_guest_js_listens_for_state_changed():
            "auction_state_changed" in js)
 
 
+def test_initial_horse_load_after_registration():
+    """Regression: the horse list showed 'Waiting for horses…' forever on a
+    fresh phone until the guest manually refreshed.
+
+    bootApp() fires /api/admin/settings, /api/horses and /api/state in parallel
+    the instant registration returns. The old code let a failed /api/horses
+    reject the Promise.all, which skipped the final render AND startCountdown()
+    with no console trace and no retry — and nothing could repopulate the list
+    afterwards, because every socket handler early-returns on an unknown
+    horse_id. Only a page reload recovered.
+
+    Server half: the exact boot sequence — a register write immediately
+    followed by the three parallel boot reads — must return a full horse list.
+    Client half: guest.js must not be able to swallow that failure again.
+    """
+    import re
+    import threading
+    from la_subasta.models import close_conn
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+
+    # --- 1. Identity registration (the write that precedes the boot reads) ---
+    reg = client.post("/la-subasta/api/register",
+                      json={"name": "Fresh Phone", "emoji": "🌮"})
+    _check("boot: registration succeeds", reg.status_code == 200,
+           f"status {reg.status_code}: {reg.get_data(as_text=True)[:200]}")
+    bidder = reg.get_json().get("bidder") or {}
+    _check("boot: register returns the bidder fields guest.js dereferences",
+           all(k in bidder for k in ("id", "name", "emoji", "identity")),
+           f"bidder payload was {bidder!r}")
+
+    # --- 2. The three boot reads, fired concurrently as bootApp() does ---
+    results = {}
+    errors = []
+
+    def _get(label, url):
+        try:
+            c2 = app.test_client()
+            resp = c2.get(url)
+            results[label] = (resp.status_code, resp.get_json())
+        except Exception as exc:                       # pragma: no cover
+            errors.append(f"{label}: {exc!r}")
+        finally:
+            close_conn()   # release this worker thread's sqlite handle
+
+    threads = [
+        threading.Thread(target=_get, args=("settings",
+                                            "/la-subasta/api/admin/settings")),
+        threading.Thread(target=_get, args=("horses", "/la-subasta/api/horses")),
+        threading.Thread(target=_get, args=("state", "/la-subasta/api/state")),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    _check("boot: no exception from the parallel boot reads", not errors,
+           f"errors: {errors}")
+
+    horses_status, horses_body = results.get("horses", (None, None))
+    _check("boot: /api/horses returns 200 right after registration",
+           horses_status == 200, f"status was {horses_status}")
+
+    horses = (horses_body or {}).get("horses") or []
+    _check("boot: /api/horses returns the full field immediately",
+           len(horses) == la_config.NUM_HORSES,
+           f"got {len(horses)} horses, expected {la_config.NUM_HORSES}")
+
+    # renderHorseList()/updateHorseCard() dereference these on every card; a
+    # missing key throws mid-render and leaves the list half-built.
+    required = ("horse_id", "saddle_cloth", "scratched", "current_high_bid",
+                "current_leader_identity", "current_leader_bidder_id")
+    missing = [k for k in required if horses and k not in horses[0]]
+    _check("boot: each horse carries every field the renderer reads",
+           not missing, f"missing keys: {missing}")
+
+    # The other two reads feed button-enabled state — they must not 500 either.
+    _check("boot: /api/admin/settings returns 200",
+           results.get("settings", (None,))[0] == 200,
+           f"status was {results.get('settings', (None,))[0]}")
+    _check("boot: /api/state returns 200",
+           results.get("state", (None,))[0] == 200,
+           f"status was {results.get('state', (None,))[0]}")
+
+    # --- 3. Client contract: the failure cannot be swallowed again ---
+    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+
+    _check("guest.js: bootApp loads horses through the retrying loader",
+           "loadHorsesWithRetry()" in js and
+           "Promise.all([refreshSettings(), loadHorsesWithRetry(), "
+           "refreshState()])" in js,
+           "bootApp no longer calls loadHorsesWithRetry() in its Promise.all")
+    _check("guest.js: the boot chain has a .catch() backstop",
+           ".catch(function (err) {" in js,
+           "boot Promise.all has no .catch — a rejection would skip the "
+           "final render and startCountdown()")
+    _check("guest.js: getJSON traps network-layer failures",
+           "resp = await fetch(url, { credentials: 'same-origin' });" in js and
+           "networkError: true" in js,
+           "getJSON can still reject on a fetch() network error")
+    _check("guest.js: a failed horse fetch retries with backoff",
+           "HORSE_RETRY_DELAYS_MS" in js and "runHorseLoadRetries" in js,
+           "no retry schedule for the initial horse load")
+    _check("guest.js: exhausted retries fall back to a recovery poll",
+           "startHorseRecoveryPoll" in js and "HORSE_RECOVERY_POLL_MS" in js,
+           "no recovery poll — a long outage would stay stuck until reload")
+    _check("guest.js: live events on an empty list trigger a re-fetch",
+           "function horseFromEvent(" in js,
+           "socket handlers still read state.horses directly, so an empty "
+           "list can never heal from live traffic")
+    _check("guest.js: horse-fetch failures are logged, not swallowed",
+           "Horse list fetch failed (status " in js and
+           "function logWarn(" in js,
+           "no console telemetry on a failed horse fetch")
+    # \r?\n — the checked-in file uses CRLF, so a bare \n never matches.
+    swallow = re.search(r"getJSON\(API\.horses\);\s*\r?\n\s*if \(!resp\.ok\) return;",
+                        js)
+    _check("guest.js: the bare silent-swallow return is gone",
+           swallow is None,
+           "refreshHorses still swallows a non-OK response silently")
+    _check("guest.js: the placeholder distinguishes failure from waiting",
+           "Trouble loading horses" in js,
+           "a stuck list still reads 'Waiting for horses…', which is "
+           "indistinguishable from a slow first load")
+
+
 # -----------------------------------------------------------------------------
 # Phase 2A.5: onboarding flow (splash + how-it-works + help button)
 # -----------------------------------------------------------------------------
@@ -1981,6 +2108,8 @@ def main():
          test_state_includes_bidder_and_bid_counts)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
+    _run("guest UI — initial horse load after registration (regression)",
+         test_initial_horse_load_after_registration)
 
     # Phase 2A.5
     _run("onboarding — splash + how-it-works + help markup", test_onboarding_markup_present)
