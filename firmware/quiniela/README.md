@@ -138,13 +138,87 @@ Libraries (Library Manager):
    or similar).
 4. Release. The flash proceeds normally.
 
+## Bench test
+
+The current sketches exist to answer one question: **does the signal reach
+from the cabinet to the mantle, with margin?** One gateway, four cups, no
+other hardware.
+
+### Flash order
+
+1. Flash the gateway (plain WROOM-32). It boots straight into **demo mode**
+   — broadcasting on channel 6 and walking horse numbers every 3 seconds —
+   so it runs standalone off a USB brick, no Pi needed.
+2. Flash each cup (CYD, hold BOOT during upload as above). A cup with no
+   assigned ID shows a waiting screen with **its own MAC address in large
+   gold text**.
+3. Power everything up. Cups hello the gateway, get IDs assigned, and start
+   showing horse numbers within a few seconds.
+
+### Collecting the four MACs
+
+Cup IDs assigned at runtime are RAM-only and reshuffle when the gateway
+reboots. To pin them down:
+
+- Read each MAC off the cup's waiting screen (power cups **without** the
+  gateway running and they sit on that screen indefinitely), **or**
+- watch the gateway's serial log — every unknown cup produces a `NEWCUP`
+  line with the MAC pre-formatted as a `KNOWN_CUPS[]` table row.
+
+Paste the four rows into `KNOWN_CUPS[]` at the top of `ddm_gateway.ino`
+(table index = cup ID), reflash the gateway, and IDs are stable forever.
+
+### Reading the gateway output
+
+Serial monitor at 115200. Type `help` for the command list (`state`,
+`horse`, `scratch`, `roster`, `demo`). Every telemetry packet prints one
+parseable `TELEM ...` line, and every 5 seconds a summary table prints —
+this is the range-test readout:
+
+```
+---- CUPS seq=1234 state=1 demo=on rejects=0 ----
+ id mac                age_ms   drop  rssi  up_rssi  status
+  0 A4:CF:12:34:56:78     420      0   -58      -55  OK
+  1 A4:CF:12:34:56:9A    4200      9   -77      -71  STALE
+```
+
+- **age_ms** — time since that cup was last heard from. Cups report every
+  2 s, so a healthy cup sits under ~2100. `STALE` = silent for over 3 s.
+- **drop** — state packets the cup detected as missed (gaps in `seq`),
+  cumulative. A slowly rising count at range is packet loss in the
+  gateway→cup direction.
+- **rssi** — signal strength the *cup* measures on gateway broadcasts
+  (downlink). **up_rssi** — signal strength the *gateway* measures on that
+  cup's telemetry (uplink). Both directions matter; they are usually within
+  a few dB of each other.
+- **rejects** — packets discarded for a protocol-version mismatch. Nonzero
+  means a device is running an old flash.
+
+### What the RSSI figures mean
+
+- **Better than −70 dBm** — comfortable. Real margin; party-night bodies
+  and a microwave won't kill it.
+- **−70 to −85 dBm** — works on the bench, thin in real conditions. Walk
+  the cup around before trusting it.
+- **Past −85 dBm** — trouble. Expect drops and STALE cups. Move the
+  gateway, or pick a quieter channel in `ddm_common.h` (and reflash
+  everything).
+
+A short **BOOT press on any cup** toggles its diagnostic overlay — cup ID,
+horse, RSSI, drop count, seq, last-packet age — which is what you read
+while walking a board around the room.
+
 ## Status
 
 | Component | State |
 | --------- | ----- |
 | `ddm_common.h` — ESP-NOW protocol | ✅ defined |
-| `ddm_gateway/` — gateway sketch | ⬜ **not yet implemented** (empty folder) |
-| `ddm_cup/` — cup sketch | ⬜ **not yet implemented** (empty folder) |
+| `ddm_gateway/` — gateway sketch | ✅ implemented (bench test: broadcast, roster, serial commands, demo mode) |
+| `ddm_cup/` — cup sketch | ✅ implemented (bench test: display + ESP-NOW; HX711 not wired in yet, telemetry sends zeros) |
 
-Both sketches are scaffolding only at this point. The protocol header is
-complete and is what the sketches will be written against.
+Known protocol gaps, to fix in a v2 of `ddm_common.h` (bump
+`DDM_PROTO_VERSION`): no dedicated packet assigns a cup its ID (the
+gateway answers `DDM_MSG_HELLO` with the telemetry-struct layout carrying
+the assigned ID), and `DdmStatePacket` carries no win/place/show results,
+so in `DDM_WINNER` every cup cycles the podium treatment on its own
+number.
