@@ -208,6 +208,20 @@ A short **BOOT press on any cup** toggles its diagnostic overlay — cup ID,
 horse, RSSI, drop count, seq, last-packet age — which is what you read
 while walking a board around the room.
 
+## Tools
+
+### `tools/panel_probe/` — display controller probe
+
+Standalone sketch for the "bottom quarter of the panel never clears" symptom
+seen on the newer cup boards. Flash it exactly like `ddm_cup.ino` (same board,
+same two Adafruit libraries, no `ddm_common.h` needed), open the serial
+monitor at 115200, and photograph the glass as it walks through its phases.
+It reads the controller ID registers before and after the Adafruit ILI9341
+init, walks all four rotations with a border and a labelled ruler, and then
+writes raw CASET/PASET windows at several MADCTL values and row offsets,
+reading each pixel back out of GRAM. Run it on both board revisions; the
+header comment in the sketch says what to report.
+
 ## Status
 
 | Component | State |
