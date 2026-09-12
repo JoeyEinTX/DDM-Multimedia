@@ -308,6 +308,7 @@ static const IdSig SIGS[] = {
   { 0x93, 0x41, "ILI9341" },
   { 0x93, 0x42, "ILI9342C" },
   { 0x85, 0x52, "ST7789V (RDDID 85 85 52)" },
+  { 0x81, 0xB3, "ST7789-family clone (RDDID 81 81 B3, as read on Board A)" },
   { 0x97, 0x96, "ST7796" },
   { 0x94, 0x88, "ILI9488" },
   { 0x94, 0x86, "ILI9486" },
@@ -575,7 +576,7 @@ static void rawPhase() {
 static void lcmctrlPhase() {
   if (!(detectedST7789 || FORCE_LCMCTRL_TEST)) {
     Serial.println();
-    Serial.println("=== PHASE 5 skipped: no ST7789 signature in Phase 1 (set FORCE_LCMCTRL_TEST 1 to run it anyway) ===");
+    Serial.println("=== PHASE 5 skipped: no ST7789 signature and no IDSET fingerprint in Phase 1 (set FORCE_LCMCTRL_TEST 1 to run it anyway) ===");
     return;
   }
   Serial.println();
@@ -652,11 +653,14 @@ static void runProbe() {
   tft.invertDisplay(INVERT);
   poisonAddrCache();
   identify("AFTER tft.begin() (Adafruit ILI9341 init table)", false);
-  if (memcmp(idPre, idPost, 3) != 0)
+  if (memcmp(idPre, idPost, 3) != 0) {
     Serial.println("  !! RDDID CHANGED across tft.begin(). The init table's 0xC1 write landed in an ID register:\n"
-                   "     this is not an ILI9341 register map (ST7789V: 0xC1 = IDSET).");
-  else
+                   "     this is not an ILI9341 register map (ST7789V: 0xC1 = IDSET). Treating the controller\n"
+                   "     as ST7789-family for Phase 5, whatever the ID bytes say.");
+    detectedST7789 = true;
+  } else {
     Serial.println("  RDDID unchanged across tft.begin().");
+  }
 
   // Phase 2
   Serial.println();
@@ -691,6 +695,7 @@ static void runProbe() {
   Serial.println("  Board B/C/D showing an ST7789 signature + R04 filling the whole glass while R03 leaves a band = driver/rotation mismatch (MV inverted).");
   Serial.println("  ILI9341 signature on B/C/D + a YELLOW stripe reaching the bottom only in R07..R14 = GRAM row offset.");
   Serial.println("  ILI9341 signature + every full-frame test covering the glass = the band is not an addressing problem at all; revisit the sketch's SW/SH.");
+  Serial.println("  Rotation 3 upright but text running off the right, R04 readbacks OK and R03 far corner MISMATCH = the panel ignores MV: rotations 1/3 stay portrait while the library thinks 320x240.");
 }
 
 // ===========================================================================
