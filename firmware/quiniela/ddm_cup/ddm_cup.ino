@@ -638,6 +638,24 @@ static void renderTick() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The CYD's display controller is not an ILI9341: the panel probe
+// (tools/panel_probe) reads an ST7789-family register map on every board.
+// The Adafruit ILI9341 init table sends a Vertical Scrolling Start Address
+// (0x37), which leaves the panel in vertical-scroll mode (status register
+// bit D15 reads 1 after tft.begin()). On these panels the bottom quarter of
+// the glass then stops following frame memory: writes land, nothing shows.
+// Define the scroll area as the whole panel and return to normal display
+// mode. Harmless on a genuine ILI9341.
+// ---------------------------------------------------------------------------
+static void panelNormalMode() {
+  static const uint8_t vscrdef[6] = { 0x00, 0x00, 0x01, 0x40, 0x00, 0x00 }; // TFA 0, VSA 320, BFA 0
+  static const uint8_t vscsad[2]  = { 0x00, 0x00 };                         // scroll start 0
+  tft.sendCommand(0x33, vscrdef, 6);
+  tft.sendCommand(0x37, vscsad, 2);
+  tft.sendCommand(0x13);                                                    // NORON: scroll mode off
+}
+
 // ===========================================================================
 void setup() {
   Serial.begin(115200);
@@ -653,6 +671,7 @@ void setup() {
   SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
 
   tft.begin();
+  panelNormalMode();
   tft.setRotation(ROTATION);
   tft.invertDisplay(INVERT);
 

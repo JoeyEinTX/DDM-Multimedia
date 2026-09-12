@@ -222,6 +222,14 @@ writes raw CASET/PASET windows at several MADCTL values and row offsets,
 reading each pixel back out of GRAM. Run it on both board revisions; the
 header comment in the sketch says what to report.
 
+### `tools/band_test/` — bottom-band yes/no test
+
+Eight numbered fills, ~5 s each, at rotation 0. Each says on serial and in the
+strip along the top of the glass which colour the bottom quarter should now be.
+Report one yes/no per step. Steps 2 and 8 apply the `panelNormalMode()` fix
+that `ddm_cup.ino` now sends after `tft.begin()`; steps 6 and 7 deliberately
+put the panel back into scroll mode to show the band returning.
+
 ## Status
 
 | Component | State |
