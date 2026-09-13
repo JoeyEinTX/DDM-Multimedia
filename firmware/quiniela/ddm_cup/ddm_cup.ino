@@ -54,7 +54,7 @@
 // ===========================================================================
 // Tunables
 // ===========================================================================
-#define ROTATION       0        // 0 = portrait, 2 = portrait upside down
+#define ROTATION       0        // 0 = upright portrait, 2 = portrait rotated 180 (see panelOrientation)
 #define INVERT     false        // true if colors come out backwards
 
 #define TRACK       0.06f       // gap between two digits, as a fraction of height
@@ -641,19 +641,53 @@ static void renderTick() {
 // ---------------------------------------------------------------------------
 // The CYD's display controller is not an ILI9341: the panel probe
 // (tools/panel_probe) reads an ST7789-family register map on every board.
-// The Adafruit ILI9341 init table sends a Vertical Scrolling Start Address
-// (0x37), which leaves the panel in vertical-scroll mode (status register
-// bit D15 reads 1 after tft.begin()). On these panels the bottom quarter of
-// the glass then stops following frame memory: writes land, nothing shows.
-// Define the scroll area as the whole panel and return to normal display
-// mode. Harmless on a genuine ILI9341.
+// Two things in the Adafruit ILI9341 init table go wrong on it:
+//
+//  * It sends a Vertical Scrolling Start Address (0x37) and never Normal
+//    Display Mode ON, which leaves the panel in vertical-scroll mode (status
+//    register bit D15 reads 1 after tft.begin()). On these panels the bottom
+//    quarter of the glass then stops following frame memory: writes land,
+//    nothing shows. Define the scroll area as the whole panel, zero the
+//    scroll start and send NORON (0x13).
+//
+//  * It writes 0xC0 = 0x23. On an ILI9341 that is Power Control 1; on an
+//    ST7789 it is LCMCTRL, a byte of XOR flags laid over MADCTL:
+//    0x23 = XBGR | XMV | XGS. XMV inverts the meaning of MADCTL's MV
+//    (row/column exchange) bit. While the panel is scrolling MV is not
+//    applied, which is why rotation 0 looked right before the NORON fix and
+//    rotations 1/3 "stayed portrait"; the moment scroll mode ends the
+//    inverted MV bit takes effect and rotation 0 comes out transposed.
+//    XBGR likewise inverts the driver's BGR bit, so the glass ran in RGB
+//    order and horse 1's red cloth came up blue (Board A, 2026-09-12).
+//    Rewrite LCMCTRL with XMV and XBGR cleared, keeping only XGS as the
+//    init left it (0x01); panelOrientation() picks the MADCTL that is
+//    upright with XGS set.
+//
+// On a genuine ILI9341 the scroll commands are harmless and the 0xC0 write
+// only sets a slightly lower GVDD in Power Control 1.
 // ---------------------------------------------------------------------------
 static void panelNormalMode() {
+  static const uint8_t lcmctrl[1] = { 0x01 };                               // XGS only: XMV and XBGR cleared
   static const uint8_t vscrdef[6] = { 0x00, 0x00, 0x01, 0x40, 0x00, 0x00 }; // TFA 0, VSA 320, BFA 0
   static const uint8_t vscsad[2]  = { 0x00, 0x00 };                         // scroll start 0
+  tft.sendCommand(0xC0, lcmctrl, 1);                                        // LCMCTRL: MV means MV, BGR means BGR
   tft.sendCommand(0x33, vscrdef, 6);
   tft.sendCommand(0x37, vscsad, 2);
   tft.sendCommand(0x13);                                                    // NORON: scroll mode off
+}
+
+// ---------------------------------------------------------------------------
+// The driver's portrait MADCTL values assume an ILI9341 glass: 0x48 (MX|BGR)
+// for rotation 0 and 0x88 (MY|BGR) for rotation 2. On these panels, once
+// they are out of scroll mode, 0x48 comes out flipped top-to-bottom and
+// 0x88 flipped left-to-right (Board A, 2026-09-12). Upright needs MX and MY
+// both set, which no library rotation produces, so setRotation() is used
+// for its width/height bookkeeping only and the MADCTL byte is sent here.
+// BGR stays set as the driver would send it; colour order is LCMCTRL's job.
+// ---------------------------------------------------------------------------
+static void panelOrientation() {
+  uint8_t madctl = (ROTATION == 2) ? 0x08 : 0xC8;   // BGR alone = rotated 180, MY|MX|BGR = upright
+  tft.sendCommand(0x36, &madctl, 1);                 // MADCTL
 }
 
 // ===========================================================================
@@ -672,7 +706,8 @@ void setup() {
 
   tft.begin();
   panelNormalMode();
-  tft.setRotation(ROTATION);
+  tft.setRotation(0);          // library bookkeeping only: 240 wide, 320 tall
+  panelOrientation();          // the MADCTL this glass actually needs
   tft.invertDisplay(INVERT);
 
   SW = tft.width();

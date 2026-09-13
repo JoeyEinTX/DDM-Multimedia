@@ -7,8 +7,8 @@
  *
  * It runs numbered steps, ~5 s each. Each step paints a colour and says on
  * serial (and in the strip along the top of the glass, which always works)
- * which colour the BOTTOM QUARTER should now be. Report one yes/no per step:
- * "did the bottom quarter turn that colour?"
+ * which colour the BOTTOM QUARTER should now be. Report, per step, the colour
+ * you actually see there and whether the label text at the top is upright.
  *
  * Before every step it reads the status register (0x09) and prints whether
  * the panel is in vertical-scroll mode (bit D15). The Adafruit ILI9341 init
@@ -16,6 +16,12 @@
  * this panel into scroll mode; steps 2 and 8 send Normal Display Mode ON
  * (0x13) to leave it. If the band repaints only after those, the fix in
  * ddm_cup.ino (panelNormalMode) is the right one.
+ *
+ * Steps 9..12 poke LCMCTRL (0xC0). On an ST7789 that register is a set of
+ * XOR flags laid over MADCTL, and the ILI9341 init table writes 0x23 into it
+ * (XMV set) believing it is Power Control 1. They show whether the picture
+ * goes sideways only once the panel leaves scroll mode, and whether clearing
+ * XBGR puts the colour order right.
  */
 
 #include <SPI.h>
@@ -86,6 +92,15 @@ static void normalMode() {
   tft.sendCommand(0x13);
 }
 
+// LCMCTRL (0xC0) on an ST7789: XOR flags applied on top of MADCTL. Bit 5 XBGR
+// flips the colour order, bit 1 XMV inverts the MV (row/column exchange) bit,
+// bit 0 XGS flips the gate scan direction. The Adafruit ILI9341 init table
+// writes 0x23 = XBGR | XMV | XGS here, thinking it is Power Control 1.
+static void lcmctrl(uint8_t v) {
+  tft.sendCommand(0xC0, &v, 1);
+  Serial.printf("  LCMCTRL (0xC0) <- 0x%02X\n", v);
+}
+
 // Label strip at the very top: rows 0..23 always repaint, so this is readable
 // whatever the bottom does.
 static void label(uint8_t step, const char* colour) {
@@ -99,7 +114,8 @@ static void label(uint8_t step, const char* colour) {
 
 static void ask(uint8_t step, const char* colour, const char* what) {
   Serial.printf("STEP %u  %s\n", step, what);
-  Serial.printf("  LOOK: is the bottom quarter of the glass now %s?\n", colour);
+  Serial.printf("  LOOK: is the bottom quarter of the glass now %s? Name the colour you actually see.\n", colour);
+  Serial.println("  LOOK: is the label text along the TOP edge, upright and readable?");
   label(step, colour);
   delay(HOLD_MS);
 }
@@ -157,7 +173,30 @@ static void runTest() {
   tft.fillScreen(C_WHITE);
   ask(8, "WHITE", "Normal Display Mode ON again, then fillScreen(WHITE). Expected: band white.");
 
-  Serial.println("=== BAND TEST DONE — report yes/no for steps 1..8. Short-press BOOT to run again. ===");
+  // --- LCMCTRL trials, all in normal mode ------------------------------------
+  // Board A, 2026-09-12: with the init's 0x23 the picture goes sideways once
+  // scroll mode ends (XMV); with XMV cleared it is flipped top-to-bottom
+  // (ddm_cup.ino corrects that with MADCTL MY|MX); with XBGR cleared red is
+  // red again. Step 12 asks whether XGS is the remaining flip.
+  lcmctrl(0x21);
+  tft.fillScreen(C_BLUE);
+  ask(9, "BLUE", "LCMCTRL 0x21 (the init's 0x23 minus XMV), then fillScreen(BLUE). Expected: band blue, picture flipped top-to-bottom, so the label sits along the BOTTOM edge upside down.");
+
+  lcmctrl(0x23);
+  tft.fillScreen(C_GREEN);
+  ask(10, "GREEN", "LCMCTRL back to the init's 0x23, then fillScreen(GREEN). Expected: sideways again. If 9 was flipped but not sideways and this is sideways, XMV is the rotation culprit.");
+
+  lcmctrl(0x01);
+  tft.fillScreen(C_RED);
+  ask(11, "RED", "LCMCTRL 0x01 (XMV and XBGR cleared), what ddm_cup.ino sets, then fillScreen(RED). Expected: still flipped top-to-bottom, band red, and the fill really RED now, not blue.");
+
+  lcmctrl(0x00);
+  tft.fillScreen(C_YELLOW);
+  ask(12, "YELLOW", "LCMCTRL 0x00 (no XOR flags at all) with the library's own rotation-0 MADCTL, then fillScreen(YELLOW). If the label is now upright along the TOP, not mirrored, and the fill is yellow, XGS was the last flip and the glass runs on plain ILI9341 settings.");
+
+  lcmctrl(0x01);                      // leave the panel the way ddm_cup.ino runs it
+
+  Serial.println("=== BAND TEST DONE — for each of steps 1..12 report the colour of the bottom quarter and whether the label text is upright. Short-press BOOT to run again. ===");
   tft.fillRect(0, 0, tft.width(), 24, C_BLACK);
   tft.setCursor(4, 4);
   tft.setTextColor(C_GREY);

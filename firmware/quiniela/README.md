@@ -24,7 +24,9 @@ nothing depends on venue infrastructure.
 
 ### Per cup — ESP32-2432S028R ("Cheap Yellow Display" / CYD)
 
-An ESP32 dev board with a 2.8" ILI9341 TFT already wired to it.
+An ESP32 dev board with a 2.8" 240×320 TFT already wired to it. It is sold
+as an ILI9341 and is not one; see [the display controller](#the-cyds-display-controller-is-not-an-ili9341)
+below before touching the display code.
 
 **Power: 5V + GND into the P1 connector, and only P1.**
 
@@ -50,6 +52,29 @@ kill the pin or the chip.
 always sold online as "1.25mm JST", which is technically wrong but is the search
 term that finds the right part. They are *not* JST-XH (2.54mm) or JST-PH (2.0mm)
 — those will not fit.
+
+### The CYD's display controller is not an ILI9341
+
+The boards are sold as ILI9341 and `Adafruit_ILI9341` drives them fine, but
+the controller answers as an ST7789-family part: RDID4 (`0xD3`) reads all
+`FF`, RDDID (`0x04`) reads `81 81 B3` after a software reset, and a software
+reset does not clear MADCTL or COLMOD. The panel's reset pin is not on a GPIO,
+so register state carries over from one sketch to the next. Three things in
+the Adafruit init table go wrong on it, and `ddm_cup.ino` corrects all of them
+right after `tft.begin()` (verified on Board A, 2026-09-12; the band symptom
+was identical on every board):
+
+| Symptom | Cause | Fix in `ddm_cup.ino` |
+| ------- | ----- | -------------------- |
+| Bottom quarter of the glass never repaints and keeps stale pixels | The init table sends Vertical Scrolling Start Address (`0x37`) and never Normal Display Mode ON, so the panel stays in scroll mode | `panelNormalMode()`: scroll area = whole panel (`0x33`), scroll start 0, NORON (`0x13`) |
+| Picture sideways as soon as scroll mode ends; before that, rotations 1 and 3 stayed portrait | The table writes `0xC0 = 0x23`: Power Control 1 on an ILI9341, but LCMCTRL on an ST7789, a byte of XOR flags laid over MADCTL. Bit 1 (XMV) inverts the row/column-swap bit, which scroll mode had been masking | `panelNormalMode()` rewrites LCMCTRL as `0x01` |
+| Red and blue swapped (horse 1 came up blue) | Bit 5 (XBGR) of the same byte inverts the driver's BGR bit | the same `0x01` |
+| Rotation 0 flipped top-to-bottom, rotation 2 flipped left-to-right | Upright needs both MADCTL flip bits set; the library's portrait rotations set only one | `panelOrientation()` sends MADCTL `0xC8` (`0x08` for `ROTATION 2`) after `setRotation()` |
+
+`ROTATION 0` is upright, `2` is the 180° version. Landscape (`1` and `3`) has
+not been tried since the fix. Horse 15's khaki cloth reads as light grey on
+this glass; that is the colour table, not the controller. The two sketches
+under `tools/` are what found all this.
 
 ### Gateway — plain ESP32 WROOM-32 dev board
 
@@ -224,11 +249,16 @@ header comment in the sketch says what to report.
 
 ### `tools/band_test/` — bottom-band yes/no test
 
-Eight numbered fills, ~5 s each, at rotation 0. Each says on serial and in the
-strip along the top of the glass which colour the bottom quarter should now be.
-Report one yes/no per step. Steps 2 and 8 apply the `panelNormalMode()` fix
-that `ddm_cup.ino` now sends after `tft.begin()`; steps 6 and 7 deliberately
-put the panel back into scroll mode to show the band returning.
+Twelve numbered fills, ~5 s each, at rotation 0. Each says on serial and in
+the strip along the top of the glass which colour the bottom quarter should now
+be. Report, per step, the colour you actually see there and whether the label
+text at the top is upright. Steps 2 and 8 apply the scroll-mode part of the
+`panelNormalMode()` fix that `ddm_cup.ino` sends after `tft.begin()`; steps 6
+and 7 deliberately put the panel back into scroll mode to show the band
+returning; steps 9..12 rewrite LCMCTRL (`0xC0`), the ST7789 register the
+ILI9341 init table clobbers with `0x23`, to show whether the picture goes
+sideways only once the panel leaves scroll mode and whether clearing XBGR
+puts the colour order right.
 
 ## Status
 
