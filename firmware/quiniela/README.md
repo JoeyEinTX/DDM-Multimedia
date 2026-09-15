@@ -296,6 +296,31 @@ the current print dropped one at a time. A token lands as a spike about 3% high
 and settles over a second; the sketch confirms over three samples and snaps its
 baseline to the new reading, so the spike is absorbed rather than counted.
 
+Those are only the defaults. Load cells differ by several percent from unit to
+unit, and the 6212 was read 0.8 s after each drop, so it carries a little
+overshoot itself. Calibrate each cup on the bench instead: put a known number
+of tokens in, wait about 20 s for the `[settle]` line, then type `c` followed
+by the number in the serial monitor, for example `c50`. The cup divides the
+settled load by that number, stores the result in NVS, and sets its count to
+it. `c0` forgets the stored value. The boot line `scale: N counts/token from
+NVS` shows what a cup is using.
+
+### Counting accuracy
+
+Two things keep a big stack honest. First, the bench showed that after an
+impact the whole stack reads about 2% high and relaxes over 10–15 s, and 2%
+of forty tokens is most of a token, so a single drop onto a full cup measured
+as 1.8 tokens and rounded to 2 (50 tokens counted as 51–58). The sketch now
+takes `OVERSHOOT_PCT` of the load already on the plate off each step before
+rounding, with a floor of one token so a gently placed token still counts.
+Second, 15 s after the last drop, once the reading has been flat for two
+seconds, the cup compares the settled load with its count and corrects it,
+printing `[settle] tokens 52 -> 50: load ...`; a load within a third of a token
+of a half is left alone and reported as ambiguous, so a mis-calibrated cup
+cannot flip-flop. Only settled readings are ever used for that. The
+`relaxed ... % of load` figure on those lines is the measured overshoot; if it
+is consistently far from 1.5%, adjust `OVERSHOOT_PCT`.
+
 ### If the token print changes
 
 1. Flash `tools/hx711_calibrate/hx711_calibrate.ino` (same board settings, only

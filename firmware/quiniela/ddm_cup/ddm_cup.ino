@@ -37,7 +37,9 @@
  *
  * SERIAL (115200):  o = next orientation,  h = mirror left-right,
  *                   v = mirror top-bottom (all saved),  x = forget the saved
- *                   orientation (back to the panel-ID default),  t = tare,  ? = help
+ *                   orientation (back to the panel-ID default),  t = tare,
+ *                   c<N> = N tokens are on the plate: calibrate counts/token
+ *                   for this cup and save it (c0 forgets it),  ? = help
  *
  * Until the gateway assigns this cup an ID, the screen shows this board's
  * own MAC address in large text — that is how the four MACs get collected
@@ -92,15 +94,21 @@
 // time; mean step 6212 counts, sd 102 = 1.6%). If the token print changes,
 // re-run that tool and paste its two #define lines over these.
 // ---------------------------------------------------------------------------
-#define COUNTS_PER_TOKEN   6212L    // mean step, 10 tokens, sd 102 (1.6%)
-#define TOKEN_THRESHOLD    3106L    // half a token
+#define COUNTS_PER_TOKEN   6212L    // mean step, 10 tokens, sd 102 (1.6%): the default until a cup is calibrated (serial c<N>)
+#define TOKEN_THRESHOLD    3106L    // half a token (a calibrated cup derives its own from its counts/token)
 
 #define HX711_DT                27  // CN1 data
 #define HX711_SCK               22  // CN1 clock
 #define SCALE_WARMUP_MS      30000  // HX711 drifts after power-up: no tare, no counting until this has passed
 #define SCALE_TARE_SAMPLES      30  // averaged for the tare (~3 s at 10 SPS)
-#define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation
+#define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation...
+#define SCALE_FAST_TAU_MS     1500  // ...and a faster one for SCALE_POST_EVENT_MS after a drop, while the stack relaxes
+#define SCALE_POST_EVENT_MS  15000  // how long a stack keeps relaxing after an impact (bench: 10-15 s)
 #define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
+#define OVERSHOOT_PCT         1.5f  // impact overshoot taken off a drop's step, as % of the load already on the plate (bench: ~2%)
+#define SETTLE_RING             20  // samples (~2 s) that must be flat before the settled load is trusted
+#define SETTLE_SPREAD         1200  // max-min over those samples that still counts as flat (idle noise is far below)
+#define SETTLE_AMBIGUOUS     0.35f  // settled load within this many tokens of a half: leave the count alone
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
 #define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
@@ -392,6 +400,17 @@ float      baseline      = 0;        // slow-tracking raw baseline the detector 
 uint8_t    confirmN      = 0;        // consecutive samples past TOKEN_THRESHOLD
 uint16_t   tokens        = 0;        // what telemetry reports as tokenCount
 uint32_t   tLedOff       = 0;        // non-blocking end of the tare-acknowledge blink
+long       countsPerToken = COUNTS_PER_TOKEN;  // per cup, NVS "cpt" (serial c<N>); the constant above until then
+long       tokenThreshold = TOKEN_THRESHOLD;   // half of countsPerToken
+uint32_t   tLastEvent    = 0;        // last drop/remove/tare: fast tracking and the settle check hang off it
+bool       settlePending = false;    // an event happened; compare the settled load with the count once quiet
+long       snapReading   = 0;        // reading the baseline snapped to at the last event (relaxation print)
+long       ring[SETTLE_RING];        // the last ~2 s of samples, for the settle check
+uint8_t    ringN         = 0;        // valid samples in ring (0 after every event)
+uint8_t    ringI         = 0;
+long       calNum        = 0;        // serial c<N>: digits being collected
+int8_t     calDigits     = -1;       // -1 = not collecting
+uint32_t   tCalDigit     = 0;        // last digit seen (the number ends 500 ms after it, any line ending)
 
 // Handoff from the ESP-NOW receive callback (WiFi task) to loop(). The
 // callback only copies bytes and sets a flag; all rendering and state
@@ -874,17 +893,32 @@ static void panelUseDefaultOrientation() {                          // serial 'x
 // ===========================================================================
 // SCALE — HX711 token counting
 //
-// Counting is by increments against a slow-tracking baseline, never by
-// absolute weight: a stack of tokens keeps relaxing for 10-15 s after every
-// impact (about 2% of the total load), so absolute weight drifts by roughly
-// a token in sixty. The baseline is a low-pass of the reading (time constant
-// SCALE_BASELINE_TAU_MS) that only updates while the reading is within half a
-// token of it, so warm-up drift and post-impact relaxation are absorbed and
-// never counted. A jump of at least half a token that holds for
+// Counting is by increments against a slow-tracking baseline, never by an
+// unsettled weight: a stack of tokens keeps relaxing for 10-15 s after every
+// impact (about 2% of the total load), so a raw weight is roughly a token in
+// sixty off while that lasts. The baseline is a low-pass of the reading
+// (time constant SCALE_BASELINE_TAU_MS, SCALE_FAST_TAU_MS while a stack is
+// relaxing) that only updates while the reading is within half a token of
+// it, so warm-up drift and post-impact relaxation are absorbed and never
+// counted. A jump of at least half a token that holds for
 // SCALE_CONFIRM_SAMPLES consecutive samples is an event: the step is rounded
 // to whole tokens (two dropped together count as two), the baseline snaps to
 // the new reading, and tracking resumes. Downward steps decrement the same
 // way. A bump spikes and returns within a sample or two, so it never confirms.
+//
+// Two corrections keep a big stack honest (bench, 2026-09-15: 50 tokens
+// counted as 51..58 without them):
+//  * The impact overshoot scales with the load already on the plate, so a
+//    drop onto forty tokens measures about 1.8 tokens. OVERSHOOT_PCT of that
+//    load is taken off the step before rounding, with a floor of one token
+//    so a gently placed token still counts.
+//  * SCALE_POST_EVENT_MS after the last event, once the reading has been
+//    flat for SETTLE_RING samples, the settled load is compared with the
+//    count and the count is corrected. Only a settled reading is ever used
+//    for that. A load within SETTLE_AMBIGUOUS of a half token is left alone
+//    and reported, so a mis-calibrated cup cannot flip-flop.
+// Serial c<N> calibrates the cup from N settled tokens and stores the result
+// in NVS: load cells differ by several percent from unit to unit.
 //
 // Everything here is non-blocking: the ADC is only read when is_ready() says
 // a conversion is waiting, so the display and the radio never stall on it.
@@ -895,10 +929,92 @@ static void scaleStartTare(const char* why, bool blink) {
   tareN      = 0;
   confirmN   = 0;
   tokens     = 0;                       // a tare means "this is empty"
+  settlePending = false;
+  ringN = 0; ringI = 0;
   Serial.printf("[tare] %s: averaging %d samples\n", why, SCALE_TARE_SAMPLES);
   if (blink) {
     digitalWrite(LED_G, LOW);           // CYD LEDs are active low
     tLedOff = millis() + TARE_BLINK_MS;
+  }
+}
+
+static void scaleSetCpt(long cpt, const char* how) {
+  if (cpt < 1000 || cpt > 200000) {
+    Serial.printf("[cal] %ld counts/token rejected (%s)\n", cpt, how);
+    return;
+  }
+  countsPerToken = cpt;
+  tokenThreshold = cpt / 2;
+  Serial.printf("[cal] %ld counts/token (%s), threshold %ld\n", countsPerToken, how, tokenThreshold);
+}
+
+// Flat enough to trust: max-min over the ring under SETTLE_SPREAD. Fills
+// *mean with the ring average.
+static bool scaleSettled(long* mean) {
+  if (ringN < SETTLE_RING) return false;
+  long mn = ring[0], mx = ring[0]; long long sum = 0;
+  for (uint8_t i = 0; i < SETTLE_RING; i++) {
+    if (ring[i] < mn) mn = ring[i];
+    if (ring[i] > mx) mx = ring[i];
+    sum += ring[i];
+  }
+  *mean = (long)(sum / SETTLE_RING);
+  return (mx - mn) <= SETTLE_SPREAD;
+}
+
+// Serial c<N>: N tokens are on the plate and the cup is quiet. c0 forgets the
+// stored calibration.
+static void scaleCalibrate(long n) {
+  if (n == 0) {
+    prefs.remove("cpt");
+    scaleSetCpt(COUNTS_PER_TOKEN, "c0: back to the default");
+    return;
+  }
+  if (scalePhase != SCALE_RUNNING) { Serial.println("[cal] scale not running yet"); return; }
+  if (n < 1 || n > 1000) { Serial.printf("[cal] c%ld: give the number of tokens on the plate, 1..1000\n", n); return; }
+  long settled;
+  if (!scaleSettled(&settled)) {
+    Serial.println("[cal] not settled: wait 15-20 s after the last drop, hands off, then try again");
+    return;
+  }
+  long load = settled - tare;
+  if (load < n * 100) { Serial.printf("[cal] load %ld counts is too small for %ld tokens\n", load, n); return; }
+  long cpt = load / n;
+  scaleSetCpt(cpt, "c<N>");
+  if (countsPerToken != cpt) return;                      // rejected
+  prefs.putLong("cpt", cpt);
+  tokens        = (uint16_t)n;
+  baseline      = (float)settled;
+  settlePending = false;
+  Serial.printf("[cal] saved to NVS; tokens set to %ld\n", n);
+}
+
+// Once the cup has been quiet long enough after an event, trust the settled
+// load over the running count.
+static void scaleSettleCheck(uint32_t now) {
+  if (!settlePending || now - tLastEvent < SCALE_POST_EVENT_MS) return;
+  long settled;
+  if (!scaleSettled(&settled)) return;                    // still relaxing, or someone is touching it
+  long  load = settled - tare;
+  float ft   = (float)load / (float)countsPerToken;
+  long  nS   = lroundf(ft);
+  if (nS < 0) nS = 0;
+  long  relaxed = snapReading - settled;
+  float relPct  = (settled - tare) > 0 ? 100.0f * (float)relaxed / (float)(settled - tare) : 0.0f;
+  settlePending = false;
+  baseline      = (float)settled;
+  if (fabsf(ft - (float)nS) > SETTLE_AMBIGUOUS) {
+    Serial.printf("[settle] ambiguous: load %ld = %.2f tokens, count stays %u (relaxed %ld = %.1f%% of load since the last drop)\n",
+                  load, ft, tokens, relaxed, relPct);
+    return;
+  }
+  if (nS != tokens) {
+    Serial.printf("[settle] tokens %u -> %ld: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
+                  tokens, nS, load, ft, relaxed, relPct);
+    tokens = (uint16_t)nS;
+  } else {
+    Serial.printf("[settle] ok tokens=%u: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
+                  tokens, load, ft, relaxed, relPct);
   }
 }
 
@@ -928,37 +1044,61 @@ static void scaleTick(uint32_t now) {
         tare       = tareSum / SCALE_TARE_SAMPLES;
         baseline   = (float)tare;
         scalePhase = SCALE_RUNNING;
+        tLastEvent = now;
         Serial.printf("[tare] offset=%ld tokens=%u\n", tare, tokens);
         if (cur.scr == SCR_WAITING) lastDrawn.scr = SCR_BOOT;   // drop the WARMING UP note
       }
       return;
 
     case SCALE_RUNNING: {
+      ring[ringI] = r;
+      ringI = (uint8_t)((ringI + 1) % SETTLE_RING);
+      if (ringN < SETTLE_RING) ringN++;
+
       float delta = (float)r - baseline;
-      if (fabsf(delta) < (float)TOKEN_THRESHOLD) {
-        // Quiet: track slowly. alpha = dt / tau, capped so a long gap cannot overshoot.
+      if (fabsf(delta) < (float)tokenThreshold) {
+        // Quiet: track slowly, faster while the stack is still relaxing after an
+        // event. alpha = dt / tau, capped so a long gap cannot overshoot.
         confirmN = 0;
-        float a = (float)dt / (float)SCALE_BASELINE_TAU_MS;
+        uint32_t tau = (now - tLastEvent < SCALE_POST_EVENT_MS) ? SCALE_FAST_TAU_MS : SCALE_BASELINE_TAU_MS;
+        float a = (float)dt / (float)tau;
         if (a > 1.0f) a = 1.0f;
         baseline += delta * a;
         if (tokens == 0) tare = lroundf(baseline);   // an empty cup keeps re-zeroing itself
+        scaleSettleCheck(now);
         return;
       }
       if (++confirmN < SCALE_CONFIRM_SAMPLES) return;   // a bump does not get this far
       confirmN = 0;
-      long n = lroundf(delta / (float)COUNTS_PER_TOKEN);
+
+      float est  = delta / (float)countsPerToken;       // raw step in tokens
+      float comp = est;
+      long  n;
+      if (delta > 0) {
+        float load = baseline - (float)tare;              // what was already on the plate
+        if (load < 0) load = 0;
+        comp = (delta - load * (OVERSHOOT_PCT / 100.0f)) / (float)countsPerToken;
+        n = lroundf(comp);
+        if (n < 1 && lroundf(est) >= 1) n = 1;           // a real drop never rounds away
+      } else {
+        n = lroundf(est);
+      }
       if (n > 0) {
         tokens += (uint16_t)n;
-        Serial.printf("[drop] +%ld tokens=%u step=%ld baseline=%ld\n",
-                      n, tokens, (long)delta, (long)baseline);
+        Serial.printf("[drop] +%ld tokens=%u step=%ld baseline=%ld est=%.2f comp=%.2f\n",
+                      n, tokens, (long)delta, (long)baseline, est, comp);
       } else if (n < 0) {
         long take = -n;
-        if (take > tokens) take = tokens;              // clamp at 0
+        if (take > tokens) take = tokens;                 // clamp at 0
         tokens -= (uint16_t)take;
         Serial.printf("[remove] -%ld tokens=%u step=%ld baseline=%ld\n",
                       take, tokens, (long)delta, (long)baseline);
       }
-      baseline = (float)r;                             // snap, then resume tracking
+      baseline      = (float)r;                           // snap, then resume tracking
+      snapReading   = r;
+      tLastEvent    = now;
+      settlePending = true;
+      ringN = 0; ringI = 0;
       return;
     }
   }
@@ -1040,6 +1180,11 @@ void setup() {
   Serial.printf("scale: %s\n", scaleOk
                 ? "HX711 ok, warming up 30 s before tare"
                 : "no HX711 on CN1 (DT 27, SCK 22), counting disabled");
+  countsPerToken = prefs.getLong("cpt", COUNTS_PER_TOKEN);
+  if (countsPerToken < 1000 || countsPerToken > 200000) countsPerToken = COUNTS_PER_TOKEN;
+  tokenThreshold = countsPerToken / 2;
+  Serial.printf("scale: %ld counts/token%s, threshold %ld; serial c<N> recalibrates with N tokens on the plate\n",
+                countsPerToken, prefs.isKey("cpt") ? " from NVS" : " (default)", tokenThreshold);
 
   renderTick();   // puts up the waiting screen
 }
@@ -1074,15 +1219,32 @@ void loop() {
     }
   }
 
-  // --- serial commands (bench): o/h/v set the orientation and save, t = tare
+  // --- serial commands (bench): o/h/v/x orientation, t = tare, c<N> = calibrate
   while (Serial.available()) {
     char c = (char)Serial.read();
-    if      (c == 'o') panelNextOrientation("serial o");
+    if (calDigits >= 0 && c >= '0' && c <= '9') {         // digits after a 'c'
+      calNum = calNum * 10 + (c - '0');
+      calDigits++;
+      tCalDigit = now;
+      continue;
+    }
+    if (calDigits > 0) {                                  // anything else ends the number
+      scaleCalibrate(calNum);
+      calDigits = -1;
+    }
+    if      (c == 'c') { calNum = 0; calDigits = 0; tCalDigit = now; }
+    else if (c == 'o') panelNextOrientation("serial o");
     else if (c == 'h') panelSetOrientation(orientFlips ^ 0x40, "serial h: mirror left-right");
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
     else if (c == 'x') { prefs.remove("flip"); panelUseDefaultOrientation(); }
     else if (c == 't') { if (scaleOk) scaleStartTare("serial", true); else Serial.println("[tare] ignored: no HX711"); }
-    else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), x = forget the saved orientation and use the panel-ID default, t = tare, ? = help");
+    else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), "
+                                      "x = forget the saved orientation and use the panel-ID default, t = tare, "
+                                      "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
+  }
+  if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed
+    scaleCalibrate(calNum);
+    calDigits = -1;
   }
 
   // --- drain packets handed over by the receive callback --------------------
