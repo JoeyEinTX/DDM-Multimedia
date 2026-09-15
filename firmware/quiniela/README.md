@@ -25,7 +25,7 @@ nothing depends on venue infrastructure.
 ### Per cup — ESP32-2432S028R ("Cheap Yellow Display" / CYD)
 
 An ESP32 dev board with a 2.8" 240×320 TFT already wired to it. It is sold
-as an ILI9341 and is not one; see [the display controller](#the-cyds-display-controller-is-not-an-ili9341)
+as an ILI9341, which at least one batch is not; see [the display controllers](#the-cyds-display-controllers-two-batches)
 below before touching the display code.
 
 **Power: 5V + GND into the P1 connector, and only P1.**
@@ -57,16 +57,17 @@ always sold online as "1.25mm JST", which is technically wrong but is the search
 term that finds the right part. They are *not* JST-XH (2.54mm) or JST-PH (2.0mm)
 — those will not fit.
 
-### The CYD's display controller is not an ILI9341
+### The CYD's display controllers (two batches)
 
 The boards are sold as ILI9341 and `Adafruit_ILI9341` drives them fine, but
-the controller answers as an ST7789-family part: RDID4 (`0xD3`) reads all
+Board A's controller answers as an ST7789-family part: RDID4 (`0xD3`) reads all
 `FF`, RDDID (`0x04`) reads `81 81 B3` after a software reset, and a software
 reset does not clear MADCTL or COLMOD. The panel's reset pin is not on a GPIO,
 so register state carries over from one sketch to the next. Three things in
 the Adafruit init table go wrong on it, and `ddm_cup.ino` corrects all of them
 right after `tft.begin()` (verified on Board A, 2026-09-12; the band symptom
-was identical on every board):
+was identical on every board, the other two rows only apply to Board A's
+batch, see below):
 
 | Symptom | Cause | Fix in `ddm_cup.ino` |
 | ------- | ----- | -------------------- |
@@ -77,13 +78,15 @@ was identical on every board):
 
 There are at least two panel batches. Board A answers RDDID `10 81 B3` and
 wants MX and MY (`0xC8`) to be upright. The bench cup with the scale answers
-`00 00 00`, which a genuine ILI9341 also does, and wants MX alone (`0x48`,
-the library's own rotation-0 value): the same build came up flipped
-top-to-bottom on it (2026-09-15). Whether that batch is the same ST7789-family
-part with a blank ID or a different controller is open; the boot log now also
-prints RDID4 and the status register to settle it. Until it is settled, note
-that the LCMCTRL write (`0xC0 = 0x01`) goes to every board, and on a real
-ILI9341 that byte is Power Control 1 with an out-of-range value.
+`00 00 00` to both RDDID and RDID4, which is what a genuine ILI9341 does over
+SPI; its status register behaves like the ILI9341 datasheet (normal mode OFF
+while scrolling, ON after NORON, where Board A reported both bits on); and it
+is upright with the library's own rotation-0 value (`0x48`), the same build
+having come up flipped top-to-bottom on it (2026-09-15). That batch is
+therefore treated as ILI9341-like: it still gets the scroll fix (the band was
+there too) but not the LCMCTRL write, because on an ILI9341 `0xC0` is Power
+Control 1 and `0x01` would be an out-of-range GVDD. The boot log prints which
+path was taken (`LCMCTRL rewritten` or `LCMCTRL left alone`).
 
 The cup reads its ID bytes at boot and picks the orientation default from
 them (`00 00 00` gets `0x48`, anything else `0xC8`); each cup can override

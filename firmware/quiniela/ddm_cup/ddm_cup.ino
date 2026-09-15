@@ -746,14 +746,22 @@ static void renderTick() {
 //    init left it (0x01); panelOrientation() picks the MADCTL that is
 //    upright with XGS set.
 //
-// On a genuine ILI9341 the scroll commands are harmless and the 0xC0 write
-// only sets a slightly lower GVDD in Power Control 1.
+// The scroll commands go to every board (the band was on every board). The
+// 0xC0 write only goes to boards with a non-zero RDDID: on an ILI9341 that
+// register is Power Control 1 and 0x01 would be an out-of-range GVDD, and
+// the zero-ID batch (RDDID and RDID4 both 00 00 00, textbook status bits,
+// upright with the library's own 0x48) looks like an ILI9341.
 // ---------------------------------------------------------------------------
 static void panelNormalMode() {
   static const uint8_t lcmctrl[1] = { 0x01 };                               // XGS only: XMV and XBGR cleared
   static const uint8_t vscrdef[6] = { 0x00, 0x00, 0x01, 0x40, 0x00, 0x00 }; // TFA 0, VSA 320, BFA 0
   static const uint8_t vscsad[2]  = { 0x00, 0x00 };                         // scroll start 0
-  tft.sendCommand(0xC0, lcmctrl, 1);                                        // LCMCTRL: MV means MV, BGR means BGR
+  if (panelIsSt7789Family()) {
+    tft.sendCommand(0xC0, lcmctrl, 1);                                      // LCMCTRL: MV means MV, BGR means BGR
+    Serial.println("panel: ST7789-family ID, LCMCTRL rewritten");
+  } else {
+    Serial.println("panel: zero ID (ILI9341-like), LCMCTRL left alone");   // 0xC0 is Power Control 1 there
+  }
   tft.sendCommand(0x33, vscrdef, 6);
   tft.sendCommand(0x37, vscsad, 2);
   tft.sendCommand(0x13);                                                    // NORON: scroll mode off
@@ -846,9 +854,12 @@ static void panelLogIds() {
                 panelRdid4[0], panelRdid4[1], panelRdid4[2], raw2[0], raw2[1], raw2[2], raw2[3]);
 }
 
+static bool panelIsSt7789Family() {                    // non-zero RDDID: Board A's 10 81 B3, or a real ST7789V's 85 85 52
+  return (panelRddid[0] | panelRddid[1] | panelRddid[2]) != 0;
+}
+
 static uint8_t panelDefaultFlips() {
-  bool zeroId = (panelRddid[0] == 0 && panelRddid[1] == 0 && panelRddid[2] == 0);
-  return zeroId ? ORIENT_DEFAULT_ID00 : ORIENT_DEFAULT;
+  return panelIsSt7789Family() ? ORIENT_DEFAULT : ORIENT_DEFAULT_ID00;
 }
 
 static void panelUseDefaultOrientation() {                          // serial 'x': NVS forgotten
