@@ -39,7 +39,8 @@
  *                   v = mirror top-bottom (all saved),  x = forget the saved
  *                   orientation (back to the panel-ID default),  t = tare,
  *                   c<N> = N tokens are on the plate: calibrate counts/token
- *                   for this cup and save it (c0 forgets it),  ? = help
+ *                   for this cup and save it (c0 forgets it),  s = apply the
+ *                   settled load to the count now,  ? = help
  *
  * Until the gateway assigns this cup an ID, the screen shows this board's
  * own MAC address in large text — that is how the four MACs get collected
@@ -105,10 +106,14 @@
 #define SCALE_FAST_TAU_MS     1500  // ...and a faster one for SCALE_POST_EVENT_MS after a drop, while the stack relaxes
 #define SCALE_POST_EVENT_MS  15000  // how long a stack keeps relaxing after an impact (bench: 10-15 s)
 #define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
-#define OVERSHOOT_PCT         1.5f  // impact overshoot taken off a drop's step, as % of the load already on the plate (bench: ~2%)
+#define OVERSHOOT_PCT         2.0f  // impact overshoot taken off a drop's step, as % of the load already on the plate (bench: 1.4-2.5%)
 #define SETTLE_RING             20  // samples (~2 s) that must be flat before the settled load is trusted
 #define SETTLE_SPREAD         1200  // max-min over those samples that still counts as flat (idle noise is far below)
 #define SETTLE_AMBIGUOUS     0.35f  // settled load within this many tokens of a half: leave the count alone
+#define SETTLE_MAX_FIX           1  // a settle check may move the count by at most this many tokens; a bigger
+                                    // disagreement is only reported (serial s applies it). Raise it once the scale
+                                    // base is proven free of hysteresis (bench 2026-09-15: the same 50 tokens
+                                    // settled at 50.6, 53.2 and 51.5 tokens as the cup was shaken)
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
 #define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
@@ -914,9 +919,13 @@ static void panelUseDefaultOrientation() {                          // serial 'x
 //    so a gently placed token still counts.
 //  * SCALE_POST_EVENT_MS after the last event, once the reading has been
 //    flat for SETTLE_RING samples, the settled load is compared with the
-//    count and the count is corrected. Only a settled reading is ever used
-//    for that. A load within SETTLE_AMBIGUOUS of a half token is left alone
-//    and reported, so a mis-calibrated cup cannot flip-flop.
+//    count and the count is corrected by at most SETTLE_MAX_FIX tokens; a
+//    bigger disagreement is reported and left for serial 's', because on the
+//    bench the same 50 tokens settled at 50.6, 53.2 and 51.5 tokens as the
+//    cup was shaken (2026-09-15): a mechanical hysteresis no software can
+//    remove. Only a settled reading is ever used for that. A load within
+//    SETTLE_AMBIGUOUS of a half token is left alone and reported, so a
+//    mis-calibrated cup cannot flip-flop.
 // Serial c<N> calibrates the cup from N settled tokens and stores the result
 // in NVS: load cells differ by several percent from unit to unit.
 //
@@ -1009,6 +1018,12 @@ static void scaleSettleCheck(uint32_t now) {
     return;
   }
   if (nS != tokens) {
+    long dif = nS - (long)tokens;
+    if (labs(dif) > SETTLE_MAX_FIX) {
+      Serial.printf("[settle] DISAGREES by %+ld: count %u, load %ld = %.2f tokens, not applied (SETTLE_MAX_FIX %d; serial s applies it) (relaxed %ld = %.1f%% of load since the last drop)\n",
+                    dif, tokens, load, ft, SETTLE_MAX_FIX, relaxed, relPct);
+      return;
+    }
     Serial.printf("[settle] tokens %u -> %ld: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
                   tokens, nS, load, ft, relaxed, relPct);
     tokens = (uint16_t)nS;
@@ -1016,6 +1031,22 @@ static void scaleSettleCheck(uint32_t now) {
     Serial.printf("[settle] ok tokens=%u: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
                   tokens, load, ft, relaxed, relPct);
   }
+}
+
+// Serial 's': the operator knows the cup is right, take the settled load as
+// the count regardless of SETTLE_MAX_FIX.
+static void scaleApplySettled() {
+  if (scalePhase != SCALE_RUNNING) { Serial.println("[settle] scale not running yet"); return; }
+  long settled;
+  if (!scaleSettled(&settled)) { Serial.println("[settle] not settled right now: hands off, wait a few seconds, try again"); return; }
+  long  load = settled - tare;
+  float ft   = (float)load / (float)countsPerToken;
+  long  nS   = lroundf(ft);
+  if (nS < 0) nS = 0;
+  Serial.printf("[settle] serial s: tokens %u -> %ld (load %ld = %.2f tokens)\n", tokens, nS, load, ft);
+  tokens        = (uint16_t)nS;
+  baseline      = (float)settled;
+  settlePending = false;
 }
 
 static void scaleTick(uint32_t now) {
@@ -1238,8 +1269,9 @@ void loop() {
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
     else if (c == 'x') { prefs.remove("flip"); panelUseDefaultOrientation(); }
     else if (c == 't') { if (scaleOk) scaleStartTare("serial", true); else Serial.println("[tare] ignored: no HX711"); }
+    else if (c == 's') scaleApplySettled();
     else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), "
-                                      "x = forget the saved orientation and use the panel-ID default, t = tare, "
+                                      "x = forget the saved orientation and use the panel-ID default, t = tare, s = apply the settled load to the count, "
                                       "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
   }
   if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed
