@@ -31,7 +31,7 @@
  *     Short press  ->  toggle the diagnostic overlay (RSSI, drops, seq, age,
  *                      tokens and net scale counts)
  *     Hold 3 s     ->  re-tare the scale: count back to 0, green LED blinks
- *     Hold 6 s     ->  (keep holding past the tare) step the display
+ *     Hold 15 s    ->  (keep holding well past the tare) step the display
  *                      orientation to the next of its four settings and
  *                      save it in NVS for this cup
  *
@@ -102,7 +102,8 @@
 #define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation
 #define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
-#define ORIENT_HOLD_MS        6000  // BOOT kept held this long steps the display orientation (saved)
+#define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
+                                    // the 3 s tare so a long tare press cannot rotate a cup by accident
 #define TARE_BLINK_MS          150  // LED acknowledgement of a manual tare
 
 // ---------------------------------------------------------------------------
@@ -779,7 +780,7 @@ static void panelNormalMode() {
 // vertical flip the other way, so the glass is wired differently between
 // board batches. Which MX/MY pair is upright is therefore a per-cup setting:
 // the default comes from the panel's RDDID bytes (panelDefaultFlips), NVS
-// holds the real bits, and serial o/h/v or a 6 s BOOT hold change and save them.
+// holds the real bits, and serial o/h/v or a 15 s BOOT hold change and save them.
 // ---------------------------------------------------------------------------
 static void panelOrientation() {
   uint8_t madctl = 0x08 | orientFlips;                  // BGR | MX? | MY?
@@ -991,7 +992,7 @@ void setup() {
   panelLogStatus("after panelNormalMode()");
   tft.setRotation(0);          // library bookkeeping only: 240 wide, 320 tall
   panelOrientation();          // the MADCTL this cup is set to
-  Serial.printf("orientation MADCTL 0x%02X %s; serial o/h/v/x or BOOT held 6 s changes it\n",
+  Serial.printf("orientation MADCTL 0x%02X %s; serial o/h/v/x or BOOT held 15 s changes it\n",
                 0x08 | orientFlips, haveFlip ? "from NVS" : "= default for this panel ID");
   tft.invertDisplay(INVERT);
 

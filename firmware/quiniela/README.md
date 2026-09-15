@@ -93,8 +93,11 @@ them (`00 00 00` gets `0x48`, anything else `0xC8`); each cup can override
 that in NVS. In the serial monitor, `h` mirrors left-right, `v` mirrors
 top-bottom, `o` steps through the four combinations (`C8 → 48 → 08 → 88`),
 `x` forgets the saved setting and goes back to the ID default; without a
-cable, hold BOOT for 6 s to step (the 3 s tare fires on the way, harmless with
-an empty cup). Each change redraws at once and is remembered across reflashes.
+cable, hold BOOT for 15 s to step (the 3 s tare fires on the way, harmless with
+an empty cup; the hold is that long because at 6 s a couple of long tare
+presses on the bench rotated a cup by accident). If a cup ever comes up turned
+round, look at its boot line: `from NVS` means a saved setting is in play and
+`x` clears it. Each change redraws at once and is remembered across reflashes.
 Landscape has not been tried since the fix.
 Horse 15's khaki cloth reads as light grey on this glass; that is the colour
 table, not the controller. The two sketches under `tools/` are what found all
@@ -311,7 +314,7 @@ baseline to the new reading, so the spike is absorbed rather than counted.
   re-zeroing itself. Once a token is counted the tare freezes.
 - **Hold BOOT for 3 s** to re-tare by hand: the count goes back to 0, the
   current reading becomes "empty", the green LED blinks once and serial prints
-  `[tare]`. Keep holding to 6 s and the cup steps its display orientation and
+  `[tare]`. Keep holding to 15 s and the cup steps its display orientation and
   saves it instead (see the display controller section); `t` over serial also
   tares. A short press still toggles the diagnostic overlay, whose last line
   now reads `TOKENS:n  NET:±counts` plus the scale state. The cup never shows the
