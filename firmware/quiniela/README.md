@@ -75,17 +75,24 @@ was identical on every board):
 | Red and blue swapped (horse 1 came up blue) | Bit 5 (XBGR) of the same byte inverts the driver's BGR bit | the same `0x01` |
 | Rotation 0 flipped top-to-bottom, rotation 2 flipped left-to-right | Upright needs both MADCTL flip bits set; the library's portrait rotations set only one | `panelOrientation()` sends MADCTL `0xC8` (`0x08` for `ROTATION 2`) after `setRotation()` |
 
-Which MADCTL flip bits make the picture upright turned out to differ between
-boards: Board A wants MX and MY (`0xC8`), and the bench cup with the scale
-wants MX alone (`0x48`), i.e. the same build came up flipped top-to-bottom on
-it (2026-09-15). So `ORIENT_DEFAULT` is only the default; each cup keeps its
-own MX/MY bits in NVS. To set a cup: in the serial monitor, `h` mirrors
-left-right, `v` mirrors top-bottom, `o` steps through the four combinations
-(`C8 → 48 → 08 → 88`); without a cable, hold BOOT for 6 s to step (the 3 s
-tare fires on the way, harmless with an empty cup). Each change redraws at once
-and is remembered across reflashes. The cup prints its panel ID bytes
-(`panel RDDID`) at boot so the board batches can be told apart, and defaulted
-from the ID if the bytes differ. Landscape has not been tried since the fix.
+There are at least two panel batches. Board A answers RDDID `10 81 B3` and
+wants MX and MY (`0xC8`) to be upright. The bench cup with the scale answers
+`00 00 00`, which a genuine ILI9341 also does, and wants MX alone (`0x48`,
+the library's own rotation-0 value): the same build came up flipped
+top-to-bottom on it (2026-09-15). Whether that batch is the same ST7789-family
+part with a blank ID or a different controller is open; the boot log now also
+prints RDID4 and the status register to settle it. Until it is settled, note
+that the LCMCTRL write (`0xC0 = 0x01`) goes to every board, and on a real
+ILI9341 that byte is Power Control 1 with an out-of-range value.
+
+The cup reads its ID bytes at boot and picks the orientation default from
+them (`00 00 00` gets `0x48`, anything else `0xC8`); each cup can override
+that in NVS. In the serial monitor, `h` mirrors left-right, `v` mirrors
+top-bottom, `o` steps through the four combinations (`C8 → 48 → 08 → 88`),
+`x` forgets the saved setting and goes back to the ID default; without a
+cable, hold BOOT for 6 s to step (the 3 s tare fires on the way, harmless with
+an empty cup). Each change redraws at once and is remembered across reflashes.
+Landscape has not been tried since the fix.
 Horse 15's khaki cloth reads as light grey on this glass; that is the colour
 table, not the controller. The two sketches under `tools/` are what found all
 this.

@@ -36,7 +36,8 @@
  *                      save it in NVS for this cup
  *
  * SERIAL (115200):  o = next orientation,  h = mirror left-right,
- *                   v = mirror top-bottom (all saved),  t = tare,  ? = help
+ *                   v = mirror top-bottom (all saved),  x = forget the saved
+ *                   orientation (back to the panel-ID default),  t = tare,  ? = help
  *
  * Until the gateway assigns this cup an ID, the screen shows this board's
  * own MAC address in large text — that is how the four MACs get collected
@@ -69,7 +70,8 @@
 // ===========================================================================
 // Tunables
 // ===========================================================================
-#define ORIENT_DEFAULT 0xC0     // MADCTL MX|MY bits for a cup with nothing saved (see panelOrientation)
+#define ORIENT_DEFAULT      0xC0  // MADCTL MX|MY bits for a cup with nothing saved: Board A's batch (RDDID 10 81 B3)
+#define ORIENT_DEFAULT_ID00 0x40  // same for the batch whose RDDID reads 00 00 00 (the scale cup, 2026-09-15): MX alone
 #define INVERT     false        // true if colors come out backwards
 
 #define TRACK       0.06f       // gap between two digits, as a fraction of height
@@ -768,8 +770,8 @@ static void panelNormalMode() {
 // The cup with the scale (2026-09-15) wants MX alone (0x48): same build,
 // vertical flip the other way, so the glass is wired differently between
 // board batches. Which MX/MY pair is upright is therefore a per-cup setting:
-// ORIENT_DEFAULT is only the default, NVS holds the real bits, and serial
-// o/h/v or a 6 s BOOT hold change and save them.
+// the default comes from the panel's RDDID bytes (panelDefaultFlips), NVS
+// holds the real bits, and serial o/h/v or a 6 s BOOT hold change and save them.
 // ---------------------------------------------------------------------------
 static void panelOrientation() {
   uint8_t madctl = 0x08 | orientFlips;                  // BGR | MX? | MY?
@@ -792,22 +794,69 @@ static void panelNextOrientation(const char* how) {
   panelSetOrientation(cycle[(i + 1) & 3], how);
 }
 
-// Controller ID bytes (RDDID 0x04), raw over SPI at 2 MHz and realigned for
-// the one dummy clock, exactly as tools/panel_probe does it. Board A reads
-// 10 81 B3 here (the init table's 0xC1 write lands in IDSET). Logged so a
-// board revision with different glass wiring can be told apart later.
-static void panelLogId() {
-  uint8_t in[4], id[3];
+// ---------------------------------------------------------------------------
+// Panel identity, read raw over SPI at 2 MHz with the one-bit realignment for
+// the dummy clock, exactly as tools/panel_probe does it.
+//   Board A (ST7789-family clone): RDDID 10 81 B3 after tft.begin(), RDID4 FF FF FF
+//   The cup with the scale, 2026-09-15:  RDDID 00 00 00 (what a genuine ILI9341
+//   answers too; RDID4 and RDDST are logged to tell the two apart)
+// The RDDID bytes pick the orientation default for a cup with nothing in NVS.
+// ---------------------------------------------------------------------------
+uint8_t panelRddid[3] = { 0, 0, 0 };
+uint8_t panelRdid4[3] = { 0, 0, 0 };
+
+static void panelRawRead(uint8_t cmd, uint8_t* buf, uint8_t n) {
   SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   digitalWrite(TFT_CS, LOW);
   digitalWrite(TFT_DC, LOW);
-  SPI.transfer(0x04);
+  SPI.transfer(cmd);
   digitalWrite(TFT_DC, HIGH);
-  for (uint8_t i = 0; i < 4; i++) in[i] = SPI.transfer(0x00);
+  for (uint8_t i = 0; i < n; i++) buf[i] = SPI.transfer(0x00);
   digitalWrite(TFT_CS, HIGH);
   SPI.endTransaction();
-  for (uint8_t i = 0; i < 3; i++) id[i] = (uint8_t)((in[i] << 1) | (in[i + 1] >> 7));
-  Serial.printf("panel RDDID: %02X %02X %02X  (Board A reads 10 81 B3 here)\n", id[0], id[1], id[2]);
+}
+
+static void panelRead3(uint8_t cmd, uint8_t* out, uint8_t* raw) {   // 3 bytes after one dummy clock
+  panelRawRead(cmd, raw, 4);
+  for (uint8_t i = 0; i < 3; i++) out[i] = (uint8_t)((raw[i] << 1) | (raw[i + 1] >> 7));
+}
+
+static uint32_t panelReadStatus() {                                 // RDDST, 32 bits after one dummy clock
+  uint8_t in[5];
+  panelRawRead(0x09, in, 5);
+  uint32_t st = 0;
+  for (uint8_t i = 0; i < 4; i++) st = (st << 8) | (uint8_t)((in[i] << 1) | (in[i + 1] >> 7));
+  return st;
+}
+
+static void panelLogStatus(const char* when) {
+  uint32_t st = panelReadStatus();
+  Serial.printf("panel RDDST %s: 0x%08lX  scroll %s  normal %s  MADCTL MY%u MX%u MV%u\n",
+                when, (unsigned long)st,
+                (st & (1UL << 15)) ? "ON" : "off", (st & (1UL << 16)) ? "on" : "OFF",
+                (unsigned)((st >> 30) & 1), (unsigned)((st >> 29) & 1), (unsigned)((st >> 28) & 1));
+}
+
+static void panelLogIds() {
+  uint8_t raw1[4], raw2[4];
+  panelRead3(0x04, panelRddid, raw1);
+  panelRead3(0xD3, panelRdid4, raw2);
+  Serial.printf("panel RDDID: %02X %02X %02X (raw %02X %02X %02X %02X)   RDID4: %02X %02X %02X (raw %02X %02X %02X %02X)   Board A: 10 81 B3 / FF FF FF\n",
+                panelRddid[0], panelRddid[1], panelRddid[2], raw1[0], raw1[1], raw1[2], raw1[3],
+                panelRdid4[0], panelRdid4[1], panelRdid4[2], raw2[0], raw2[1], raw2[2], raw2[3]);
+}
+
+static uint8_t panelDefaultFlips() {
+  bool zeroId = (panelRddid[0] == 0 && panelRddid[1] == 0 && panelRddid[2] == 0);
+  return zeroId ? ORIENT_DEFAULT_ID00 : ORIENT_DEFAULT;
+}
+
+static void panelUseDefaultOrientation() {                          // serial 'x': NVS forgotten
+  orientFlips = panelDefaultFlips();
+  panelOrientation();
+  lastDrawn.scr = SCR_BOOT;
+  Serial.printf("[panel] orientation MADCTL 0x%02X = default for RDDID %02X %02X %02X (saved setting cleared)\n",
+                0x08 | orientFlips, panelRddid[0], panelRddid[1], panelRddid[2]);
 }
 
 // ===========================================================================
@@ -920,15 +969,19 @@ void setup() {
   // Per-cup settings from NVS (survive reflashing; only an NVS erase clears them)
   prefs.begin("ddmcup", false);
   if (prefs.isKey("rot")) prefs.remove("rot");          // key from the two-way version of this setting
+  bool haveFlip = prefs.isKey("flip");
   orientFlips = prefs.getUChar("flip", ORIENT_DEFAULT) & 0xC0;
 
   tft.begin();
-  panelLogId();
+  panelLogIds();
+  panelLogStatus("after tft.begin()");
+  if (!haveFlip) orientFlips = panelDefaultFlips();      // nothing saved: default by panel batch
   panelNormalMode();
+  panelLogStatus("after panelNormalMode()");
   tft.setRotation(0);          // library bookkeeping only: 240 wide, 320 tall
   panelOrientation();          // the MADCTL this cup is set to
-  Serial.printf("orientation MADCTL 0x%02X%s; serial o/h/v or BOOT held 6 s changes and saves\n",
-                0x08 | orientFlips, prefs.isKey("flip") ? " from NVS" : " (default)");
+  Serial.printf("orientation MADCTL 0x%02X %s; serial o/h/v/x or BOOT held 6 s changes it\n",
+                0x08 | orientFlips, haveFlip ? "from NVS" : "= default for this panel ID");
   tft.invertDisplay(INVERT);
 
   SW = tft.width();
@@ -1015,8 +1068,9 @@ void loop() {
     if      (c == 'o') panelNextOrientation("serial o");
     else if (c == 'h') panelSetOrientation(orientFlips ^ 0x40, "serial h: mirror left-right");
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
+    else if (c == 'x') { prefs.remove("flip"); panelUseDefaultOrientation(); }
     else if (c == 't') { if (scaleOk) scaleStartTare("serial", true); else Serial.println("[tare] ignored: no HX711"); }
-    else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), t = tare, ? = help");
+    else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), x = forget the saved orientation and use the panel-ID default, t = tare, ? = help");
   }
 
   // --- drain packets handed over by the receive callback --------------------
