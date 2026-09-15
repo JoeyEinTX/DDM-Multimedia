@@ -19,7 +19,8 @@
  * ===========================================================================
  *
  * LIBRARIES (Tools -> Manage Libraries):  Adafruit GFX Library,
- * Adafruit ILI9341. Say Install All if it offers dependencies.
+ * Adafruit ILI9341, HX711 Arduino Library (Bogdan Necula / bogde). Say
+ * Install All if it offers dependencies.
  *
  * BOARD:  ESP32 Dev Module
  *
@@ -27,19 +28,26 @@
  * chip, then let go.
  *
  * CONTROLS — BOOT button:
- *     Short press  ->  toggle the diagnostic overlay (RSSI, drops, seq, age)
+ *     Short press  ->  toggle the diagnostic overlay (RSSI, drops, seq, age,
+ *                      tokens and net scale counts)
+ *     Hold 3 s     ->  re-tare the scale: count back to 0, green LED blinks
  *
  * Until the gateway assigns this cup an ID, the screen shows this board's
  * own MAC address in large text — that is how the four MACs get collected
  * for the gateway's KNOWN_CUPS[] table with no serial cable.
  *
- * No HX711 yet: telemetry carries rawWeight=0, tokenCount=0 so the wire
- * format is already stable when the scale lands.
+ * SCALE: an HX711 on CN1 (DT GPIO27, SCK GPIO22) weighs the tokens. Counting
+ * is by steps against a slow-tracking baseline, never by absolute weight; the
+ * two calibration constants in the tunables came from tools/hx711_calibrate/.
+ * The cup never shows the count on a normal screen (the splash display does);
+ * the diagnostic overlay shows TOKENS and the net counts for bench checks, and
+ * telemetry carries rawWeight (reading minus tare) and tokenCount.
  */
 
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
+#include <HX711.h>
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -68,6 +76,24 @@
 #define SCRATCH_FLASH_MS  1200  // scratched alternation period
 #define PODIUM_STEP_MS    2000  // podium metal cycle period (from prototype)
 #define OVERLAY_MS         500  // diagnostic overlay refresh
+
+// ---------------------------------------------------------------------------
+// Scale — HX711 on CN1. CALIBRATION CONSTANTS: measured on the bench with
+// tools/hx711_calibrate/ (ten tokens of the current print dropped one at a
+// time; mean step 6212 counts, sd 102 = 1.6%). If the token print changes,
+// re-run that tool and paste its two #define lines over these.
+// ---------------------------------------------------------------------------
+#define COUNTS_PER_TOKEN   6212L    // mean step, 10 tokens, sd 102 (1.6%)
+#define TOKEN_THRESHOLD    3106L    // half a token
+
+#define HX711_DT                27  // CN1 data
+#define HX711_SCK               22  // CN1 clock
+#define SCALE_WARMUP_MS      30000  // HX711 drifts after power-up: no tare, no counting until this has passed
+#define SCALE_TARE_SAMPLES      30  // averaged for the tare (~3 s at 10 SPS)
+#define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation
+#define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
+#define TARE_HOLD_MS          3000  // BOOT held this long re-tares
+#define TARE_BLINK_MS          150  // LED acknowledgement of a manual tare
 
 // ---------------------------------------------------------------------------
 // CYD hardware pins — correct for the ESP32-2432S028R, leave alone
@@ -328,6 +354,31 @@ uint32_t versionRejects = 0;
 
 uint32_t tHello = 0, tTelemetry = 0;
 
+// ---------------------------------------------------------------------------
+// Scale state. Everything the HX711 produces lives here; the display never
+// reads `tokens` except for the diagnostic overlay.
+// ---------------------------------------------------------------------------
+HX711 hx711;
+
+enum ScalePhase : uint8_t {
+  SCALE_WARMUP,    // first SCALE_WARMUP_MS after boot: sampling, not counting
+  SCALE_TARING,    // collecting SCALE_TARE_SAMPLES for the empty reading
+  SCALE_RUNNING    // counting
+};
+
+bool       scaleOk       = false;    // HX711 answered at boot
+ScalePhase scalePhase    = SCALE_WARMUP;
+uint32_t   tScaleWarmup  = 0;        // millis() at boot
+uint32_t   tScaleSample  = 0;        // millis() of the last sample (baseline time constant)
+long       tareSum       = 0;        // tare accumulator
+uint8_t    tareN         = 0;
+long       tare          = 0;        // raw counts that mean "empty"
+long       lastReading   = 0;        // most recent raw sample
+float      baseline      = 0;        // slow-tracking raw baseline the detector compares against
+uint8_t    confirmN      = 0;        // consecutive samples past TOKEN_THRESHOLD
+uint16_t   tokens        = 0;        // what telemetry reports as tokenCount
+uint32_t   tLedOff       = 0;        // non-blocking end of the tare-acknowledge blink
+
 // Handoff from the ESP-NOW receive callback (WiFi task) to loop(). The
 // callback only copies bytes and sets a flag; all rendering and state
 // mutation happens in loop().
@@ -403,8 +454,8 @@ static void sendTelemetry() {
   p.cupId      = (uint8_t)myCupId;
   p.seq        = lastSeq;
   p.dropped    = droppedCount;
-  p.rawWeight  = 0;    // no HX711 yet — fields exist so the wire format
-  p.tokenCount = 0;    // is already stable when the scale lands
+  p.rawWeight  = (int32_t)(lastReading - tare);   // net counts, uncalibrated
+  p.tokenCount = tokens;
   p.rssi       = lastRssi;
   esp_now_send(gatewayMac, (const uint8_t*)&p, sizeof(p));
 }
@@ -458,6 +509,18 @@ void drawWaiting() {
   centerText(l2, SW / 2, SH / 2 + 66, SW - 16, C_GOLD);
 
   centerText("MAC ADDRESS", SW / 2, SH - 28, SW - 24, C_DIM);
+
+  // Scale note, only while the HX711 is still warming up or taring, so it is
+  // obvious why nothing is being counted yet. Built-in font, in the free band
+  // between the MAC and its caption.
+  if (scaleOk && scalePhase != SCALE_RUNNING) {
+    const char* note = "SCALE WARMING UP";
+    tft.setFont(nullptr);
+    tft.setTextSize(2);
+    tft.setTextColor(C_AMBER);
+    tft.setCursor((SW - 12 * (int)strlen(note)) / 2, SH - 66);
+    tft.print(note);
+  }
 }
 
 void drawNoHorse() {
@@ -540,7 +603,7 @@ void drawNoLinkBadge() {
 
 void drawOverlay() {
   uint32_t now = millis();
-  int h = 62;
+  int h = 78;                       // four lines of the built-in font
   int y = SH - h;
   uint8_t horse = 0, st = 0;
   if (haveState && myCupId >= 0) {
@@ -565,6 +628,13 @@ void drawOverlay() {
   else
     tft.printf("SEQ:%lu  AGE:%lums",
                (unsigned long)lastSeq, (unsigned long)(now - lastPacketAt));
+  tft.setCursor(6, y + 56);
+  if (!scaleOk)
+    tft.printf("TOKENS:-  NET:-  no HX711");
+  else
+    tft.printf("TOKENS:%u  NET:%+ld  %s", tokens, lastReading - tare,
+               scalePhase == SCALE_WARMUP ? "warmup" :
+               scalePhase == SCALE_TARING ? "taring" : "ok");
 }
 
 // --- render decision --------------------------------------------------------
@@ -691,6 +761,99 @@ static void panelOrientation() {
 }
 
 // ===========================================================================
+// SCALE — HX711 token counting
+//
+// Counting is by increments against a slow-tracking baseline, never by
+// absolute weight: a stack of tokens keeps relaxing for 10-15 s after every
+// impact (about 2% of the total load), so absolute weight drifts by roughly
+// a token in sixty. The baseline is a low-pass of the reading (time constant
+// SCALE_BASELINE_TAU_MS) that only updates while the reading is within half a
+// token of it, so warm-up drift and post-impact relaxation are absorbed and
+// never counted. A jump of at least half a token that holds for
+// SCALE_CONFIRM_SAMPLES consecutive samples is an event: the step is rounded
+// to whole tokens (two dropped together count as two), the baseline snaps to
+// the new reading, and tracking resumes. Downward steps decrement the same
+// way. A bump spikes and returns within a sample or two, so it never confirms.
+//
+// Everything here is non-blocking: the ADC is only read when is_ready() says
+// a conversion is waiting, so the display and the radio never stall on it.
+// ===========================================================================
+static void scaleStartTare(const char* why, bool blink) {
+  scalePhase = SCALE_TARING;
+  tareSum    = 0;
+  tareN      = 0;
+  confirmN   = 0;
+  tokens     = 0;                       // a tare means "this is empty"
+  Serial.printf("[tare] %s: averaging %d samples\n", why, SCALE_TARE_SAMPLES);
+  if (blink) {
+    digitalWrite(LED_G, LOW);           // CYD LEDs are active low
+    tLedOff = millis() + TARE_BLINK_MS;
+  }
+}
+
+static void scaleTick(uint32_t now) {
+  if (tLedOff && (int32_t)(now - tLedOff) >= 0) {
+    digitalWrite(LED_G, HIGH);
+    tLedOff = 0;
+  }
+  if (!scaleOk) return;
+
+  if (scalePhase == SCALE_WARMUP && now - tScaleWarmup >= SCALE_WARMUP_MS)
+    scaleStartTare("warm-up done", false);
+
+  if (!hx711.is_ready()) return;        // nothing waiting: never block on the ADC
+  long r = hx711.read();
+  uint32_t dt = now - tScaleSample;
+  tScaleSample = now;
+  lastReading  = r;
+
+  switch (scalePhase) {
+    case SCALE_WARMUP:
+      return;                           // sampling only, so the overlay has a live number
+
+    case SCALE_TARING:
+      tareSum += r;
+      if (++tareN >= SCALE_TARE_SAMPLES) {
+        tare       = tareSum / SCALE_TARE_SAMPLES;
+        baseline   = (float)tare;
+        scalePhase = SCALE_RUNNING;
+        Serial.printf("[tare] offset=%ld tokens=%u\n", tare, tokens);
+        if (cur.scr == SCR_WAITING) lastDrawn.scr = SCR_BOOT;   // drop the WARMING UP note
+      }
+      return;
+
+    case SCALE_RUNNING: {
+      float delta = (float)r - baseline;
+      if (fabsf(delta) < (float)TOKEN_THRESHOLD) {
+        // Quiet: track slowly. alpha = dt / tau, capped so a long gap cannot overshoot.
+        confirmN = 0;
+        float a = (float)dt / (float)SCALE_BASELINE_TAU_MS;
+        if (a > 1.0f) a = 1.0f;
+        baseline += delta * a;
+        if (tokens == 0) tare = lroundf(baseline);   // an empty cup keeps re-zeroing itself
+        return;
+      }
+      if (++confirmN < SCALE_CONFIRM_SAMPLES) return;   // a bump does not get this far
+      confirmN = 0;
+      long n = lroundf(delta / (float)COUNTS_PER_TOKEN);
+      if (n > 0) {
+        tokens += (uint16_t)n;
+        Serial.printf("[drop] +%ld tokens=%u step=%ld baseline=%ld\n",
+                      n, tokens, (long)delta, (long)baseline);
+      } else if (n < 0) {
+        long take = -n;
+        if (take > tokens) take = tokens;              // clamp at 0
+        tokens -= (uint16_t)take;
+        Serial.printf("[remove] -%ld tokens=%u step=%ld baseline=%ld\n",
+                      take, tokens, (long)delta, (long)baseline);
+      }
+      baseline = (float)r;                             // snap, then resume tracking
+      return;
+    }
+  }
+}
+
+// ===========================================================================
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -744,22 +907,39 @@ void setup() {
   p.encrypt = false;
   esp_now_add_peer(&p);
 
+  // Scale. The only blocking call is this one-second boot check; if the
+  // HX711 is missing the cup runs without counting and the overlay says so.
+  hx711.begin(HX711_DT, HX711_SCK, 128);
+  pinMode(HX711_DT, INPUT_PULLUP);      // a missing amplifier reads "not ready", not garbage
+  scaleOk      = hx711.wait_ready_timeout(1000, 10);
+  tScaleWarmup = millis();
+  tScaleSample = tScaleWarmup;
+  Serial.printf("scale: %s\n", scaleOk
+                ? "HX711 ok, warming up 30 s before tare"
+                : "no HX711 on CN1 (DT 27, SCK 22), counting disabled");
+
   renderTick();   // puts up the waiting screen
 }
 
 void loop() {
   uint32_t now = millis();
 
-  // --- BOOT button: short press toggles the diagnostic overlay -------------
-  static bool     down   = false;
-  static uint32_t downAt = 0;
+  // --- BOOT button: short press toggles the diagnostic overlay; a hold of
+  //     TARE_HOLD_MS re-tares the scale (that press then does not toggle)
+  static bool     down     = false;
+  static uint32_t downAt   = 0;
+  static bool     heldDone = false;
 
   bool pressed = (digitalRead(BOOT_BTN) == LOW);
   if (pressed && !down) {
-    down = true; downAt = now;
+    down = true; downAt = now; heldDone = false;
+  } else if (pressed && down && !heldDone && now - downAt >= TARE_HOLD_MS) {
+    heldDone = true;                  // fires once per hold, while still held
+    if (scaleOk) scaleStartTare("BOOT held", true);
+    else         Serial.println("[tare] ignored: no HX711");
   } else if (!pressed && down) {
     down = false;
-    if (now - downAt > 30) {          // debounce
+    if (!heldDone && now - downAt > 30) {   // debounce; a hold is not a short press
       overlayOn = !overlayOn;
       Serial.printf("[btn] overlay %s\n", overlayOn ? "on" : "off");
       if (overlayOn) { tOverlay = now; drawOverlay(); }
@@ -794,6 +974,8 @@ void loop() {
     lastRssi     = rxRssiVal;
     lastPacketAt = now;
   }
+
+  scaleTick(now);
 
   // --- uplink cadence --------------------------------------------------------
   if (myCupId < 0) {

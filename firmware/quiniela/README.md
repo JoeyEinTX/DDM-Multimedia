@@ -40,8 +40,12 @@ below before touching the display code.
 | ------- | ----- |
 | 3.3V    | VCC   |
 | GND     | GND   |
-| GPIO22  | DT (data) |
-| GPIO27  | SCK (clock) |
+| GPIO27  | DT (data) |
+| GPIO22  | SCK (clock) |
+
+DT on GPIO27 and SCK on GPIO22 is how the bench cup is wired and what both
+`ddm_cup.ino` and `tools/hx711_calibrate/` assume. If a cup ends up wired the
+other way round, swap `HX711_DT` / `HX711_SCK` in the sketch rather than the plug.
 
 Power the HX711 from **3.3V, not 5V**. The HX711 drives its data line at
 whatever voltage it is powered from, so a 5V-powered HX711 pushes 5V into a
@@ -233,6 +237,68 @@ A short **BOOT press on any cup** toggles its diagnostic overlay — cup ID,
 horse, RSSI, drop count, seq, last-packet age — which is what you read
 while walking a board around the room.
 
+## Scale
+
+Each cup weighs the tokens dropped into it with a 1 kg load cell on an HX711
+(gain 128, 10 SPS) and counts them by the *step* in the reading, not by
+absolute weight: a stack of tokens keeps relaxing for 10–15 s after every
+impact, by about 2% of the total load, so absolute weight drifts by roughly one
+token in sixty. `ddm_cup.ino` tracks a slow baseline instead and counts a token
+when the reading jumps at least half a token above it for three samples in a
+row; two tokens dropped together count as two, and a token lifted out counts
+down the same way.
+
+### Wiring
+
+| CN1 pin | HX711 |
+| ------- | ----- |
+| 3.3V    | VCC   |
+| GND     | GND   |
+| GPIO27  | DT (data) |
+| GPIO22  | SCK (clock) |
+
+3.3V only (see the warning under Hardware). The pins are `HX711_DT` and
+`HX711_SCK` at the top of `ddm_cup.ino`; `tools/hx711_calibrate/` uses the same
+two. Library: **HX711 Arduino Library** by Bogdan Necula (`bogde/HX711`).
+
+### Calibration constants
+
+```cpp
+#define COUNTS_PER_TOKEN   6212L    // mean step, 10 tokens, sd 102 (1.6%)
+#define TOKEN_THRESHOLD    3106L    // half a token
+```
+
+Measured on the bench with `tools/hx711_calibrate/` in 2026-09: ten tokens of
+the current print dropped one at a time. A token lands as a spike about 3% high
+and settles over a second; the sketch confirms over three samples and snaps its
+baseline to the new reading, so the spike is absorbed rather than counted.
+
+### If the token print changes
+
+1. Flash `tools/hx711_calibrate/hx711_calibrate.ino` (same board settings, only
+   the HX711 library needed), serial monitor at 115200.
+2. Wait 60 s for the HX711 to warm up, then type `t` with the plate empty.
+3. Type `c`. Drop one token, type `+`, wait for the `[cal] token N` line.
+   Repeat for 8–10 tokens.
+4. Type `d`. It prints the two `#define` lines; paste them over the ones at the
+   top of `ddm_cup.ino` and reflash every cup.
+
+### Tare
+
+- On boot the cup waits 30 s for the HX711 to settle (the waiting screen says
+  `SCALE WARMING UP`), then averages 30 samples as the empty reading.
+- While the count is 0 the tare follows the slow baseline, so an empty cup keeps
+  re-zeroing itself. Once a token is counted the tare freezes.
+- **Hold BOOT for 3 s** to re-tare by hand: the count goes back to 0, the
+  current reading becomes "empty", the green LED blinks once and serial prints
+  `[tare]`. A short press still toggles the diagnostic overlay, whose last line
+  now reads `TOKENS:n  NET:±counts` plus the scale state. The cup never shows the
+  count on a normal screen; the splash display does that.
+
+Serial prints one line per event, `[drop] +1 tokens=7 step=6240 baseline=43512`
+or `[remove] -1 ...`, so a bench session can be grepped. If no HX711 answers at
+boot the cup runs without counting and the overlay says `no HX711`.
+
 ## Tools
 
 ### `tools/panel_probe/` — display controller probe
@@ -260,13 +326,20 @@ ILI9341 init table clobbers with `0x23`, to show whether the picture goes
 sideways only once the panel leaves scroll mode and whether clearing XBGR
 puts the colour order right.
 
+### `tools/hx711_calibrate/` — HX711 calibration
+
+Standalone: streams raw HX711 counts and walks a token calibration over serial
+(`t` tare, `c` start, `+` per token, `d` results). Prints the two `#define`
+lines for `ddm_cup.ino`; the values it measured for the current token print are
+in its header comment and under Scale above.
+
 ## Status
 
 | Component | State |
 | --------- | ----- |
 | `ddm_common.h` — ESP-NOW protocol | ✅ defined |
 | `ddm_gateway/` — gateway sketch | ✅ implemented (bench test: broadcast, roster, serial commands, demo mode) |
-| `ddm_cup/` — cup sketch | ✅ implemented (bench test: display + ESP-NOW; HX711 not wired in yet, telemetry sends zeros) |
+| `ddm_cup/` — cup sketch | ✅ implemented (bench test: display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
 
 Known protocol gaps, to fix in a v2 of `ddm_common.h` (bump
 `DDM_PROTO_VERSION`): no dedicated packet assigns a cup its ID (the
