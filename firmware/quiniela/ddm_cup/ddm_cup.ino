@@ -31,6 +31,10 @@
  *     Short press  ->  toggle the diagnostic overlay (RSSI, drops, seq, age,
  *                      tokens and net scale counts)
  *     Hold 3 s     ->  re-tare the scale: count back to 0, green LED blinks
+ *     Hold 8 s     ->  (keep holding past the tare) flip the display
+ *                      orientation and save it in NVS for this cup
+ *
+ * SERIAL (115200):  o = flip orientation and save,  t = tare,  ? = help
  *
  * Until the gateway assigns this cup an ID, the screen shows this board's
  * own MAC address in large text — that is how the four MACs get collected
@@ -51,6 +55,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <Preferences.h>
 #include "ddm_digits.h"
 #include "ddm_common.h"
 
@@ -62,7 +67,7 @@
 // ===========================================================================
 // Tunables
 // ===========================================================================
-#define ROTATION       0        // 0 = upright portrait, 2 = portrait rotated 180 (see panelOrientation)
+#define ROTATION       0        // default for a cup with no saved orientation: 0 or 2 (see panelOrientation)
 #define INVERT     false        // true if colors come out backwards
 
 #define TRACK       0.06f       // gap between two digits, as a fraction of height
@@ -93,6 +98,7 @@
 #define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation
 #define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
+#define ORIENT_HOLD_MS        8000  // BOOT kept held this long flips the display orientation (saved)
 #define TARE_BLINK_MS          150  // LED acknowledgement of a manual tare
 
 // ---------------------------------------------------------------------------
@@ -112,6 +118,9 @@
 #define LED_B     17
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+Preferences prefs;                     // NVS: per-cup settings that survive reflashing
+uint8_t     rotationNow = ROTATION;    // 0 or 2, loaded from NVS at boot (see panelOrientation)
 
 // ---------------------------------------------------------------------------
 #define RGB(r,g,b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
@@ -754,10 +763,41 @@ static void panelNormalMode() {
 // both set, which no library rotation produces, so setRotation() is used
 // for its width/height bookkeeping only and the MADCTL byte is sent here.
 // BGR stays set as the driver would send it; colour order is LCMCTRL's job.
+// A second board came up rotated 180 with the same build (2026-09-15), so
+// which of the two portrait MADCTLs is "upright" is a per-cup setting:
+// ROTATION is only the default, NVS holds the real value, and serial 'o' or
+// an 8 s BOOT hold flips and saves it.
 // ---------------------------------------------------------------------------
 static void panelOrientation() {
-  uint8_t madctl = (ROTATION == 2) ? 0x08 : 0xC8;   // BGR alone = rotated 180, MY|MX|BGR = upright
-  tft.sendCommand(0x36, &madctl, 1);                 // MADCTL
+  uint8_t madctl = (rotationNow == 2) ? 0x08 : 0xC8;   // BGR alone, or MY|MX|BGR
+  tft.sendCommand(0x36, &madctl, 1);                    // MADCTL
+}
+
+static void panelFlipOrientation() {
+  rotationNow = (rotationNow == 2) ? 0 : 2;
+  prefs.putUChar("rot", rotationNow);
+  panelOrientation();
+  lastDrawn.scr = SCR_BOOT;                             // full redraw on the next tick
+  Serial.printf("[panel] orientation %u saved to NVS (MADCTL 0x%02X)\n",
+                rotationNow, (rotationNow == 2) ? 0x08 : 0xC8);
+}
+
+// Controller ID bytes (RDDID 0x04), raw over SPI at 2 MHz and realigned for
+// the one dummy clock, exactly as tools/panel_probe does it. Board A reads
+// 10 81 B3 here (the init table's 0xC1 write lands in IDSET). Logged so a
+// board revision with different glass wiring can be told apart later.
+static void panelLogId() {
+  uint8_t in[4], id[3];
+  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TFT_CS, LOW);
+  digitalWrite(TFT_DC, LOW);
+  SPI.transfer(0x04);
+  digitalWrite(TFT_DC, HIGH);
+  for (uint8_t i = 0; i < 4; i++) in[i] = SPI.transfer(0x00);
+  digitalWrite(TFT_CS, HIGH);
+  SPI.endTransaction();
+  for (uint8_t i = 0; i < 3; i++) id[i] = (uint8_t)((in[i] << 1) | (in[i + 1] >> 7));
+  Serial.printf("panel RDDID: %02X %02X %02X  (Board A reads 10 81 B3 here)\n", id[0], id[1], id[2]);
 }
 
 // ===========================================================================
@@ -867,10 +907,19 @@ void setup() {
 
   SPI.begin(TFT_SCLK, TFT_MISO, TFT_MOSI, TFT_CS);
 
+  // Per-cup settings from NVS (survive reflashing; only an NVS erase clears them)
+  prefs.begin("ddmcup", false);
+  rotationNow = prefs.getUChar("rot", ROTATION);
+  if (rotationNow != 0 && rotationNow != 2) rotationNow = ROTATION;
+
   tft.begin();
+  panelLogId();
   panelNormalMode();
   tft.setRotation(0);          // library bookkeeping only: 240 wide, 320 tall
-  panelOrientation();          // the MADCTL this glass actually needs
+  panelOrientation();          // the MADCTL this cup is set to
+  Serial.printf("orientation %u%s (MADCTL 0x%02X); serial 'o' or BOOT held 8 s flips and saves\n",
+                rotationNow, prefs.isKey("rot") ? " from NVS" : " (default)",
+                (rotationNow == 2) ? 0x08 : 0xC8);
   tft.invertDisplay(INVERT);
 
   SW = tft.width();
@@ -924,27 +973,39 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
-  // --- BOOT button: short press toggles the diagnostic overlay; a hold of
-  //     TARE_HOLD_MS re-tares the scale (that press then does not toggle)
-  static bool     down     = false;
-  static uint32_t downAt   = 0;
-  static bool     heldDone = false;
+  // --- BOOT button: short press toggles the diagnostic overlay; held for
+  //     TARE_HOLD_MS it re-tares the scale, kept held to ORIENT_HOLD_MS it
+  //     flips the display orientation and saves it (neither press toggles)
+  static bool     down      = false;
+  static uint32_t downAt    = 0;
+  static uint8_t  holdStage = 0;      // 0 nothing yet, 1 tare fired, 2 flip fired
 
   bool pressed = (digitalRead(BOOT_BTN) == LOW);
   if (pressed && !down) {
-    down = true; downAt = now; heldDone = false;
-  } else if (pressed && down && !heldDone && now - downAt >= TARE_HOLD_MS) {
-    heldDone = true;                  // fires once per hold, while still held
+    down = true; downAt = now; holdStage = 0;
+  } else if (pressed && down && holdStage == 0 && now - downAt >= TARE_HOLD_MS) {
+    holdStage = 1;                    // fires once per hold, while still held
     if (scaleOk) scaleStartTare("BOOT held", true);
     else         Serial.println("[tare] ignored: no HX711");
+  } else if (pressed && down && holdStage == 1 && now - downAt >= ORIENT_HOLD_MS) {
+    holdStage = 2;
+    panelFlipOrientation();
   } else if (!pressed && down) {
     down = false;
-    if (!heldDone && now - downAt > 30) {   // debounce; a hold is not a short press
+    if (holdStage == 0 && now - downAt > 30) {   // debounce; a hold is not a short press
       overlayOn = !overlayOn;
       Serial.printf("[btn] overlay %s\n", overlayOn ? "on" : "off");
       if (overlayOn) { tOverlay = now; drawOverlay(); }
       else           { lastDrawn.scr = SCR_BOOT; }   // force base redraw
     }
+  }
+
+  // --- serial commands (bench): o = flip orientation and save, t = tare -----
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if      (c == 'o') panelFlipOrientation();
+    else if (c == 't') { if (scaleOk) scaleStartTare("serial", true); else Serial.println("[tare] ignored: no HX711"); }
+    else if (c == '?') Serial.println("commands: o = flip orientation (saved to NVS), t = tare, ? = help");
   }
 
   // --- drain packets handed over by the receive callback --------------------

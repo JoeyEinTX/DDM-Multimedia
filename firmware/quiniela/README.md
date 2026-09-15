@@ -75,10 +75,17 @@ was identical on every board):
 | Red and blue swapped (horse 1 came up blue) | Bit 5 (XBGR) of the same byte inverts the driver's BGR bit | the same `0x01` |
 | Rotation 0 flipped top-to-bottom, rotation 2 flipped left-to-right | Upright needs both MADCTL flip bits set; the library's portrait rotations set only one | `panelOrientation()` sends MADCTL `0xC8` (`0x08` for `ROTATION 2`) after `setRotation()` |
 
-`ROTATION 0` is upright, `2` is the 180° version. Landscape (`1` and `3`) has
-not been tried since the fix. Horse 15's khaki cloth reads as light grey on
-this glass; that is the colour table, not the controller. The two sketches
-under `tools/` are what found all this.
+Which of the two portrait MADCTLs is upright turned out to differ between
+boards: Board A is upright with `ROTATION 0`, and the bench cup with the scale
+came up rotated 180° with the same build (2026-09-15). So `ROTATION` is only
+the default; each cup keeps its own orientation in NVS. To flip a cup, type
+`o` in the serial monitor or hold BOOT for 8 s (the 3 s tare fires on the way,
+harmless with an empty cup); it redraws at once and remembers across
+reflashes. The cup prints its panel ID bytes (`panel RDDID`) at boot so the
+board revisions can be told apart later. Landscape (`1` and `3`) has not been
+tried since the fix. Horse 15's khaki cloth reads as light grey on this glass;
+that is the colour table, not the controller. The two sketches under `tools/`
+are what found all this.
 
 ### Gateway — plain ESP32 WROOM-32 dev board
 
@@ -291,7 +298,9 @@ baseline to the new reading, so the spike is absorbed rather than counted.
   re-zeroing itself. Once a token is counted the tare freezes.
 - **Hold BOOT for 3 s** to re-tare by hand: the count goes back to 0, the
   current reading becomes "empty", the green LED blinks once and serial prints
-  `[tare]`. A short press still toggles the diagnostic overlay, whose last line
+  `[tare]`. Keep holding to 8 s and the cup flips its display orientation and
+  saves it instead (see the display controller section); `t` over serial also
+  tares. A short press still toggles the diagnostic overlay, whose last line
   now reads `TOKENS:n  NET:±counts` plus the scale state. The cup never shows the
   count on a normal screen; the splash display does that.
 
