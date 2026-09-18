@@ -97,6 +97,16 @@ Event types: `cup_hello`, `cup_online`, `cup_offline`, `cup_claim_mismatch`,
   table is never overwritten. `adopt_roster()` turns the mirrored numbers
   into the first roster without typing 20 MACs.
 
+Adopt only once every cup has reported. It copies the cups DevPi has heard
+from at that moment, so a cup that has not reported yet is left out, and
+adopting again will not add it: from the first roster on, DevPi owns the cup
+numbers, so the gateway reports that cup as `-1` and there is nothing left
+to mirror. A cup left out this way is put back by naming it in a roster,
+through the admin page or `set_roster()`. The roster is also persisted, so a
+short roster is inherited by the next run of the app. The simulator avoids
+all of this by naming all 20 MACs at the start of every scenario rather than
+adopting.
+
 ## SocketIO events
 
 Guest phones share this server for La Subasta, so La Quiniela events go to
