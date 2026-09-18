@@ -439,9 +439,9 @@ Validation:
 
 On a valid line: the RAM roster is replaced **entirely** with the new table
 (a MAC missing from the new roster becomes unknown, `cup: -1`; per-slot
-stats are reset for every slot whose MAC changed; ESP-NOW peers are added
-and removed to match); `rev` becomes `roster_rev`; every MAC whose slot
-changed compared to the previous roster is sent a fresh hello-ack carrying
+stats are reset for every slot whose MAC changed); `rev` becomes
+`roster_rev`; every MAC whose slot changed compared to the previous roster
+is sent a fresh hello-ack carrying
 its new ID, which the cup adopts at once (a newly added MAC needs nothing
 here: it is still sending HELLO and is acked on the next one); a `status` is
 emitted. The gateway also prints one `# [roster] rev N applied: ...` line.
@@ -465,10 +465,14 @@ for an ack) the gateway re-sends the hello-ack with the slot's ID, so a wrong
 ID lasts at most one telemetry period (2 s) once the cup is talking to the
 gateway. DevPi still sees the `claim` on that packet.
 
-ESP-NOW holds at most 20 peers **including the broadcast address**, so the
-gateway can unicast acks to at most 19 cups at a time; the 20th `add_peer`
-fails and is reported as a `# ERR esp_now_add_peer` line. A full 20-cup
-roster needs the protocol v2 assignment packet (or acks by broadcast).
+**Transient ack peers.** ESP-NOW holds 20 peers in all, broadcast included,
+and receiving needs no peer entry, so the broadcast address is the gateway's
+only permanent peer. A hello-ack is queued (one entry per MAC, newest ID
+wins, `DDM_MAX_CUPS + 4` entries, `# ERR ack queue full` if it overflows)
+and sent one at a time from `loop()`: the cup's MAC is added as a peer, the
+ack is sent, and the peer is deleted once the send callback has reported or
+100 ms have passed. Any number of cups can therefore be acked; a dropped or
+lost ack is retried by the cup's next HELLO or by the claim-mismatch re-ack.
 
 #### `debug` — runtime toggle for the human-readable output
 

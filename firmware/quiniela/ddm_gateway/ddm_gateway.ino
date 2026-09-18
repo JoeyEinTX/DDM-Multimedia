@@ -38,6 +38,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_idf_version.h>
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -103,6 +104,8 @@ const int KNOWN_CUPS_N = sizeof(KNOWN_CUPS) / sizeof(KNOWN_CUPS[0]);
 #define DDM_LINE_MAX      1024     // longest serial line, both directions, excluding the newline
 #define RX_QUEUE_LEN    32     // ESP-NOW packets that can wait for loop()
 #define ERR_EXCERPT     40     // characters of a rejected line echoed in the err line
+#define ACK_QUEUE_LEN   (DDM_MAX_CUPS + 4)   // hello-acks waiting to go out, one entry per MAC
+#define ACK_SEND_TIMEOUT_MS 100              // give up waiting for an ack's send callback after this
 
 static const uint8_t BCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
@@ -225,8 +228,15 @@ static int findCupOld(const uint8_t* mac) {
   return -1;
 }
 
-static void addPeer(const uint8_t* mac) {
-  if (esp_now_is_peer_exist(mac)) return;
+// ---------------------------------------------------------------------------
+// ESP-NOW peers. The broadcast address is the only permanent peer: ESP-NOW
+// holds ESP_NOW_MAX_TOTAL_PEER_NUM (20) peers in all, broadcast included, so
+// registering every roster cup would cap the fleet at 19. Receiving needs no
+// peer entry at all; only the unicast hello-ack does, and it gets one for the
+// few milliseconds the frame is in flight (see the ack queue below).
+// ---------------------------------------------------------------------------
+static bool addPeer(const uint8_t* mac) {
+  if (esp_now_is_peer_exist(mac)) return true;
   esp_now_peer_info_t p = {};
   memcpy(p.peer_addr, mac, 6);
   p.channel = DDM_ESPNOW_CHANNEL;
@@ -235,9 +245,10 @@ static void addPeer(const uint8_t* mac) {
   esp_err_t e = esp_now_add_peer(&p);
   if (e != ESP_OK) {
     char m[18]; macFmt(mac, m);
-    textf("ERR esp_now_add_peer %s failed (%d): ESP-NOW holds at most %d peers including broadcast",
-          m, (int)e, ESP_NOW_MAX_TOTAL_PEER_NUM);
+    textf("ERR esp_now_add_peer %s failed (%d)", m, (int)e);
+    return false;
   }
+  return true;
 }
 
 static void delPeer(const uint8_t* mac) {
@@ -253,7 +264,6 @@ static int addCup(const uint8_t* mac) {
       roster[i] = {};
       roster[i].used = true;
       memcpy(roster[i].mac, mac, 6);
-      addPeer(mac);
 
       char m[18]; macFmt(mac, m);
       textf("NEWCUP id=%d mac=%s", i, m);
@@ -275,16 +285,96 @@ static int addCup(const uint8_t* mac) {
 // are zero. Byte-compatible with the shared header; candidate for a proper
 // assignment packet in protocol v2. The cup adopts whatever ID a fresh ack
 // carries, at any time, so this is also how a cup is moved to a new slot.
+// The cup only accepts an ack unicast to its own MAC, never a broadcast.
+//
+// Acks are queued and sent one at a time from loop() (ackTick): the cup's
+// MAC becomes an ESP-NOW peer, the frame goes out, and the peer is deleted
+// once the send callback has reported on it or ACK_SEND_TIMEOUT_MS has
+// passed. Never straight after esp_now_send(): the send is asynchronous and
+// pulling the peer from under it loses the frame. Queued acks are deduped by
+// MAC, newest ID wins. A full queue drops the new ack, and the cup's next
+// HELLO or its claim-mismatch telemetry brings it back. No retries here.
 // ---------------------------------------------------------------------------
-static void sendHelloAck(int id) {
+struct AckEntry { uint8_t mac[6]; uint8_t cupId; };
+
+static AckEntry ackQueue[ACK_QUEUE_LEN];         // ring buffer, no heap
+static int      ackHead = 0, ackCount = 0;       // head = oldest entry
+
+static volatile bool ackInFlight = false;
+static uint8_t       ackMac[6];                  // the transient peer while an ack is in flight
+static uint8_t       ackId       = 0;
+static uint32_t      ackSentAt   = 0;
+static volatile bool ackDone     = false;        // set by the send callback for ackMac
+static volatile bool ackOk       = false;
+
+static void queueAckTo(const uint8_t* mac, uint8_t cupId) {
+  for (int i = 0; i < ackCount; i++) {
+    AckEntry& e = ackQueue[(ackHead + i) % ACK_QUEUE_LEN];
+    if (memcmp(e.mac, mac, 6) == 0) { e.cupId = cupId; return; }   // already queued: newest ID wins
+  }
+  if (ackCount >= ACK_QUEUE_LEN) {
+    char m[18]; macFmt(mac, m);
+    textf("ERR ack queue full, ack to cup %u %s dropped", (unsigned)cupId, m);
+    return;
+  }
+  AckEntry& e = ackQueue[(ackHead + ackCount) % ACK_QUEUE_LEN];
+  memcpy(e.mac, mac, 6);
+  e.cupId = cupId;
+  ackCount++;
+}
+
+static void queueAck(int id) { queueAckTo(roster[id].mac, (uint8_t)id); }
+
+// Send callback, WiFi task: flags the ack in flight and nothing else. Core
+// 3.3 (IDF 5.5) hands over a tx-info struct, older cores the bare MAC.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+static void onDataSent(const esp_now_send_info_t* info, esp_now_send_status_t status) {
+  const uint8_t* mac = info->des_addr;
+#else
+static void onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
+#endif
+  if (ackInFlight && memcmp(mac, ackMac, 6) == 0) {
+    ackOk   = (status == ESP_NOW_SEND_SUCCESS);
+    ackDone = true;
+  }
+}
+
+// One ack in flight at a time. Called every loop() pass; never blocks.
+static void ackTick(uint32_t now) {
+  if (ackInFlight) {
+    if (!ackDone && now - ackSentAt < ACK_SEND_TIMEOUT_MS) return;   // still waiting for the callback
+    if (debugText) {
+      char m[18]; macFmt(ackMac, m);
+      textf("ack to cup %u %s %s", (unsigned)ackId, m,
+            ackDone ? (ackOk ? "delivered" : "not delivered") : "timed out, no send callback");
+    }
+    delPeer(ackMac);
+    ackInFlight = false;
+  }
+  if (ackCount == 0) return;
+
+  AckEntry e = ackQueue[ackHead];
+  ackHead = (ackHead + 1) % ACK_QUEUE_LEN;
+  ackCount--;
+  memcpy(ackMac, e.mac, 6);
+  ackId = e.cupId;
+
+  if (!addPeer(ackMac)) { delPeer(ackMac); return; }   // reported by addPeer; next entry next pass
+
   DdmTelemetryPacket ack = {};
   ack.version = DDM_PROTO_VERSION;
   ack.msgType = DDM_MSG_HELLO;
-  ack.cupId   = (uint8_t)id;
-  esp_err_t e = esp_now_send(roster[id].mac, (const uint8_t*)&ack, sizeof(ack));
-  if (e != ESP_OK && debugText) {
-    char m[18]; macFmt(roster[id].mac, m);
-    textf("ERR ack to cup %d %s not sent (%d)", id, m, (int)e);
+  ack.cupId   = ackId;
+  ackDone     = false;
+  ackOk       = false;
+  ackSentAt   = now;
+  ackInFlight = true;                     // before the send: the callback can run before it returns
+  esp_err_t err = esp_now_send(ackMac, (const uint8_t*)&ack, sizeof(ack));
+  if (err != ESP_OK) {
+    char m[18]; macFmt(ackMac, m);
+    textf("ERR esp_now_send ack to cup %u %s failed (%d)", (unsigned)ackId, m, (int)err);
+    ackInFlight = false;
+    delPeer(ackMac);
   }
 }
 
@@ -423,7 +513,7 @@ static void handlePacket(const uint8_t* mac, int8_t upRssi, const uint8_t* data,
     if (id >= 0) {
       roster[id].lastSeenMs = now;
       roster[id].upRssi     = upRssi;
-      sendHelloAck(id);
+      queueAck(id);
     }
     emitCupHello(id, m);
     if (debugText) textf("HELLO cup=%d mac=%s up_rssi=%d", id, m, upRssi);
@@ -447,7 +537,7 @@ static void handlePacket(const uint8_t* mac, int8_t upRssi, const uint8_t* data,
       // before a gateway reboot, or the cup took a stray HELLO for an ack),
       // send the ack again: the cup adopts a fresh ack at any time. This is
       // the same ack path as HELLO; steady state costs nothing.
-      if (reack || (int)p->cupId != id) sendHelloAck(id);
+      if (reack || (int)p->cupId != id) queueAck(id);
     }
     emitTelem(id, m, p, upRssi);
     if (debugText)
@@ -678,22 +768,18 @@ static void jsonRoster(JsonObjectConst root, const char* line) {
     if (was >= 0) { moved++; reack[i] = true; }   // a newly added MAC is still sending HELLO
     else          { added++; }                    // and gets acked on the next one
   }
-  // ESP-NOW peers follow the table: departing MACs go first, so their entries
-  // in the 20-slot peer list are free before the new MACs are added.
-  for (i = 0; i < DDM_MAX_CUPS; i++)
-    if (rosterOld[i].used && findCup(rosterOld[i].mac) < 0) { left++; delPeer(rosterOld[i].mac); }
-  for (i = 0; i < DDM_MAX_CUPS; i++)
-    if (roster[i].used) addPeer(roster[i].mac);
+  for (i = 0; i < DDM_MAX_CUPS; i++)              // MACs that left the roster, for the report line
+    if (rosterOld[i].used && findCup(rosterOld[i].mac) < 0) left++;
 
   // 2.
   rosterRev = (uint32_t)rev;
 
-  // 3. Every MAC whose slot changed gets a fresh ack with its new ID now,
-  //    through the ordinary ack path (the cup adopts it at once). If the
-  //    ack is lost, the cup's next telemetry carries the old ID and
+  // 3. Every MAC whose slot changed gets a fresh ack with its new ID queued
+  //    now, through the ordinary ack path (the cup adopts it at once). If
+  //    the ack is lost, the cup's next telemetry carries the old ID and
   //    handlePacket() re-acks it.
   for (i = 0; i < DDM_MAX_CUPS; i++)
-    if (reack[i]) sendHelloAck(i);
+    if (reack[i]) queueAck(i);
 
   // 4.
   textf("[roster] rev %lu applied: %d kept, %d moved (re-acked), %d added, %d left",
@@ -822,7 +908,8 @@ void setup() {
     while (true) delay(1000);
   }
   esp_now_register_recv_cb(onDataRecv);
-  addPeer(BCAST);
+  esp_now_register_send_cb(onDataSent);
+  addPeer(BCAST);                          // the one permanent peer
 
   // Seed the roster from the compile-time table (bench mode, until DevPi's
   // first roster line replaces it)
@@ -830,7 +917,6 @@ void setup() {
     roster[i] = {};
     roster[i].used = true;
     memcpy(roster[i].mac, KNOWN_CUPS[i].mac, 6);
-    addPeer(roster[i].mac);
   }
   textf("roster seeded with %d known cup(s)", KNOWN_CUPS_N);
 
@@ -855,6 +941,7 @@ void loop() {
 
   pollSerial();
   drainRx();
+  ackTick(now);
 
   if (demoMode && now - tDemo >= DEMO_STEP_MS) {
     tDemo = now;
