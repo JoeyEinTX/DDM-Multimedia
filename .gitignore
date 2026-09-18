@@ -42,3 +42,7 @@ pi5/data/race_setup.json
 pi5/data/animation_assignments.json
 !pi5/data/animation_registry.json
 pi5/animation_params.json
+
+# Font sources: Impact is licensed with Windows; only the traced ddm_font.h is committed
+*.ttf
+*.TTF

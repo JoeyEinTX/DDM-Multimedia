@@ -157,15 +157,28 @@ If symlinks are genuinely unavailable, copying the file works — but then it is
 on you to re-copy after every edit, and a stale copy produces silently corrupt
 packets rather than a build error.
 
-## `ddm_digits.h` is generated — do not hand-edit
+## `ddm_font.h` is generated — do not hand-edit
 
-> **`ddm_digits.h` is machine-generated output.** It comes from a fontTools
-> tracing pipeline that reads a TTF, extracts the outlines of the digit glyphs,
-> and emits them as polygon data the cup renders directly.
+> **`ddm_font.h` is machine-generated output.** `tools/tracefont.py` reads a TTF
+> with fontTools, flattens and simplifies the outlines of 44 glyphs (`0-9`,
+> `A-Z`, space and `% : - . ! ? /`) and emits them as polygon data on a
+> 1000-unit grid (y = 0 at cap height, 1000 at the baseline) that the cup
+> renders directly, anti-aliased. Every string on the cup goes through it, not
+> just the digits, so **all cup text is uppercase** and limited to that set; a
+> character the font lacks draws as a gap the width of `?`.
 >
-> **Any hand edit is destroyed the next time the generator runs.** To change how
-> the digits look, change the source font or the generator settings and
-> regenerate. Never patch the header.
+> **Any hand edit is destroyed the next time the generator runs.** To change the
+> face, regenerate:
+>
+> ```
+> pip install fonttools
+> python3 tools/tracefont.py IMPACT.TTF ddm_cup/ddm_font.h
+> ```
+>
+> The source TTF is **not** in the repo and must not be committed: Impact is a
+> Monotype typeface licensed with Windows (`C:\Windows\Fonts\impact.ttf`); the
+> traced coordinate data is the only thing that lives here, and `*.ttf` is in
+> `.gitignore`.
 
 ## Build settings
 
@@ -410,6 +423,12 @@ Standalone: streams raw HX711 counts and walks a token calibration over serial
 (`t` tare, `c` start, `+` per token, `d` results). Prints the two `#define`
 lines for `ddm_cup.ino`; the values it measured for the current token print are
 in its header comment and under Scale above.
+
+### `tools/tracefont.py` — glyph tracer
+
+Generates `ddm_cup/ddm_font.h` from a TTF (see the `ddm_font.h` section
+above). Python 3 with `fonttools`; the third argument is the simplification
+tolerance in grid units, default 1.4.
 
 ## Status
 
