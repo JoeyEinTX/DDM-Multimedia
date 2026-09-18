@@ -390,6 +390,55 @@ Serial prints one line per event, `[drop] +1 tokens=7 step=6240 baseline=43512`
 or `[remove] -1 ...`, so a bench session can be grepped. If no HX711 answers at
 boot the cup runs without counting and the overlay says `no HX711`.
 
+## Touch menu
+
+The CYD's resistive touch panel (XPT2046, its own SPI bus on GPIO 25/33/32/39,
+IRQ 36; library **XPT2046_Touchscreen** by Paul Stoffregen) carries a hidden
+maintenance menu, because once the board is inside the cup the BOOT button is
+unreachable. It is built so a guest poking the screen sees a cup that ignores
+them.
+
+- **Open:** press anywhere on the glass and hold for 3 s. A tap does nothing,
+  and nothing is drawn until the 3 s are up.
+- **Locked during a race:** in `DDM_BETTING_OPEN`, `DDM_FINAL_CALL`,
+  `DDM_AT_THE_POST` and `DDM_RUNNING` a completed hold shows `LOCKED DURING
+  RACE` for 1.5 s and goes back. The menu opens in `DDM_PRE_RACE`,
+  `DDM_WINNER`, `DDM_AFTER_PARTY`, and whenever the cup has heard nothing from
+  the gateway for 10 s (a cup with no gateway cannot be in a race).
+- **Closes** after 5 s without a touch, and after most actions. On close the
+  normal screen is redrawn exactly as it was.
+
+Header: `CUP n   HORSE h` and `V0.5  SEP 17 2026   <MAC>` (firmware version
+from `FW_VERSION`, build date from `__DATE__`). Then seven full-width bars:
+
+| Bar | Does |
+| --- | --- |
+| `TARE` | confirm screen (`TARE?`, `PLATE HAS n TOKENS`, `YES` / `NO`); YES runs the same tare as the 3 s BOOT hold, shows `TARED`, closes |
+| `CAL 10` | confirm screen (`PUT EXACTLY 10 TOKENS IN`, `DONE` / `CANCEL`); DONE shows `SETTLING...`, waits up to 6 s for the plate to settle, then does what serial `c10` does (counts/token into NVS, count set to 10), shows the value for 2 s, closes; `NOT SETTLED - TRY AGAIN` returns to the menu |
+| `DIAG` | toggles the diagnostic overlay, closes |
+| `FLIP 180` | toggles both MADCTL flip bits, saves, redraws, closes |
+| `BRIGHT n%` | cycles 100 → 60 → 30 → 100, saved in NVS as `bright` and applied at boot; stays in the menu |
+| `ANNOUNCE` | re-sends `DDM_MSG_HELLO` once, shows `SENT`, stays in the menu |
+| `CLOSE` | closes |
+
+A tapped bar lights up amber for 120 ms before its action runs. Serial prints
+`[menu] open`, `[menu] locked (state N)`, `[menu] tare`, `[menu] cal cpt=N`,
+`[menu] flip madctl=0x..`, `[menu] bright N%`, `[menu] announce`,
+`[menu] close (...)`.
+
+**Touch mapping.** Hit-testing is on y only: bars are full-width and confirm
+screens are top/bottom halves, so rough calibration is fine. The defines at the
+top of `ddm_cup.ino` are `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` (raw XPT2046
+ranges; raw x is the panel's long axis), `TOUCH_SWAP_XY` (true for portrait:
+raw x becomes screen y) and `TOUCH_FLIP_X/Y`. An orientation away from the
+batch default (FLIP 180) is followed automatically. **Both panel batches need
+their touch axes verified:** type `tc` in the serial monitor (a lone `t` still
+tares, after half a second), touch the top, middle and bottom of the glass, and
+check the printed `screen y` runs 0 → 319 top to bottom; if it runs the other
+way set `TOUCH_FLIP_Y`, if it barely changes set `TOUCH_SWAP_XY` the other way.
+A press counts only after three consecutive 50 ms polls, because resistive
+panels chatter at the edge of a press.
+
 ## Tools
 
 ### `tools/panel_probe/` — display controller probe

@@ -36,9 +36,15 @@
  *                      orientation to the next of its four settings and
  *                      save it in NVS for this cup
  *
+ * TOUCH: press anywhere on the glass for 3 s to open the maintenance menu
+ *        (TARE, CAL 10, DIAG, FLIP 180, BRIGHT, ANNOUNCE, CLOSE). A tap does
+ *        nothing at all, on purpose. Refused during a race; closes after
+ *        5 s idle. Once the board is inside the cup this replaces BOOT.
+ *
  * SERIAL (115200):  o = next orientation,  h = mirror left-right,
  *                   v = mirror top-bottom (all saved),  x = forget the saved
  *                   orientation (back to the panel-ID default),  t = tare,
+ *                   tc = print raw and mapped touch coordinates on/off,
  *                   c<N> = N tokens are on the plate: calibrate counts/token
  *                   for this cup and save it (c0 forgets it),  s = apply the
  *                   settled load to the count now,  ? = help
@@ -59,6 +65,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <HX711.h>
+#include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -114,6 +121,33 @@
 #define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
 #define TARE_BLINK_MS          150  // LED acknowledgement of a manual tare
+
+// ---------------------------------------------------------------------------
+// Touch menu — XPT2046 on its own SPI bus (HSPI; the display owns SPI/VSPI).
+// Raw x is the panel's LONG axis (the 320 px one) and raw y the short one,
+// so in portrait raw x becomes screen y and raw y screen x: TOUCH_SWAP_XY.
+// Verify per panel batch with serial "tc". Every button is a full-width bar,
+// so only the y axis has to be right; 15% of error still lands in the band.
+// ---------------------------------------------------------------------------
+#define FW_VERSION      "0.5"
+#define TOUCH_CLK          25
+#define TOUCH_CS           33
+#define TOUCH_MOSI         32
+#define TOUCH_MISO         39
+#define TOUCH_IRQ          36
+#define TOUCH_X_MIN       200   // raw x (long axis) range
+#define TOUCH_X_MAX      3700
+#define TOUCH_Y_MIN       240   // raw y (short axis) range
+#define TOUCH_Y_MAX      3800
+#define TOUCH_SWAP_XY    true   // portrait: raw x -> screen y, raw y -> screen x
+#define TOUCH_FLIP_X    false   // on top of that, mirror screen x / y; an orientation away from the
+#define TOUCH_FLIP_Y    false   // batch default (FLIP 180) is followed automatically
+#define TOUCH_POLL_MS      50   // resistive panels chatter: a press counts after TOUCH_DEBOUNCE polls
+#define TOUCH_DEBOUNCE      3
+#define MENU_HOLD_MS     3000   // press anywhere this long to open; nothing is drawn before that
+#define MENU_IDLE_MS     5000   // auto-close after this long without a touch
+#define MENU_HL_MS        120   // bar highlight on tap
+#define MENU_CAL_WAIT_MS 6000   // CAL 10 waits this long for the plate to settle
 
 // ---------------------------------------------------------------------------
 // CYD hardware pins — correct for the ESP32-2432S028R, leave alone
@@ -591,6 +625,42 @@ uint32_t tAnim       = 0;    // scratched/podium frame timer
 uint8_t  animStep    = 0;
 uint32_t tOverlay    = 0;
 
+// ---------------------------------------------------------------------------
+// Touch menu state (the code is under TOUCH MENU below). Declared up here
+// because renderTick() checks `menu` before it draws anything.
+// ---------------------------------------------------------------------------
+SPIClass            touchSPI(HSPI);
+XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
+
+enum MenuScreen : uint8_t {
+  MENU_NONE,            // closed: the cup looks exactly as it always did
+  MENU_MAIN,
+  MENU_TARE_CONFIRM,
+  MENU_CAL_CONFIRM,
+  MENU_CAL_SETTLING,    // waiting for the plate to settle, up to MENU_CAL_WAIT_MS
+  MENU_TOAST            // a message for a while, then menuAfterToast
+};
+uint8_t  menu           = MENU_NONE;
+uint8_t  menuAfterToast = MENU_NONE;
+uint32_t tMenuTouch     = 0;     // last touch while open: idle timeout
+uint32_t tToastEnd      = 0;
+uint32_t tCalStart      = 0;
+int8_t   menuHl         = -1;    // bar highlighted on tap until tMenuHl, then its action runs
+uint32_t tMenuHl        = 0;
+bool     menuLongFired  = false; // this press already opened (or was refused) the menu
+uint8_t  brightPct      = 100;   // backlight, NVS "bright": 100, 60 or 30
+
+// touch panel
+uint32_t tTouchPoll  = 0;
+uint8_t  touchPolls  = 0;        // consecutive polls with touched()
+bool     touchHeld   = false;    // debounced
+bool     touchEdge   = false;    // true only on the poll where a press began
+uint32_t tTouchDown  = 0;
+int      touchX = 0, touchY = 0; // mapped to screen pixels
+bool     touchDebug  = false;    // serial "tc"
+uint32_t tTouchDebug = 0;
+uint32_t tPendingT   = 0;        // serial 't' seen, waiting to see whether a 'c' follows
+
 // --- screens ---------------------------------------------------------------
 
 void drawWaiting() {
@@ -773,6 +843,7 @@ static void drawBase() {          // draws `cur`
 
 static void renderTick() {
   uint32_t now = millis();
+  if (menu != MENU_NONE) return;   // the touch menu owns the glass; closing marks the base dirty
   computeRendered();
   const Rendered& r = cur;
 
@@ -1196,6 +1267,286 @@ static void scaleTick(uint32_t now) {
 }
 
 // ===========================================================================
+// TOUCH MENU — hidden maintenance UI on the XPT2046
+//
+// A 3 s press anywhere opens it; a tap shows nothing at all, on purpose. It
+// is refused while a race is on, and it closes itself after MENU_IDLE_MS
+// without a touch. Every button is a full-width bar and every confirm
+// screen is top/bottom halves, so only the y axis of the touch mapping has
+// to be right. While the menu owns the glass renderTick() draws nothing;
+// closing marks the base screen dirty, so it comes back exactly as it was.
+// Everything is millis() driven; nothing here blocks.
+// ===========================================================================
+enum { MB_TARE, MB_CAL, MB_DIAG, MB_FLIP, MB_BRIGHT, MB_ANNOUNCE, MB_CLOSE, MB_COUNT };
+static const char* const MENU_LABELS[MB_COUNT] = { "TARE", "CAL 10", "DIAG", "FLIP 180", "BRIGHT", "ANNOUNCE", "CLOSE" };
+#define MENU_HDR1_CY    15
+#define MENU_HDR2_CY    33
+#define MENU_BAR_Y0     46
+#define MENU_BAR_H      34
+#define MENU_BAR_PITCH  39      // 7 bars: 46 .. 314
+#define MENU_YES_Y     170      // confirm screens: title above, two bars below
+#define MENU_YES_H      70
+#define MENU_NO_Y      250
+#define MENU_NO_H       66
+
+static void serialTare() {
+  if (scaleOk) scaleStartTare("serial", true);
+  else         Serial.println("[tare] ignored: no HX711");
+}
+
+static int menuMapAxis(int raw, int lo, int hi, int px) {
+  long v = ((long)(raw - lo) * px) / (hi - lo);
+  if (v < 0) v = 0;
+  if (v > px - 1) v = px - 1;
+  return (int)v;
+}
+
+// Poll the panel every TOUCH_POLL_MS. A press counts after TOUCH_DEBOUNCE
+// consecutive touched() polls; sets touchHeld, touchEdge, touchX, touchY.
+static void touchPoll(uint32_t now) {
+  touchEdge = false;
+  if (now - tTouchPoll < TOUCH_POLL_MS) return;
+  tTouchPoll = now;
+
+  if (touch.touched()) { if (touchPolls < TOUCH_DEBOUNCE) touchPolls++; }
+  else                 touchPolls = 0;
+  bool held = (touchPolls >= TOUCH_DEBOUNCE);
+
+  if (held) {
+    TS_Point p = touch.getPoint();                       // raw: x = long axis, y = short axis
+    int sxv, syv;
+    if (TOUCH_SWAP_XY) {
+      sxv = menuMapAxis(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, SW);
+      syv = menuMapAxis(p.x, TOUCH_X_MIN, TOUCH_X_MAX, SH);
+    } else {
+      sxv = menuMapAxis(p.x, TOUCH_X_MIN, TOUCH_X_MAX, SW);
+      syv = menuMapAxis(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, SH);
+    }
+    // The touch panel is glued to the glass; the picture is not. Follow any
+    // orientation change away from this batch's default so FLIP 180 keeps
+    // the menu usable.
+    uint8_t rel = orientFlips ^ panelDefaultFlips();
+    bool fx = TOUCH_FLIP_X ^ ((rel & 0x40) != 0);
+    bool fy = TOUCH_FLIP_Y ^ ((rel & 0x80) != 0);
+    touchX = fx ? SW - 1 - sxv : sxv;
+    touchY = fy ? SH - 1 - syv : syv;
+    if (touchDebug && (!touchHeld || now - tTouchDebug >= 250)) {
+      tTouchDebug = now;
+      Serial.printf("[touch] raw x=%d y=%d z=%d -> screen x=%d y=%d\n", p.x, p.y, p.z, touchX, touchY);
+    }
+  }
+
+  if (held && !touchHeld) {
+    touchHeld = true; touchEdge = true; tTouchDown = now; menuLongFired = false;
+  } else if (!held && touchHeld) {
+    touchHeld = false;
+  }
+}
+
+static bool menuRaceLocked(uint32_t now) {
+  bool noLink = (lastPacketAt == 0) || (now - lastPacketAt > LINK_TIMEOUT_MS);
+  if (noLink || !haveState) return false;                // no gateway: cannot be in a race
+  uint8_t s = lastState.raceState;
+  return s == DDM_BETTING_OPEN || s == DDM_FINAL_CALL || s == DDM_AT_THE_POST || s == DDM_RUNNING;
+}
+
+static void menuDrawBar(int i, bool hl) {
+  int y = MENU_BAR_Y0 + i * MENU_BAR_PITCH;
+  uint16_t bg = hl ? C_AMBER : C_DIM, fg = hl ? C_BLACK : C_WHITE;
+  tft.fillRect(0, y, SW, MENU_BAR_H, bg);
+  char buf[16];
+  if (i == MB_BRIGHT) snprintf(buf, sizeof(buf), "BRIGHT %u%%", brightPct);
+  else                snprintf(buf, sizeof(buf), "%s", MENU_LABELS[i]);
+  textBg = bg;
+  centerTextCap(buf, SW / 2, y + MENU_BAR_H / 2, SW - 24, fg, 22);
+}
+
+static void menuDrawMain() {
+  tft.fillScreen(C_BLACK);
+  textBg = C_BLACK;
+  char l1[32], l2[64], date[16];
+  if (myCupId >= 0)
+    snprintf(l1, sizeof(l1), "CUP %d   HORSE %u", myCupId, haveState ? lastState.horseForCup[myCupId] : 0);
+  else
+    snprintf(l1, sizeof(l1), "CUP -   HORSE -");
+  strncpy(date, __DATE__, sizeof(date) - 1);             // "Sep 17 2026": the glyph set has no lowercase
+  date[sizeof(date) - 1] = 0;
+  for (char* p = date; *p; p++) *p = (char)toupper((unsigned char)*p);
+  snprintf(l2, sizeof(l2), "V%s  %s   %02X:%02X:%02X:%02X:%02X:%02X", FW_VERSION, date,
+           myMac[0], myMac[1], myMac[2], myMac[3], myMac[4], myMac[5]);
+  centerTextCap(l1, SW / 2, MENU_HDR1_CY, SW - 16, C_AMBER, 14);
+  centerTextCap(l2, SW / 2, MENU_HDR2_CY, SW - 12, C_DIM, 10);
+  for (int i = 0; i < MB_COUNT; i++) menuDrawBar(i, false);
+}
+
+// Title (and a second line) on top, YES-style bar then NO-style bar below.
+static void menuDrawConfirm(const char* title, int titleCap, const char* sub, int subCap,
+                            const char* yes, const char* no) {
+  tft.fillScreen(C_BLACK);
+  textBg = C_BLACK;
+  centerTextCap(title, SW / 2, 62, SW - 20, C_WHITE, titleCap);
+  if (sub) centerTextCap(sub, SW / 2, 112, SW - 16, C_AMBER, subCap);
+  tft.fillRect(0, MENU_YES_Y, SW, MENU_YES_H, C_AMBER);
+  textBg = C_AMBER;
+  centerTextCap(yes, SW / 2, MENU_YES_Y + MENU_YES_H / 2, SW - 24, C_BLACK, 28);
+  tft.fillRect(0, MENU_NO_Y, SW, MENU_NO_H, C_DIM);
+  textBg = C_DIM;
+  centerTextCap(no, SW / 2, MENU_NO_Y + MENU_NO_H / 2, SW - 24, C_WHITE, 28);
+}
+
+static void menuToast(const char* s, uint32_t ms, uint8_t next) {
+  tft.fillScreen(C_BLACK);
+  textBg = C_BLACK;
+  centerTextCap(s, SW / 2, SH / 2, SW - 16, C_WHITE, 30);
+  menu = MENU_TOAST;
+  tToastEnd = millis() + ms;
+  menuAfterToast = next;
+}
+
+static void menuShowMain(uint32_t now) {
+  menu = MENU_MAIN;
+  menuHl = -1;
+  tMenuTouch = now;
+  menuDrawMain();
+}
+
+static void menuClose(const char* why) {
+  menu = MENU_NONE;
+  menuHl = -1;
+  lastDrawn.scr = SCR_BOOT;                              // base screen back, exactly as before
+  Serial.printf("[menu] close (%s)\n", why);
+}
+
+static void menuOpen(uint32_t now) {
+  if (menuRaceLocked(now)) {
+    Serial.printf("[menu] locked (state %u)\n", lastState.raceState);
+    menuToast("LOCKED DURING RACE", 1500, MENU_NONE);
+    return;
+  }
+  Serial.println("[menu] open");
+  menuShowMain(now);
+}
+
+static void menuAction(int i, uint32_t now) {
+  switch (i) {
+    case MB_TARE: {
+      char sub[32];
+      snprintf(sub, sizeof(sub), "PLATE HAS %u TOKENS", tokens);
+      menu = MENU_TARE_CONFIRM;
+      menuDrawConfirm("TARE?", 40, sub, 16, "YES", "NO");
+      break;
+    }
+    case MB_CAL:
+      menu = MENU_CAL_CONFIRM;
+      menuDrawConfirm("PUT EXACTLY 10", 26, "TOKENS IN", 26, "DONE", "CANCEL");
+      break;
+    case MB_DIAG:
+      overlayOn = !overlayOn;
+      Serial.printf("[menu] diag %s\n", overlayOn ? "on" : "off");
+      menuClose("diag");
+      break;
+    case MB_FLIP:
+      panelSetOrientation(orientFlips ^ 0xC0, "menu FLIP 180");
+      Serial.printf("[menu] flip madctl=0x%02X\n", 0x08 | orientFlips);
+      menuClose("flip");
+      break;
+    case MB_BRIGHT:
+      brightPct = (brightPct == 100) ? 60 : (brightPct == 60) ? 30 : 100;
+      backlight((uint8_t)((unsigned)brightPct * 255 / 100));
+      prefs.putUChar("bright", brightPct);
+      Serial.printf("[menu] bright %u%%\n", brightPct);
+      menuDrawBar(MB_BRIGHT, false);
+      tMenuTouch = now;
+      break;
+    case MB_ANNOUNCE:
+      sendHello();
+      Serial.println("[menu] announce");
+      menuToast("SENT", 800, MENU_MAIN);
+      break;
+    case MB_CLOSE:
+      menuClose("button");
+      break;
+  }
+}
+
+static void menuTick(uint32_t now) {
+  touchPoll(now);
+  if (touchHeld) tMenuTouch = now;                       // any touch resets the idle timer
+
+  switch (menu) {
+    case MENU_NONE:
+      if (touchHeld && !menuLongFired && now - tTouchDown >= MENU_HOLD_MS) {
+        menuLongFired = true;
+        menuOpen(now);
+      }
+      return;
+
+    case MENU_TOAST:
+      if ((int32_t)(now - tToastEnd) >= 0) {
+        if (menuAfterToast == MENU_MAIN) menuShowMain(now);
+        else                             menuClose("toast");
+      }
+      return;
+
+    case MENU_CAL_SETTLING: {
+      long settled;
+      if (scaleSettled(&settled)) {
+        scaleCalibrate(10);                              // same as serial c10: NVS cpt, tokens = 10
+        Serial.printf("[menu] cal cpt=%ld\n", countsPerToken);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ld COUNTS/TOKEN", countsPerToken);
+        menuToast(buf, 2000, MENU_NONE);
+      } else if (now - tCalStart > MENU_CAL_WAIT_MS) {
+        menuToast("NOT SETTLED - TRY AGAIN", 2000, MENU_MAIN);
+      }
+      return;
+    }
+
+    default:
+      break;
+  }
+
+  // MENU_MAIN and the two confirm screens
+  if (now - tMenuTouch > MENU_IDLE_MS) { menuClose("timeout"); return; }
+  if (menuHl >= 0) {                                     // highlight shown: run the action after MENU_HL_MS
+    if ((int32_t)(now - tMenuHl) >= 0) { int i = menuHl; menuHl = -1; menuAction(i, now); }
+    return;
+  }
+  if (!touchEdge) return;                                // taps only, on the press edge
+
+  if (menu == MENU_MAIN) {
+    if (touchY < MENU_BAR_Y0) return;
+    int i = (touchY - MENU_BAR_Y0) / MENU_BAR_PITCH;
+    if (i >= MB_COUNT) return;
+    menuHl = (int8_t)i;
+    tMenuHl = now + MENU_HL_MS;
+    menuDrawBar(i, true);
+  } else if (menu == MENU_TARE_CONFIRM) {
+    if (touchY >= MENU_YES_Y - 5 && touchY < MENU_NO_Y - 5) {
+      serialTare();                                      // the same routine the 3 s BOOT hold uses
+      Serial.println("[menu] tare");
+      menuToast("TARED", 1000, MENU_NONE);
+    } else if (touchY >= MENU_NO_Y - 5) {
+      menuShowMain(now);
+    }
+  } else if (menu == MENU_CAL_CONFIRM) {
+    if (touchY >= MENU_YES_Y - 5 && touchY < MENU_NO_Y - 5) {
+      if (!scaleOk || scalePhase != SCALE_RUNNING) {
+        menuToast("SCALE NOT READY", 1500, MENU_MAIN);
+      } else {
+        menu = MENU_CAL_SETTLING;
+        tCalStart = now;
+        tft.fillScreen(C_BLACK);
+        textBg = C_BLACK;
+        centerTextCap("SETTLING...", SW / 2, SH / 2, SW - 16, C_WHITE, 30);
+      }
+    } else if (touchY >= MENU_NO_Y - 5) {
+      menuShowMain(now);
+    }
+  }
+}
+
+// ===========================================================================
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -1232,7 +1583,9 @@ void setup() {
   Serial.printf("screen %dx%d\n", SW, SH);
 
   backlightInit();
-  backlight(255);
+  brightPct = prefs.getUChar("bright", 100);            // touch menu BRIGHT: 100, 60 or 30
+  if (brightPct != 100 && brightPct != 60 && brightPct != 30) brightPct = 100;
+  backlight((uint8_t)((unsigned)brightPct * 255 / 100));
 
   // ESP-NOW only: STA mode, never associated, pinned channel
   WiFi.mode(WIFI_STA);
@@ -1277,6 +1630,14 @@ void setup() {
   tokenThreshold = countsPerToken / 2;
   Serial.printf("scale: %ld counts/token%s, threshold %ld; serial c<N> recalibrates with N tokens on the plate\n",
                 countsPerToken, prefs.isKey("cpt") ? " from NVS" : " (default)", tokenThreshold);
+
+  // Touch panel: XPT2046 on HSPI with its own pins. The library's begin()
+  // calls touchSPI.begin() again with default pins, which is a no-op because
+  // the bus is already up on ours.
+  touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+  touch.begin(touchSPI);
+  Serial.printf("touch: XPT2046 on HSPI (CLK %d MISO %d MOSI %d CS %d IRQ %d); hold 3 s for the menu, serial tc prints coordinates\n",
+                TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS, TOUCH_IRQ);
 
   renderTick();   // puts up the waiting screen
 }
@@ -1324,20 +1685,33 @@ void loop() {
       scaleCalibrate(calNum);
       calDigits = -1;
     }
+    if (tPendingT) {                                      // a 't' was seen: 'tc' toggles the touch print, anything else tares
+      tPendingT = 0;
+      if (c == 'c') {
+        touchDebug = !touchDebug;
+        Serial.printf("[touch] coordinate print %s\n", touchDebug ? "ON" : "off");
+        continue;
+      }
+      serialTare();
+    }
     if      (c == 'c') { calNum = 0; calDigits = 0; tCalDigit = now; }
     else if (c == 'o') panelNextOrientation("serial o");
     else if (c == 'h') panelSetOrientation(orientFlips ^ 0x40, "serial h: mirror left-right");
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
     else if (c == 'x') { prefs.remove("flip"); panelUseDefaultOrientation(); }
-    else if (c == 't') { if (scaleOk) scaleStartTare("serial", true); else Serial.println("[tare] ignored: no HX711"); }
+    else if (c == 't') tPendingT = now ? now : 1;         // tare after 500 ms unless a 'c' follows (tc)
     else if (c == 's') scaleApplySettled();
     else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), "
-                                      "x = forget the saved orientation and use the panel-ID default, t = tare, s = apply the settled load to the count, "
+                                      "x = forget the saved orientation and use the panel-ID default, t = tare, tc = toggle the touch coordinate print, s = apply the settled load to the count, "
                                       "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
   }
   if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed
     scaleCalibrate(calNum);
     calDigits = -1;
+  }
+  if (tPendingT && now - tPendingT > 500) {                // lone 't': tare
+    tPendingT = 0;
+    serialTare();
   }
 
   // --- drain packets handed over by the receive callback --------------------
@@ -1369,6 +1743,7 @@ void loop() {
   }
 
   scaleTick(now);
+  menuTick(now);
 
   // --- uplink cadence --------------------------------------------------------
   if (myCupId < 0) {
