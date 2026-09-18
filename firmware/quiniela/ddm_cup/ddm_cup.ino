@@ -520,7 +520,14 @@ volatile bool  rxAckPending   = false;
 DdmStatePacket rxStateBuf;
 uint8_t        rxAckCupId     = 0;
 uint8_t        rxSrcMac[6];
+uint8_t        rxAckSrcMac[6];               // sender of the last ACCEPTED ack; a rejected frame never lands here
 int8_t         rxRssiVal      = 0;
+volatile uint32_t ackRejects  = 0;           // HELLO-layout frames that were not an ack for this cup
+
+// True only for an assigned, in-range ID. Every read of horseForCup[myCupId]
+// or scratched[myCupId] sits behind this: an unassigned or out-of-range ID
+// shows the MAC waiting screen and keeps sending HELLO, and never indexes.
+static bool cupIdValid() { return myCupId >= 0 && myCupId < DDM_MAX_CUPS; }
 
 // ---------------------------------------------------------------------------
 // Receive path. Core 3.x hands us esp_now_recv_info_t (with per-packet RSSI);
@@ -530,9 +537,11 @@ int8_t         rxRssiVal      = 0;
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   const uint8_t* src = info->src_addr;
   int8_t rssi = info->rx_ctrl ? info->rx_ctrl->rssi : 0;
+  const bool toUs = (memcmp(info->des_addr, myMac, 6) == 0);   // unicast to this cup, not a broadcast
 #else
 void onDataRecv(const uint8_t* src, const uint8_t* data, int len) {
-  int8_t rssi = 0;   // core 2.x recv path exposes no RSSI
+  int8_t rssi = 0;         // core 2.x recv path exposes no RSSI...
+  const bool toUs = true;  // ...and no destination address, so a broadcast cannot be told apart there
 #endif
   if (len < 2) return;
   if (data[0] != DDM_PROTO_VERSION) { versionRejects++; return; }
@@ -546,9 +555,19 @@ void onDataRecv(const uint8_t* src, const uint8_t* data, int len) {
   } else if (data[1] == DDM_MSG_HELLO && len == (int)sizeof(DdmTelemetryPacket)) {
     // Gateway's hello-ack: the DdmTelemetryPacket layout coming back at us
     // with cupId = the ID this cup was assigned (see gateway PROTOCOL NOTE).
+    // Only a frame unicast to this cup, with the right version and an ID in
+    // range, is an ack. A cup with no gateway yet BROADCASTS its own HELLO in
+    // this same layout with cupId 0xFF and every cup on the channel hears it;
+    // taken for an ack, that made a cup adopt ID 255 and register the
+    // neighbouring cup as its gateway. Anything else is counted and dropped:
+    // no ID change, no gateway registration, the HELLO retry loop goes on.
     const DdmTelemetryPacket* p = (const DdmTelemetryPacket*)data;
+    if (!toUs || p->version != DDM_PROTO_VERSION || p->cupId >= DDM_MAX_CUPS) {
+      ackRejects = ackRejects + 1;
+      return;
+    }
     rxAckCupId = p->cupId;
-    memcpy((void*)rxSrcMac, src, 6);
+    memcpy((void*)rxAckSrcMac, src, 6);
     rxRssiVal = rssi;
     rxAckPending = true;
   }
@@ -574,7 +593,7 @@ static void sendHello() {
   DdmTelemetryPacket p = {};
   p.version = DDM_PROTO_VERSION;
   p.msgType = DDM_MSG_HELLO;
-  p.cupId   = (myCupId < 0) ? 0xFF : (uint8_t)myCupId;  // 0xFF = unassigned;
+  p.cupId   = cupIdValid() ? (uint8_t)myCupId : 0xFF;   // 0xFF = unassigned;
                                                         // gateway keys on MAC
   p.rssi    = lastRssi;
   esp_now_send(gatewayKnown ? gatewayMac : BCAST, (const uint8_t*)&p, sizeof(p));
@@ -771,7 +790,7 @@ void drawOverlay() {
   int h = 78;                       // four lines of 11 px Impact
   int y = SH - h;
   uint8_t horse = 0, st = 0;
-  if (haveState && myCupId >= 0) {
+  if (haveState && cupIdValid()) {
     horse = lastState.horseForCup[myCupId];
     st    = lastState.raceState;
   }
@@ -786,7 +805,7 @@ void drawOverlay() {
            myCupId, horse, st, (unsigned long)versionRejects);
   drawTextLeft(line, x0, y + 5, cap, C_WHITE, C_BLACK);
 
-  snprintf(line, sizeof(line), "RSSI:%d DBM  DROP:%lu", lastRssi, (unsigned long)droppedCount);
+  snprintf(line, sizeof(line), "RSSI:%d DBM  DROP:%lu  ACK!:%lu", lastRssi, (unsigned long)droppedCount, (unsigned long)ackRejects);
   drawTextLeft(line, x0, y + 5 + pitch, cap, C_WHITE, C_BLACK);
 
   if (lastPacketAt == 0)
@@ -810,14 +829,14 @@ void drawOverlay() {
 static void computeRendered() {   // fills `cur`
   cur.noLink = (lastPacketAt != 0) && (millis() - lastPacketAt > LINK_TIMEOUT_MS);
 
-  if (myCupId < 0) {
+  if (!cupIdValid()) {
     cur.scr = SCR_WAITING; cur.horse = 0;
     return;
   }
 
   uint8_t horse     = haveState ? lastState.horseForCup[myCupId] : 0;
   uint8_t scratched = haveState ? lastState.scratched[myCupId]   : 0;
-  uint8_t state     = haveState ? lastState.raceState            : DDM_PRE_RACE;
+  uint8_t state     = haveState ? lastState.raceState            : (uint8_t)DDM_PRE_RACE;
 
   if (horse == 0)                { cur.scr = SCR_NO_HORSE;  cur.horse = 0;     }
   else if (scratched)            { cur.scr = SCR_SCRATCHED; cur.horse = horse; }
@@ -1365,7 +1384,7 @@ static void menuDrawMain() {
   tft.fillScreen(C_BLACK);
   textBg = C_BLACK;
   char l1[32], l2[64], date[16];
-  if (myCupId >= 0)
+  if (cupIdValid())
     snprintf(l1, sizeof(l1), "CUP %d   HORSE %u", myCupId, haveState ? lastState.horseForCup[myCupId] : 0);
   else
     snprintf(l1, sizeof(l1), "CUP -   HORSE -");
@@ -1717,7 +1736,7 @@ void loop() {
   // --- drain packets handed over by the receive callback --------------------
   if (rxAckPending) {
     rxAckPending = false;
-    ensureGatewayPeer((const uint8_t*)rxSrcMac);
+    ensureGatewayPeer((const uint8_t*)rxAckSrcMac);   // only ever the sender of an accepted ack
     lastRssi     = rxRssiVal;
     lastPacketAt = now;
     if ((int)rxAckCupId != myCupId) {
@@ -1746,7 +1765,7 @@ void loop() {
   menuTick(now);
 
   // --- uplink cadence --------------------------------------------------------
-  if (myCupId < 0) {
+  if (!cupIdValid()) {
     if (now - tHello >= HELLO_MS) {
       tHello = now;
       sendHello();
