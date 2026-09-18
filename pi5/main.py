@@ -24,6 +24,7 @@ from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 from la_subasta import la_subasta_bp, init_la_subasta
+from la_quiniela import la_quiniela_bp, init_la_quiniela, start_la_quiniela
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -1328,6 +1329,12 @@ init_la_subasta(socketio=socketio, racing_service=racing_service)
 app.register_blueprint(la_subasta_bp)
 print("La Subasta initialised (/la-subasta)")
 
+# La Quiniela gateway bridge: routes + SocketIO room now, the serial thread
+# only from the __main__ block below (importing this module never opens a port)
+init_la_quiniela(socketio=socketio)
+app.register_blueprint(la_quiniela_bp)
+print("La Quiniela bridge initialised (/api/lq)")
+
 
 # ---------------------------------------------------------------------------
 # Socket.IO event handlers
@@ -1374,5 +1381,11 @@ if __name__ == '__main__':
     print(f"  Racing Service: READY (auto-progression via POST /api/racing/start)")
     print(f"\n  Debug Mode: {FLASK_DEBUG}\n")
     print("="*60 + "\n")
+    
+    # Start the La Quiniela serial bridge exactly once. With debug on, the
+    # Werkzeug reloader runs this file twice; only the child that serves
+    # requests has WERKZEUG_RUN_MAIN set, and only it may open the port.
+    if not FLASK_DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        start_la_quiniela()
     
     socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)

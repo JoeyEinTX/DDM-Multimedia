@@ -8,3 +8,4 @@ python-socketio==5.10.0
 python-engineio==4.8.0
 anthropic
 python-dotenv
+pyserial==3.5

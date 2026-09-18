@@ -57,3 +57,29 @@ ANIMATION_ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), 'data', 'an
 WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
 WEATHER_LOCATION = "Dallas,TX"
 WEATHER_CACHE_MINUTES = 30
+
+
+# ---------------------------------------------------------------------------
+# La Quiniela gateway bridge (pi5/la_quiniela/, see pi5/LQ_BRIDGE.md)
+#
+# Every key here can be overridden by an environment variable of the same
+# name prefixed DDM_ (for example DDM_LQ_SERIAL_PORT=/dev/pts/3 points the
+# app at a simulator without editing this file).
+# ---------------------------------------------------------------------------
+def _lq_env(name, default):
+    raw = os.environ.get('DDM_' + name)
+    if raw is None:
+        return default
+    if isinstance(default, bool):
+        return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+    if isinstance(default, int):
+        return int(raw)
+    return raw
+
+LQ_BRIDGE_ENABLED = _lq_env('LQ_BRIDGE_ENABLED', True)    # master switch
+LQ_SERIAL_PORT = _lq_env('LQ_SERIAL_PORT', '')            # empty = bridge idles; on DevPi a /dev/serial/by-id/... path, never /dev/ttyUSB0
+LQ_SERIAL_BAUD = _lq_env('LQ_SERIAL_BAUD', 115200)
+LQ_HEARTBEAT_LOG_S = _lq_env('LQ_HEARTBEAT_LOG_S', 10)    # per-cup heartbeat interval for logging and display refresh
+LQ_CUP_OFFLINE_S = _lq_env('LQ_CUP_OFFLINE_S', 6)         # no telemetry for this long = cup offline
+LQ_GATEWAY_OFFLINE_S = _lq_env('LQ_GATEWAY_OFFLINE_S', 12) # no line at all for this long = gateway offline
+LQ_DEV_ENDPOINTS = _lq_env('LQ_DEV_ENDPOINTS', False)     # enables POST /api/lq/dev/* (testing only)
