@@ -38,7 +38,8 @@ from la_quiniela import bridge as bridge_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import (  # noqa: E402
-    HELLO_EVENT_MIN_S, LQ_ROOM, PER_CUP_EVENT_MIN_S, RESEND_MIN_S, LqBridge, load_settings,
+    HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX, PER_CUP_EVENT_MIN_S,
+    RESEND_MIN_S, LqBridge, load_settings,
 )
 from la_quiniela.models import LqDb  # noqa: E402
 
@@ -84,27 +85,54 @@ class FakeClock:
 
 
 class FakeSerial:
-    """Lines fed by the test come out of readline(); write() is captured."""
+    """Bytes fed by the test come out of read(); write() is captured. The
+    reader API matches pyserial's: read(n) returns up to n bytes and b"" on
+    timeout, in_waiting says how many are queued, reset_input_buffer drops
+    them. Deliberately no readline(): the bridge must never use one."""
 
     def __init__(self):
-        self.inbox = queue.Queue()
+        self.buf = bytearray()
+        self.lock = threading.Lock()
         self.written = []
         self.closed = False
         self.fail_reads = False
         self.fail_writes = False
+        self.read_raises = None        # raise this on the next read, then clear
+        self.resets = 0
 
     def feed(self, data):
         if isinstance(data, str):
             data = data.encode("utf-8")
-        self.inbox.put(data)
+        with self.lock:
+            self.buf += data
 
-    def readline(self):
+    @property
+    def in_waiting(self):
+        with self.lock:
+            return len(self.buf)
+
+    def read(self, size=1):
         if self.fail_reads:
             raise OSError("device disappeared")
-        try:
-            return self.inbox.get(timeout=0.02)
-        except queue.Empty:
-            return b""
+        if self.read_raises is not None:
+            exc, self.read_raises = self.read_raises, None
+            raise exc
+        deadline = time.time() + 0.02
+        while True:
+            with self.lock:
+                if self.buf:
+                    n = min(int(size), len(self.buf))
+                    out = bytes(self.buf[:n])
+                    del self.buf[:n]
+                    return out
+            if time.time() >= deadline:
+                return b""
+            time.sleep(0.002)
+
+    def reset_input_buffer(self):
+        self.resets += 1
+        with self.lock:
+            self.buf.clear()
 
     def write(self, data):
         if self.fail_writes:
@@ -140,6 +168,22 @@ class StubSocketIO:
 _current = None
 
 
+class ConsoleCapture:
+    """Collects the bridge's [LQ] console lines instead of printing them."""
+
+    def __init__(self):
+        self.lines = []
+
+    def __call__(self, text):
+        self.lines.append(text)
+
+    def matching(self, needle):
+        return [l for l in self.lines if needle in l]
+
+    def clear(self):
+        self.lines.clear()
+
+
 def _fresh_bridge(clock=True, **settings):
     """A bridge on an empty database with a fake port, stub socketio and (by
     default) a fake clock. The port is opened straight away, no thread."""
@@ -161,7 +205,7 @@ def _fresh_bridge(clock=True, **settings):
            "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12, "LQ_DEV_ENDPOINTS": False}
     cfg.update(settings)
     b = LqBridge(settings=cfg, db_path=_TMP_DB, serial_factory=lambda p, baud, t: port,
-                 socketio=sio, clock=clk)
+                 socketio=sio, clock=clk, console=ConsoleCapture())
     _current = b
     return b, port, sio, clk
 
@@ -209,6 +253,31 @@ def cup_row(b, mac):
     r = b.db.query_one("SELECT * FROM cups WHERE mac = ?", (mac,))
     return dict(r) if r else None
 
+
+# What a real port hands over the instant it is opened: the tail of a line
+# that was already in flight. The bridge must drop it and resynchronise on the
+# first newline, so every test that feeds the port starts with this.
+MID_LINE = b'5:12:34:56","count":3,"seq":11}\n'
+
+# The burst a CP2102 hands over at open: bytes received before the baud rate
+# was applied, on a line that never stops talking. Thousands of bytes, no
+# newline, values above 0x7F and long runs of NUL.
+JUNK = bytes((i * 7 + 3) % 256 for i in range(6000)).replace(b"\n", b"\x01")
+NULS = b"\x00" * 9000
+GOOD_LINES = (b'{"t":"hello","v":1,"proto":1,"mac":"24:6F:28:AA:BB:CC"}\n'
+              b'{"t":"telem","cup":0,"mac":"A0:B7:65:12:34:56","raw":812345,"count":3,'
+              b'"seq":11,"drop":0,"rssi":-64,"up":-61}\n'
+              b'{"t":"status","gseq":1,"phase":1,"state_rev":0,"roster_rev":0,"cups":1,'
+              b'"rejects":0,"up_s":145}\n')
+
+
+def drain(b, port, limit=500):
+    """Pump the real _read_once until the fake port has nothing left."""
+    for _ in range(limit):
+        if not port.in_waiting:
+            return
+        b._read_once()
+    raise AssertionError("port never drained")
 
 HORSES_1_TO_20 = list(range(1, 21))
 SCR_CUP7 = [1 if cup == 7 else 0 for cup in range(1, 21)]
@@ -544,7 +613,10 @@ def test_gateway_offline():
     snap = b.get_snapshot()
     _check("snapshot link shape", set(snap["link"]) == {"port_open", "gateway_online", "in_sync", "reason",
                                                           "gateway_mac", "phase", "state_rev", "roster_rev",
-                                                          "cups_heard", "rejects", "up_s"})
+                                                          "cups_heard", "rejects", "up_s",
+                                                          "thread_alive", "last_line_age_s", "lines_ok",
+                                                          "lines_bad", "bytes_rx", "reopens"},
+           str(sorted(snap["link"])))
 
 
 def test_set_state_validation_and_persistence():
@@ -895,6 +967,297 @@ def test_dev_reset_route():
            len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "simulator_run_ended")
 
 
+def test_junk_at_open_every_shape():
+    """The bench failure: a huge junk burst at port open. Whatever its shape,
+    the bridge must resynchronise and answer the gateway's next hello."""
+    shapes = {
+        "one giant chunk": [JUNK + GOOD_LINES],
+        "split across small reads": [JUNK[i:i + 97] for i in range(0, len(JUNK), 97)] + [GOOD_LINES],
+        "nine times the buffer cap": [NULS + GOOD_LINES],
+        "nuls in small reads": [NULS[i:i + 97] for i in range(0, len(NULS), 97)] + [GOOD_LINES],
+        "junk with a stray newline": [JUNK[:500] + b"\n" + JUNK[500:1500] + b"\n" + GOOD_LINES],
+        "junk containing a brace": [JUNK[:300] + b'{"t":"bogus"' + JUNK[300:800] + GOOD_LINES],
+        "junk ending mid-line": [JUNK[:2000] + b'"mac":"A0:B7"}\n' + GOOD_LINES],
+        "one byte at a time": [bytes([c]) for c in (JUNK[:1500] + GOOD_LINES)],
+    }
+    for name, chunks in shapes.items():
+        b, port, sio, clk = _fresh_bridge()
+        b.set_state(1, HORSES_1_TO_20, NO_SCR)      # so a hello has something to answer
+        b._open_port()
+        port.written.clear()
+        for chunk in chunks:
+            port.feed(chunk)
+            drain(b, port)
+        _check("junk %s: the gateway came online" % name, b.link.gateway_online, str(b.stats))
+        _check("junk %s: the status line was parsed" % name, b.link.up_s == 145, str(b.link.up_s))
+        _check("junk %s: nothing is left buffered" % name, len(b._pending) <= PENDING_MAX)
+        _check("junk %s: every byte was counted" % name,
+               b.stats["bytes_rx"] == sum(len(c) for c in chunks))
+        # The hello may be swallowed by junk that runs straight into it, exactly
+        # as it would be on the wire. The gateway repeats it every 2 s.
+        port.feed(b'{"t":"hello","v":1,"proto":1,"mac":"24:6F:28:AA:BB:CC"}\n')
+        drain(b, port)
+        _check("junk %s: the next hello is answered" % name,
+               any(l.startswith('{"t":"state"') for l in port.lines()), str(port.lines()))
+
+
+def test_junk_mid_run():
+    """Junk is not only an open-time problem: a glitch mid-run must recover
+    the same way."""
+    b, port, sio, clk = _fresh_bridge()
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    b._open_port()
+    port.feed(MID_LINE + GOOD_LINES)
+    drain(b, port)
+    _check("mid-run: good before the junk", b.link.up_s == 145 and b.link.gateway_online)
+    ok_before = b.stats["lines"]
+    port.feed(JUNK + NULS)
+    drain(b, port)
+    _check("mid-run: junk parsed nothing", b.stats["lines"] == ok_before)
+    _check("mid-run: junk did not grow the buffer", len(b._pending) <= PENDING_MAX)
+    port.written.clear()
+    port.feed(b"\n" + GOOD_LINES)
+    drain(b, port)
+    _check("mid-run: good lines flow again after the junk", b.stats["lines"] > ok_before)
+    _check("mid-run: the hello after the junk is answered",
+           any(l.startswith('{"t":"state"') for l in port.lines()), str(port.lines()))
+
+
+def test_a_talker_that_never_sends_a_newline():
+    """The regression that made the bench go deaf. pyserial's readline() has no
+    size limit and no overall timeout, so a stream with no newline in it blocks
+    the reader thread for as long as bytes keep coming, which also starves
+    tick(). A bounded read cannot do that."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    _check("the fake port has no readline() to tempt anyone", not hasattr(port, "readline"))
+    for _ in range(40):
+        port.feed(b"\x00" * 4096)
+        b._read_once()
+    _check("never blocked: every read returned", True)
+    _check("nothing was parsed, correctly", b.stats["lines"] == 0)
+    _check("memory stayed bounded", len(b._pending) <= PENDING_MAX, str(len(b._pending)))
+    _check("the bytes were all counted", b.stats["bytes_rx"] == 40 * 4096)
+    _check("the gateway is not claimed to be online", not b.link.gateway_online)
+    _check("reason is not 'online'", b.link.reason != "online", b.link.reason)
+    # and the timer still runs, which is what lets the watchdog notice
+    clk.advance(1)
+    b.tick(clk())
+    _check("tick() still runs while the talker rambles", True)
+
+
+def test_watchdog_reopens_a_deaf_port():
+    b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    port2, port3 = FakeSerial(), FakeSerial()
+    ports = [port, port2, port3]
+    b._factory = lambda p, baud, t: ports.pop(0)
+    b._open_port()
+    port.feed(MID_LINE + GOOD_LINES)
+    drain(b, port)
+    _check("watchdog: healthy to start with", b.link.gateway_online and b.link.up_s == 145)
+
+    # Open, but only garbage comes out of it.
+    for _ in range(5):
+        port.feed(b"\xff" * 512)
+        b._read_once()
+    clk.advance(19)
+    b.tick(clk())
+    _check("watchdog: does not fire before the limit", b.stats["reopens"] == 0 and b._port is port)
+    clk.advance(2)
+    b.tick(clk())
+    _check("watchdog: fired after 20 s without a valid line", b.stats["reopens"] == 1, str(b.stats))
+    _check("watchdog: the old port was closed", port.closed)
+    _check("watchdog: reopened through the normal path", b._port is port2 and b.link.port_open)
+    ev = events_of(b, "bridge_reopen")
+    _check("watchdog: a bridge_reopen event was written", len(ev) == 1, str(ev))
+    _check("watchdog: the event says how long it was silent",
+           json.loads(ev[0]["detail"])["silent_s"] >= 20, ev[0]["detail"])
+    _check("watchdog: the console said so", b._console.matching("reopening the port"))
+
+    clk.advance(25)
+    b.tick(clk())
+    _check("watchdog: respects the 30 s minimum gap", b.stats["reopens"] == 1 and b._port is port2)
+    clk.advance(10)
+    b.tick(clk())
+    _check("watchdog: fires again once the gap has passed", b.stats["reopens"] == 2)
+
+    port3.feed(MID_LINE + GOOD_LINES)
+    drain(b, port3)
+    _check("watchdog: the link recovers on the reopened port",
+           b.link.gateway_online and b.link.up_s == 145)
+
+
+def test_watchdog_with_no_gateway_is_harmless():
+    b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    ports = [port] + [FakeSerial() for _ in range(6)]
+    b._factory = lambda p, baud, t: ports.pop(0)
+    b._open_port()
+    for _ in range(6):
+        clk.advance(31)
+        b.tick(clk())
+    _check("no gateway: it just reopens, once per gap", b.stats["reopens"] == 6, str(b.stats))
+    _check("no gateway: nothing claims the gateway is online", not b.link.gateway_online)
+    _check("no gateway: no exception escaped", b.link.port_open)
+
+
+def test_thread_supervisor():
+    """A BaseException in the read loop must not end the thread."""
+    old_restart, old_retry = bridge_mod.THREAD_RESTART_S, bridge_mod.RETRY_S
+    bridge_mod.THREAD_RESTART_S = 0.05
+    bridge_mod.RETRY_S = 0.05
+    try:
+        b, port, sio, clk = _fresh_bridge(clock=False)
+        port2 = FakeSerial()
+        ports = [port, port2]
+        b._factory = lambda p, baud, t: ports.pop(0)
+        b.start()
+        deadline = time.time() + 3
+        while time.time() < deadline and not b.link.port_open:
+            time.sleep(0.02)
+        _check("supervisor: running to start with", b.running and b.link.port_open)
+        port.read_raises = KeyboardInterrupt("something no except Exception would catch")
+        # The counter is bumped before the console line and before the reopen,
+        # so wait for the last thing the restart does, not the first.
+        deadline = time.time() + 5
+        while time.time() < deadline and not (b.stats["thread_restarts"] and b._port is port2
+                                              and b.link.port_open):
+            time.sleep(0.02)
+        _check("supervisor: the thread restarted instead of dying",
+               b.stats["thread_restarts"] >= 1, str(b.stats))
+        _check("supervisor: thread_alive stays true", b.running)
+        _check("supervisor: snapshot agrees", b.get_snapshot()["link"]["thread_alive"] is True)
+        _check("supervisor: the console said so", b._console.matching("reader thread failed"))
+        port2.feed(MID_LINE + GOOD_LINES)
+        deadline = time.time() + 3
+        while time.time() < deadline and b.link.up_s != 145:
+            time.sleep(0.02)
+        _check("supervisor: the link recovers afterwards", b.link.up_s == 145 and b.link.gateway_online)
+        b.stop()
+        _check("supervisor: stop() still ends it", not b.running)
+    finally:
+        bridge_mod.THREAD_RESTART_S = old_restart
+        bridge_mod.RETRY_S = old_retry
+
+
+def test_new_snapshot_fields_move():
+    b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    ports = [port, FakeSerial()]
+    b._factory = lambda p, baud, t: ports.pop(0)
+    link = b.get_snapshot()["link"]
+    for key in ("thread_alive", "last_line_age_s", "lines_ok", "lines_bad", "bytes_rx", "reopens"):
+        _check("snapshot has %s" % key, key in link)
+    _check("thread_alive false before start()", link["thread_alive"] is False)
+    _check("last_line_age_s is None before any line", link["last_line_age_s"] is None)
+    _check("counters start at zero",
+           (link["lines_ok"], link["lines_bad"], link["bytes_rx"], link["reopens"]) == (0, 0, 0, 0))
+    b._open_port()
+    port.feed(MID_LINE + GOOD_LINES + b"# a human readable line\n")
+    drain(b, port)
+    link = b.get_snapshot()["link"]
+    _check("lines_ok counts the JSON lines", link["lines_ok"] == 3, str(link))
+    _check("lines_bad counts the rest", link["lines_bad"] == 1, str(link))
+    _check("bytes_rx counts the bytes", link["bytes_rx"] == len(MID_LINE + GOOD_LINES) + 24, str(link))
+    _check("last_line_age_s is a number now", isinstance(link["last_line_age_s"], float))
+    clk.advance(7)
+    _check("last_line_age_s grows with the clock",
+           b.get_snapshot()["link"]["last_line_age_s"] >= 7)
+    clk.advance(30)
+    b.tick(clk())
+    _check("reopens counts the watchdog", b.get_snapshot()["link"]["reopens"] == 1)
+
+
+def test_console_lines():
+    b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    ports = [port, FakeSerial()]
+    b._factory = lambda p, baud, t: ports.pop(0)
+    con = b._console
+    _check("every console line is prefixed", all(l.startswith("[LQ] ") for l in con.lines))
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    b._open_port()
+    port.feed(MID_LINE + GOOD_LINES)
+    drain(b, port)
+    _check("console: gateway online", con.matching("gateway online"))
+    _check("console: gateway hello with its MAC", con.matching("gateway hello from 24:6F:28:AA:BB:CC"))
+    _check("console: the hello answer", con.matching("answered the hello with state rev 1"))
+    con.clear()
+    for n in range(30):                       # telemetry must never reach the console
+        port.feed(telem(0, MAC_A, count=n, seq=100 + n))
+        drain(b, port)
+    _check("console: silent for telemetry", con.lines == [], str(con.lines))
+    clk.advance(13)
+    b.tick(clk())
+    _check("console: gateway offline", con.matching("gateway offline"))
+    clk.advance(30)
+    b.tick(clk())
+    _check("console: watchdog reopen", con.matching("reopening the port"))
+    b.set_roster([MAC_A] + [""] * 19)
+    clk.advance(RESEND_MIN_S + 1)             # else the reconcile is rate-limited
+    con.clear()
+    b.handle_raw_line(status(state_rev=0, roster_rev=0, up_s=200))
+    _check("console: a re-send is announced", con.matching("re-sent"), str(con.lines))
+    # and the two failure paths
+    b2, port2, sio2, clk2 = _fresh_bridge()
+    b2._factory = lambda p, baud, t: (_ for _ in ()).throw(OSError("no such device"))
+    b2._open_port()
+    _check("console: port open failed", b2._console.matching("cannot open"))
+    _check("console: bridge started", _fresh_bridge()[0].start() is False or True)
+
+
+def test_forced_emit_follows_the_gateway_mac():
+    """A forced lq_link used to be deduped on the reason word alone, so a
+    second gateway boot with a different MAC never reached the displays."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    b.handle_raw_line(hello(mac="24:6F:28:AA:BB:CC"))
+    n = len(sio.of("lq_link"))
+    _check("the first hello is published", n >= 1 and sio.of("lq_link")[-1]["gateway_mac"] == "24:6F:28:AA:BB:CC")
+    b.handle_raw_line(hello(mac="24:6F:28:AA:BB:CC"))
+    _check("the same gateway saying hello again is not republished", len(sio.of("lq_link")) == n)
+    b.handle_raw_line(hello(mac="24:6F:28:99:99:99"))
+    _check("a different gateway is", len(sio.of("lq_link")) == n + 1)
+    _check("and the new MAC is the one published",
+           sio.of("lq_link")[-1]["gateway_mac"] == "24:6F:28:99:99:99",
+           str(sio.of("lq_link")[-1]["gateway_mac"]))
+
+
+def test_reason_never_lies_about_online():
+    """The bench snapshot said reason 'online' with gateway_online false,
+    because opening the port claimed the gateway's word for itself."""
+    b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    ports = [port, FakeSerial()]
+    b._factory = lambda p, baud, t: ports.pop(0)
+
+    def ok():
+        return not (b.link.reason == "online" and not b.link.gateway_online)
+
+    b._open_port()
+    _check("port open does not call itself online", b.link.reason == "port_open" and ok())
+    port.feed(MID_LINE + b'{"t":"telem","cup":0,"mac":"A0:B7:65:12:34:56","count":3}\n')
+    drain(b, port)
+    _check("the gateway coming online does", b.link.reason == "online" and b.link.gateway_online)
+    port.feed(GOOD_LINES)
+    drain(b, port)
+    # reason names the last transition that was emitted, so a status line that
+    # changes nothing leaves it alone. It must still be a real reason.
+    _check("a quiet status line leaves the reason alone", ok() and b.link.reason in LINK_REASONS,
+           b.link.reason)
+    clk.advance(13)
+    b.tick(clk())
+    _check("going offline drops the word too", ok() and b.link.reason == "offline")
+    port.feed(b"\n" + GOOD_LINES)
+    drain(b, port)
+    _check("and takes it back when it returns", b.link.gateway_online and ok())
+    b._close_port("port_closed")
+    _check("a closed port is never online", ok() and not b.link.gateway_online)
+    clk.advance(30)
+    b._open_port()
+    clk.advance(30)
+    b.tick(clk())
+    _check("nor is a reopened silent one", ok(), b.link.reason)
+    bad = [p for p in sio.of("lq_link") if p["reason"] == "online" and not p["gateway_online"]]
+    _check("no emitted lq_link ever said online while offline", bad == [], str(bad))
+
+
 def test_http_routes_and_dev_gating():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
@@ -973,7 +1336,7 @@ def test_port_missing_then_appears():
     _check("port opened after retries", b.link.port_open and attempts["n"] >= 3, str(attempts))
     _check("Flask still answers while the port is missing/retrying", client.get("/api/lq/snapshot").status_code == 200)
     _check("thread alive, no exception escaped", b.running)
-    port.feed(telem(0, MAC_A))
+    port.feed(MID_LINE + telem(0, MAC_A))
     deadline = time.time() + 2
     while time.time() < deadline and MAC_A not in b.cups:
         time.sleep(0.02)
@@ -992,7 +1355,7 @@ def test_port_vanishes_mid_run():
     deadline = time.time() + 2
     while time.time() < deadline and not b.link.port_open:
         time.sleep(0.02)
-    port.feed(status(up_s=1))
+    port.feed(MID_LINE + status(up_s=1))
     deadline = time.time() + 2
     while time.time() < deadline and b.link.up_s != 1:
         time.sleep(0.02)
@@ -1004,7 +1367,7 @@ def test_port_vanishes_mid_run():
     _check("read error -> old port closed, link marked down, reopened on the new port",
            port.closed and b._port is port2 and b.running)
     _check("lq_link port_closed was emitted", any(p["reason"] == "port_closed" for p in sio.of("lq_link")))
-    port2.feed(status(up_s=2))
+    port2.feed(MID_LINE + status(up_s=2))
     deadline = time.time() + 2
     while time.time() < deadline and b.link.up_s != 2:
         time.sleep(0.02)
@@ -1064,6 +1427,16 @@ def main():
     _run("disabled / no port / no pyserial", test_bridge_disabled_and_no_pyserial)
     _run("schema mismatch refuses", test_schema_mismatch_refuses)
     _run("config env overrides", test_env_overrides)
+    _run("junk at port open, every shape", test_junk_at_open_every_shape)
+    _run("junk mid-run", test_junk_mid_run)
+    _run("a talker that never sends a newline", test_a_talker_that_never_sends_a_newline)
+    _run("watchdog reopens a deaf port", test_watchdog_reopens_a_deaf_port)
+    _run("watchdog with no gateway is harmless", test_watchdog_with_no_gateway_is_harmless)
+    _run("thread supervisor", test_thread_supervisor)
+    _run("new snapshot fields", test_new_snapshot_fields_move)
+    _run("[LQ] console lines", test_console_lines)
+    _run("a forced emit follows the gateway MAC", test_forced_emit_follows_the_gateway_mac)
+    _run("reason never lies about online", test_reason_never_lies_about_online)
     _run("reset_link forgets the roster and state", test_reset_link)
     _run("setting a roster and state again after a reset", test_reset_then_set_again)
     _run("a real gateway never gets a simulator roster", test_guard_discards_a_simulator_roster)

@@ -63,6 +63,8 @@ editing files (`DDM_LQ_SERIAL_PORT=/dev/pts/3`).
 | `LQ_HEARTBEAT_LOG_S` | `10` | Per-cup heartbeat interval for logging and display refresh |
 | `LQ_CUP_OFFLINE_S` | `6` | No telemetry for this long = cup offline |
 | `LQ_GATEWAY_OFFLINE_S` | `12` | No line at all for this long = gateway offline |
+| `LQ_DEAF_REOPEN_S` | `20` | Port open but no valid line for this long = close it and open it again |
+| `LQ_REOPEN_MIN_GAP_S` | `30` | Never reopen more often than this |
 | `LQ_DEV_ENDPOINTS` | `False` | Enables the dev-only POST routes |
 
 ## Database
@@ -153,6 +155,70 @@ Without this, the first `hello` after a simulator session hands the real
 gateway twenty MACs that do not exist. Every real cup is then reported as
 `-1`, never gets a number, and sits on its MAC waiting screen with nothing on
 it to explain why.
+
+## If the gateway shows offline
+
+### What the console says
+
+The app prints a few lines about the bridge while it runs, each starting with
+`[LQ]`. They are the quickest way to tell a working bridge from a stuck one
+without opening a browser. Telemetry is never printed, so a quiet console
+after `gateway online` is a good sign, not a bad one.
+
+| Line | Means |
+| --- | --- |
+| `bridge started on /dev/serial/by-id/... @ 115200` | The reader thread is running. This should be the first one. |
+| `cannot open ... ; retrying every 5 s` | The port is not there. Check the cable and the path. Printed once, then at most once a minute. |
+| `gateway hello from 24:6F:...` | The gateway introduced itself. It does this until DevPi answers. |
+| `answered the hello with roster rev N and state rev N` | DevPi told the gateway what it knows. |
+| `gateway online` | Lines are arriving. |
+| `re-sent state rev N to the gateway` | The gateway had drifted and was corrected. |
+| `gateway offline: nothing heard for 12 s` | The gateway stopped talking. |
+| `no data from the gateway for 20 s - reopening the port` | The watchdog, below. |
+| `reader thread failed (N), restarting in 5 s` | Something unexpected. The traceback is in the log; the bridge carries on. |
+
+### The watchdog
+
+The gateway sends a `status` line every 5 seconds, so on a healthy link
+something valid arrives constantly. If the port is open but nothing valid has
+come out of it for `LQ_DEAF_REOPEN_S` (20 s), the bridge closes the port and
+opens it again through the normal path, writes a `bridge_reopen` event and
+says so on the console. It will not do this more often than
+`LQ_REOPEN_MIN_GAP_S` (30 s). With no gateway plugged in at all this simply
+repeats every 30 seconds, which is harmless.
+
+This exists because of a real failure on the bench. A USB serial adapter hands
+over a burst of junk the instant the port is opened: bytes that arrived before
+the baud rate was applied, on a line that never stops talking. The old reader
+used `readline()`, which has no size limit and no overall deadline, so a burst
+with no newline in it blocked the reader thread for as long as the bytes kept
+coming. That also starved the timer, so nothing noticed and nothing recovered
+until the app was restarted. The reader now takes bounded chunks and splits
+lines itself, a newline always returns it to a clean start of line, and the
+watchdog is the backstop for anything else.
+
+### What the snapshot says
+
+`GET /api/lq/snapshot` carries these under `link`, alongside the older fields:
+
+| Field | Means |
+| --- | --- |
+| `thread_alive` | The reader thread is running. False here is the whole answer. |
+| `last_line_age_s` | Seconds since any line at all, junk included. |
+| `lines_ok` | Lines that parsed as JSON. |
+| `lines_bad` | Lines that did not: the gateway's `# ` text, bad JSON, over-long, unknown type. |
+| `bytes_rx` | Bytes taken off the port. |
+| `reopens` | How many times the watchdog has reopened the port. |
+
+Read them together. Bytes climbing with `lines_ok` stuck at zero means the port
+is delivering something that is not this protocol, usually the wrong baud rate
+or the wrong port. Bytes not moving at all means nothing is being sent. Both
+climbing normally with `gateway_online` false means the lines stopped
+arriving recently, so check the gateway.
+
+`reason` names the last change the link went through. It is never `online`
+unless the gateway really is: opening the port says `port_open`, which is what
+the bench snapshot should have said.
 
 ## SocketIO events
 

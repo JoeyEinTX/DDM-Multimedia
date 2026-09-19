@@ -400,6 +400,12 @@ def test_in_memory_scenarios():
 # End to end: the real bridge over a real pty
 # -----------------------------------------------------------------------------
 
+def _quiet_console(text):
+    """The bridge's [LQ] console lines are asserted on in test_smoke; here they
+    would just scribble over the suite's own output."""
+    return None
+
+
 def _fresh_db():
     for suffix in ("", "-wal", "-shm"):
         try:
@@ -414,8 +420,9 @@ def _e2e(name, seed=1, speed=50.0, settle=15.0):
     _fresh_db()
     link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-sim-test-"))
     bridge = LqBridge(settings={"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
-                                "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12},
-                      db_path=_TMP_DB)
+                                "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300},
+                      db_path=_TMP_DB, console=_quiet_console)
     started = bridge.start()
     sim = Simulator(link=link, seed=seed, ideal=True, speed=speed, quiet=True, out=lambda s: None,
                     operator=ApiOperator(bridge), settle_s=settle, operator_timeout=40)
@@ -479,8 +486,9 @@ def test_e2e_short_roster_repaired():
     missing = {4, 5, 6, 7, 15, 16, 17}
     link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-sim-test-"))
     bridge = LqBridge(settings={"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
-                                "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12},
-                      db_path=_TMP_DB)
+                                "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300},
+                      db_path=_TMP_DB, console=_quiet_console)
     stale = ["" if c in missing else cup_mac(c) for c in range(1, 21)]
     rev = bridge.set_roster(stale)              # what an earlier run left behind
     bridge.start()
@@ -535,7 +543,8 @@ def test_e2e_real_gateway_after_a_simulator_run():
     from la_quiniela.sim.link import PtyLink
     _fresh_db()
     cfg = {"LQ_SERIAL_BAUD": 115200, "LQ_HEARTBEAT_LOG_S": 10,
-           "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12}
+           "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+           "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300}
 
     def wait_until(pred, timeout=20.0):
         end = time.time() + timeout
@@ -547,7 +556,7 @@ def test_e2e_real_gateway_after_a_simulator_run():
 
     # 1. A full simulator run, which leaves twenty fake MACs in the database.
     link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-sim-test-"))
-    bridge = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link.slave_path), db_path=_TMP_DB)
+    bridge = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link.slave_path), db_path=_TMP_DB, console=_quiet_console)
     bridge.start()
     sim = Simulator(link=link, seed=1, ideal=True, speed=50.0, quiet=True, out=lambda s: None,
                     operator=ApiOperator(bridge), settle_s=15.0, operator_timeout=40)
@@ -559,7 +568,7 @@ def test_e2e_real_gateway_after_a_simulator_run():
 
     # 2. DevPi restarts with the real gateway plugged in.
     link2 = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-real-test-"))
-    bridge2 = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link2.slave_path), db_path=_TMP_DB)
+    bridge2 = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link2.slave_path), db_path=_TMP_DB, console=_quiet_console)
     _check("the restarted bridge did load the simulator's roster",
            bridge2.has_roster and bridge2._roster_is_simulated())
     bridge2.start()
@@ -568,8 +577,17 @@ def test_e2e_real_gateway_after_a_simulator_run():
     wait_until(lambda: bridge2.link.port_open)
     link2.drain()
 
+    # A real port hands over the tail of whatever was in flight when it was
+    # opened. The bridge must drop that and resynchronise on the newline.
+    link2.write_line('5:12:34:56","count":3,"seq":11}')
     link2.write_line(W.hello_line(real_gw))
-    got_reset = wait_until(lambda: not bridge2.has_roster)
+
+    def reset_logged():
+        # has_roster flips at the top of reset_link and the event row is
+        # written several statements later, so wait for the row, not the flag.
+        return bool(bridge2.db.query("SELECT id FROM events WHERE type = 'lq_reset'"))
+
+    got_reset = wait_until(lambda: not bridge2.has_roster and reset_logged())
     _check("the real gateway's hello threw the simulator roster away", got_reset)
     _check("the real gateway was sent nothing", link2.drain() == [], "bridge wrote something back")
     events = [r["type"] for r in bridge2.db.query("SELECT type FROM events ORDER BY id")]
@@ -597,6 +615,73 @@ def test_e2e_real_gateway_after_a_simulator_run():
     _check("the simulated cup rows are gone from the database", sim_rows == 0, str(sim_rows))
 
 
+def test_e2e_newline_free_torrent_over_a_real_port():
+    """The bench failure, with real pyserial on a real port. A talker that
+    never sends a newline used to block the reader thread outright: port open,
+    gateway never online, timers starved, and only an app restart to cure it.
+    The reader must stay responsive and the watchdog must reopen the port."""
+    from la_quiniela.bridge import LqBridge
+    from la_quiniela.sim.link import PtyLink
+    _fresh_db()
+    link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-junk-"))
+    cfg = {"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
+           "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+           "LQ_DEAF_REOPEN_S": 3, "LQ_REOPEN_MIN_GAP_S": 2}
+    bridge = LqBridge(settings=cfg, db_path=_TMP_DB, console=_quiet_console)
+
+    def push(data, budget=5.0):
+        sent, end = 0, time.time() + budget
+        while sent < len(data) and time.time() < end:
+            try:
+                sent += os.write(link.master, data[sent:])
+            except BlockingIOError:
+                time.sleep(0.005)
+            except OSError:
+                break
+        return sent
+
+    def wait(pred, timeout=15.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            if pred():
+                return True
+            time.sleep(0.05)
+        return pred()
+
+    try:
+        started = bridge.start()
+        _check("torrent: the real bridge opened the real port", started and wait(lambda: bridge.link.port_open))
+        # No newline anywhere in it, and it never stops.
+        torrent = bytes(b for b in range(1, 256) if b != 0x0A) * 8      # ~2 kB, no 0x0A
+        pushed = 0
+        end = time.time() + 6
+        while time.time() < end:
+            pushed += push(torrent, budget=0.3)
+        _check("torrent: a lot of newline-free bytes went in", pushed > 20000, str(pushed))
+        _check("torrent: the reader thread is still alive", bridge.running)
+        snap = bridge.get_snapshot()["link"]
+        _check("torrent: the bytes were read, not blocked on", snap["bytes_rx"] > 20000, str(snap))
+        _check("torrent: nothing was parsed from it", snap["lines_ok"] == 0, str(snap))
+        _check("torrent: the gateway is not claimed online", snap["gateway_online"] is False)
+        _check("torrent: reason does not say online", snap["reason"] != "online", snap["reason"])
+        _check("torrent: memory stayed bounded", len(bridge._pending) <= 4 * 1024, str(len(bridge._pending)))
+        _check("torrent: the watchdog noticed and reopened", wait(lambda: bridge.stats["reopens"] >= 1, 10),
+               str(bridge.stats))
+        _check("torrent: a bridge_reopen event was written",
+               len(bridge.db.query("SELECT id FROM events WHERE type = 'bridge_reopen'")) >= 1)
+        # Now talk properly. The link must come up without restarting anything.
+        push(b"\n" + W.hello_line("24:6F:28:AA:BB:CC").encode() + b"\n")
+        push(W.status_line(1, 1, 0, 0, 0, 0, 145).encode() + b"\n")
+        came_back = wait(lambda: bridge.link.gateway_online and bridge.link.up_s == 145, 20)
+        _check("torrent: the link recovers on its own, no restart", came_back,
+               str(bridge.get_snapshot()["link"]))
+        _check("torrent: thread_alive is true throughout",
+               bridge.get_snapshot()["link"]["thread_alive"] is True)
+    finally:
+        bridge.close()
+        link.close()
+
+
 def test_bridge_disconnect_reconnect():
     from la_quiniela.bridge import LqBridge
     from la_quiniela.sim.link import PtyLink
@@ -608,7 +693,8 @@ def test_bridge_disconnect_reconnect():
     time.sleep(2.5)
     _check("simulator runs with nobody listening", th.is_alive() and sim.gw.gseq == 0 and link.dropped_writes >= 0)
     b1 = LqBridge(settings={"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
-                            "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12}, db_path=_TMP_DB)
+                            "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300}, db_path=_TMP_DB, console=_quiet_console)
     b1.start()
     time.sleep(3)
     _check("first bridge sees lines", b1.stats["lines"] > 0 and b1.link.gateway_online)
@@ -619,7 +705,8 @@ def test_bridge_disconnect_reconnect():
     time.sleep(3)
     _check("simulator still running after the bridge disconnected", th.is_alive())
     b2 = LqBridge(settings={"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
-                            "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12}, db_path=_TMP_DB)
+                            "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
+                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300}, db_path=_TMP_DB, console=_quiet_console)
     b2.start()
     time.sleep(3)
     _check("second bridge reconnects and sees lines", b2.stats["lines"] > 0 and b2.link.port_open)
@@ -648,6 +735,7 @@ def main():
     _run("end to end — gateway-reboot", test_e2e_gateway_reboot)
     _run("end to end — cup-swap", test_e2e_cup_swap)
     _run("end to end — a real gateway after a simulator run", test_e2e_real_gateway_after_a_simulator_run)
+    _run("end to end — a newline-free torrent on a real port", test_e2e_newline_free_torrent_over_a_real_port)
     _run("bridge disconnect and reconnect mid-run", test_bridge_disconnect_reconnect)
 
     passed = sum(1 for r in _results if r[0] == "PASS")

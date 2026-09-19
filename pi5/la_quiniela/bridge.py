@@ -30,6 +30,16 @@ logger = logging.getLogger(__name__)
 
 LQ_ROOM = "lq"
 
+
+def console_print(text: str) -> None:
+    """The app's startup text goes to stdout, and nothing the logger writes
+    reaches it. Anyone watching the terminal has to be able to tell a working
+    bridge from a deaf one, so the few things that matter are printed too."""
+    try:
+        print(text, flush=True)
+    except Exception:           # a closed or odd stdout must never reach the thread
+        pass
+
 # Configuration keys, their defaults, and the environment override DDM_<key>.
 DEFAULTS: Dict[str, Any] = {
     "LQ_BRIDGE_ENABLED": True,
@@ -38,11 +48,16 @@ DEFAULTS: Dict[str, Any] = {
     "LQ_HEARTBEAT_LOG_S": 10,
     "LQ_CUP_OFFLINE_S": 6,
     "LQ_GATEWAY_OFFLINE_S": 12,
+    "LQ_DEAF_REOPEN_S": 20,       # port open but no valid JSON line for this long -> reopen
+    "LQ_REOPEN_MIN_GAP_S": 30,    # never reopen more often than this
     "LQ_DEV_ENDPOINTS": False,
 }
 
 # Fixed timing. The gateway side of each is documented in firmware/quiniela/README.md.
 READ_TIMEOUT_S = 1.0          # serial read timeout, so the thread notices a stop request
+READ_CHUNK_BYTES = 4096       # most bytes taken from the port in one read
+OPEN_SETTLE_S = 0.1           # pause after opening, before the input buffer is dropped
+THREAD_RESTART_S = 5.0        # supervisor pause before the thread's loop starts over
 RETRY_S = 5.0                 # port open / reopen retry interval
 PORT_LOG_MIN_S = 60.0         # repeated port failures are logged at most this often
 TICK_S = 1.0                  # timer check interval
@@ -51,8 +66,8 @@ HELLO_EVENT_MIN_S = 10.0      # gateway_hello event at most this often
 PER_CUP_EVENT_MIN_S = 10.0    # cup_claim_mismatch / roster_mismatch per cup at most this often
 PENDING_MAX = 4 * P.MAX_LINE_BYTES   # partial-line buffer ceiling
 
-LINK_REASONS = ("boot", "reboot", "online", "offline", "port_closed", "status",
-                "protocol_mismatch", "reset")
+LINK_REASONS = ("boot", "reboot", "online", "offline", "port_open", "port_closed",
+                "status", "protocol_mismatch", "reset", "deaf")
 
 # Every MAC the cup simulator invents starts with this. Nothing real does: it
 # is a locally-administered address, and no ESP32 ships with one.
@@ -164,9 +179,11 @@ class LinkLive:
     cups_heard: int = 0
     rejects: int = 0
     up_s: Optional[int] = None
-    last_line_mono: Optional[float] = None
+    last_line_mono: Optional[float] = None           # any line at all, junk included
+    last_good_line_mono: Optional[float] = None      # a line that parsed as JSON
     last_hello_event_mono: Optional[float] = None
     last_resend_mono: Optional[float] = None
+    last_reopen_mono: Optional[float] = None
 
 
 # -----------------------------------------------------------------------------
@@ -177,7 +194,8 @@ class LqBridge:
 
     def __init__(self, settings: Optional[Dict[str, Any]] = None, db_path: Optional[str] = None,
                  serial_factory: Optional[Callable[[str, int, float], Any]] = None,
-                 socketio=None, clock: Optional[Callable[[], float]] = None):
+                 socketio=None, clock: Optional[Callable[[], float]] = None,
+                 console: Optional[Callable[[str], None]] = None):
         self.settings = dict(DEFAULTS)
         self.settings.update(settings or {})
         self.socketio = socketio
@@ -195,8 +213,12 @@ class LqBridge:
 
         self.cups: Dict[str, CupLive] = {}    # by MAC
         self.link = LinkLive()
+        self._resync = False              # drop bytes until the next newline
+        self._last_link_key = None        # what the last emitted lq_link said
+        self._console = console or console_print
         self.stats = {"lines": 0, "text": 0, "bad_json": 0, "too_long": 0,
-                      "unknown_type": 0, "sent": 0}
+                      "unknown_type": 0, "sent": 0, "bytes_rx": 0, "reopens": 0,
+                      "thread_restarts": 0}
 
         # DevPi-owned state, 1-based cups. Revs start at 0 and only go up,
         # including across a reset_link(), so a rev never says whether DevPi
@@ -274,6 +296,16 @@ class LqBridge:
         if self.has_roster:
             self._apply_roster_to_live()
 
+    # -- console --------------------------------------------------------------
+
+    def say(self, text: str) -> None:
+        """One short line to the terminal the app runs in. Only for things a
+        person watching would want to know; never per telemetry line."""
+        try:
+            self._console("[LQ] " + text)
+        except Exception:
+            pass
+
     # -- lifecycle ------------------------------------------------------------
 
     @property
@@ -310,6 +342,8 @@ class LqBridge:
         self._thread.start()
         logger.info("La Quiniela bridge started on %s @ %s",
                     self.settings["LQ_SERIAL_PORT"], self.settings["LQ_SERIAL_BAUD"])
+        self.say("bridge started on %s @ %s" % (self.settings["LQ_SERIAL_PORT"],
+                                                self.settings["LQ_SERIAL_BAUD"]))
         return True
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -327,6 +361,27 @@ class LqBridge:
     # -- the thread -----------------------------------------------------------
 
     def _run(self) -> None:
+        """The thread's whole life. Nothing may end it but a stop request: an
+        unexpected error is logged with its traceback, the port is dropped and
+        the loop starts over, because a bridge that has quietly died looks
+        exactly like a bridge with nothing to say."""
+        while not self._stop.is_set():
+            try:
+                self._loop()
+            except BaseException:       # including anything a C extension raises
+                self.stats["thread_restarts"] += 1
+                logger.exception("La Quiniela bridge: reader thread failed, restarting in %.0f s",
+                                 THREAD_RESTART_S)
+                self.say("reader thread failed (%d), restarting in %.0f s - see the log for the traceback"
+                         % (self.stats["thread_restarts"], THREAD_RESTART_S))
+                try:
+                    self._close_port("port_closed")
+                except Exception:
+                    pass
+                self._stop.wait(THREAD_RESTART_S)
+        self._close_port("stop")
+
+    def _loop(self) -> None:
         next_tick = self._clock()
         while not self._stop.is_set():
             try:
@@ -335,7 +390,7 @@ class LqBridge:
                         self._stop.wait(RETRY_S)
                 else:
                     self._read_once()
-            except Exception:           # nothing escapes this thread
+            except Exception:           # an ordinary error only costs the port
                 logger.exception("La Quiniela bridge: unexpected error, port will be reopened")
                 self._close_port("port_closed")
                 self._stop.wait(RETRY_S)
@@ -346,7 +401,6 @@ class LqBridge:
                     self.tick(now)
                 except Exception:
                     logger.exception("La Quiniela bridge: timer error")
-        self._close_port("stop")
 
     def _open_port(self) -> bool:
         try:
@@ -362,51 +416,99 @@ class LqBridge:
                                "%s", self.settings["LQ_SERIAL_PORT"], exc, RETRY_S,
                                "" if self._port_failures == 1 else
                                f" (attempt {self._port_failures})")
+                self.say("cannot open %s (%s); retrying every %.0f s"
+                         % (self.settings["LQ_SERIAL_PORT"], exc, RETRY_S))
             with self._lock:
                 self._set_link(port_open=False, gateway_online=False, reason="port_closed")
             return False
+        # A port that has just been opened is mid-conversation: the gateway
+        # never stops talking, and the bytes that arrived before the baud rate
+        # was applied are junk. Let them land, drop them, and refuse to parse
+        # anything before the first newline.
+        self._stop.wait(OPEN_SETTLE_S)
+        try:
+            port.reset_input_buffer()
+        except Exception as exc:        # a pty or a fake has nothing to reset
+            logger.debug("La Quiniela bridge: reset_input_buffer not available (%s)", exc)
         with self._lock:
             self._port = port
             self._pending = b""
+            self._resync = True         # nothing is a line until a newline says so
             self._port_failures = 0
             self._port_fail_logged_mono = None
+            now = self._clock()
+            self.link.last_good_line_mono = now     # the watchdog counts from here
             logger.info("La Quiniela bridge: %s open", self.settings["LQ_SERIAL_PORT"])
-            self._set_link(port_open=True, reason="online")
+            self._set_link(port_open=True, reason="port_open")
         return True
 
     def _close_port(self, reason: str) -> None:
         with self._lock:
             port, self._port = self._port, None
             self._pending = b""
+            self._resync = False
             if port is not None:
                 try:
                     port.close()
                 except Exception:
                     pass
-                self._set_link(port_open=False, gateway_online=False, reason="port_closed")
+                # The caller's reason, when it is one clients know; "stop" and
+                # anything else read as an ordinary close.
+                self._set_link(port_open=False, gateway_online=False,
+                               reason=reason if reason in LINK_REASONS else "port_closed")
 
     def _read_once(self) -> None:
+        """Take at most one bounded chunk from the port and turn it into lines.
+
+        Never readline(). pyserial's readline() has no size limit and no
+        overall timeout: it reads one byte at a time until it sees a newline,
+        so a stream that never sends one - a desynchronised UART, a run of
+        NULs, a wrong baud rate - blocks this thread for as long as the bytes
+        keep coming. That also starves tick(), so nothing notices and nothing
+        recovers. A bounded read cannot do that."""
         port = self._port
         if port is None:                       # closed under us by a failed write
             return
         try:
-            chunk = port.readline()
+            want = READ_CHUNK_BYTES
+            waiting = getattr(port, "in_waiting", None)
+            if isinstance(waiting, int) and waiting > 0:
+                want = min(waiting, READ_CHUNK_BYTES)
+            chunk = port.read(want)
         except (OSError, ValueError) as exc:   # SerialException is an OSError
             logger.warning("La Quiniela bridge: read failed (%s); reopening in %.0f s", exc, RETRY_S)
             self._close_port("port_closed")
             self._stop.wait(RETRY_S)
             return
-        if not chunk:
-            return
-        if not chunk.endswith(b"\n"):          # timeout mid-line: keep the fragment
-            self._pending += chunk
-            if len(self._pending) > PENDING_MAX:
-                self._pending = b""
-                self.stats["too_long"] += 1
-            return
-        raw = self._pending + chunk
+        if chunk:
+            self.feed_bytes(chunk)
+
+    def feed_bytes(self, chunk: bytes) -> None:
+        """Bytes in, whole lines out. Whatever arrives, a newline always puts
+        this back into a clean start-of-line state, and nothing is buffered
+        without bound."""
+        self.stats["bytes_rx"] += len(chunk)
+        buf = self._pending + chunk
         self._pending = b""
-        self.handle_raw_line(raw)
+        if self._resync:
+            nl = buf.find(b"\n")
+            if nl < 0:
+                return                          # still inside the junk: keep none of it
+            buf = buf[nl + 1:]
+            self._resync = False
+        parts = buf.split(b"\n")
+        self._pending = parts.pop()             # the tail, still unterminated
+        for part in parts:
+            line = part.rstrip(b"\r")
+            if line:
+                self.handle_raw_line(line)
+        if len(self._pending) > PENDING_MAX:
+            # Far too long to be a line. Drop it and everything up to the next
+            # newline, rather than growing a buffer for a talker that never
+            # ends a line.
+            self._pending = b""
+            self._resync = True
+            self.stats["too_long"] += 1
 
     # -- uplink ---------------------------------------------------------------
 
@@ -430,6 +532,7 @@ class LqBridge:
                                    self.stats["bad_json"], raw[:60])
                 return
             self.stats["lines"] += 1
+            self.link.last_good_line_mono = now     # what the watchdog waits for
             try:
                 self.handle_message(obj, now)
             except Exception:
@@ -586,6 +689,12 @@ class LqBridge:
         mac = P.normalize_mac(msg.get("mac"))
         if mac:
             self.link.gateway_mac = mac
+        # A gateway with nothing to hear repeats its hello every 2 s, so the
+        # console says so on the same 10 s rhythm as the event.
+        last = self.link.last_hello_event_mono
+        announce = last is None or now - last >= HELLO_EVENT_MIN_S
+        if announce:
+            self.say("gateway hello from %s" % (mac or "an unnamed gateway"))
         if version != P.LINE_PROTO_VERSION:
             logger.error("La Quiniela bridge: gateway speaks line protocol v%s, this bridge v%d; "
                          "sending nothing", version, P.LINE_PROTO_VERSION)
@@ -594,8 +703,7 @@ class LqBridge:
         # A hello means the gateway knows nothing: it has no state and no roster.
         self.link.state_rev = 0
         self.link.roster_rev = 0
-        last = self.link.last_hello_event_mono
-        if last is None or now - last >= HELLO_EVENT_MIN_S:
+        if announce:
             self.link.last_hello_event_mono = now
             self._event("gateway_hello", None, {"mac": mac, "v": version,
                                                  "proto": self._int(msg, "proto")})
@@ -610,10 +718,15 @@ class LqBridge:
                            "gateway that just said hello is not the simulator (%s); discarding it",
                            mac or "no MAC")
             self.reset_link("sim_roster_discarded")
+        answered = []
         if self.has_roster:
             self._send_roster()
+            answered.append("roster rev %d" % self.roster_rev)
         if self.has_state:
             self._send_state()
+            answered.append("state rev %d" % self.state_rev)
+        if announce:
+            self.say("answered the hello with " + (" and ".join(answered) if answered else "nothing"))
         self.link.last_resend_mono = now
         self._set_link(reason="boot", force=True, in_sync=self._compute_sync())
 
@@ -670,6 +783,44 @@ class LqBridge:
             if self.link.gateway_online and self.link.last_line_mono is not None \
                     and now - self.link.last_line_mono >= gw_limit:
                 self._set_link(gateway_online=False, in_sync=False, reason="offline")
+                self.say("gateway offline: nothing heard for %.0f s" % gw_limit)
+            deaf = self._watchdog_due(now)
+        if deaf:
+            # Outside the lock: reopening blocks, and a Flask request thread
+            # must not be held up behind it.
+            self._reopen_deaf(now)
+
+    def _watchdog_due(self, now: float) -> bool:
+        """True when the port is open but nothing valid has come out of it for
+        LQ_DEAF_REOPEN_S. The gateway sends status every 5 s, so silence that
+        long means the port is open onto something that is not talking to us."""
+        if self._port is None or not self.link.port_open:
+            return False
+        limit = float(self.settings["LQ_DEAF_REOPEN_S"])
+        last = self.link.last_good_line_mono
+        if last is None or now - last < limit:
+            return False
+        gap = float(self.settings["LQ_REOPEN_MIN_GAP_S"])
+        if self.link.last_reopen_mono is not None and now - self.link.last_reopen_mono < gap:
+            return False
+        return True
+
+    def _reopen_deaf(self, now: float) -> None:
+        """Close the port and open it again through the normal path. With the
+        gateway genuinely absent this simply repeats, which is harmless."""
+        silent = now - (self.link.last_good_line_mono or now)
+        with self._lock:
+            self.link.last_reopen_mono = now
+            self.stats["reopens"] += 1
+            self._event("bridge_reopen", None, {"silent_s": round(silent, 1),
+                                                "reopens": self.stats["reopens"],
+                                                "bytes_rx": self.stats["bytes_rx"]})
+        logger.warning("La Quiniela bridge: no valid line for %.0f s on an open port; "
+                       "closing and reopening %s", silent, self.settings["LQ_SERIAL_PORT"])
+        self.say("no data from the gateway for %.0f s - reopening the port (%d so far)"
+                 % (silent, self.stats["reopens"]))
+        self._close_port("deaf")
+        self._open_port()
 
     # -- downlink -------------------------------------------------------------
 
@@ -709,10 +860,15 @@ class LqBridge:
         if self._port is None:
             return False
         self.link.last_resend_mono = now
+        sent = []
         if roster and self.has_roster:
             self._send_roster()
+            sent.append("roster rev %d" % self.roster_rev)
         if state and self.has_state:
             self._send_state()
+            sent.append("state rev %d" % self.state_rev)
+        if sent:
+            self.say("re-sent " + " and ".join(sent) + " to the gateway")
         return True
 
     # -- link bookkeeping -----------------------------------------------------
@@ -721,6 +877,7 @@ class LqBridge:
         self.link.last_line_mono = now
         if not self.link.gateway_online:
             self._set_link(gateway_online=True, reason="online")
+            self.say("gateway online")
 
     def _compute_sync(self) -> bool:
         """In sync means the gateway agrees about everything DevPi holds. With
@@ -742,8 +899,18 @@ class LqBridge:
         if not self.link.gateway_online:
             self.link.in_sync = False
         after = (self.link.port_open, self.link.gateway_online, self.link.in_sync)
-        if after != before or (force and self.link.reason != reason):
+        if reason == "online" and not self.link.gateway_online:
+            # "online" is the gateway's word, not the port's. Opening the port
+            # used to claim it, which is how a deaf bridge came to describe
+            # itself as online with gateway_online false.
+            reason = "port_open" if self.link.port_open else "port_closed"
+        # A forced emit is deduped on more than the reason word. Using the
+        # word alone dropped the second of two boots, so a gateway that came
+        # back with a different MAC never reached the displays.
+        key = (after, reason, self.link.gateway_mac)
+        if after != before or (force and key != self._last_link_key):
             self.link.reason = reason
+            self._last_link_key = key
             self._emit("lq_link", self._link_payload())
 
     # -- database writes ------------------------------------------------------
@@ -803,6 +970,15 @@ class LqBridge:
             "cups_heard": link.cups_heard,
             "rejects": link.rejects,
             "up_s": link.up_s,
+            # How the reader itself is doing, for when the link looks wrong.
+            "thread_alive": self.running,
+            "last_line_age_s": (None if link.last_line_mono is None
+                                else round(self._clock() - link.last_line_mono, 1)),
+            "lines_ok": self.stats["lines"],
+            "lines_bad": (self.stats["text"] + self.stats["bad_json"]
+                          + self.stats["too_long"] + self.stats["unknown_type"]),
+            "bytes_rx": self.stats["bytes_rx"],
+            "reopens": self.stats["reopens"],
         }
 
     def _mac_by_cup(self) -> Dict[int, str]:
