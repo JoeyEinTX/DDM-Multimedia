@@ -73,6 +73,10 @@ class HttpOperator:
     def adopt(self) -> None:
         self._post("/api/lq/dev/roster/adopt", None)
 
+    def reset(self, reason: str = "simulator") -> dict:
+        """Tell DevPi to forget its roster and state. Returns the new revs."""
+        return self._post("/api/lq/dev/reset", {"reason": reason})
+
 
 class ApiOperator:
     """Drives the bridge in-process through its Python API (tests)."""
@@ -164,6 +168,7 @@ class Simulator:
         self.intended_scratched: Dict[int, bool] = {c: False for c in range(1, 21)}
         self.intended_roster: Dict[int, Optional[str]] = {c: None for c in range(1, 21)}
         self.scenario_name: Optional[str] = None
+        self.reboot_log_mark: int = 0        # gw.applied_log length at the last reboot
         self._gen = None
         self._pending = None
         self._pending_deadline: Optional[float] = None
@@ -223,6 +228,10 @@ class Simulator:
         return c
 
     def reboot_gateway(self) -> None:
+        # Where the gateway's applied log stood when it went down. Everything
+        # after this mark is DevPi noticing the reboot and putting the gateway
+        # back on its own, which is the thing worth asserting on.
+        self.reboot_log_mark = len(self.gw.applied_log)
         self.gw.reboot(self.clock.now())
         self.say("gateway: REBOOT")
 
@@ -336,10 +345,15 @@ class Simulator:
         DevPi is given the roster, horses 1..20 go to cups 1..20, BETTING_OPEN."""
         for n in range(1, 21):
             self.boot(n)
-        yield self.until("all 20 cups assigned a slot in HELLO order",
+        # The roster goes down before the cups are checked, not after. DevPi
+        # keeps its roster between runs, and while it holds one the gateway
+        # hands out no number of its own: any cup outside that roster would
+        # wait for a slot that is never coming. Naming all twenty first makes
+        # the start of a scenario the same from any DevPi state.
+        yield self.operator_roster_all("put the 20 cups in cups 1..20 (POST /api/lq/dev/roster)")
+        yield self.until("all 20 cups hold their numbers",
                          lambda: all(self.cups[n].cup_id == cup_to_slot(n) for n in range(1, 21)),
                          timeout=30)
-        yield self.operator_roster_all("put the 20 cups in cups 1..20 (POST /api/lq/dev/roster)")
         yield self.operator_state("assign horses 1..20 to cups 1..20 and open betting",
                                   phase=Phase.BETTING_OPEN, horses={c: c for c in range(1, 21)},
                                   scratched={c: False for c in range(1, 21)})

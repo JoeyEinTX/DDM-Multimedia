@@ -75,6 +75,24 @@ gateway. Every scenario starts by telling DevPi all twenty cup addresses
 again, so a leftover roster from an earlier run is corrected rather than
 inherited. You never need to clear anything by hand between runs.
 
+### Going back to the real gateway
+
+Nothing to remember here either. The twenty cups the simulator invents are
+not real, and DevPi can tell: their addresses all start `02:DD:4D:`. The
+moment the real gateway is plugged back in and says hello, DevPi sees that
+the cups it is holding are pretend ones and a real gateway is asking, throws
+the whole lot away, and tells the gateway nothing. The real cups then get
+their numbers normally.
+
+This matters. Without it the real gateway would be handed twenty addresses
+that do not exist, no real cup would ever get a number, and every cup would
+sit on its address screen with nothing on it to say why.
+
+One thing is worth knowing: the gateway itself keeps whatever it was last
+told until it loses power. So if you have been simulating and then plug the
+real gateway back in, give the gateway a power cycle as well. DevPi clears
+itself; the gateway needs the switch.
+
 ## Seeing it work
 
 While both windows run, open this address in a browser on the same
@@ -132,6 +150,9 @@ Useful extras:
   `--wire` prints every line that goes over the fake serial port.
 - `--auto-demo` pretends the gateway was flashed as a bench build that
   starts demo mode on its own.
+- `--reset-after` tells DevPi to forget this run's cups the moment the run
+  ends, instead of waiting for the real gateway to turn up. Needs `--devpi`.
+  Tidy rather than necessary: DevPi does it by itself either way.
 
 ## Driving it by hand
 

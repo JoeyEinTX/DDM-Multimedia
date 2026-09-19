@@ -210,6 +210,19 @@ class LqDb:
             for cup, horse in horses_by_cup.items():
                 conn.execute("UPDATE cups SET horse = ? WHERE cup_id = ?", (horse, cup))
 
+    def clear_cup_assignments(self, drop_mac_prefix: Optional[str] = None) -> int:
+        """Forget every cup number and horse, for a link reset. Rows whose MAC
+        starts with drop_mac_prefix are deleted outright rather than kept with
+        a NULL cup_id: they belong to a simulator run and there is no real cup
+        behind them. Returns how many rows were deleted."""
+        with self.txn() as conn:
+            deleted = 0
+            if drop_mac_prefix:
+                cur = conn.execute("DELETE FROM cups WHERE mac LIKE ? || '%'", (drop_mac_prefix,))
+                deleted = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            conn.execute("UPDATE cups SET cup_id = NULL, horse = NULL")
+            return deleted
+
     def set_cup_online(self, mac: str, online: bool, last_seen: Optional[str] = None) -> None:
         with self.txn() as conn:
             if last_seen is None:

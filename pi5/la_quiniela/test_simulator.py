@@ -380,7 +380,8 @@ def test_in_memory_scenarios():
            sim.tokens_in(5) == 0 and before == after and before > 0 and rc == 0 and not sim.failures)
     sim, rc = in_memory_run("gateway-reboot", seed=3)
     _check("gateway-reboot: the gateway booted twice and got roster before state the second time",
-           sim.gw.boots == 2 and [k for k, _ in sim.gw.applied_log][:2] == ["roster", "state"])
+           sim.gw.boots == 2
+           and [k for k, _ in sim.gw.applied_log][sim.reboot_log_mark:][:2] == ["roster", "state"])
     sim, rc = in_memory_run("cup-swap", seed=4)
     exp = sim.expectation()
     _check("cup-swap: cup 7 is the spare, online, with the dead cup's tokens",
@@ -507,7 +508,9 @@ def test_e2e_gateway_reboot():
     started, sim, rc, snap, events, elapsed, link, bridge = _e2e("gateway-reboot")
     _check("gateway-reboot: PASS (%.0f s)" % elapsed, rc == 0, "; ".join(sim.failures))
     log = sim.gw.applied_log
-    _check("gateway-reboot: bridge re-sent roster then state on its own", sim.gw.boots == 2 and [k for k, _ in log][:2] == ["roster", "state"], str(log))
+    _check("gateway-reboot: bridge re-sent roster then state on its own",
+           sim.gw.boots == 2
+           and [k for k, _ in log][sim.reboot_log_mark:][:2] == ["roster", "state"], str(log))
     _check("gateway-reboot: in_sync came back true", snap["link"]["in_sync"] is True)
     _check("gateway-reboot: gateway_reboot event logged (the second hello is inside the bridge's 10 s hello-event rate limit)",
            "gateway_reboot" in events and events.count("gateway_hello") >= 1, str([e for e in events if e.startswith("gateway")]))
@@ -522,6 +525,76 @@ def test_e2e_cup_swap():
            c7["mac"] == cup_mac(21) and c7["online"] and c7["count"] == sim.expectation()["cups"][7]["count"])
     _check("cup-swap: cup_offline for cup 7 then a cup_hello for the spare were logged", "cup_offline" in events)
     print("      elapsed %.1f s" % elapsed)
+
+
+def test_e2e_real_gateway_after_a_simulator_run():
+    """The whole reason prompt 3b exists. A simulator session leaves its
+    roster in DevPi's database. When the real gateway is plugged back in and
+    DevPi restarts, the real cups must get their numbers, not -1."""
+    from la_quiniela.bridge import LqBridge
+    from la_quiniela.sim.link import PtyLink
+    _fresh_db()
+    cfg = {"LQ_SERIAL_BAUD": 115200, "LQ_HEARTBEAT_LOG_S": 10,
+           "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12}
+
+    def wait_until(pred, timeout=20.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            if pred():
+                return True
+            time.sleep(0.05)
+        return pred()
+
+    # 1. A full simulator run, which leaves twenty fake MACs in the database.
+    link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-sim-test-"))
+    bridge = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link.slave_path), db_path=_TMP_DB)
+    bridge.start()
+    sim = Simulator(link=link, seed=1, ideal=True, speed=50.0, quiet=True, out=lambda s: None,
+                    operator=ApiOperator(bridge), settle_s=15.0, operator_timeout=40)
+    rc = sim.run(scenario="normal", check=bridge.get_snapshot)
+    sim_revs = (bridge.state_rev, bridge.roster_rev)
+    bridge.close()
+    link.close()
+    _check("simulator run finished first", rc == 0, "; ".join(sim.failures))
+
+    # 2. DevPi restarts with the real gateway plugged in.
+    link2 = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-real-test-"))
+    bridge2 = LqBridge(settings=dict(cfg, LQ_SERIAL_PORT=link2.slave_path), db_path=_TMP_DB)
+    _check("the restarted bridge did load the simulator's roster",
+           bridge2.has_roster and bridge2._roster_is_simulated())
+    bridge2.start()
+    real_gw = "24:6F:28:AA:BB:CC"
+    real_cups = ["24:6F:28:11:22:%02X" % (n + 1) for n in range(4)]
+    wait_until(lambda: bridge2.link.port_open)
+    link2.drain()
+
+    link2.write_line(W.hello_line(real_gw))
+    got_reset = wait_until(lambda: not bridge2.has_roster)
+    _check("the real gateway's hello threw the simulator roster away", got_reset)
+    _check("the real gateway was sent nothing", link2.drain() == [], "bridge wrote something back")
+    events = [r["type"] for r in bridge2.db.query("SELECT type FROM events ORDER BY id")]
+    _check("an lq_reset event was logged", events.count("lq_reset") == 1, str(events[-5:]))
+    _check("revs still only went up",
+           bridge2.state_rev > sim_revs[0] and bridge2.roster_rev > sim_revs[1])
+
+    # 3. Four real cups report. They must be mirrored, not left at -1.
+    for i, mac in enumerate(real_cups):
+        link2.write_line(W.telem_line(i, mac, 810000 + i, 0, 1, 0, -60, -58))
+    ok = wait_until(lambda: all(c["mac"] in real_cups for c in bridge2.get_snapshot()["cups"][:4]))
+    snap = bridge2.get_snapshot()
+    sim_rows = bridge2.db.query_one("SELECT COUNT(*) AS n FROM cups WHERE mac LIKE '02:DD:4D:%'")["n"]
+    bridge2.close()
+    link2.close()
+    _check("all four real cups got their numbers from the gateway", ok,
+           str([(c["cup"], c["mac"]) for c in snap["cups"][:4]]))
+    _check("cups 1 to 4 are the real MACs in order",
+           [c["mac"] for c in snap["cups"][:4]] == real_cups,
+           str([c["mac"] for c in snap["cups"][:4]]))
+    _check("they are online, not waiting on a MAC screen",
+           all(c["online"] for c in snap["cups"][:4]))
+    _check("no simulated cup is left anywhere in the snapshot",
+           not any((c["mac"] or "").startswith("02:DD:4D:") for c in snap["cups"]))
+    _check("the simulated cup rows are gone from the database", sim_rows == 0, str(sim_rows))
 
 
 def test_bridge_disconnect_reconnect():
@@ -574,6 +647,7 @@ def main():
     _run("end to end — DevPi remembers a short roster", test_e2e_short_roster_repaired)
     _run("end to end — gateway-reboot", test_e2e_gateway_reboot)
     _run("end to end — cup-swap", test_e2e_cup_swap)
+    _run("end to end — a real gateway after a simulator run", test_e2e_real_gateway_after_a_simulator_run)
     _run("bridge disconnect and reconnect mid-run", test_bridge_disconnect_reconnect)
 
     passed = sum(1 for r in _results if r[0] == "PASS")

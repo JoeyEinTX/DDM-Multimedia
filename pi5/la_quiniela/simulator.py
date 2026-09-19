@@ -43,6 +43,10 @@ def main(argv=None) -> int:
     ap.add_argument("--wire", action="store_true", help="also echo every line sent and received")
     ap.add_argument("--no-stdin", action="store_true", help="do not read commands from stdin")
     ap.add_argument("--duration", type=float, metavar="S", help="with no scenario: stop after this many seconds")
+    ap.add_argument("--reset-after", action="store_true",
+                    help="when the run ends, tell DevPi to forget this run's roster and state "
+                         "(needs --devpi). DevPi does this by itself the next time a real gateway "
+                         "says hello, so this is only to leave it tidy straight away")
     args = ap.parse_args(argv)
 
     if args.list:
@@ -68,6 +72,19 @@ def main(argv=None) -> int:
         print("\nstopped", flush=True)
         return 130
     finally:
+        if args.reset_after:
+            if not args.devpi:
+                print("--reset-after needs --devpi; DevPi was not told anything", flush=True)
+            else:
+                try:
+                    revs = HttpOperator(args.devpi).reset("simulator_run_ended")
+                    print("DevPi reset: roster and state forgotten (state rev %s, roster rev %s, "
+                          "%s simulated cup row(s) deleted)"
+                          % (revs.get("state_rev"), revs.get("roster_rev"),
+                             revs.get("cups_dropped")), flush=True)
+                except Exception as exc:
+                    print("could not reset DevPi (%s); it will throw this run away by itself the "
+                          "next time a real gateway says hello" % exc, flush=True)
         link.close()
 
 

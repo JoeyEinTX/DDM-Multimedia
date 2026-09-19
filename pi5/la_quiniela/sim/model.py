@@ -34,7 +34,10 @@ GW_STALE_S = 3.0                # STALE_MS
 GW_DEMO_STEP_S = 3.0            # DEMO_STEP_MS
 BROADCAST_LOSS = 0.01           # a cup misses about one broadcast in a hundred (drop creeps up)
 
-GATEWAY_MAC = "02:DD:4D:00:00:00"
+# A fixed address the bridge can recognise. Everything the simulator
+# invents starts 02:DD:4D:, and DevPi throws away a roster of those the
+# moment a gateway with any other address says hello.
+GATEWAY_MAC = "02:DD:4D:FF:FF:FF"
 NUM_SPARES = 2
 
 

@@ -90,7 +90,7 @@ Event types: `cup_hello`, `cup_online`, `cup_offline`, `cup_claim_mismatch`,
 
 ## Who owns cup numbers
 
-- **No roster yet** (`roster_rev == 0`): DevPi mirrors the gateway. A MAC's
+- **No roster yet** (`has_roster` false): DevPi mirrors the gateway. A MAC's
   `cup_id` is whatever the gateway reports.
 - **With a roster**: DevPi is right. A cup the gateway reports differently
   logs a `roster_mismatch` event and triggers a roster re-send; DevPi's
@@ -106,6 +106,53 @@ through the admin page or `set_roster()`. The roster is also persisted, so a
 short roster is inherited by the next run of the app. The simulator avoids
 all of this by naming all 20 MACs at the start of every scenario rather than
 adopting.
+
+### Whether DevPi holds anything is not a rev
+
+`state_rev` and `roster_rev` only ever increase, including across a reset, so
+a rev of 0 no longer means "nothing set". Two flags say that: `has_state` and
+`has_roster`, both in `get_snapshot()["devpi"]`. Everything that used to read
+a rev of 0 reads a flag instead, the answer to a `hello` included. They are
+persisted as the presence of `state_json` and `roster_json` in
+`lq_link_state`, so no schema change was needed.
+
+## Resetting the link
+
+`reset_link(reason)` makes DevPi forget its roster and its state and go back
+to mirroring the gateway. It exists because the cup simulator writes a roster
+of twenty invented MACs into this same database, and that roster must never
+reach a real gateway.
+
+- Both revs go up, so a gateway can never mistake the reset for an older
+  roster. What changes is that DevPi stops claiming to hold one, and answers
+  the next `hello` with nothing.
+- `cups.cup_id` and `cups.horse` are set to NULL on every row. Rows whose MAC
+  starts with `02:DD:4D:` are deleted outright: they are simulated cups and
+  there is no real cup behind them.
+- `telemetry` and `events` are left alone. One `lq_reset` event records the
+  reason and the new revs.
+- A fresh `lq_snapshot` and `lq_link` go to the room.
+- **Nothing is sent to the gateway.** There is no line in the protocol that
+  means "forget what I told you", so a gateway that already holds a roster
+  keeps it until it is power-cycled. Reset DevPi, then power-cycle the
+  gateway, and both start clean.
+
+### The automatic guard
+
+Nobody has to remember to do this. Every MAC the simulator invents starts
+`02:DD:4D:`, its gateway included (`02:DD:4D:FF:FF:FF`), and nothing real uses
+that prefix. So when a `hello` arrives, if the stored roster holds any
+`02:DD:4D:` MAC and the gateway saying hello does not, the bridge calls
+`reset_link("sim_roster_discarded")` before answering, and then answers with
+nothing.
+
+The reverse needs no guard: a simulator scenario names all twenty of its own
+MACs at the start, replacing whatever roster was there.
+
+Without this, the first `hello` after a simulator session hands the real
+gateway twenty MACs that do not exist. Every real cup is then reported as
+`-1`, never gets a number, and sits on its MAC waiting screen with nothing on
+it to explain why.
 
 ## SocketIO events
 
@@ -151,6 +198,7 @@ the gateway.
 | `set_state(phase, horses, scratched) -> rev` | `horses` and `scratched` are 20-item lists, position 0 = cup 1. Validated exactly as the gateway does (`ValueError` on bad input). Bumps `state_rev`, persists, updates `cups.horse`, sends if the port is open, emits `lq_update` for every cup whose horse or flag changed. Identical values are a no-op returning the current rev. |
 | `set_roster(macs) -> rev` | 20-item list, `None` or `""` for an empty slot. Rejects bad MACs, duplicates and `FF:FF:FF:FF:FF:FF`. Bumps `roster_rev`, persists, rewrites `cups.cup_id`, sends roster then state, emits a fresh `lq_snapshot`. |
 | `adopt_roster() -> rev` | Builds a roster from the cup numbers mirrored from the gateway and calls `set_roster`. |
+| `reset_link(reason) -> dict` | Forgets the roster and the state, clears `cups.cup_id` and `cups.horse`, deletes simulated cup rows, keeps the history, sends the gateway nothing. Returns the new revs and how many rows were deleted. |
 | `get_snapshot() -> dict` | The `lq_snapshot` payload. |
 | `set_gateway_debug(on) -> bool` | Sends `{"t":"debug","on":...}`; True if it went out. |
 
@@ -165,8 +213,11 @@ in `ddm_common.h`; a test parses the header so the two cannot drift.
   - `POST /api/lq/dev/roster` body `{"macs":[...20]}`
   - `POST /api/lq/dev/roster/adopt`
   - `POST /api/lq/dev/debug` body `{"on":true}`
+  - `POST /api/lq/dev/reset` body `{"reason":"..."}` (optional), returns
+    `{"success":true,"state_rev":N,"roster_rev":N,"cups_dropped":N}`
 
-  Each returns `{"success":true,"rev":N}` or a 400 with the validation message.
+  The others return `{"success":true,"rev":N}` or a 400 with the validation
+  message.
 
 ## Tests
 

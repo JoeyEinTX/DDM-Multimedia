@@ -120,6 +120,16 @@ def api_dev_roster_adopt():
     return _rev_or_400(lambda: get_bridge().adopt_roster())
 
 
+@la_quiniela_bp.route("/dev/reset", methods=["POST"])
+def api_dev_reset():
+    """Forget DevPi's roster and state. Used to throw away what a simulator
+    session left behind, without waiting for a real gateway to say hello."""
+    _dev_only()
+    body = request.get_json(silent=True) or {}
+    reason = str(body.get("reason") or "dev_reset")[:64]
+    return jsonify({"success": True, **get_bridge().reset_link(reason)})
+
+
 @la_quiniela_bp.route("/dev/debug", methods=["POST"])
 def api_dev_debug():
     _dev_only()

@@ -158,7 +158,7 @@ def gateway_reboot(ctx):
     ctx.expect_event("gateway_reboot", None)
     yield ctx.until("DevPi re-sent roster and state after the reboot",
                     lambda: ctx.gw.roster_rev > 0 and ctx.gw.state_rev > 0, timeout=30)
-    order = [kind for kind, _ in ctx.gw.applied_log]
+    order = [kind for kind, _ in ctx.gw.applied_log][ctx.reboot_log_mark:]
     ctx.assert_equal("roster arrived before state after the reboot", order[:2], ["roster", "state"])
     yield ctx.wait(6, min_real=6)              # a status with matching revs, so in_sync comes back
     yield from _betting(ctx, rng, 10, favourites=[4])

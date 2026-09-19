@@ -170,6 +170,9 @@ MAC_A = "A0:B7:65:12:34:56"
 MAC_B = "A0:B7:65:12:34:57"
 MAC_C = "A0:B7:65:12:34:99"
 GW_MAC = "24:6F:28:AA:BB:CC"
+SIM_MAC_A = "02:DD:4D:00:00:01"      # what the cup simulator invents
+SIM_MAC_B = "02:DD:4D:00:00:02"
+SIM_GW_MAC = "02:DD:4D:FF:FF:FF"     # the simulator's own gateway
 
 
 def telem(cup_wire, mac, count=14, raw=812345, seq=9021, drop=2, rssi=-64, up=-61, claim=None):
@@ -738,6 +741,160 @@ def _make_app(bridge, socketio=None):
     return app
 
 
+def test_reset_link():
+    """reset_link forgets the roster and the state, clears the cups table and
+    deletes simulated rows, keeps the history, and sends the gateway nothing."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    b.handle_raw_line(telem(0, MAC_A, count=3))
+    b.handle_raw_line(telem(1, SIM_MAC_A, count=5))
+    b.set_roster([MAC_A, SIM_MAC_A] + [""] * 18)
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    before = (b.state_rev, b.roster_rev)
+    telem_before = len(telemetry_rows(b))
+    events_before = len(b.db.query("SELECT id FROM events"))
+    sio.clear()
+    port.written.clear()
+
+    result = b.reset_link("manual")
+
+    _check("reset sends the gateway nothing", port.written == [], str(port.lines()))
+    _check("reset reports the new revs",
+           result["state_rev"] > before[0] and result["roster_rev"] > before[1], str(result))
+    _check("revs only went up", b.state_rev > before[0] and b.roster_rev > before[1])
+    _check("DevPi no longer holds a roster or a state", not b.has_roster and not b.has_state)
+    snap = b.get_snapshot()
+    _check("snapshot says nothing is held",
+           snap["devpi"]["has_roster"] is False and snap["devpi"]["has_state"] is False)
+    _check("snapshot revs match the bridge",
+           snap["devpi"]["state_rev"] == b.state_rev and snap["devpi"]["roster_rev"] == b.roster_rev)
+    _check("snapshot has no cup addresses left", all(c["mac"] is None for c in snap["cups"]),
+           str([c["cup"] for c in snap["cups"] if c["mac"]]))
+    _check("snapshot has no horses left", all(c["horse"] is None for c in snap["cups"]))
+    _check("telemetry history kept", len(telemetry_rows(b)) == telem_before and telem_before > 0)
+    _check("event history kept", len(b.db.query("SELECT id FROM events")) > events_before)
+    resets = events_of(b, "lq_reset")
+    _check("one lq_reset event with the reason",
+           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "manual", str(resets))
+    _check("the simulated cup row is gone", cup_row(b, SIM_MAC_A) is None)
+    _check("reset counted the deleted row", result["cups_dropped"] == 1, str(result))
+    real = cup_row(b, MAC_A)
+    _check("the real cup row is kept, with no number and no horse",
+           real is not None and real["cup_id"] is None and real["horse"] is None, str(real))
+    _check("a fresh snapshot went to the room", "lq_snapshot" in [e for e, _, _ in sio.events])
+    _check("an lq_link went to the room", "lq_link" in [e for e, _, _ in sio.events])
+    port.written.clear()
+    b.handle_raw_line(hello())
+    _check("a hello after a reset is answered with nothing", port.written == [], str(port.lines()))
+
+
+def test_reset_then_set_again():
+    """Everything that used to read a rev of 0 as 'nothing set' still works
+    once the revs are past 0 but nothing is held."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    b.set_roster([MAC_A] + [""] * 19)
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    b.reset_link("manual")
+    after_reset = (b.state_rev, b.roster_rev)
+
+    b.handle_raw_line(telem(2, MAC_B, count=4))
+    _check("with nothing held DevPi mirrors the gateway's numbering", b.cups[MAC_B].cup == 3)
+
+    b.handle_raw_line(status(state_rev=0, roster_rev=0))
+    _check("in sync when DevPi holds nothing, whatever the revs say", b.link.in_sync is True)
+    port.written.clear()
+    clk.advance(RESEND_MIN_S + 1)
+    b.handle_raw_line(status(state_rev=0, roster_rev=0))
+    _check("nothing is re-sent when DevPi holds nothing", port.written == [], str(port.lines()))
+
+    rev = b.set_roster([MAC_B, MAC_A] + [""] * 18)
+    _check("set_roster after a reset keeps counting up", rev == after_reset[1] + 1, str(rev))
+    srev = b.set_state(2, HORSES_1_TO_20, SCR_CUP7)
+    _check("set_state after a reset keeps counting up", srev == after_reset[0] + 1, str(srev))
+    _check("DevPi holds them again", b.has_roster and b.has_state)
+    _check("the new roster owns the numbering", b.cups[MAC_B].cup == 1 and b.cups[MAC_A].cup == 2)
+    b.handle_raw_line(status(state_rev=srev, roster_rev=rev))
+    _check("in sync once the gateway reports the new revs", b.link.in_sync is True)
+    b.handle_raw_line(status(state_rev=srev, roster_rev=rev - 1))
+    _check("out of sync when the gateway's roster rev is stale", b.link.in_sync is False)
+
+
+def test_guard_discards_a_simulator_roster():
+    """The whole point: a real gateway must never be handed the simulator's
+    cups, or every real cup is reported as -1 and never gets a number."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    b.set_roster([SIM_MAC_A, SIM_MAC_B] + [""] * 18)
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    before = (b.state_rev, b.roster_rev)
+    port.written.clear()
+
+    b.handle_raw_line(hello())               # a real gateway, 24:6F:28:...
+
+    _check("the simulator roster was discarded", not b.has_roster and not b.has_state)
+    _check("the real gateway was sent nothing at all", port.written == [], str(port.lines()))
+    resets = events_of(b, "lq_reset")
+    _check("one lq_reset event, reason sim_roster_discarded",
+           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "sim_roster_discarded",
+           str(resets))
+    _check("revs still only went up", b.state_rev > before[0] and b.roster_rev > before[1])
+    _check("the simulated cup rows are gone",
+           cup_row(b, SIM_MAC_A) is None and cup_row(b, SIM_MAC_B) is None)
+    b.handle_raw_line(telem(0, MAC_A, count=2))
+    b.handle_raw_line(telem(1, MAC_B, count=3))
+    snap = b.get_snapshot()
+    _check("the real cups are mirrored into cups 1 and 2",
+           snap["cups"][0]["mac"] == MAC_A and snap["cups"][1]["mac"] == MAC_B,
+           str([(c["cup"], c["mac"]) for c in snap["cups"][:3]]))
+
+
+def test_guard_does_not_misfire():
+    """It must not fire for a real roster, nor when the simulator itself is
+    the gateway: a scenario replaces the whole roster at its start anyway."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    b.set_roster([MAC_A, MAC_B] + [""] * 18)
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    rev = b.roster_rev
+    port.written.clear()
+    b.handle_raw_line(hello())
+    _check("a real roster survives a real gateway", b.has_roster and b.roster_rev == rev)
+    _check("no reset event", events_of(b, "lq_reset") == [])
+    _check("the real gateway gets its roster and state", len(port.lines()) == 2, str(port.lines()))
+
+    b2, port2, sio2, clk2 = _fresh_bridge()
+    b2._open_port()
+    b2.set_roster([SIM_MAC_A, SIM_MAC_B] + [""] * 18)
+    b2.set_state(1, HORSES_1_TO_20, NO_SCR)
+    rev2 = b2.roster_rev
+    port2.written.clear()
+    b2.handle_raw_line(hello(mac=SIM_GW_MAC))
+    _check("a simulator roster survives the simulator's own gateway",
+           b2.has_roster and b2.roster_rev == rev2)
+    _check("no reset event for the simulator", events_of(b2, "lq_reset") == [])
+    _check("the simulator gets its roster and state back", len(port2.lines()) == 2, str(port2.lines()))
+
+
+def test_dev_reset_route():
+    b, port, sio, clk = _fresh_bridge(LQ_DEV_ENDPOINTS=True)
+    b._open_port()
+    b.set_roster([SIM_MAC_A] + [""] * 19)
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    before = (b.state_rev, b.roster_rev)
+    app = _make_app(b)
+    client = app.test_client()
+    r = client.post("/api/lq/dev/reset", json={"reason": "simulator_run_ended"})
+    body = r.get_json()
+    _check("POST /api/lq/dev/reset returns the new revs",
+           r.status_code == 200 and body["state_rev"] > before[0] and body["roster_rev"] > before[1],
+           str(body))
+    _check("the route really reset the bridge", not b.has_roster and not b.has_state)
+    resets = events_of(b, "lq_reset")
+    _check("the route's reason is recorded",
+           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "simulator_run_ended")
+
+
 def test_http_routes_and_dev_gating():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
@@ -745,7 +902,8 @@ def test_http_routes_and_dev_gating():
     client = app.test_client()
     r = client.get("/api/lq/snapshot")
     _check("GET /api/lq/snapshot 200", r.status_code == 200 and len(r.get_json()["cups"]) == 20)
-    for path in ("/api/lq/dev/state", "/api/lq/dev/roster", "/api/lq/dev/roster/adopt", "/api/lq/dev/debug"):
+    for path in ("/api/lq/dev/state", "/api/lq/dev/roster", "/api/lq/dev/roster/adopt",
+                 "/api/lq/dev/debug", "/api/lq/dev/reset"):
         r = client.post(path, json={})
         _check(f"POST {path} is 404 with LQ_DEV_ENDPOINTS off", r.status_code == 404)
     b.settings["LQ_DEV_ENDPOINTS"] = True
@@ -906,6 +1064,11 @@ def main():
     _run("disabled / no port / no pyserial", test_bridge_disabled_and_no_pyserial)
     _run("schema mismatch refuses", test_schema_mismatch_refuses)
     _run("config env overrides", test_env_overrides)
+    _run("reset_link forgets the roster and state", test_reset_link)
+    _run("setting a roster and state again after a reset", test_reset_then_set_again)
+    _run("a real gateway never gets a simulator roster", test_guard_discards_a_simulator_roster)
+    _run("the guard does not misfire", test_guard_does_not_misfire)
+    _run("POST /api/lq/dev/reset", test_dev_reset_route)
     _run("HTTP routes + dev gating", test_http_routes_and_dev_gating)
     _run("SocketIO room isolation (real Flask-SocketIO)", test_room_isolation_real_socketio)
     _run("serial — port missing at start", test_port_missing_then_appears)
