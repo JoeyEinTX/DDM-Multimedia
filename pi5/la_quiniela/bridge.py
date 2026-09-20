@@ -45,6 +45,7 @@ DEFAULTS: Dict[str, Any] = {
     "LQ_BRIDGE_ENABLED": True,
     "LQ_SERIAL_PORT": "",
     "LQ_SERIAL_BAUD": 115200,
+    "LQ_SERIAL_LINES": "leave",   # "leave" = never touch DTR/RTS; "low" = hold both low
     "LQ_HEARTBEAT_LOG_S": 10,
     "LQ_CUP_OFFLINE_S": 6,
     "LQ_GATEWAY_OFFLINE_S": 12,
@@ -54,6 +55,8 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 # Fixed timing. The gateway side of each is documented in firmware/quiniela/README.md.
+SERIAL_LINE_MODES = ("leave", "low")
+
 READ_TIMEOUT_S = 1.0          # serial read timeout, so the thread notices a stop request
 READ_CHUNK_BYTES = 4096       # most bytes taken from the port in one read
 OPEN_SETTLE_S = 0.1           # pause after opening, before the input buffer is dropped
@@ -117,30 +120,51 @@ def load_settings(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 # The real serial port
 # -----------------------------------------------------------------------------
 
-def pyserial_factory(port: str, baud: int, timeout: float):
-    """Open the gateway's port the careful way.
+def open_serial_port(port: str, baud: int, timeout: float, lines: str = "leave",
+                     serial_class=None):
+    """Open the gateway's port. The promise is that restarting the app does
+    not reboot the gateway.
 
-    Built unopened, DTR and RTS held low, then opened: a USB adapter pulses
-    those lines on open and that resets an ESP32, and the promise is that a
-    DevPi service restart does not reboot the gateway. exclusive=True stops a
-    second copy of the app opening the same port."""
-    import serial
-    ser = serial.Serial()
+    lines="leave", the default, does not touch DTR or RTS at all: not before
+    opening, not after, and it never reads them either. On the CP2102 board
+    on the bench (2026-09-19) that is what keeps the gateway running. Linux
+    raises both lines together on open, which the ESP32's auto-reset circuit
+    ignores.
+
+    lines="low" builds the port unopened and holds both lines low first. That
+    was meant to prevent a reset and on that board causes one, because setting
+    them one after the other passes through DTR low with RTS high, which is
+    exactly the combination that pulls EN low. It is kept for a board that
+    turns out to need it.
+
+    exclusive=True stops a second copy of the app opening the same port.
+    serial_class is a seam for the tests; the real one is serial.Serial."""
+    if serial_class is None:
+        import serial
+        serial_class = serial.Serial
+    ser = serial_class()
     ser.port = port
     ser.baudrate = baud
     ser.timeout = timeout
     ser.write_timeout = 1.0
-    for attr in ("dtr", "rts"):
-        try:
-            setattr(ser, attr, False)
-        except Exception:           # a virtual port may refuse the control lines
-            pass
+    if lines == "low":
+        for attr in ("dtr", "rts"):
+            try:
+                setattr(ser, attr, False)
+            except Exception:       # a virtual port may refuse the control lines
+                pass
     try:
         ser.exclusive = True
     except Exception:               # not every platform supports it
         pass
     ser.open()
     return ser
+
+
+def pyserial_factory(port: str, baud: int, timeout: float):
+    """open_serial_port with the default line handling, for a caller that has
+    no settings to hand."""
+    return open_serial_port(port, baud, timeout)
 
 
 # -----------------------------------------------------------------------------
@@ -215,6 +239,7 @@ class LqBridge:
         self.link = LinkLive()
         self._resync = False              # drop bytes until the next newline
         self._last_link_key = None        # what the last emitted lq_link said
+        self._lines_warned = False        # LQ_SERIAL_LINES warned about once
         self._console = console or console_print
         self.stats = {"lines": 0, "text": 0, "bad_json": 0, "too_long": 0,
                       "unknown_type": 0, "sent": 0, "bytes_rx": 0, "reopens": 0,
@@ -296,6 +321,28 @@ class LqBridge:
         if self.has_roster:
             self._apply_roster_to_live()
 
+    # -- the port -------------------------------------------------------------
+
+    def lines_mode(self) -> str:
+        """Which DTR/RTS handling to open the port with. Anything that is not
+        a known mode warns once and behaves as "leave"."""
+        raw = self.settings.get("LQ_SERIAL_LINES", "leave")
+        mode = str(raw).strip().lower()
+        if mode in SERIAL_LINE_MODES:
+            return mode
+        if not self._lines_warned:
+            self._lines_warned = True
+            logger.warning("La Quiniela bridge: LQ_SERIAL_LINES is %r, which is not one of %s; "
+                           "leaving DTR and RTS alone", raw, " or ".join(SERIAL_LINE_MODES))
+            self.say("LQ_SERIAL_LINES is %r, not one of %s; leaving the control lines alone"
+                     % (raw, " or ".join(SERIAL_LINE_MODES)))
+        return "leave"
+
+    def _default_factory(self, port: str, baud: int, timeout: float):
+        """The real port, opened the way the settings say. Read at open time,
+        so a watchdog reopen uses the same mode as the first open."""
+        return open_serial_port(port, baud, timeout, lines=self.lines_mode())
+
     # -- console --------------------------------------------------------------
 
     def say(self, text: str) -> None:
@@ -329,7 +376,7 @@ class LqBridge:
                 logger.warning("La Quiniela bridge disabled: pyserial is not installed "
                                "(pip install -r requirements.txt)")
                 return False
-            self._factory = pyserial_factory
+            self._factory = self._default_factory
         if not self.settings.get("LQ_SERIAL_PORT"):
             logger.warning("La Quiniela bridge idle: LQ_SERIAL_PORT is empty. Set it in "
                            "pi5/config.py or export DDM_LQ_SERIAL_PORT; on DevPi use the "
@@ -342,8 +389,9 @@ class LqBridge:
         self._thread.start()
         logger.info("La Quiniela bridge started on %s @ %s",
                     self.settings["LQ_SERIAL_PORT"], self.settings["LQ_SERIAL_BAUD"])
-        self.say("bridge started on %s @ %s" % (self.settings["LQ_SERIAL_PORT"],
-                                                self.settings["LQ_SERIAL_BAUD"]))
+        self.say("bridge started on %s @ %s, lines: %s"
+                 % (self.settings["LQ_SERIAL_PORT"], self.settings["LQ_SERIAL_BAUD"],
+                    self.lines_mode()))
         return True
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -403,9 +451,10 @@ class LqBridge:
                     logger.exception("La Quiniela bridge: timer error")
 
     def _open_port(self) -> bool:
+        factory = self._factory or self._default_factory
         try:
-            port = self._factory(self.settings["LQ_SERIAL_PORT"],
-                                 int(self.settings["LQ_SERIAL_BAUD"]), READ_TIMEOUT_S)
+            port = factory(self.settings["LQ_SERIAL_PORT"],
+                           int(self.settings["LQ_SERIAL_BAUD"]), READ_TIMEOUT_S)
         except Exception as exc:
             self._port_failures += 1
             now = self._clock()

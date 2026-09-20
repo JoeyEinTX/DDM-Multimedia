@@ -60,7 +60,10 @@ def _lq_env(name, default):
 LQ_BRIDGE_ENABLED = _lq_env('LQ_BRIDGE_ENABLED', True)    # master switch
 LQ_SERIAL_PORT = _lq_env('LQ_SERIAL_PORT', '')            # empty = bridge idles; on DevPi a /dev/serial/by-id/... path, never /dev/ttyUSB0
 LQ_SERIAL_BAUD = _lq_env('LQ_SERIAL_BAUD', 115200)
+LQ_SERIAL_LINES = _lq_env('LQ_SERIAL_LINES', 'leave')     # 'leave' never touches DTR/RTS (right for the CP2102 board); 'low' holds both low, which reboots that board
 LQ_HEARTBEAT_LOG_S = _lq_env('LQ_HEARTBEAT_LOG_S', 10)    # per-cup heartbeat interval for logging and display refresh
 LQ_CUP_OFFLINE_S = _lq_env('LQ_CUP_OFFLINE_S', 6)         # no telemetry for this long = cup offline
 LQ_GATEWAY_OFFLINE_S = _lq_env('LQ_GATEWAY_OFFLINE_S', 12) # no line at all for this long = gateway offline
+LQ_DEAF_REOPEN_S = _lq_env('LQ_DEAF_REOPEN_S', 20)        # port open but no valid line for this long = close it and open it again
+LQ_REOPEN_MIN_GAP_S = _lq_env('LQ_REOPEN_MIN_GAP_S', 30)  # never reopen more often than this
 LQ_DEV_ENDPOINTS = _lq_env('LQ_DEV_ENDPOINTS', False)     # enables POST /api/lq/dev/* (testing only)

@@ -60,6 +60,7 @@ editing files (`DDM_LQ_SERIAL_PORT=/dev/pts/3`).
 | `LQ_BRIDGE_ENABLED` | `True` | Master switch |
 | `LQ_SERIAL_PORT` | `""` | Port path; empty = idle |
 | `LQ_SERIAL_BAUD` | `115200` | |
+| `LQ_SERIAL_LINES` | `"leave"` | `"leave"` never touches the port's DTR and RTS control lines; `"low"` holds both low before opening. See below. |
 | `LQ_HEARTBEAT_LOG_S` | `10` | Per-cup heartbeat interval for logging and display refresh |
 | `LQ_CUP_OFFLINE_S` | `6` | No telemetry for this long = cup offline |
 | `LQ_GATEWAY_OFFLINE_S` | `12` | No line at all for this long = gateway offline |
@@ -156,6 +157,44 @@ gateway twenty MACs that do not exist. Every real cup is then reported as
 `-1`, never gets a number, and sits on its MAC waiting screen with nothing on
 it to explain why.
 
+## If starting the app reboots the gateway
+
+`LQ_SERIAL_LINES` decides how the bridge handles the two control lines on the
+USB serial cable, DTR and RTS. On an ESP32 board those lines are wired to the
+reset circuit, so how they are driven when the port is opened decides whether
+the gateway keeps running or starts over.
+
+- **`leave`**, the default, does not touch them at all. This is right for the
+  CP2102 gateway board tested on the bench on 19 September 2026. Linux raises
+  both lines together when a port is opened, which that board's reset circuit
+  ignores, so the gateway carries on through an app restart.
+- **`low`** holds both lines low before opening. This was meant to prevent a
+  reset and on that board causes one, because setting them one after the other
+  passes through the one combination that pulls the reset line down. It is
+  kept in case another board turns out to need it.
+
+### How to tell which one a board needs
+
+Leave the gateway running with a race set up, so it is holding a state, then
+restart the app and watch its console. A gateway that already holds a state
+never introduces itself, so:
+
+- No `[LQ] gateway hello` line: the gateway kept running. The setting is right.
+- `[LQ] gateway hello` within a few seconds, and `up_s` in
+  `/api/lq/snapshot` back near zero: starting the app rebooted the gateway.
+  Try the other value.
+
+To change it, put this line in `pi5/.env` and restart the app:
+
+```
+DDM_LQ_SERIAL_LINES=low
+```
+
+`pi5/.env` is read before anything else, so nothing in `pi5/config.py` needs
+editing. The `[LQ] bridge started` line names the mode in use, for example
+`[LQ] bridge started on /dev/serial/by-id/... @ 115200, lines: leave`. A value
+that is neither `leave` nor `low` warns once and behaves as `leave`.
+
 ## If the gateway shows offline
 
 ### What the console says
@@ -167,7 +206,7 @@ after `gateway online` is a good sign, not a bad one.
 
 | Line | Means |
 | --- | --- |
-| `bridge started on /dev/serial/by-id/... @ 115200` | The reader thread is running. This should be the first one. |
+| `bridge started on /dev/serial/by-id/... @ 115200, lines: leave` | The reader thread is running. This should be the first one. The last word is `LQ_SERIAL_LINES`. |
 | `cannot open ... ; retrying every 5 s` | The port is not there. Check the cable and the path. Printed once, then at most once a minute. |
 | `gateway hello from 24:6F:...` | The gateway introduced itself. It does this until DevPi answers. |
 | `answered the hello with roster rev N and state rev N` | DevPi told the gateway what it knows. |

@@ -39,7 +39,7 @@ from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import (  # noqa: E402
     HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX, PER_CUP_EVENT_MIN_S,
-    RESEND_MIN_S, LqBridge, load_settings,
+    RESEND_MIN_S, SERIAL_LINE_MODES, LqBridge, load_settings, open_serial_port,
 )
 from la_quiniela.models import LqDb  # noqa: E402
 
@@ -967,6 +967,127 @@ def test_dev_reset_route():
            len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "simulator_run_ended")
 
 
+class RecordingSerial:
+    """Stands in for serial.Serial and records every attribute ever assigned,
+    so a test can prove DTR and RTS were not merely set back but never touched."""
+
+    instances = []
+
+    def __init__(self):
+        object.__setattr__(self, "assigned", [])
+        object.__setattr__(self, "opened", False)
+        RecordingSerial.instances.append(self)
+
+    def __setattr__(self, name, value):
+        self.assigned.append((name, value))
+        object.__setattr__(self, name, value)
+
+    def __getattr__(self, name):
+        # Reading dtr or rts on a closed port raises in pyserial; make any
+        # stray read loud rather than silently returning something.
+        raise AttributeError(name)
+
+    def open(self):
+        object.__setattr__(self, "opened", True)
+
+    @classmethod
+    def reset(cls):
+        cls.instances = []
+
+    @property
+    def touched_lines(self):
+        return [n for n, _ in self.assigned if n in ("dtr", "rts")]
+
+
+def test_serial_lines_leave_never_touches_them():
+    RecordingSerial.reset()
+    ser = open_serial_port("/dev/fake", 115200, 1.0, lines="leave", serial_class=RecordingSerial)
+    _check("leave: the port was opened", ser.opened)
+    _check("leave: DTR and RTS were never assigned", ser.touched_lines == [],
+           str(ser.assigned))
+    names = [n for n, _ in ser.assigned]
+    _check("leave: port, baud and timeouts are still set",
+           {"port", "baudrate", "timeout", "write_timeout"} <= set(names), str(names))
+    _check("leave: exclusive is still set", ("exclusive", True) in ser.assigned)
+
+
+def test_serial_lines_low_holds_them_low_before_open():
+    RecordingSerial.reset()
+    ser = open_serial_port("/dev/fake", 115200, 1.0, lines="low", serial_class=RecordingSerial)
+    _check("low: DTR and RTS were both assigned False",
+           [(n, v) for n, v in ser.assigned if n in ("dtr", "rts")] == [("dtr", False), ("rts", False)],
+           str(ser.assigned))
+    names = [n for n, _ in ser.assigned]
+    _check("low: they were set before the port was opened", ser.opened)
+    _check("low: and before exclusive, as before", names.index("dtr") < names.index("exclusive"))
+
+
+def test_serial_lines_mode_resolution():
+    b, port, sio, clk = _fresh_bridge()
+    _check("the default, with nothing configured, is leave", b.lines_mode() == "leave")
+    _check("the known modes are leave and low", SERIAL_LINE_MODES == ("leave", "low"))
+    defaults = load_settings()
+    _check("load_settings needs no config.py entry", defaults["LQ_SERIAL_LINES"] == "leave")
+    b.settings["LQ_SERIAL_LINES"] = "low"
+    _check("low is taken as given", b.lines_mode() == "low")
+    b.settings["LQ_SERIAL_LINES"] = "  LOW  "
+    _check("spacing and case do not matter", b.lines_mode() == "low")
+    # A bad value warns once and behaves as leave.
+    b2, port2, sio2, clk2 = _fresh_bridge(LQ_SERIAL_LINES="sideways")
+    _check("a bad value behaves as leave", b2.lines_mode() == "leave")
+    _check("and says so on the console once", len(b2._console.matching("LQ_SERIAL_LINES")) == 1,
+           str(b2._console.lines))
+    for _ in range(5):
+        b2.lines_mode()
+    _check("even after five more asks", len(b2._console.matching("LQ_SERIAL_LINES")) == 1)
+    # The environment override, the same way the other keys are read.
+    old = os.environ.get("DDM_LQ_SERIAL_LINES")
+    os.environ["DDM_LQ_SERIAL_LINES"] = "low"
+    try:
+        _check("DDM_LQ_SERIAL_LINES overrides the default",
+               load_settings()["LQ_SERIAL_LINES"] == "low")
+    finally:
+        if old is None:
+            os.environ.pop("DDM_LQ_SERIAL_LINES", None)
+        else:
+            os.environ["DDM_LQ_SERIAL_LINES"] = old
+
+
+def test_serial_lines_used_on_every_open():
+    """The mode must reach the real open path on the first open and on a
+    watchdog reopen, not just once at start()."""
+    for mode, expected in (("leave", []), ("low", ["dtr", "rts"])):
+        RecordingSerial.reset()
+        b, _port, sio, clk = _fresh_bridge(LQ_SERIAL_LINES=mode, LQ_DEAF_REOPEN_S=20,
+                                           LQ_REOPEN_MIN_GAP_S=30)
+        b._factory = None                      # use the bridge's own factory
+        b._default_factory = lambda p, baud, t, m=mode: open_serial_port(
+            p, baud, t, lines=b.lines_mode(), serial_class=RecordingSerial)
+        b._open_port()
+        _check("%s: first open touched %s" % (mode, expected or "neither line"),
+               RecordingSerial.instances[0].touched_lines == expected)
+        clk.advance(30)
+        b.tick(clk())
+        _check("%s: the watchdog reopened the port" % mode, len(RecordingSerial.instances) == 2,
+               str(len(RecordingSerial.instances)))
+        _check("%s: the reopen touched %s too" % (mode, expected or "neither line"),
+               RecordingSerial.instances[1].touched_lines == expected)
+
+
+def test_started_console_line_says_the_mode():
+    b, port, sio, clk = _fresh_bridge()
+    b.start()
+    _check("the started line names the mode",
+           b._console.matching("bridge started on /dev/fake @ 115200, lines: leave"),
+           str(b._console.lines))
+    b.stop()
+    b2, port2, sio2, clk2 = _fresh_bridge(LQ_SERIAL_LINES="low")
+    b2.start()
+    _check("and says low when that is configured",
+           b2._console.matching("lines: low"), str(b2._console.lines))
+    b2.stop()
+
+
 def test_junk_at_open_every_shape():
     """The bench failure: a huge junk burst at port open. Whatever its shape,
     the bridge must resynchronise and answer the gateway's next hello."""
@@ -1427,6 +1548,11 @@ def main():
     _run("disabled / no port / no pyserial", test_bridge_disabled_and_no_pyserial)
     _run("schema mismatch refuses", test_schema_mismatch_refuses)
     _run("config env overrides", test_env_overrides)
+    _run("serial lines: leave never touches DTR/RTS", test_serial_lines_leave_never_touches_them)
+    _run("serial lines: low holds them low", test_serial_lines_low_holds_them_low_before_open)
+    _run("serial lines: mode resolution", test_serial_lines_mode_resolution)
+    _run("serial lines: used on every open", test_serial_lines_used_on_every_open)
+    _run("the started console line says the mode", test_started_console_line_says_the_mode)
     _run("junk at port open, every shape", test_junk_at_open_every_shape)
     _run("junk mid-run", test_junk_mid_run)
     _run("a talker that never sends a newline", test_a_talker_that_never_sends_a_newline)

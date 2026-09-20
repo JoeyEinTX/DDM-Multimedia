@@ -414,14 +414,15 @@ def _fresh_db():
             pass
 
 
-def _e2e(name, seed=1, speed=50.0, settle=15.0):
+def _e2e(name, seed=1, speed=50.0, settle=15.0, lines=None):
     from la_quiniela.bridge import LqBridge
     from la_quiniela.sim.link import PtyLink
     _fresh_db()
     link = PtyLink(link_path=tempfile.mktemp(prefix="ddm-lq-sim-test-"))
     bridge = LqBridge(settings={"LQ_SERIAL_PORT": link.slave_path, "LQ_SERIAL_BAUD": 115200,
                                 "LQ_HEARTBEAT_LOG_S": 10, "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12,
-                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300},
+                                "LQ_DEAF_REOPEN_S": 300, "LQ_REOPEN_MIN_GAP_S": 300,
+                                **({} if lines is None else {"LQ_SERIAL_LINES": lines})},
                       db_path=_TMP_DB, console=_quiet_console)
     started = bridge.start()
     sim = Simulator(link=link, seed=seed, ideal=True, speed=speed, quiet=True, out=lambda s: None,
@@ -438,7 +439,9 @@ def _e2e(name, seed=1, speed=50.0, settle=15.0):
 
 def test_e2e_normal():
     started, sim, rc, snap, events, elapsed, link, bridge = _e2e("normal")
-    _check("real bridge opened the pty with pyserial, unchanged", started and bridge._factory.__name__ == "pyserial_factory")
+    _check("real bridge opened the pty with real pyserial, through its own factory",
+           started and bridge._factory == bridge._default_factory)
+    _check("normal: the default line handling is 'leave'", bridge.lines_mode() == "leave")
     _check("normal: PASS against the bridge's snapshot (%.0f s)" % elapsed, rc == 0, "; ".join(sim.failures))
     _check("normal: 20 cups online in the snapshot", sum(1 for c in snap["cups"] if c["online"]) == 20)
     _check("normal: token counts match exactly", all(c["count"] == sim.expectation()["cups"][c["cup"]]["count"] for c in snap["cups"]))
@@ -510,6 +513,16 @@ def test_e2e_short_roster_repaired():
     _check("short roster: the gateway was told a newer roster",
            bridge.roster_rev > rev, "%s -> %s" % (rev, bridge.roster_rev))
     print("      elapsed %.1f s, roster rev %d -> %d" % (elapsed, rev, bridge.roster_rev))
+
+
+def test_e2e_normal_with_lines_low():
+    """The other DTR/RTS mode must still work end to end on a real port."""
+    started, sim, rc, snap, events, elapsed, link, bridge = _e2e("normal", lines="low")
+    _check("lines=low: the bridge opened the pty", started)
+    _check("lines=low: the mode is what was configured", bridge.lines_mode() == "low")
+    _check("lines=low: normal still PASSes (%.0f s)" % elapsed, rc == 0, "; ".join(sim.failures))
+    _check("lines=low: 20 cups online in the snapshot", sum(1 for c in snap["cups"] if c["online"]) == 20)
+    print("      elapsed %.1f s" % elapsed)
 
 
 def test_e2e_gateway_reboot():
@@ -732,6 +745,7 @@ def main():
     _run("a refused operator request is retried", test_operator_retry)
     _run("end to end — normal (real bridge over a pty)", test_e2e_normal)
     _run("end to end — DevPi remembers a short roster", test_e2e_short_roster_repaired)
+    _run("end to end — normal with lines=low", test_e2e_normal_with_lines_low)
     _run("end to end — gateway-reboot", test_e2e_gateway_reboot)
     _run("end to end — cup-swap", test_e2e_cup_swap)
     _run("end to end — a real gateway after a simulator run", test_e2e_real_gateway_after_a_simulator_run)
