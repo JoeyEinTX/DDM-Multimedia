@@ -80,7 +80,10 @@
 #define ORIENT_DEFAULT_ID00 0x40  // same for the batch whose RDDID reads 00 00 00 (the scale cup, 2026-09-15): MX alone
 #define INVERT     false        // true if colors come out backwards
 
-#define TRACK       0.06f       // extra gap between two digits on top of the Impact advance, as a fraction of height
+#define TRACK       0.06f       // extra gap between two digits on top of the Impact advance, as a fraction of
+                                // height. Impact's advances already carry side bearings: try 0.03 if it looks loose
+#define NUMBER_SIZE_REF  "20"   // every number is sized as if it were this string, so all twenty cups show the
+                                // same digit size ("20" is the widest of 1..20). "" restores per-number fitting
 #define CONDENSE    0.72f       // narrowest a digit may be squeezed (1.0 = never)
 #define SUBROWS        4        // vertical anti-alias samples per pixel row
 
@@ -412,7 +415,10 @@ static void fillGlyph(int gi, float ox, float oy, float sx, float sy,
 }
 
 // Whole number, centered in the box, condensing rather than shrinking.
-// Digit advances come from FONT_ADV; the TRACK gap is added on top.
+// Digit advances come from FONT_ADV; the TRACK gap is added on top. The
+// scale comes from NUMBER_SIZE_REF fitted into this call's box, not from the
+// number itself, so giant, scratched and podium are each the same size for
+// every horse; only the centring uses the number's own width.
 void drawNumber(uint8_t n, int cx, int cy, int maxW, int maxH,
                 uint16_t fg, uint16_t bg) {
   int gi[2];
@@ -424,8 +430,22 @@ void drawNumber(uint8_t n, int cx, int cy, int maxW, int maxH,
   float totalW = (digits - 1) * gap;
   for (int i = 0; i < digits; i++) totalW += FONT_ADV[gi[i]];
 
+  float fitW = totalW;                                   // "" = fit each number on its own, as before
+  const char* ref = NUMBER_SIZE_REF;
+  if (ref[0]) {
+    float refW = 0;
+    int   k    = 0;
+    for (const char* p = ref; *p; p++) {
+      int g = fontIndex(*p);
+      if (g < 0) continue;
+      if (k++) refW += gap;
+      refW += FONT_ADV[g];
+    }
+    if (refW > fitW) fitW = refW;                        // a number wider than the reference still has to fit
+  }
+
   float sy = (float)maxH / FONT_GRID;
-  float sx = fminf(sy, (float)maxW / totalW);
+  float sx = fminf(sy, (float)maxW / fitW);
   if (sx < sy * CONDENSE) sy = sx / CONDENSE;
 
   float x = cx - (totalW * sx) * 0.5f;
