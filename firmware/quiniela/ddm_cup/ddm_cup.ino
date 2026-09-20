@@ -44,7 +44,7 @@
  * SERIAL (115200):  o = next orientation,  h = mirror left-right,
  *                   v = mirror top-bottom (all saved),  x = forget the saved
  *                   orientation (back to the panel-ID default),  t = tare,
- *                   tc = print raw and mapped touch coordinates on/off,
+ *                   p = print raw and mapped touch coordinates on/off,
  *                   c<N> = N tokens are on the plate: calibrate counts/token
  *                   for this cup and save it (c0 forgets it),  s = apply the
  *                   settled load to the count now,  ? = help
@@ -129,7 +129,7 @@
 // Touch menu — XPT2046 on its own SPI bus (HSPI; the display owns SPI/VSPI).
 // Raw x is the panel's LONG axis (the 320 px one) and raw y the short one,
 // so in portrait raw x becomes screen y and raw y screen x: TOUCH_SWAP_XY.
-// Verify per panel batch with serial "tc". Every button is a full-width bar,
+// Verify per panel batch with serial "p". Every button is a full-width bar,
 // so only the y axis has to be right; 15% of error still lands in the band.
 // ---------------------------------------------------------------------------
 #define FW_VERSION      "0.5"
@@ -697,9 +697,8 @@ bool     touchHeld   = false;    // debounced
 bool     touchEdge   = false;    // true only on the poll where a press began
 uint32_t tTouchDown  = 0;
 int      touchX = 0, touchY = 0; // mapped to screen pixels
-bool     touchDebug  = false;    // serial "tc"
+bool     touchDebug  = false;    // serial "p"
 uint32_t tTouchDebug = 0;
-uint32_t tPendingT   = 0;        // serial 't' seen, waiting to see whether a 'c' follows
 
 // --- screens ---------------------------------------------------------------
 
@@ -1676,7 +1675,7 @@ void setup() {
   // the bus is already up on ours.
   touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
   touch.begin(touchSPI);
-  Serial.printf("touch: XPT2046 on HSPI (CLK %d MISO %d MOSI %d CS %d IRQ %d); hold 3 s for the menu, serial tc prints coordinates\n",
+  Serial.printf("touch: XPT2046 on HSPI (CLK %d MISO %d MOSI %d CS %d IRQ %d); hold 3 s for the menu, serial p prints coordinates\n",
                 TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS, TOUCH_IRQ);
 
   renderTick();   // puts up the waiting screen
@@ -1725,33 +1724,21 @@ void loop() {
       scaleCalibrate(calNum);
       calDigits = -1;
     }
-    if (tPendingT) {                                      // a 't' was seen: 'tc' toggles the touch print, anything else tares
-      tPendingT = 0;
-      if (c == 'c') {
-        touchDebug = !touchDebug;
-        Serial.printf("[touch] coordinate print %s\n", touchDebug ? "ON" : "off");
-        continue;
-      }
-      serialTare();
-    }
     if      (c == 'c') { calNum = 0; calDigits = 0; tCalDigit = now; }
     else if (c == 'o') panelNextOrientation("serial o");
     else if (c == 'h') panelSetOrientation(orientFlips ^ 0x40, "serial h: mirror left-right");
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
     else if (c == 'x') { prefs.remove("flip"); panelUseDefaultOrientation(); }
-    else if (c == 't') tPendingT = now ? now : 1;         // tare after 500 ms unless a 'c' follows (tc)
+    else if (c == 't') serialTare();
+    else if (c == 'p') { touchDebug = !touchDebug; Serial.printf("[touch] coordinate print %s\n", touchDebug ? "ON" : "off"); }
     else if (c == 's') scaleApplySettled();
     else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), "
-                                      "x = forget the saved orientation and use the panel-ID default, t = tare, tc = toggle the touch coordinate print, s = apply the settled load to the count, "
+                                      "x = forget the saved orientation and use the panel-ID default, t = tare, p = toggle the touch coordinate print, s = apply the settled load to the count, "
                                       "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
   }
   if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed
     scaleCalibrate(calNum);
     calDigits = -1;
-  }
-  if (tPendingT && now - tPendingT > 500) {                // lone 't': tare
-    tPendingT = 0;
-    serialTare();
   }
 
   // --- drain packets handed over by the receive callback --------------------

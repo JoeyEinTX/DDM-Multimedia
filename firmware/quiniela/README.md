@@ -689,8 +689,7 @@ top of `ddm_cup.ino` are `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` (raw XPT2046
 ranges; raw x is the panel's long axis), `TOUCH_SWAP_XY` (true for portrait:
 raw x becomes screen y) and `TOUCH_FLIP_X/Y`. An orientation away from the
 batch default (FLIP 180) is followed automatically. **Both panel batches need
-their touch axes verified:** type `tc` in the serial monitor (a lone `t` still
-tares, after half a second), touch the top, middle and bottom of the glass, and
+their touch axes verified:** type `p` in the serial monitor, touch the top, middle and bottom of the glass, and
 check the printed `screen y` runs 0 → 319 top to bottom; if it runs the other
 way set `TOUCH_FLIP_Y`, if it barely changes set `TOUCH_SWAP_XY` the other way.
 A press counts only after three consecutive 50 ms polls, because resistive
