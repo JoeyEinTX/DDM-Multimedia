@@ -160,8 +160,8 @@ packets rather than a build error.
 ## `ddm_font.h` is generated — do not hand-edit
 
 > **`ddm_font.h` is machine-generated output.** `tools/tracefont.py` reads a TTF
-> with fontTools, flattens and simplifies the outlines of 44 glyphs (`0-9`,
-> `A-Z`, space and `% : - . ! ? /`) and emits them as polygon data on a
+> with fontTools, flattens and simplifies the outlines of 50 glyphs (`0-9`,
+> `A-Z`, space and `% : - . ! ? / + # , ( ) '`) and emits them as polygon data on a
 > 1000-unit grid (y = 0 at cap height, 1000 at the baseline) that the cup
 > renders directly, anti-aliased. Every string on the cup goes through it, not
 > just the digits, so **all cup text is uppercase** and limited to that set; a

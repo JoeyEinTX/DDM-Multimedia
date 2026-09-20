@@ -217,7 +217,8 @@ int SW, SH;
 
 // ===========================================================================
 // TEXT — every string on the cup goes through the traced-outline renderer
-// with the Impact glyph set in ddm_font.h: 0-9 A-Z space % : - . ! ? /,
+// with the Impact glyph set in ddm_font.h: 0-9 A-Z space and the marks
+// % : - . ! ? / + # , ( ) ' (50 glyphs),
 // uppercase only. Layout is advance-based, no kerning. In a glyph, y = 0 is
 // the cap-height line and y = FONT_GRID the baseline; round glyphs overshoot
 // both by a few units and are drawn, not clipped. Text is anti-aliased
@@ -818,7 +819,7 @@ void drawOverlay() {
   tft.fillRect(0, y, SW, h, C_BLACK);
   tft.drawRect(0, y, SW, h, C_AMBER);
 
-  // Uppercase only, and no '+': the glyph set has 0-9 A-Z space % : - . ! ? /
+  // Uppercase only: the glyph set has 0-9 A-Z space % : - . ! ? / + # , ( ) '
   const int cap = 11, pitch = 17, x0 = 6;
   char line[48];
   snprintf(line, sizeof(line), "ID:%d  HORSE:%u  STATE:%u  VER!:%lu",
@@ -838,7 +839,7 @@ void drawOverlay() {
   if (!scaleOk)
     snprintf(line, sizeof(line), "TOKENS:-  NET:-  NO HX711");
   else
-    snprintf(line, sizeof(line), "TOKENS:%u  NET:%ld  %s", tokens, lastReading - tare,
+    snprintf(line, sizeof(line), "TOKENS:%u  NET:%+ld  %s", tokens, lastReading - tare,
              scalePhase == SCALE_WARMUP ? "WARMUP" :
              scalePhase == SCALE_TARING ? "TARING" : "OK");
   drawTextLeft(line, x0, y + 5 + 3 * pitch, cap, C_WHITE, C_BLACK);
