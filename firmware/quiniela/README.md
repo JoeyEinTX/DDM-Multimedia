@@ -533,13 +533,11 @@ is talking to the real gateway again.
 ## Scale
 
 Each cup weighs the tokens dropped into it with a 1 kg load cell on an HX711
-(gain 128, 10 SPS) and counts them by the *step* in the reading, not by
-absolute weight: a stack of tokens keeps relaxing for 10–15 s after every
-impact, by about 2% of the total load, so absolute weight drifts by roughly one
-token in sixty. `ddm_cup.ino` tracks a slow baseline instead and counts a token
-when the reading jumps at least half a token above it for three samples in a
-row; two tokens dropped together count as two, and a token lifted out counts
-down the same way.
+(gain 128, 10 SPS). The tokens land in an inner sleeve that rides on the load
+cell, so nothing that is weighed touches anything fixed. The settled weight is
+the source of truth for the count; live drop and remove events, detected as
+steps against a slow baseline, are provisional and exist so telemetry and the
+splash display react within about 300 ms.
 
 ### Wiring
 
@@ -577,47 +575,35 @@ NVS` shows what a cup is using.
 
 ### Counting accuracy
 
-Two things keep a big stack honest. First, the bench showed that after an
-impact the whole stack reads about 2% high and relaxes over 10–15 s, and 2%
-of forty tokens is most of a token, so a single drop onto a full cup measured
-as 1.8 tokens and rounded to 2 (50 tokens counted as 51–58). The sketch now
-takes `OVERSHOOT_PCT` of the load already on the plate off each step before
-rounding, with a floor of one token so a gently placed token still counts.
-Second, 15 s after the last drop, once the reading has been flat for two
-seconds, the cup compares the settled load with its count and corrects it by
-at most `SETTLE_MAX_FIX` tokens (1 for now), printing `[settle] tokens 52 ->
-50: load ...`; a bigger disagreement is printed as `DISAGREES` and left alone,
-and `s` over serial applies it when you know the cup is right; a load within a
-third of a token of a half is left alone and reported as ambiguous, so a
-mis-calibrated cup cannot flip-flop. Only settled readings are ever used for
-that. The `relaxed ... % of load` figure on those lines is the measured
-overshoot; it read 1.4–2.5% on the bench, hence `OVERSHOOT_PCT` 2.0.
+The settled weight is authoritative; live events are provisional.
 
-### The scale has to see all of the weight, every time
+A slow baseline tracks the reading while it stays within half a token, so
+warm-up drift is never counted. A jump of at least half a token that holds for
+three consecutive samples (bump rejection) is a live event: the step is rounded
+to whole tokens and the count moves at once, up or down. Then, 3 s after the
+last event, once the last 20 samples span less than 1,200 counts, the cup sets
+the count to the settled load divided by its counts-per-token, with no cap,
+printing `[settle] ok tokens=n load=x.xx` or `[settle] tokens a -> b
+load=x.xx`. That corrects a double count, a missed handful and a token lifted
+out while nobody was looking, all the same way. A load within a third of a
+token of a half is left alone and printed as `[settle] ambiguous ... (left
+alone)`, so a slightly mis-calibrated cup cannot flip-flop. `s` over serial
+applies the settled load immediately.
 
-Bench, 2026-09-15, second run: with the same 50 tokens in the cup the settled
-load read 50.6, then 53.2, then 51.5 tokens as the cup was shaken, and drops
-onto a tall stack produced spurious removals of 0.8–1.5 tokens as the stack
-shifted. That is a 5% hysteresis in the weighing itself, which no counting
-algorithm can remove, and it is why a settle check may not move the count by
-more than one token until the base is proven. Things to check, with 50 tokens
-in and the reading settled, watching the raw number on the overlay or serial:
+Because the settled weight decides, each cup's counts-per-token has to be its
+own (`c<N>` or the menu's `CAL 10`): load cells differ by a few percent per
+unit, and at 50 tokens a 2% error is a whole token.
 
-- Anything crossing from the weighed cup to the fixed world acts as a spring:
-  the HX711 lead if the amplifier is not on the weighed side, the 5V lead into
-  the CYD, LED wiring. Flex each one; a lasting change of more than about
-  1,000 counts (a sixth of a token) is the culprit. Thin silicone wire with a
-  generous loop entering at right angles, or everything on one side.
-- The top plate must not touch the enclosure rim or anything else. Press its
-  edges lightly, and lift and replace the cup a few times: the settled reading
-  should come back to within a few hundred counts every time.
-- The load-cell mount must be rigid. The 10–15 s relaxation after every impact
-  is plastic creep; a thicker or ribbed mount, or a metal top plate, shortens
-  it and shrinks the overshoot.
-- Tokens may touch anything that sits on the plate, and nothing that does not.
+History: until 2026-09-20 the stack leaned on the fixed cup wall and shunted
+weight, giving about 5% of hysteresis. An overshoot compensation, a faster
+post-event baseline and a one-token cap on settle corrections were added to
+survive that; with the sleeve they had turned into the miscount and are gone.
 
-Once lifting, flexing and shaking no longer move the settled reading, raise
-`SETTLE_MAX_FIX` and the settled weight becomes the final word on the count.
+### The sleeve
+
+- The sleeve must clear the shell by 3–4 mm all the way up; anything it touches
+  takes weight off the cell.
+- Tare with the sleeve installed. The sleeve is part of the empty reading.
 
 ### If the token print changes
 

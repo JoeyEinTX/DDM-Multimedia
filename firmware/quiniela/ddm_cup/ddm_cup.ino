@@ -108,18 +108,12 @@
 #define HX711_SCK               22  // CN1 clock
 #define SCALE_WARMUP_MS      30000  // HX711 drifts after power-up: no tare, no counting until this has passed
 #define SCALE_TARE_SAMPLES      30  // averaged for the tare (~3 s at 10 SPS)
-#define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift and relaxation...
-#define SCALE_FAST_TAU_MS     1500  // ...and a faster one for SCALE_POST_EVENT_MS after a drop, while the stack relaxes
-#define SCALE_POST_EVENT_MS  15000  // how long a stack keeps relaxing after an impact (bench: 10-15 s)
+#define SCALE_BASELINE_TAU_MS 5000  // time constant of the slow baseline that absorbs drift
+#define SCALE_POST_EVENT_MS   3000  // quiet time after the last event before the settled load is trusted (the sleeve settles in ~1 s)
 #define SCALE_CONFIRM_SAMPLES    3  // consecutive samples past the threshold that make a drop/remove event
-#define OVERSHOOT_PCT         2.0f  // impact overshoot taken off a drop's step, as % of the load already on the plate (bench: 1.4-2.5%)
 #define SETTLE_RING             20  // samples (~2 s) that must be flat before the settled load is trusted
 #define SETTLE_SPREAD         1200  // max-min over those samples that still counts as flat (idle noise is far below)
-#define SETTLE_AMBIGUOUS     0.35f  // settled load within this many tokens of a half: leave the count alone
-#define SETTLE_MAX_FIX           1  // a settle check may move the count by at most this many tokens; a bigger
-                                    // disagreement is only reported (serial s applies it). Raise it once the scale
-                                    // base is proven free of hysteresis (bench 2026-09-15: the same 50 tokens
-                                    // settled at 50.6, 53.2 and 51.5 tokens as the cup was shaken)
+#define SETTLE_AMBIGUOUS     0.35f  // settled load within this many tokens of a half: leave the count alone and say so
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
 #define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
@@ -525,7 +519,6 @@ long       countsPerToken = COUNTS_PER_TOKEN;  // per cup, NVS "cpt" (serial c<N
 long       tokenThreshold = TOKEN_THRESHOLD;   // half of countsPerToken
 uint32_t   tLastEvent    = 0;        // last drop/remove/tare: fast tracking and the settle check hang off it
 bool       settlePending = false;    // an event happened; compare the settled load with the count once quiet
-long       snapReading   = 0;        // reading the baseline snapped to at the last event (relaxation print)
 long       ring[SETTLE_RING];        // the last ~2 s of samples, for the settle check
 uint8_t    ringN         = 0;        // valid samples in ring (0 after every event)
 uint8_t    ringI         = 0;
@@ -1068,36 +1061,31 @@ static void panelUseDefaultOrientation() {                          // serial 'x
 // ===========================================================================
 // SCALE — HX711 token counting
 //
-// Counting is by increments against a slow-tracking baseline, never by an
-// unsettled weight: a stack of tokens keeps relaxing for 10-15 s after every
-// impact (about 2% of the total load), so a raw weight is roughly a token in
-// sixty off while that lasts. The baseline is a low-pass of the reading
-// (time constant SCALE_BASELINE_TAU_MS, SCALE_FAST_TAU_MS while a stack is
-// relaxing) that only updates while the reading is within half a token of
-// it, so warm-up drift and post-impact relaxation are absorbed and never
-// counted. A jump of at least half a token that holds for
-// SCALE_CONFIRM_SAMPLES consecutive samples is an event: the step is rounded
-// to whole tokens (two dropped together count as two), the baseline snaps to
-// the new reading, and tracking resumes. Downward steps decrement the same
-// way. A bump spikes and returns within a sample or two, so it never confirms.
+// The settled weight is the source of truth; live events are provisional.
 //
-// Two corrections keep a big stack honest (bench, 2026-09-15: 50 tokens
-// counted as 51..58 without them):
-//  * The impact overshoot scales with the load already on the plate, so a
-//    drop onto forty tokens measures about 1.8 tokens. OVERSHOOT_PCT of that
-//    load is taken off the step before rounding, with a floor of one token
-//    so a gently placed token still counts.
-//  * SCALE_POST_EVENT_MS after the last event, once the reading has been
-//    flat for SETTLE_RING samples, the settled load is compared with the
-//    count and the count is corrected by at most SETTLE_MAX_FIX tokens; a
-//    bigger disagreement is reported and left for serial 's', because on the
-//    bench the same 50 tokens settled at 50.6, 53.2 and 51.5 tokens as the
-//    cup was shaken (2026-09-15): a mechanical hysteresis no software can
-//    remove. Only a settled reading is ever used for that. A load within
-//    SETTLE_AMBIGUOUS of a half token is left alone and reported, so a
-//    mis-calibrated cup cannot flip-flop.
-// Serial c<N> calibrates the cup from N settled tokens and stores the result
-// in NVS: load cells differ by several percent from unit to unit.
+// A slow baseline (low-pass of the reading, time constant
+// SCALE_BASELINE_TAU_MS) tracks the plate while the reading stays within half
+// a token of it, so warm-up drift is absorbed and never counted. A jump of at
+// least half a token that holds for SCALE_CONFIRM_SAMPLES consecutive samples
+// is an event: the step is rounded to whole tokens, `tokens` moves at once so
+// telemetry and the splash display react within ~300 ms, and the baseline
+// snaps to the new reading. Downward steps decrement the same way. A bump
+// spikes and returns within a sample or two, so it never confirms.
+//
+// SCALE_POST_EVENT_MS after the last event, once the last SETTLE_RING samples
+// span less than SETTLE_SPREAD, the settled load overrides the count:
+// tokens = round(net / countsPerToken), with full authority, whether the live
+// event over- or under-counted or a removal went unseen. A load within
+// SETTLE_AMBIGUOUS of a half token is left alone and reported, so a slightly
+// mis-calibrated cup cannot flip-flop. This is only right because the tokens
+// land in an inner sleeve that rides on the load cell, so nothing weighed
+// touches anything fixed (the 2026-09-15 overshoot compensation, fast
+// post-event baseline and settle cap were crutches for a leaning stack and
+// are gone).
+//
+// Serial c<N> (or the menu's CAL 10) calibrates the cup from N settled tokens
+// and stores counts/token in NVS: load cells differ by a few percent per
+// unit, and at 50 tokens 2% is a whole token.
 //
 // Everything here is non-blocking: the ADC is only read when is_ready() says
 // a conversion is waiting, so the display and the radio never stall on it.
@@ -1173,38 +1161,28 @@ static void scaleCalibrate(long n) {
 static void scaleSettleCheck(uint32_t now) {
   if (!settlePending || now - tLastEvent < SCALE_POST_EVENT_MS) return;
   long settled;
-  if (!scaleSettled(&settled)) return;                    // still relaxing, or someone is touching it
+  if (!scaleSettled(&settled)) return;                    // not flat yet, or someone is touching it
   long  load = settled - tare;
   float ft   = (float)load / (float)countsPerToken;
   long  nS   = lroundf(ft);
   if (nS < 0) nS = 0;
-  long  relaxed = snapReading - settled;
-  float relPct  = (settled - tare) > 0 ? 100.0f * (float)relaxed / (float)(settled - tare) : 0.0f;
   settlePending = false;
   baseline      = (float)settled;
   if (fabsf(ft - (float)nS) > SETTLE_AMBIGUOUS) {
-    Serial.printf("[settle] ambiguous: load %ld = %.2f tokens, count stays %u (relaxed %ld = %.1f%% of load since the last drop)\n",
-                  load, ft, tokens, relaxed, relPct);
+    Serial.printf("[settle] ambiguous tokens=%u load=%.2f (left alone)\n", tokens, ft);
     return;
   }
   if (nS != tokens) {
-    long dif = nS - (long)tokens;
-    if (labs(dif) > SETTLE_MAX_FIX) {
-      Serial.printf("[settle] DISAGREES by %+ld: count %u, load %ld = %.2f tokens, not applied (SETTLE_MAX_FIX %d; serial s applies it) (relaxed %ld = %.1f%% of load since the last drop)\n",
-                    dif, tokens, load, ft, SETTLE_MAX_FIX, relaxed, relPct);
-      return;
-    }
-    Serial.printf("[settle] tokens %u -> %ld: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
-                  tokens, nS, load, ft, relaxed, relPct);
+    Serial.printf("[settle] tokens %u -> %ld load=%.2f\n", tokens, nS, ft);
     tokens = (uint16_t)nS;
   } else {
-    Serial.printf("[settle] ok tokens=%u: load %ld = %.2f tokens (relaxed %ld = %.1f%% of load since the last drop)\n",
-                  tokens, load, ft, relaxed, relPct);
+    Serial.printf("[settle] ok tokens=%u load=%.2f\n", tokens, ft);
   }
 }
 
-// Serial 's': the operator knows the cup is right, take the settled load as
-// the count regardless of SETTLE_MAX_FIX.
+// Serial 's': apply the settled load to the count right now, without waiting
+// out SCALE_POST_EVENT_MS. Bench convenience; the settle check does the same
+// on its own.
 static void scaleApplySettled() {
   if (scalePhase != SCALE_RUNNING) { Serial.println("[settle] scale not running yet"); return; }
   long settled;
@@ -1258,11 +1236,9 @@ static void scaleTick(uint32_t now) {
 
       float delta = (float)r - baseline;
       if (fabsf(delta) < (float)tokenThreshold) {
-        // Quiet: track slowly, faster while the stack is still relaxing after an
-        // event. alpha = dt / tau, capped so a long gap cannot overshoot.
+        // Quiet: track slowly. alpha = dt / tau, capped so a long gap cannot overshoot.
         confirmN = 0;
-        uint32_t tau = (now - tLastEvent < SCALE_POST_EVENT_MS) ? SCALE_FAST_TAU_MS : SCALE_BASELINE_TAU_MS;
-        float a = (float)dt / (float)tau;
+        float a = (float)dt / (float)SCALE_BASELINE_TAU_MS;
         if (a > 1.0f) a = 1.0f;
         baseline += delta * a;
         if (tokens == 0) tare = lroundf(baseline);   // an empty cup keeps re-zeroing itself
@@ -1272,31 +1248,22 @@ static void scaleTick(uint32_t now) {
       if (++confirmN < SCALE_CONFIRM_SAMPLES) return;   // a bump does not get this far
       confirmN = 0;
 
-      float est  = delta / (float)countsPerToken;       // raw step in tokens
-      float comp = est;
-      long  n;
-      if (delta > 0) {
-        float load = baseline - (float)tare;              // what was already on the plate
-        if (load < 0) load = 0;
-        comp = (delta - load * (OVERSHOOT_PCT / 100.0f)) / (float)countsPerToken;
-        n = lroundf(comp);
-        if (n < 1 && lroundf(est) >= 1) n = 1;           // a real drop never rounds away
-      } else {
-        n = lroundf(est);
-      }
+      float est = delta / (float)countsPerToken;        // step in tokens
+      long  n   = lroundf(est);
+      if (n == 0) return;                                 // rounds to nothing: not an event
+
       if (n > 0) {
         tokens += (uint16_t)n;
-        Serial.printf("[drop] +%ld tokens=%u step=%ld baseline=%ld est=%.2f comp=%.2f\n",
-                      n, tokens, (long)delta, (long)baseline, est, comp);
-      } else if (n < 0) {
+        Serial.printf("[drop] +%ld tokens=%u step=%ld baseline=%ld est=%.2f\n",
+                      n, tokens, (long)delta, (long)baseline, est);
+      } else {
         long take = -n;
         if (take > tokens) take = tokens;                 // clamp at 0
         tokens -= (uint16_t)take;
         Serial.printf("[remove] -%ld tokens=%u step=%ld baseline=%ld\n",
                       take, tokens, (long)delta, (long)baseline);
       }
-      baseline      = (float)r;                           // snap, then resume tracking
-      snapReading   = r;
+      baseline      = (float)r;                           // snap, then resume tracking; the settle check has the last word
       tLastEvent    = now;
       settlePending = true;
       ringN = 0; ringI = 0;
