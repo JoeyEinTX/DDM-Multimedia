@@ -13,11 +13,16 @@
  *     from DevPi as JSON lines.
  *
  * Serial line protocol: 115200 8N1, one compact JSON object per line, at
- * most DDM_LINE_MAX bytes per line in either direction. Documented in
+ * most DDM_LINE_MAX bytes per line in either direction, with one exception:
+ * the up "state" snapshot (typed `json`) runs to about 2.1 KB with a full
+ * fleet and has its own buffer, STATE_LINE_MAX. Documented in
  * ../README.md ("Serial line protocol"); the key names are a contract with
  * the DevPi bridge, implement them exactly.
- *   up:   hello, status, telem, cup_hello, err
+ *   up:   hello, status, telem, cup_hello, err, state (only when asked: `json`)
  *   down: state, roster, debug
+ * The up and down "state" lines share a type name and nothing else: the
+ * down line is DevPi's snapshot for the gateway to apply, the up line is
+ * the gateway's report. This sketch never parses its own output.
  * Every line this sketch prints that is not JSON starts with "# " so DevPi
  * can drop it. The hand-typed bench commands still work: type `help`.
  *
@@ -57,7 +62,8 @@
 // Boot default of the human-readable output: the per-packet TELEM lines and
 // the 5-second summary table. 0 = JSON lines only. Flip it at runtime with
 // the JSON line {"t":"debug","on":true} or the typed command `debug on`.
-// JSON lines are emitted whatever this says.
+// JSON lines are emitted whatever this says. (The table also pauses while
+// `json 1` runs: the state line carries the same numbers every second.)
 #define DDM_DEBUG_TEXT 0
 
 // 0 = party build: the gateway broadcasts NOTHING over ESP-NOW until a valid
@@ -101,7 +107,10 @@ const int KNOWN_CUPS_N = sizeof(KNOWN_CUPS) / sizeof(KNOWN_CUPS[0]);
 #define SUMMARY_MS    5000     // debug summary table cadence
 #define STATUS_MS     5000     // JSON status heartbeat cadence
 #define HELLO_MS      2000     // JSON hello repeat cadence until the first state line
-#define DDM_LINE_MAX      1024     // longest serial line, both directions, excluding the newline
+#define DDM_LINE_MAX      1024     // longest serial line, both directions, excluding the newline (one exception: STATE_LINE_MAX)
+#define STATE_LINE_MS   1000     // `json 1` state snapshot cadence
+#define STATE_LINE_MAX  2560     // the up "state" line, the one line allowed past DDM_LINE_MAX: 80-byte head
+                                 // + 20 comma-separated cup entries of at most 101 bytes + "]}" = 2121 worst case (+ NUL), see emitState()
 #define RX_QUEUE_LEN    32     // ESP-NOW packets that can wait for loop()
 #define ERR_EXCERPT     40     // characters of a rejected line echoed in the err line
 #define ACK_QUEUE_LEN   (DDM_MAX_CUPS + 4)   // hello-acks waiting to go out, one entry per MAC
@@ -133,13 +142,14 @@ uint32_t versionRejects = 0;                     // packets with the wrong DDM_P
 bool     demoMode       = (DDM_AUTO_DEMO != 0);
 bool     broadcasting   = (DDM_AUTO_DEMO != 0);  // once true, stays true until reboot
 bool     debugText      = (DDM_DEBUG_TEXT != 0);
+bool     jsonAuto       = false;                 // `json 1`: a state line every STATE_LINE_MS and no summary table; boot default off
 bool     helloActive    = true;                  // hello repeats until the first valid state line
 uint32_t stateRev       = 0;                     // rev of the last applied state line, 0 = none yet
 uint32_t rosterRev      = 0;                     // rev of the last applied roster line, 0 = DevPi has not spoken
 uint32_t demoStep       = 0;
 char     gwMac[18];                              // this board's MAC, formatted once at boot
 
-uint32_t tBroadcast = 0, tDemo = 0, tSummary = 0, tStatus = 0, tHello = 0;
+uint32_t tBroadcast = 0, tDemo = 0, tSummary = 0, tStatus = 0, tHello = 0, tState = 0;
 
 // ---------------------------------------------------------------------------
 // ESP-NOW -> loop() handoff. The receive callback runs in the WiFi task; it
@@ -158,6 +168,7 @@ static QueueHandle_t     rxQueue      = nullptr;
 static volatile uint32_t rxQueueDrops = 0;       // packets lost because loop() fell behind
 
 static char outBuf[DDM_LINE_MAX + 1];                // JSON lines are built here, from loop() only
+static char stateBuf[STATE_LINE_MAX + 1];            // except the up "state" line, which outgrows DDM_LINE_MAX
 
 // ===========================================================================
 // Serial output. Everything leaves through these two, from loop() (or from
@@ -465,6 +476,50 @@ static void emitErr(const char* msg, const char* line) {
   outLine(outBuf);
 }
 
+// The whole gateway in one line, for a machine reader: typed `json` prints
+// one, `json 1` one every STATE_LINE_MS. Not the down-link {"t":"state"}
+// (jsonState below): same type name, opposite direction, different keys.
+//
+// cups[] holds every slot that is in the roster OR has a horse assigned, so a
+// horse given to a cup that has not said hello yet still shows, with mac ""
+// and age -1. An unused slot's stats are all zero (every path that frees a
+// slot clears it), so tok/rssi/up read 0 there without a special case.
+//
+// This is the one line that may run past DDM_LINE_MAX (about 2.1 KB with 20
+// cups), hence its own buffer. The TX buffer in setup() is sized so that it
+// and a burst of telem lines drain in the background.
+static void emitState() {
+  uint32_t now = millis();
+  int n = snprintf(stateBuf, sizeof(stateBuf),
+                   "{\"t\":\"state\",\"seq\":%lu,\"st\":%u,\"demo\":%d,\"mac\":\"%s\",\"cups\":[",
+                   (unsigned long)statePkt.seq, (unsigned)statePkt.raceState, demoMode ? 1 : 0, gwMac);
+  if (n < 0 || n >= (int)sizeof(stateBuf)) return;
+  bool first = true;
+  for (int i = 0; i < DDM_MAX_CUPS; i++) {
+    const CupSlot& c = roster[i];
+    if (!c.used && statePkt.horseForCup[i] == 0) continue;
+    char m[18] = "";
+    if (c.used) macFmt(c.mac, m);
+    char age[12];                                  // ms since last heard, -1 = never (as the summary table)
+    if (c.used && c.lastSeenMs != 0) snprintf(age, sizeof(age), "%lu", (unsigned long)(now - c.lastSeenMs));
+    else                             strcpy(age, "-1");
+    int k = snprintf(stateBuf + n, sizeof(stateBuf) - n,
+                     "%s{\"id\":%d,\"mac\":\"%s\",\"h\":%u,\"scr\":%u,\"tok\":%u,\"rssi\":%d,\"up\":%d,\"age\":%s}",
+                     first ? "" : ",", i, m,
+                     (unsigned)statePkt.horseForCup[i], (unsigned)statePkt.scratched[i],
+                     (unsigned)c.tokenCount, (int)c.rssi, (int)c.upRssi, age);
+    if (k < 0 || n + k >= (int)sizeof(stateBuf) - 2) {   // cannot happen at STATE_LINE_MAX; never print a cut line
+      textf("ERR state line over %d bytes, not sent", STATE_LINE_MAX);
+      return;
+    }
+    n += k;
+    first = false;
+  }
+  snprintf(stateBuf + n, sizeof(stateBuf) - n, "]}");
+  outLine(stateBuf);
+  tState = now;
+}
+
 // ===========================================================================
 // Receive path. Core 3.x hands us esp_now_recv_info_t (with per-packet RSSI);
 // core 2.x hands us just the MAC. Same guard pattern as the LEDC handling in
@@ -580,6 +635,16 @@ static void setDebug(bool on, const char* why) {
   textf("[debug] text %s (%s)", on ? "on" : "off", why);
 }
 
+// `json 1` / `json 0`. While it runs the summary table stays off whatever the
+// debug flag says (the line carries the same numbers); `json 0` hands the
+// table back to the flag. TELEM text lines are not affected.
+static void setJsonAuto(bool on) {
+  jsonAuto = on;
+  textf("[json] state line every %d ms %s (%s)", STATE_LINE_MS, on ? "on" : "off",
+        on ? "summary table off" : "summary table follows the debug flag");
+  if (on) tState = millis() - STATE_LINE_MS;   // the first line on the next loop() pass, not a second from now
+}
+
 // ===========================================================================
 // Hand-typed serial commands (replies always print, prefixed "# ")
 // ===========================================================================
@@ -592,6 +657,8 @@ static void printHelp() {
   textf("  roster                   dump MAC-to-ID table");
   textf("  demo                     toggle demo mode (horse walk every 3s)");
   textf("  debug on|off             human-readable TELEM lines and 5s summary table");
+  textf("  json                     full gateway state as one JSON line, now");
+  textf("  json 1|0                 that line every 1s (summary table off) / back to normal");
   textf("  help                     this text");
   textf("Any state/horse/scratch command turns demo mode OFF. Any state/horse/scratch/demo");
   textf("command starts the state broadcast if the gateway is still silent from boot.");
@@ -654,6 +721,15 @@ static void handleCommand(char* line) {
 
   } else if (strcmp(line, "debug off") == 0) {
     setDebug(false, "command");
+
+  } else if (strcmp(line, "json") == 0) {
+    emitState();
+
+  } else if (strcmp(line, "json 1") == 0) {
+    setJsonAuto(true);
+
+  } else if (strcmp(line, "json 0") == 0) {
+    setJsonAuto(false);
 
   } else if (strcmp(line, "help") == 0) {
     printHelp();
@@ -880,9 +956,11 @@ void setup() {
   // Both buffer sizes must be set before begin(). The default 256-byte RX
   // buffer is smaller than a roster line (over 400 bytes); the TX buffer
   // lets a burst of telem lines drain in the background instead of stalling
-  // loop() at 115200 baud.
+  // loop() at 115200 baud (about 11.5 KB/s, so 2 KB takes ~175 ms). 8 KB
+  // holds a full-fleet `json 1` state line (~2.1 KB) plus 20 telem lines
+  // and their TELEM text (~5 KB) at once.
   Serial.setRxBufferSize(DDM_LINE_MAX);
-  Serial.setTxBufferSize(2048);
+  Serial.setTxBufferSize(8192);
   Serial.begin(115200);
   delay(300);
 
@@ -968,7 +1046,11 @@ void loop() {
     emitStatus();                       // sets tStatus
   }
 
-  if (debugText && now - tSummary >= SUMMARY_MS) {
+  if (jsonAuto && now - tState >= STATE_LINE_MS) {
+    emitState();                        // sets tState
+  }
+
+  if (debugText && !jsonAuto && now - tSummary >= SUMMARY_MS) {   // `json 1` stands in for the table
     tSummary = now;
     printSummary();
   }

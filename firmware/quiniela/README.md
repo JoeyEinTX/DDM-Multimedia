@@ -245,7 +245,10 @@ Paste the four rows into `KNOWN_CUPS[]` at the top of `ddm_gateway.ino`
 ### Reading the gateway output
 
 Serial monitor at 115200. Type `help` for the command list (`state`,
-`horse`, `scratch`, `roster`, `demo`, `debug`). A default build prints the
+`horse`, `scratch`, `roster`, `demo`, `debug`, `json`). `json` prints the
+whole gateway state as one JSON line and `json 1` repeats it every second in
+place of the summary table (`json 0` to stop); see `state` under "Up:
+gateway → DevPi" below. A default build prints the
 JSON lines DevPi reads (one `{"t":"telem",...}` per telemetry packet, a
 `{"t":"status",...}` every 5 seconds, see
 [Serial line protocol](#serial-line-protocol)) and prefixes every other line
@@ -290,8 +293,9 @@ while walking a board around the room.
 
 The gateway's USB serial port (115200 8N1) is a machine-readable bridge
 between ESP-NOW and DevPi: **one compact JSON object per line** in each
-direction, `\n`-terminated, at most 1024 bytes per line. Every JSON line has
-a `"t"` key naming its type. Unknown `"t"` values and unknown keys are
+direction, `\n`-terminated, at most 1024 bytes per line (one exception, the
+on-request up `state` snapshot, is sized under its own heading). Every JSON
+line has a `"t"` key naming its type. Unknown `"t"` values and unknown keys are
 ignored silently, which is how one end can move ahead of the other.
 
 Rules that apply to every line:
@@ -395,6 +399,57 @@ and `\` escaped, control characters dropped, bytes above 0x7F as `\u00XX`);
 it is omitted for `overflow`. A rejected line changes nothing and no `status`
 is sent for it.
 
+#### `state` — full gateway snapshot, only when asked
+
+```json
+{"t":"state","seq":1234,"st":1,"demo":0,"mac":"A4:F0:0F:5E:0B:08","cups":[{"id":0,"mac":"20:50:0D:11:D9:AC","h":7,"scr":0,"tok":23,"rssi":-63,"up":-61,"age":180},{"id":1,"mac":"20:50:0D:11:D9:B0","h":3,"scr":0,"tok":0,"rssi":0,"up":0,"age":-1}]}
+```
+
+| Key | Meaning |
+| --- | ------- |
+| `seq` | the gateway's current state broadcast `seq` (`gseq` in `status`; stays 0 while silent) |
+| `st` | current `raceState` (`phase` in `status`) |
+| `demo` | `1` while demo mode is on, else `0` |
+| `mac` | the gateway's own MAC |
+| `cups` | one entry per slot, in ID order, for every slot that is in the roster **or** has a horse assigned (see below) |
+| `cups[].id` | cup ID, the slot index |
+| `cups[].mac` | the slot's MAC, `""` if the slot is not in the roster |
+| `cups[].h` | `horseForCup[id]` from the broadcast packet, `0` = unassigned |
+| `cups[].scr` | `scratched[id]` from the broadcast packet |
+| `cups[].tok` | `tokenCount` from the cup's last telemetry packet |
+| `cups[].rssi` | `rssi` from that packet: the cup's view of the gateway (downlink) |
+| `cups[].up` | gateway-side RSSI of that packet (uplink, the table's `up_rssi`) |
+| `cups[].age` | ms since the cup was last heard from (the table's `age_ms`); `-1` if never |
+
+`cups` is a superset of the roster. A slot is listed if it is in the roster,
+heard from or not, **or** if `horseForCup` is nonzero for it, so a horse
+assigned before its cup has said hello still shows, with `"mac":""` and
+`"age":-1`. A slot that is neither is left out. `tok`, `rssi` and `up` are
+`0` until the first telemetry packet from that cup.
+
+Sent only on request, never on its own. Typing `json` prints one line at
+once; `json 1` prints one every 1000 ms, and silences the 5-second summary
+table while it runs (see "Debug flag" below), until `json 0`. The boot
+default is off, so a hand-driven Serial Monitor session sees nothing new.
+The line is written from `loop()` like every other one, so it never
+interleaves with a `telem`.
+
+**Length.** This is the one line that may exceed the 1024-byte limit: a cup
+entry is up to 101 bytes, so a full fleet of 20 comes to about 2.1 KB
+(2121 bytes worst case; the sketch builds it in its own 2560-byte buffer,
+`STATE_LINE_MAX`, and raises the serial TX buffer to 8 KB so that it and a
+burst of `telem` lines drain in the background). Its consumer is whoever
+typed `json`, reading with a limit that fits. The DevPi bridge in `pi5/`
+keeps its 1024-byte cap (`MAX_LINE_BYTES`) and never sends `json`; if it
+ever did see this line it would drop it as `too_long`, so the bridge is not
+its consumer.
+
+**Naming.** The down-link `state` line (next section) is a different line
+that happens to share the type name. DevPi → gateway carries `rev`,
+`phase`, `horse[]` and `scr[]` and is what the gateway *applies*; this
+gateway → DevPi line is a *report* the gateway never parses. Direction tells
+them apart, and beyond `t` the two key sets do not overlap.
+
 ### Down: DevPi → gateway
 
 The gateway reads without blocking, strips a trailing `\r`, ignores empty
@@ -491,7 +546,11 @@ default. The flag gates the **periodic** human output only: the per-packet
 neither prints; flag on, both print as they always did, prefixed with `# `.
 JSON lines are emitted regardless. Replies to hand-typed commands (`roster`,
 `help`, ...) and the boot banner always print, prefixed with `# `. Flip the
-flag with the JSON `debug` line or by typing `debug on` / `debug off`.
+flag with the JSON `debug` line or by typing `debug on` / `debug off`. One
+override: while `json 1` is on, the summary table is suppressed whatever the
+flag says (the `state` line carries the same numbers every second); the
+`# TELEM` lines still follow the flag, and `json 0` hands the table back to
+it.
 
 ### Silent boot and `DDM_AUTO_DEMO`
 
