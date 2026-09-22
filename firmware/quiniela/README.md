@@ -643,11 +643,9 @@ them.
 
 - **Open:** press anywhere on the glass and hold for 3 s. A tap does nothing,
   and nothing is drawn until the 3 s are up.
-- **Locked during a race:** in `DDM_BETTING_OPEN`, `DDM_FINAL_CALL`,
-  `DDM_AT_THE_POST` and `DDM_RUNNING` a completed hold shows `LOCKED DURING
-  RACE` for 1.5 s and goes back. The menu opens in `DDM_PRE_RACE`,
-  `DDM_WINNER`, `DDM_AFTER_PARTY`, and whenever the cup has heard nothing from
-  the gateway for 10 s (a cup with no gateway cannot be in a race).
+- **Any state:** the menu opens in every race state, linked or not; the 3 s
+  hold is the guard against guests, and the destructive actions (`TARE`,
+  `CAL 10`) confirm first.
 - **Closes** after 5 s without a touch, and after most actions. On close the
   normal screen is redrawn exactly as it was.
 
@@ -665,7 +663,7 @@ from `FW_VERSION`, build date from `__DATE__`). Then seven full-width bars:
 | `CLOSE` | closes |
 
 A tapped bar lights up amber for 120 ms before its action runs. Serial prints
-`[menu] open`, `[menu] locked (state N)`, `[menu] tare`, `[menu] cal cpt=N`,
+`[menu] open`, `[menu] tare`, `[menu] cal cpt=N`,
 `[menu] flip madctl=0x..`, `[menu] bright N%`, `[menu] announce`,
 `[menu] close (...)`.
 

@@ -38,8 +38,9 @@
  *
  * TOUCH: press anywhere on the glass for 3 s to open the maintenance menu
  *        (TARE, CAL 10, DIAG, FLIP 180, BRIGHT, ANNOUNCE, CLOSE). A tap does
- *        nothing at all, on purpose. Refused during a race; closes after
- *        5 s idle. Once the board is inside the cup this replaces BOOT.
+ *        nothing at all, on purpose. Opens in any race state; TARE and CAL
+ *        confirm first. Closes after 5 s idle. Once the board is inside the
+ *        cup this replaces BOOT.
  *
  * SERIAL (115200):  o = next orientation,  h = mirror left-right,
  *                   v = mirror top-bottom (all saved),  x = forget the saved
@@ -680,7 +681,7 @@ uint32_t tToastEnd      = 0;
 uint32_t tCalStart      = 0;
 int8_t   menuHl         = -1;    // bar highlighted on tap until tMenuHl, then its action runs
 uint32_t tMenuHl        = 0;
-bool     menuLongFired  = false; // this press already opened (or was refused) the menu
+bool     menuLongFired  = false; // this press already opened the menu
 uint8_t  brightPct      = 100;   // backlight, NVS "bright": 100, 60 or 30
 
 // touch panel
@@ -1275,9 +1276,11 @@ static void scaleTick(uint32_t now) {
 // ===========================================================================
 // TOUCH MENU — hidden maintenance UI on the XPT2046
 //
-// A 3 s press anywhere opens it; a tap shows nothing at all, on purpose. It
-// is refused while a race is on, and it closes itself after MENU_IDLE_MS
-// without a touch. Every button is a full-width bar and every confirm
+// A 3 s press anywhere opens it, in any race state and with or without a
+// gateway; a tap shows nothing at all, on purpose. The hold is the guard
+// against guests, and TARE and CAL 10 confirm before they act, so a cup
+// bumped mid-race can be tared without touching the gateway. It closes
+// itself after MENU_IDLE_MS without a touch. Every button is a full-width bar and every confirm
 // screen is top/bottom halves, so only the y axis of the touch mapping has
 // to be right. While the menu owns the glass renderTick() draws nothing;
 // closing marks the base screen dirty, so it comes back exactly as it was.
@@ -1349,13 +1352,6 @@ static void touchPoll(uint32_t now) {
   }
 }
 
-static bool menuRaceLocked(uint32_t now) {
-  bool noLink = (lastPacketAt == 0) || (now - lastPacketAt > LINK_TIMEOUT_MS);
-  if (noLink || !haveState) return false;                // no gateway: cannot be in a race
-  uint8_t s = lastState.raceState;
-  return s == DDM_BETTING_OPEN || s == DDM_FINAL_CALL || s == DDM_AT_THE_POST || s == DDM_RUNNING;
-}
-
 static void menuDrawBar(int i, bool hl) {
   int y = MENU_BAR_Y0 + i * MENU_BAR_PITCH;
   uint16_t bg = hl ? C_AMBER : C_DIM, fg = hl ? C_BLACK : C_WHITE;
@@ -1424,11 +1420,6 @@ static void menuClose(const char* why) {
 }
 
 static void menuOpen(uint32_t now) {
-  if (menuRaceLocked(now)) {
-    Serial.printf("[menu] locked (state %u)\n", lastState.raceState);
-    menuToast("LOCKED DURING RACE", 1500, MENU_NONE);
-    return;
-  }
   Serial.println("[menu] open");
   menuShowMain(now);
 }
