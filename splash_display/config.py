@@ -179,3 +179,34 @@ DEBUG = False
 # ---------------------------------------------------------------------------
 DASHBOARD_RACE_URL = "http://joeydevpi.local:5000/api/race"
 RACE_DATA_STALENESS_S = 300  # 5 minutes — past this, slide shows "Last updated N min ago"
+
+# ---------------------------------------------------------------------------
+# La Quiniela live board (quiniela.py)
+#
+# The cup gateway (firmware/quiniela/ddm_gateway) plugs into this Pi's USB
+# port and streams cup/token state as JSON lines; the board on the TV is
+# built from them. None of this is needed for the slideshow: with no gateway
+# plugged in (or no pyserial installed) the link idles and /api/quiniela
+# reports link_ok=false.
+# ---------------------------------------------------------------------------
+# Serial port of the gateway. None = auto-detect: the first /dev/serial/by-id
+# entry naming a CH34x (vendor id 1a86; product "USB2.0-Serial" on a CH340G,
+# "USB Serial" on newer ones), CP210x or ESP32 device (quiniela.PORT_HINTS).
+# Set it explicitly (e.g. "/dev/ttyUSB0") when more than one USB-serial
+# device is attached.
+# Only one process can own the port: if pi5's bridge is pointed at the same
+# gateway (its LQ_SERIAL_PORT), whichever opens second keeps failing.
+GATEWAY_PORT = None      # None = auto-detect /dev/serial/by-id
+
+# Dollar value of one token. pot = total tokens x TOKEN_VALUE.
+TOKEN_VALUE = 1.00
+
+# Append every betting-model change (token counts, scratches, race state)
+# as one JSON line to logs/quiniela_YYYY-MM-DD.jsonl. False = no log file.
+QUINIELA_LOG = True
+
+# Race states in which the board owns the TV (the slideshow yields to it).
+# 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING,
+# 5 WINNER, 6 AFTER_PARTY. Exposed by /api/quiniela as "board_states" so the
+# frontend does not hard-code it.
+QUINIELA_BOARD_STATES = [1, 2, 3, 4]   # race states in which the board owns the TV

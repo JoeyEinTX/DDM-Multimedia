@@ -46,3 +46,6 @@ pi5/animation_params.json
 # Font sources: Impact is licensed with Windows; only the traced ddm_font.h is committed
 *.ttf
 *.TTF
+
+# La Quiniela betting-model event log (splash_display/quiniela.py), one file per day
+splash_display/logs/
