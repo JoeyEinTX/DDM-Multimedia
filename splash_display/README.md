@@ -20,6 +20,8 @@ splash_display/
 ├── requirements.txt
 ├── tests/
 │   └── test_quiniela.py     # python -m unittest -v tests.test_quiniela
+├── tools/
+│   └── fake_gateway.py      # dev aid: the real server fed by a synthetic gateway
 ├── logs/                    # quiniela_YYYY-MM-DD.jsonl event log (git-ignored)
 ├── content/
 │   ├── trivia.json          # Trivia cards by category
@@ -28,9 +30,12 @@ splash_display/
 │   ├── base.html
 │   ├── slideshow.html       # Master slideshow (kiosk URL target)
 │   ├── splash/{countdown,la_subasta,la_quiniela,derby_dash,ddm_brand}.html
+│   ├── splash/quiniela_live.html   # the live board layer (not a playlist slide)
 │   └── trivia/{fact_card,qa_reveal}.html
 ├── static/
 │   ├── css/ddm_style.css
+│   ├── css/quiniela_board.css
+│   ├── js/quiniela_board.js        # SSE client + board renderer
 │   ├── img/                 # DROP YOUR LOGOS HERE
 │   └── fonts/
 └── deploy/
@@ -306,8 +311,104 @@ Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
 
 ### The board
 
-The TV board itself, the takeover rule (`board_states`) and its layout are
-documented by the next commit.
+The TV board lives in `templates/splash/quiniela_live.html`, rendered once
+into `slideshow.html` as a fixed full-screen layer above the two slide
+layers (it is **not** a playlist slide and is not in `splash_pages.json`).
+`static/js/quiniela_board.js` drives it; `static/css/quiniela_board.css`
+styles it. Vanilla JS, no CDN, relative URLs only, so the kiosk can be a
+different machine from the server. With no gateway plugged in the layer
+stays hidden and the slideshow is indistinguishable from before.
+
+**Takeover rule.** On load the page fetches `/api/quiniela` once and
+subscribes to `/api/quiniela/stream` (reconnecting on error with a 1 s
+backoff doubling to 30 s, reset by the next message). Whenever
+`board_states` (the model's copy of `config.QUINIELA_BOARD_STATES`; the
+page never hard-codes it) contains `race_state`:
+
+- the playlist pauses in place (`window.ddmSlideshow.hold()` clears the
+  slide timers, the current slide stays where it is) and the board
+  crossfades in full-screen, over the same `TRANSITION_FADE_MS`;
+- when the state leaves the set the board crossfades out and
+  `release()` restarts the same slide's timers from zero — same slide,
+  fresh dwell. The spacebar pause still wins: a paused show stays paused.
+- a dead stream never hides the board. It stays up with its last data;
+  only a model saying the state is outside `board_states` takes it down.
+
+**Banner** (top right), by `race_state`:
+
+| State | Banner | Tiles, pot, ticker |
+| --- | --- | --- |
+| 1 `BETTING_OPEN` | BETTING OPEN (green) | live |
+| 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing — the only looping animation) | live |
+| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED | **frozen** at the values shown when the state was entered; back in 1 or 2 they go live again |
+
+The freeze only holds while the board is up. A board coming up already in
+3 or 4 — a page loaded mid-race, or the server restarted during the race —
+paints the live model first, so it never shows an earlier hidden paint of
+an empty model (POT $0, every count 0).
+
+**Layout** (1920x1080, built for a TV across the room; serape band top
+and bottom, the countdown's dark panel look):
+
+- Header: `la_quiniela.png` left; the pot centered and big — `POT $147`
+  (whole dollars while `TOKEN_VALUE` is a whole number, else two
+  decimals); the banner right.
+- Grid: 20 horse tiles, 5 wide x 4 tall, even gutters, filling the width.
+  Each tile: the post position in its saddle-cloth colored block on the
+  left; the token count on the right, the largest thing on the tile; a
+  thin bar along the bottom whose width is the horse's `share` (a full
+  tile is 100 % of the pot), in the saddle-cloth color (the near-black
+  cloths 6, 17, 19 use their number color), so the field's distribution
+  reads at a glance. Scratched: tile dimmed and the cloth greyed, count
+  hidden, a red X across the number block. Cup offline (`cup` assigned,
+  `online` false): a small dim dot in the tile's corner. Leader: a subtle
+  yellow border.
+- Ticker: one line along the bottom, the last eight `events` as `#7 +1`
+  chips, newest sliding in from the right.
+
+**Motion.** A changed count ticks to the new value over ~500 ms (a
+`requestAnimationFrame` tween writing the number) and the tile pulses
+once, ~400 ms (scale 1.03 plus a white overlay's opacity). Bars are a
+`scaleX` transform with a 600 ms transition. Chips are keyed by
+`horse:ts`, so a re-render never replays their entry. Everything is
+transform / opacity only so it stays smooth on a Pi 5 in kiosk Chromium;
+nothing loops except the FINAL CALL pulse.
+
+**NO LINK mark.** A small dim `NO LINK` mark sits in the top-right corner
+of the board (above the banner, never over a tile) when no SSE message of
+any kind — a model or a `ping` — has arrived for 10 s, or when the latest
+model says `link_ok: false` (the gateway itself has gone quiet). It hides
+as soon as either condition clears. It is only ever a mark: the board
+keeps its last data and never drops back to trivia on a hiccup.
+
+### Dev aid: fake gateway
+
+`tools/fake_gateway.py` runs the **real** server (`server.py`, every route
+and template) on `127.0.0.1` with a synthetic gateway feeding
+`quiniela.link.feed_line()` from a thread. No serial port is opened, the
+dashboard poller stays off and the JSONL event log is disabled, so it is
+safe on any machine:
+
+```bash
+cd splash_display
+python tools/fake_gateway.py --phase open              # BETTING OPEN, 20 cups, leader, a scratch, an offline cup, recent events
+python tools/fake_gateway.py --phase final             # FINAL CALL
+python tools/fake_gateway.py --phase closed            # AT_THE_POST: BETTING CLOSED, board frozen
+python tools/fake_gateway.py --phase running           # RUNNING: BETTING CLOSED, still frozen
+python tools/fake_gateway.py --phase winner            # state 5: the playlist is back
+python tools/fake_gateway.py --phase idle              # state 0, link up: plain slideshow
+python tools/fake_gateway.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
+python tools/fake_gateway.py --phase open --stop-feed-after 0   # board up, link lost: NO LINK mark
+# --port 5077 (default), --period 15 (cycle), --host 127.0.0.1
+```
+
+Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. For
+automated 1080p frames drive headless Chrome over the DevTools protocol
+(`--remote-debugging-port`, `Page.navigate`, wait a few seconds of real
+time, `Page.captureScreenshot`): the plain `--screenshot` flags do not
+wait for the stream. `--virtual-time-budget` never expires because the
+open SSE request keeps headless virtual time paused (Chrome hangs), and
+`--timeout` fires before the board's first fetch has rendered.
 
 ### First end-to-end test
 

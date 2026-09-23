@@ -1,0 +1,59 @@
+{# La Quiniela live board (commit 3/3) — NOT a playlist slide.
+
+   Included once, as live DOM, inside #slideshow-stage (slideshow.html),
+   after the two slide layers and before the overlays. Hidden by default;
+   static/js/quiniela_board.js subscribes to /api/quiniela/stream and
+   crossfades this layer in while the model's race_state is one of its
+   board_states, holding the playlist in place through window.ddmSlideshow.
+   Styles: static/css/quiniela_board.css.
+
+   Everything the JS touches is addressed by id or data-horse; the 20 tiles
+   are rendered here once so the JS only ever writes text, classes and one
+   transform per tile. #}
+<div id="quiniela-board" class="qb" aria-hidden="true" data-state="">
+    <div class="splash-serape-band qb-band qb-band--top"></div>
+
+    <header class="qb-header">
+        <img class="qb-logo"
+             src="{{ url_for('static', filename='img/la_quiniela.png') }}"
+             alt="La Quiniela"
+             onerror="this.outerHTML='<div class=&quot;qb-logo qb-logo-placeholder&quot;>La Quiniela</div>'" />
+
+        <div class="qb-pot">
+            <span class="qb-pot-label">Pot</span>
+            <span class="qb-pot-amount" id="qb-pot">$0</span>
+        </div>
+
+        <div class="qb-banner" id="qb-banner">
+            <span class="qb-banner-text" id="qb-banner-text">&nbsp;</span>
+        </div>
+    </header>
+
+    <div class="qb-grid" id="qb-grid">
+        {% for n in range(1, 21) %}
+        <div class="qb-tile" data-horse="{{ n }}">
+            <div class="qb-tile-leader"></div>
+            <div class="qb-tile-row">
+                <div class="qb-saddle-wrap">
+                    <div class="qb-saddle">{{ n }}</div>
+                    <div class="qb-saddle-x"></div>
+                </div>
+                <div class="qb-count">0</div>
+            </div>
+            <div class="qb-bar"><div class="qb-bar-fill"></div></div>
+            <div class="qb-offline-dot"></div>
+            <div class="qb-tile-flash"></div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="qb-ticker">
+        <div class="qb-ticker-label">Latest</div>
+        <div class="qb-ticker-empty" id="qb-ticker-empty">No bets yet</div>
+        <div class="qb-ticker-track" id="qb-ticker"></div>
+    </div>
+
+    <div class="splash-serape-band qb-band qb-band--bottom"></div>
+
+    <div class="qb-nolink" id="qb-nolink"><span class="qb-nolink-dot"></span>No link</div>
+</div>

@@ -2,6 +2,11 @@
 
 {% block title %}DDM Splash Display{% endblock %}
 
+{% block head %}
+{# La Quiniela live board (Phase 1.22) — static/css/quiniela_board.css #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/quiniela_board.css') }}" />
+{% endblock %}
+
 {% block body %}
 <style>
     /* Phase 1.6 playback overlay — keyboard-driven controls indicator.
@@ -44,6 +49,10 @@
     {# Two slide layers — we crossfade between them by toggling .is-active #}
     <div id="slide-layer-a" class="slide" data-layer="a"></div>
     <div id="slide-layer-b" class="slide" data-layer="b"></div>
+
+    {# La Quiniela live board (Phase 1.22) — a fixed full-screen layer, not a
+       playlist slide. Hidden until static/js/quiniela_board.js shows it. #}
+    {% include 'splash/quiniela_live.html' %}
 
     <div id="boot-message" class="boot-message">Loading…</div>
 
@@ -155,6 +164,7 @@
     let countdownTickHandle = null;
     let isPaused = false;             // Phase 1.6 — spacebar pauses rotation
     let overlayHideTimer = null;      // Phase 1.6 — fades the indicator after navigations
+    let boardHold = false;            // Phase 1.22 — La Quiniela board owns the TV
 
     // ---- Helpers -----------------------------------------------------
     function clearTimers() {
@@ -427,7 +437,7 @@
     // Pausable timers for the currently-displayed slide. Called by
     // showSlideAt() and again on resume from pause. No-op when paused.
     function startSlideTimers(slide) {
-        if (isPaused || !slide) return;
+        if (isPaused || boardHold || !slide) return;
 
         // QA reveal — fade the answer in once question_ms has elapsed.
         if (slide.type === 'trivia_qa') {
@@ -674,6 +684,25 @@
             showSlideAt(0);
         }
     })();
+
+    // ---- Phase 1.22: La Quiniela board hook -------------------------
+    // static/js/quiniela_board.js calls hold() when the board takes the
+    // TV and release() when it gives it back. hold() freezes the playlist
+    // in place (timers cleared, slide left as is); release() restarts the
+    // same slide's timers from zero unless the spacebar pause is on.
+    window.ddmSlideshow = {
+        hold() {
+            boardHold = true;
+            clearTimers();
+        },
+        release() {
+            boardHold = false;
+            const slide = playlist[idx];
+            if (!isPaused && slide) startSlideTimers(slide);
+        },
+    };
 })();
 </script>
+{# La Quiniela live board driver — after the slideshow script so its hook exists first. #}
+<script src="{{ url_for('static', filename='js/quiniela_board.js') }}"></script>
 {% endblock %}
