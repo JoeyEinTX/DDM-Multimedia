@@ -127,6 +127,7 @@ ddm_cup_v3/
 4. **Access Dashboard:**
    - Open browser to `http://localhost:5000`
    - Or from another device: `http://<Pi5-IP>:5000`
+   - pi5 owns port 5000 and the La Quiniela gateway's USB port (`LQ_SERIAL_PORT`); the splash display runs on port 5001, can share the same DevPi, and reads the betting board from pi5 over HTTP (`/api/quiniela`, see `pi5/LQ_BRIDGE.md`). Only pi5 opens the gateway's port.
 
 ## Command Protocol
 

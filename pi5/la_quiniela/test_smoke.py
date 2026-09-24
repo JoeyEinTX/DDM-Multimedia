@@ -1512,11 +1512,14 @@ def test_import_main_starts_nothing():
     _check("pi5/main.py imports cleanly with the bridge wired in", True)
     after = {t.name for t in threading.enumerate()}
     _check("importing main starts no lq-bridge thread", "lq-bridge" not in after - before)
+    _check("importing main starts no lq-board thread", "lq-board" not in after - before)
     _check("importing main opens no port", get_bridge()._port is None and not get_bridge().running)
     rules = {rule.rule for rule in main.app.url_map.iter_rules()}
     _check("/api/lq/snapshot route registered", "/api/lq/snapshot" in rules)
     _check("/api/lq/dev/state route registered", "/api/lq/dev/state" in rules)
     _check("La Subasta routes still registered", "/la-subasta/api/state" in rules)
+    for path in ("/api/quiniela", "/api/quiniela/stream", "/api/quiniela/cmd"):
+        _check(f"{path} route registered", path in rules)
 
 
 # -----------------------------------------------------------------------------

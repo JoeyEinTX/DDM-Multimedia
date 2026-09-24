@@ -223,6 +223,7 @@ class LqBridge:
         self.settings = dict(DEFAULTS)
         self.settings.update(settings or {})
         self.socketio = socketio
+        self._listeners: List[Callable[[], None]] = []   # see add_listener()
         self._factory = serial_factory
         self._clock = clock or time.monotonic
 
@@ -973,15 +974,38 @@ class LqBridge:
         self.db.insert_event(utc_now_iso(), type_, cup,
                              json.dumps(detail) if detail is not None else None)
 
+    # -- in-process listeners -------------------------------------------------
+
+    def add_listener(self, fn: Callable[[], None]) -> None:
+        """Register fn() to be called whenever the bridge's picture changed:
+        after every lq_update / lq_snapshot / lq_link emit and at the end of
+        set_state() and reset_link() (a phase-only set_state emits nothing,
+        so the emits alone would miss it). It carries no payload: the caller
+        reads get_snapshot() when it is ready.
+
+        Listeners run on the reader thread, with the bridge's RLock held, so
+        they must only set a threading.Event or queue.put_nowait(): never
+        block, never take a lock another thread may hold while waiting for
+        the bridge, and never call back into the bridge from another thread
+        synchronously. An exception in a listener is logged and dropped."""
+        self._listeners.append(fn)
+
+    def _notify(self) -> None:
+        for fn in list(self._listeners):
+            try:
+                fn()
+            except Exception as exc:       # a listener bug must not reach the reader thread
+                logger.warning("La Quiniela bridge: listener %r failed: %s", fn, exc)
+
     # -- SocketIO -------------------------------------------------------------
 
     def _emit(self, event: str, payload: Dict[str, Any]) -> None:
-        if self.socketio is None:
-            return
-        try:
-            self.socketio.emit(event, payload, room=LQ_ROOM)
-        except Exception:
-            logger.exception("La Quiniela bridge: emit %s failed", event)
+        if self.socketio is not None:
+            try:
+                self.socketio.emit(event, payload, room=LQ_ROOM)
+            except Exception:
+                logger.exception("La Quiniela bridge: emit %s failed", event)
+        self._notify()
 
     def _emit_cup(self, cup: int, live: Optional[CupLive]) -> None:
         self._emit("lq_update", self._cup_payload(cup, live))
@@ -1085,6 +1109,7 @@ class LqBridge:
             for cup in changed:
                 mac = mac_by_cup.get(cup)
                 self._emit_cup(cup, self.cups.get(mac) if mac else None)
+            self._notify()          # a phase-only change emitted nothing above
             return self.state_rev
 
     def set_roster(self, macs: List[Optional[str]]) -> int:
@@ -1169,6 +1194,7 @@ class LqBridge:
             self.link.reason = "reset"
             self._emit("lq_link", self._link_payload())
             self._emit_snapshot()
+            self._notify()
             return result
 
     def set_gateway_debug(self, on: bool) -> bool:

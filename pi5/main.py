@@ -24,7 +24,8 @@ from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 from la_subasta import la_subasta_bp, init_la_subasta
-from la_quiniela import la_quiniela_bp, init_la_quiniela, start_la_quiniela
+from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
+                         quiniela_board_bp, init_board, start_board)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -1334,6 +1335,9 @@ print("La Subasta initialised (/la-subasta)")
 init_la_quiniela(socketio=socketio)
 app.register_blueprint(la_quiniela_bp)
 print("La Quiniela bridge initialised (/api/lq)")
+init_board()
+app.register_blueprint(quiniela_board_bp)
+print("La Quiniela board initialised (/api/quiniela)")
 
 
 # ---------------------------------------------------------------------------
@@ -1387,5 +1391,6 @@ if __name__ == '__main__':
     # requests has WERKZEUG_RUN_MAIN set, and only it may open the port.
     if not FLASK_DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         start_la_quiniela()
+        start_board()
     
     socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)

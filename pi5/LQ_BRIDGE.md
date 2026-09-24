@@ -335,3 +335,171 @@ No hardware and no real port: a fake serial port feeds the gateway's lines
 and captures what the bridge writes, a stub SocketIO records every emit, and
 a fake clock drives the timers. Byte-exact roster and state lines are checked
 against the README examples.
+
+## Betting board (`/api/quiniela`)
+
+The splash display's TV board (`splash_display/templates/splash/quiniela_live.html`
+and `static/js/quiniela_board.js`) renders one JSON model: tokens per horse,
+shares, the leader, the last few drops, the race state and whether the link
+is up. That model is built here, in `la_quiniela/betting.py`, from the
+bridge's own picture (`get_snapshot()`), and served by `la_quiniela/board.py`
+at the three paths the page expects. The splash display is an HTTP client of
+these routes and re-serves them on its own origin, so the page itself never
+changed. Nothing in the board reads the serial port.
+
+### Ports
+
+pi5 (this app) listens on **5000**, the splash display on **5001**. They can
+run on the same DevPi; the splash reaches pi5 at its `config.PI5_URL`
+(default `http://joeydevpi.local:5000`; `http://localhost:5000` also works
+when both share DevPi).
+Only pi5 opens the gateway's USB port (`LQ_SERIAL_PORT`); the splash display
+holds no serial port at all. The port is opened `exclusive`, so a second
+owner would fail to open it in any case.
+
+### Routes
+
+The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
+| `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
+| `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see the translation table. |
+
+They are deliberately not under `la_quiniela_bp`, whose `after_request`
+rewrites `Cache-Control`.
+
+### The model
+
+```json
+{"link_ok": true,
+ "race_state": 1, "race_state_name": "BETTING_OPEN",
+ "token_value": 1.0, "pot": 33.0, "total_tokens": 33,
+ "horses": {"1": {"tokens": 0, "share": 0.0, "scratched": false, "online": false, "cup": null},
+            "7": {"tokens": 23, "share": 0.697, "scratched": false, "online": true, "cup": 1},
+            "...": "...20 entries, keys \"1\"..\"20\"..."},
+ "leader": 7,
+ "events": [{"horse": 7, "delta": 1, "ts": 1777662847.2}],
+ "updated": 1777662847.2,
+ "board_states": [1, 2, 3, 4]}
+```
+
+Exactly these eleven keys, from the snapshot as follows:
+
+- `link_ok` = `link.port_open and link.gateway_online`.
+- `race_state` = `devpi.phase` (DevPi's own phase, the one `set_state()`
+  holds), `race_state_name` its `Phase` name, `STATE_<n>` for a value the
+  enum does not know.
+- `horses[n]`: the cup whose `horse` is `n` supplies `tokens` (`count`,
+  `None` until the first telemetry line reads as 0, negatives clamp to 0),
+  `scratched`, `online` and `cup`. **`cup` is the 1-based cup number**, as
+  everywhere on pi5; the old splash model carried the gateway's 0-based slot
+  there, and the page only tests it for `null`. When two cups claim one horse
+  the lowest cup number wins and one WARNING is logged per pair. `share` =
+  `round(tokens / total, 4)`, 0.0 with no tokens.
+- `pot` = `round(total_tokens * token_value, 2)`.
+- `leader`: strictly the most tokens, the lowest horse number on a tie, `null`
+  when every count is 0. Scratched horses are not excluded.
+- `events`: the last eight token changes, newest first. The first snapshot a
+  board digests is a baseline, not a bet, so a restart never invents drops:
+  the bridge seeds each cup's count from the `cups` table before the gateway
+  is heard, and only a count that moved while pi5 was down shows up as a
+  (late but real) drop. The one exception is a fresh or deleted
+  `la_subasta.db` started with tokens already in the cups: the baseline then
+  holds zero for every cup, and the first telemetry shows those counts once
+  as drops on the ticker.
+- `updated`: wall time of the last change. A snapshot that changes nothing
+  publishes nothing and leaves it alone.
+- `board_states`: the race states in which the page takes over the TV.
+
+### `POST /api/quiniela/cmd`
+
+The splash's whitelist of gateway text commands is kept, so the operator's
+habits and the splash's tests carry over, but nothing is ever written to
+the port as text: the bridge's revision model is the source of truth, and a
+hand-typed line would be overwritten by the next hello answer. Each command
+is translated onto the bridge's own API. **Cup numbers are 1-based**, as
+everywhere on pi5 (the gateway's own `horse` command took a 0-based slot).
+
+| Command | Does | Answer |
+| --- | --- | --- |
+| `state N` (0..6) | `set_state(N, horses, scratched)` with the current lists from the snapshot | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
+| `horse C H` (cup 1..20, horse 0..20) | `set_state(phase, horses with cup C = H, scratched)` | as above plus `"cup":C,"horse":H` |
+| `scratch C F` (cup 1..20, F 0 or 1) | `set_state(phase, horses, scratched with cup C = F)` | as above plus `"cup":C,"scratched":bool` |
+| `roster` | nothing written | `{"ok":true,"roster":[20 MACs or null, cup 1..20],"roster_rev":R,"has_roster":bool}` |
+| `demo` | refused, 400 | `demo is not routed through pi5: the bridge speaks the JSON line protocol, and every state line turns demo off` |
+| `json` | refused, 400 | `json is not routed through pi5: the bridge already reads the gateway's protocol, and the up state line would exceed its 1024-byte cap` |
+
+A state change is applied even when the gateway is offline: DevPi holds it
+and re-sends it on the next hello or status line, and `gateway_online` in the
+answer says which of the two happened. Errors are `{"ok":false,"error":...}`:
+400 for a command that is not a string, empty, longer than 200 characters,
+not a single line, or whose first word is not one of `state horse scratch
+demo roster json` (case matters); 400 `usage: state 0-6`, `usage: horse <cup
+1-20> <horse 0-20>` or `usage: scratch <cup 1-20> <0|1>` for bad arguments;
+400 with the message from `validate_state` if the bridge rejects the state;
+503 `bridge not initialised` when there is no bridge.
+
+### Configuration
+
+Three more keys in `pi5/config.py`, with the names the splash display used,
+each overridable by `DDM_<KEY>` in the environment or `pi5/.env`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `TOKEN_VALUE` | `1.00` | Dollars per token, for the board's POT (`DDM_TOKEN_VALUE`, a float) |
+| `QUINIELA_LOG` | `True` | Write the JSONL log below (`DDM_QUINIELA_LOG`: 1/true/yes/on or 0/false/no/off) |
+| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4]` | Race states in which the splash board owns the TV (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4`) |
+
+A value that does not parse is logged and the default kept; a `config.py`
+without these keys works unchanged. `load_board_settings()` in `betting.py`
+resolves them.
+
+### How the board follows the bridge
+
+The bridge has a small in-process hook: `add_listener(fn)` registers a
+no-argument callable that is called after every `lq_update`, `lq_snapshot`
+and `lq_link` emit and at the end of `set_state()` and `reset_link()` (a
+phase-only `set_state` emits nothing, so the emits alone would miss it).
+Listeners run on the reader thread with the bridge's lock held, so they may
+only set an `Event` or `put_nowait()`; the board's `wake()` does exactly
+that. A listener that raises is logged at WARNING and dropped.
+
+The board's daemon thread, `lq-board`, waits on that event with a one second
+timeout and calls `refresh()` on every wake, so the model also follows a
+gateway that has simply gone quiet (the bridge's offline timer emits, but the
+timeout is the backstop). `refresh()` takes `get_snapshot()` without holding
+the board's own lock and only then applies it under that lock, so the lock
+order is always bridge then board and nothing can deadlock against the reader
+thread. `main.py` calls `init_board()` at import and `start_board()` from its
+`__main__` block only, after `start_la_quiniela()`; the thread runs even when
+the bridge has no port, so the routes answer with `link_ok` false rather than
+a stale picture.
+
+### The log
+
+With `QUINIELA_LOG` on, every token, scratch or race-state change appends one
+compact JSON line to `pi5/data/quiniela_YYYY-MM-DD.jsonl` (local date,
+git-ignored):
+
+```json
+{"ts":1777662847.2,"race_state":1,"changes":[{"horse":7,"tokens":[23,24]},{"horse":7,"scratched":[false,true]},{"race_state":[1,2]}],"total_tokens":24}
+```
+
+An `online` or `link_ok` flip alone writes nothing. The first write failure
+logs one WARNING and disables the log for the rest of the process; the model
+is unaffected.
+
+### Tests
+
+```
+cd pi5
+python -m la_quiniela.test_betting
+```
+
+Hand-built snapshots and a real `LqBridge` over the smoke test's fake port
+exercise the model, the log, the settings, the listener hook, the thread,
+the command translation (byte-exact against `protocol.build_state_line`) and
+the three routes on a Flask test app. `test_smoke` also checks that importing
+`main.py` starts no `lq-board` thread and registers the three routes.
