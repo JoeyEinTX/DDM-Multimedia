@@ -34,6 +34,7 @@ from flask import (
     request,
     url_for,
 )
+from werkzeug.exceptions import HTTPException
 
 import config
 import quiniela
@@ -514,6 +515,8 @@ def api_slide(slide_id: str):
                 category=cat,
             )
         abort(404)
+    except HTTPException:
+        raise  # abort(404) above: not a render failure, pass it through unchanged
     except Exception as exc:
         log.exception("Failed to render slide %s: %s", slide_id, exc)
         abort(500)
