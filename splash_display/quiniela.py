@@ -1,24 +1,26 @@
 """
-La Quiniela live board — gateway serial link, betting model, SSE fan-out.
+La Quiniela live board — the splash's HTTP client of pi5, and the SSE fan-out
+to the TV.
 
-The cup gateway (firmware/quiniela/ddm_gateway) plugs into this Pi's USB port
-and, once told ``json 1``, prints one ``{"t":"state",...}`` JSON line whenever
-its picture of the cups changes (and periodically). This module turns those
-lines into the betting model the TV board renders:
+The cup gateway (firmware/quiniela/ddm_gateway) plugs into DevPi, where pi5's
+bridge (pi5/la_quiniela/bridge.py) owns the USB port, keeps the betting model
+and serves it as GET /api/quiniela, GET /api/quiniela/stream (SSE) and
+POST /api/quiniela/cmd. This module mirrors that model so the board on the
+TV keeps talking to its own origin:
 
-  * GatewayLink   — a daemon thread that owns the serial port: auto-detects
-                    it, opens it without touching DTR/RTS (the ESP32 would
-                    reboot), sends the ``json 1`` handshake, hands every line
-                    to feed_line(), and reconnects forever with backoff.
-  * BettingBoard  — digests each state line into the model (tokens per horse,
-                    shares, leader, recent events, link_ok), appends every
-                    change to the JSONL event log, and fans the model out to
-                    SSE subscribers.
-  * sse_events()  — the generator behind GET /api/quiniela/stream.
-  * validate_cmd() — the whitelist behind POST /api/quiniela/cmd.
+  * Pi5Link     — a daemon thread that follows pi5's SSE stream and, while
+                  the stream is down, polls GET /api/quiniela once a second;
+                  reconnects forever with backoff. forward_cmd() relays a
+                  POST /api/quiniela/cmd body to pi5 and returns its answer.
+  * BoardRelay  — holds the last model received from pi5, flips its link_ok
+                  to false when pi5 has not been heard for LINK_TIMEOUT_S,
+                  and fans every change out to SSE subscribers.
+  * sse_events() — the generator behind the splash's GET /api/quiniela/stream
+                   (byte-identical to pi5's).
 
-Nothing here is required for the slideshow: without pyserial, or without a
-gateway plugged in, the link idles and the model reports link_ok=false.
+Nothing here is required for the slideshow: with pi5 unreachable the link
+keeps retrying, the model reports link_ok=false with an empty board_states,
+and the board stays hidden.
 
 Race states (DdmRaceState in firmware/quiniela/ddm_common.h):
     0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING,
@@ -27,53 +29,39 @@ Race states (DdmRaceState in firmware/quiniela/ddm_common.h):
 
 from __future__ import annotations
 
-import glob
+import http.client
 import json
 import logging
-import os
 import queue
+import socket
 import threading
 import time
-from datetime import date
-from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+import urllib.error
+import urllib.request
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import config
-
-try:
-    import serial  # pyserial
-except ImportError:  # fresh install without requirements.txt
-    serial = None  # type: ignore[assignment]
 
 log = logging.getLogger("splash_display.quiniela")
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent
-LOG_DIR = BASE_DIR / "logs"       # event log directory (tests point this at a temp dir)
-
-BAUD = 115200                     # 8N1 is pyserial's default
-PORT_GLOB = "/dev/serial/by-id/*"
-# Substrings of a /dev/serial/by-id name that mark a gateway, matched
-# case-insensitively. udev builds the name from the USB manufacturer and
-# product strings, or the vendor id when the manufacturer string is empty,
-# as it is on every CH34x (QinHeng, 1a86): a CH340G shows up as
-# usb-1a86_USB2.0-Serial-if00-port0, newer CH340s as usb-1a86_USB_Serial-...
-PORT_HINTS = ("ch340", "1a86", "usb2.0-serial", "usb_serial", "cp210", "esp32")
-READ_TIMEOUT_S = 1.0
-LINK_TIMEOUT_S = 5.0              # link_ok = a state line arrived within this window
-STATE_LINE_S = 1.0                # the gateway's auto-emit cadence (its STATE_LINE_MS)
-HELLO_SILENCE_S = 1.5 * STATE_LINE_S   # a hello is a reboot only after this much state silence
-JSON_RESEND_S = 5.0               # re-send "json 1" after this much state silence
-JSON_MIN_GAP_S = 1.0              # ...but never more often than this
+# link_ok window: pi5 heard (a model or a ping) within this. pi5 pings after
+# every 5 s of silence, measured from its previous chunk, so consecutive
+# contacts arrive >= 5 s apart; a window of exactly 5 s let a 1 Hz tick land
+# in the few ms between "5 s since the last ping" and the next one and flip
+# link_ok off and back on. 7.5 s clears one ping period with margin and is
+# still under the page's own 10 s NO LINK rule (quiniela_board.js STALE_MS).
+LINK_TIMEOUT_S = 7.5
+POLL_INTERVAL_S = 1.0             # GET /api/quiniela cadence while the stream is down
 BACKOFF_MIN_S = 1.0
 BACKOFF_MAX_S = 10.0
-MAX_LINE_BYTES = 8192             # a state line is ~2 KB; anything longer is garbage
+STREAM_RETRY_S = 10.0             # how long the poll fallback runs before the stream is tried again
+STREAM_READ_TIMEOUT_S = 15.0      # pi5 pings every 5 s; a stream silent for 15 s is dead
+FETCH_TIMEOUT_S = 5.0             # one GET / POST to pi5
 
 HORSE_COUNT = 20
-CUP_ONLINE_MAX_AGE_MS = 6000      # cups report every 2 s; 3 misses = offline
-MAX_EVENTS = 8
 
 SSE_HEARTBEAT_S = 5.0
 SSE_QUEUE_SIZE = 32
@@ -88,28 +76,21 @@ RACE_STATE_NAMES = {
     6: "AFTER_PARTY",
 }
 
-CMD_WHITELIST = frozenset({"state", "horse", "scratch", "demo", "roster", "json"})
-CMD_MAX_LEN = 200
+# The exceptions one HTTP exchange with pi5 can raise. HTTPError is a URLError
+# and URLError is an OSError; socket.timeout is TimeoutError; listed anyway
+# so the intent reads at a glance.
+_NET_ERRORS: Tuple[type, ...] = (
+    urllib.error.URLError,
+    urllib.error.HTTPError,
+    TimeoutError,
+    OSError,
+    socket.timeout,
+    http.client.HTTPException,
+)
 
 
 def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"))
-
-
-def _as_int(value: Any, default: Optional[int] = None) -> Optional[int]:
-    """Coerce a JSON value to int, or return default. Never raises."""
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
 
 
 def race_state_name(state: int) -> str:
@@ -120,54 +101,63 @@ def _unassigned() -> Dict[str, Any]:
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None}
 
 
-# ---------------------------------------------------------------------------
-# Betting model
-# ---------------------------------------------------------------------------
-class BettingBoard:
-    """The betting model, its event log, and its SSE subscribers.
+def _reason(exc: BaseException) -> str:
+    """A one-line reason for a failed exchange: URLError carries the socket
+    error in .reason, HTTPError its status; everything else is str()."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    reason = getattr(exc, "reason", None)
+    text = str(reason) if reason is not None else str(exc)
+    return text or type(exc).__name__
 
-    apply_state() is called with every parsed state line (by the link thread,
-    or directly by tests); tick() is called about once a second to notice the
-    gateway going silent. Both publish the full model to every subscriber
-    queue when, and only when, the model changed.
 
-    clock is a monotonic seconds source (link_ok timing); wall is unix time
-    (timestamps in the model and the log). Both are injectable for tests.
+# ---------------------------------------------------------------------------
+# The relayed model
+# ---------------------------------------------------------------------------
+class BoardRelay:
+    """The last model received from pi5, served to the TV.
+
+    apply_model() is called with every model pi5 sends (stream or poll);
+    touch() with every ping; tick() about once a second so pi5 going quiet
+    is noticed. The served link_ok is pi5's own link_ok AND pi5 heard within
+    LINK_TIMEOUT_S; the rest of the model is pi5's, untouched. Every change
+    is published (as compact JSON) to every subscriber queue.
+
+    clock is a monotonic seconds source (contact timing); wall is unix time
+    (the "updated" stamp of a link_ok flip). Both are injectable for tests.
     """
 
     def __init__(
         self,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
-        log_dir: Optional[Path] = None,
     ) -> None:
         self._clock = clock
         self._wall = wall
-        self._log_dir = log_dir            # None = module-level LOG_DIR, read at write time
         self._lock = threading.Lock()
         self._subs: List["queue.Queue[str]"] = []
-        self._received_at: Optional[float] = None
-        self._seen_state = False
-        self._events: List[Dict[str, Any]] = []
-        self._dup_warned: set = set()
-        self._log_enabled = True
-        self._model: Dict[str, Any] = self._empty_model()
+        self._heard_at: Optional[float] = None
+        self._pi5_link_ok = False          # link_ok as pi5 last reported it
+        self._model: Dict[str, Any] = self.empty_model()
         self._json: str = _dumps(self._model)
 
     # -- model ---------------------------------------------------------------
-    def _empty_model(self) -> Dict[str, Any]:
+    def empty_model(self) -> Dict[str, Any]:
+        """What is served until pi5 has been heard: link down, nothing bet,
+        and no board_states, so the board stays hidden (pi5 decides the
+        takeover states)."""
         return {
             "link_ok": False,
             "race_state": 0,
             "race_state_name": race_state_name(0),
-            "token_value": float(config.TOKEN_VALUE),
+            "token_value": 1.0,
             "pot": 0.0,
             "total_tokens": 0,
             "horses": {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)},
             "leader": None,
             "events": [],
             "updated": self._wall(),
-            "board_states": list(config.QUINIELA_BOARD_STATES),
+            "board_states": [],
         }
 
     def model(self) -> Dict[str, Any]:
@@ -181,157 +171,69 @@ class BettingBoard:
         with self._lock:
             return self._json
 
-    def link_ok(self) -> bool:
+    def pi5_ok(self) -> bool:
+        """pi5 heard (a model or a ping) within LINK_TIMEOUT_S."""
         with self._lock:
-            return self._link_ok_locked()
+            return self._heard_locked()
 
-    def _link_ok_locked(self) -> bool:
+    def _heard_locked(self) -> bool:
         return (
-            self._received_at is not None
-            and (self._clock() - self._received_at) <= LINK_TIMEOUT_S
+            self._heard_at is not None
+            and (self._clock() - self._heard_at) <= LINK_TIMEOUT_S
         )
 
-    def _digest(self, state: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], int, int]:
-        """Turn one gateway state line into (horses, race_state, total_tokens).
-
-        Every horse 1..20 gets an entry. A cup claims a horse via its "h";
-        two cups claiming the same horse keep the lowest cup id. Missing or
-        odd fields never raise.
-        """
-        st = _as_int(state.get("st"))
-        if st is None:
-            st = _as_int(state.get("phase"), 0) or 0
-        cups = state.get("cups")
-        if not isinstance(cups, list):
-            cups = []
-
-        entries: List[Tuple[int, int, Dict[str, Any]]] = []
-        for cup in cups:
-            if not isinstance(cup, dict):
-                continue
-            cid = _as_int(cup.get("id"))
-            horse = _as_int(cup.get("h"))
-            if cid is None or horse is None or not (1 <= horse <= HORSE_COUNT):
-                continue
-            entries.append((cid, horse, cup))
-        entries.sort(key=lambda e: e[0])
-
-        horses = {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)}
-        claimed: Dict[int, int] = {}
-        for cid, horse, cup in entries:
-            if horse in claimed:
-                key = (horse, claimed[horse], cid)
-                if key not in self._dup_warned:
-                    self._dup_warned.add(key)
-                    log.warning(
-                        "cups %d and %d both claim horse %d; keeping cup %d",
-                        claimed[horse], cid, horse, claimed[horse],
-                    )
-                continue
-            claimed[horse] = cid
-            tokens = _as_int(cup.get("tok"), 0) or 0
-            age = _as_int(cup.get("age"), -1)
-            horses[str(horse)] = {
-                "tokens": max(0, tokens),
-                "share": 0.0,
-                "scratched": bool(_as_int(cup.get("scr"), 0)),
-                "online": age is not None and 0 <= age <= CUP_ONLINE_MAX_AGE_MS,
-                "cup": cid,
-            }
-
-        total = sum(h["tokens"] for h in horses.values())
-        if total:
-            for h in horses.values():
-                h["share"] = round(h["tokens"] / total, 4)
-        return horses, st, total
-
-    def apply_state(self, state: Dict[str, Any]) -> bool:
-        """Digest one state line. Returns True if the model changed (and was
-        published to subscribers)."""
-        now_m = self._clock()
-        now_w = self._wall()
-        horses, race_state, total = self._digest(state)
-
-        leader: Optional[int] = None
-        best = 0
-        for n in range(1, HORSE_COUNT + 1):
-            tokens = horses[str(n)]["tokens"]
-            if tokens > best:
-                leader, best = n, tokens
-
-        record: Optional[Dict[str, Any]] = None
+    def apply_model(self, m: Any) -> bool:
+        """Serve one model from pi5. Returns True if it differed from what was
+        served (and was published). Anything that is not a dict with a
+        "horses" dict is ignored."""
+        if not isinstance(m, dict) or not isinstance(m.get("horses"), dict):
+            return False
+        served = dict(m)
+        served["link_ok"] = bool(m.get("link_ok"))   # just received: pi5 is fresh by definition
+        try:
+            text = _dumps(served)
+        except (TypeError, ValueError) as exc:
+            log.debug("pi5 model not serializable: %s", exc)
+            return False
         with self._lock:
-            self._received_at = now_m
-            old = self._model
-            old_horses = old["horses"]
-
-            changes: List[Dict[str, Any]] = []
-            new_events: List[Dict[str, Any]] = []
-            for n in range(1, HORSE_COUNT + 1):
-                key = str(n)
-                before, after = old_horses[key], horses[key]
-                if before["tokens"] != after["tokens"]:
-                    changes.append({"horse": n, "tokens": [before["tokens"], after["tokens"]]})
-                    if self._seen_state:   # the first snapshot is the baseline, not a bet
-                        new_events.append(
-                            {"horse": n, "delta": after["tokens"] - before["tokens"], "ts": now_w}
-                        )
-                if before["scratched"] != after["scratched"]:
-                    changes.append(
-                        {"horse": n, "scratched": [before["scratched"], after["scratched"]]}
-                    )
-            if old["race_state"] != race_state:
-                changes.append({"race_state": [old["race_state"], race_state]})
-            self._seen_state = True
-            if new_events:
-                self._events = (new_events + self._events)[:MAX_EVENTS]
-
-            token_value = float(config.TOKEN_VALUE)
-            model = {
-                "link_ok": True,
-                "race_state": race_state,
-                "race_state_name": race_state_name(race_state),
-                "token_value": token_value,
-                "pot": round(total * token_value, 2),
-                "total_tokens": total,
-                "horses": horses,
-                "leader": leader,
-                "events": list(self._events),
-                "updated": old["updated"],
-                "board_states": list(config.QUINIELA_BOARD_STATES),
-            }
-            changed = model != old
-            if changed:
-                model["updated"] = now_w
-                self._set_locked(model)
-            if changes:
-                record = {
-                    "ts": round(now_w, 3),
-                    "race_state": race_state,
-                    "changes": changes,
-                    "total_tokens": total,
-                }
-        if record is not None:
-            self._write_log(record)
-        return changed
-
-    def tick(self) -> bool:
-        """Re-evaluate link_ok; publish if it flipped. Returns True if it did."""
-        with self._lock:
-            ok = self._link_ok_locked()
-            if ok == self._model["link_ok"]:
+            self._heard_at = self._clock()
+            self._pi5_link_ok = served["link_ok"]
+            # Compare as dicts, not as text: the stream carries pi5's key
+            # order and the poll fallback (jsonify) sorted keys, and the
+            # same model in another order is not a change worth publishing.
+            if served == self._model:
                 return False
-            model = dict(self._model)
-            model["link_ok"] = ok
-            model["updated"] = self._wall()
-            self._set_locked(model)
+            self._set_locked(served, text)
             return True
 
-    def _set_locked(self, model: Dict[str, Any]) -> None:
+    def touch(self) -> None:
+        """Record contact without a model (a ping). If a tick had flipped
+        link_ok off between two pings, this flips it back."""
+        with self._lock:
+            self._heard_at = self._clock()
+            self._reconcile_locked()
+
+    def tick(self) -> bool:
+        """Re-evaluate the served link_ok (pi5 heard within LINK_TIMEOUT_S
+        AND pi5's own link_ok); publish if it flipped. Returns True if it did."""
+        with self._lock:
+            return self._reconcile_locked()
+
+    def _reconcile_locked(self) -> bool:
+        want = self._heard_locked() and self._pi5_link_ok
+        if want == self._model["link_ok"]:
+            return False
+        model = dict(self._model)
+        model["link_ok"] = want
+        model["updated"] = self._wall()
+        self._set_locked(model, _dumps(model))
+        return True
+
+    def _set_locked(self, model: Dict[str, Any], text: str) -> None:
         self._model = model
-        self._json = _dumps(model)
+        self._json = text
         for q in self._subs:
-            _offer(q, self._json)
+            _offer(q, text)
 
     # -- subscribers ---------------------------------------------------------
     def subscribe(self) -> "queue.Queue[str]":
@@ -348,22 +250,6 @@ class BettingBoard:
     def subscriber_count(self) -> int:
         with self._lock:
             return len(self._subs)
-
-    # -- event log -----------------------------------------------------------
-    def _write_log(self, record: Dict[str, Any]) -> None:
-        """One compact JSON line per model change. A write failure logs one
-        WARNING and disables the log for the rest of the process."""
-        if not self._log_enabled or not getattr(config, "QUINIELA_LOG", True):
-            return
-        directory = Path(self._log_dir) if self._log_dir is not None else LOG_DIR
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-            path = directory / f"quiniela_{date.today().isoformat()}.jsonl"
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(_dumps(record) + "\n")
-        except OSError as exc:
-            self._log_enabled = False
-            log.warning("event log disabled: cannot write under %s: %s", directory, exc)
 
 
 def _offer(q: "queue.Queue[str]", item: str) -> None:
@@ -385,124 +271,64 @@ def _offer(q: "queue.Queue[str]", item: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Gateway serial link
+# The pi5 link
 # ---------------------------------------------------------------------------
-class GatewayLink:
-    """Owns the gateway's USB serial port on a daemon thread.
+def _default_opener(request: Any, timeout: float) -> Any:
+    return urllib.request.urlopen(request, timeout=timeout)
 
-    Port: the constructor's port, else config.GATEWAY_PORT, else auto-detect
-    (autodetect()). Opening never touches DTR/RTS, so (re)starting this
-    service does not reboot the gateway. On any error the port is closed and
-    reopened after a backoff of 1 s doubling to 10 s, forever.
 
-    feed_line(line) is what the thread calls for every line read; tests call
-    it directly. on_state(obj) is called with every parsed state line.
+class Pi5Link:
+    """Follows pi5's betting model on a daemon thread.
+
+    Stream first: GET base_url/api/quiniela/stream and feed every SSE event
+    to on_model (a JSON dict in an unnamed or "message" event) / on_alive
+    (that, or a "ping"). When the stream ends or fails, poll
+    GET base_url/api/quiniela once per POLL_INTERVAL_S for STREAM_RETRY_S
+    (a failed poll sleeps a backoff of 1 s doubling to 10 s), then try the
+    stream again. Forever; nothing pi5 does or does not do ends the thread.
+
+    opener(request, timeout) must return a response usable as a context
+    manager that iterates lines (the stream) and has .read() (the rest);
+    sleeper(seconds) must return early when stop() was called. Both default
+    to urllib.request.urlopen and the stop Event's wait, and exist so tests
+    can drive the loop without sockets or real time.
     """
 
     def __init__(
         self,
-        on_state: Callable[[Dict[str, Any]], None],
-        port: Optional[str] = None,
+        on_model: Callable[[Dict[str, Any]], Any],
+        on_alive: Callable[[], Any],
+        base_url: Optional[str] = None,
         clock: Callable[[], float] = time.monotonic,
-        serial_module: Any = None,
+        opener: Optional[Callable[[Any, float], Any]] = None,
+        sleeper: Optional[Callable[[float], Any]] = None,
     ) -> None:
-        self._on_state = on_state
-        self._port_cfg = port
+        self._on_model = on_model
+        self._on_alive = on_alive
+        self.base_url = (base_url if base_url is not None else config.PI5_URL).rstrip("/")
         self._clock = clock
-        self._serial = serial_module if serial_module is not None else serial
-        self._ser: Any = None
-        self._ser_lock = threading.Lock()
-        self._state_lock = threading.Lock()
+        self._opener = opener if opener is not None else _default_opener
+        self._sleeper = sleeper if sleeper is not None else self._default_sleeper
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._last_state: Optional[Dict[str, Any]] = None
-        self._received_at: Optional[float] = None
-        self._hello_pending = False
-        self._opened_at: float = 0.0
-        self._last_json_sent: float = -1e9
-        self._no_port_logged = False
-        self._open_fail_logged: Optional[str] = None
-        self.port: Optional[str] = None      # the port currently open
+        self._lock = threading.Lock()
+        self._heard_at: Optional[float] = None
+        self._resp: Any = None               # the open stream, closed by stop()
+        self._backoff = BACKOFF_MIN_S
+        self._stream_up_logged = False
+        self._stream_lost_warned = False
+        self._poll_failing = False
 
     # -- public --------------------------------------------------------------
     @property
     def connected(self) -> bool:
-        return self._ser is not None
-
-    @property
-    def hello_pending(self) -> bool:
-        """True after a gateway hello until _maybe_resend_json() has either
-        re-sent "json 1" (state stream silent: a reboot) or dropped it (state
-        lines still flowing: one of the gateway's 2 s repeats)."""
-        return self._hello_pending
-
-    def snapshot(self) -> Dict[str, Any]:
-        """The last parsed state line plus received_at (monotonic seconds)
-        and link_ok (a state line arrived within LINK_TIMEOUT_S)."""
-        with self._state_lock:
-            state = self._last_state
-            at = self._received_at
-        snap: Dict[str, Any] = dict(state) if state else {}
-        snap["received_at"] = at
-        snap["link_ok"] = at is not None and (self._clock() - at) <= LINK_TIMEOUT_S
-        return snap
-
-    def send(self, cmd: str) -> bool:
-        """Write cmd + newline to the gateway. False if not connected or the
-        write failed. Callers validate cmd first (validate_cmd)."""
-        data = (str(cmd).rstrip("\r\n") + "\n").encode("utf-8")
-        with self._ser_lock:
-            ser = self._ser
-            if ser is None:
-                return False
-            try:
-                ser.write(data)
-                return True
-            except Exception as exc:  # noqa: BLE001 — pyserial raises several types
-                log.warning("gateway write failed: %s", exc)
-                return False
-
-    def feed_line(self, line: str) -> Optional[str]:
-        """Digest one line from the gateway. Returns "state" or "hello" when
-        the line was one of those, None for everything else (discarded)."""
-        line = line.strip()
-        if not line:
-            return None
-        if not line.startswith("{"):
-            log.debug("gateway: %s", line[:160])
-            return None
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            log.debug("gateway: unparseable JSON: %s", line[:160])
-            return None
-        if not isinstance(obj, dict):
-            return None
-        kind = obj.get("t")
-        if kind == "state":
-            with self._state_lock:
-                self._last_state = obj
-                self._received_at = self._clock()
-            try:
-                self._on_state(obj)
-            except Exception:  # noqa: BLE001 — a model bug must not kill the link
-                log.exception("state line handler failed")
-            return "state"
-        if kind == "hello":
-            # The gateway prints hello at boot and repeats it every 2 s until
-            # a downlink state line (pi5's; this display never sends one), so
-            # a hello alone does not mean a reboot. _maybe_resend_json()
-            # treats it as one only when the 1 Hz state stream has stopped.
-            log.debug("gateway hello: %s", line[:160])
-            self._hello_pending = True
-            return "hello"
-        log.debug("gateway: ignored %r line", kind)
-        return None
+        """pi5 heard (a model or a ping) within LINK_TIMEOUT_S."""
+        with self._lock:
+            at = self._heard_at
+        return at is not None and (self._clock() - at) <= LINK_TIMEOUT_S
 
     def start(self) -> bool:
-        """Start the port thread (idempotent). False when pyserial is absent."""
-        if self._serial is None:
-            return False
+        """Start the link thread (idempotent)."""
         if self._thread is not None:
             return True
         self._thread = threading.Thread(target=self._run, name="quiniela-link", daemon=True)
@@ -510,186 +336,234 @@ class GatewayLink:
         return True
 
     def stop(self) -> None:
-        self._stop.set()
-        self._detach_port()
+        """End the loop (idempotent) without blocking the caller.
 
-    @staticmethod
-    def autodetect(pattern: str = PORT_GLOB) -> Optional[str]:
-        """First /dev/serial/by-id entry whose name carries one of PORT_HINTS
-        (a CH34x by its 1a86 vendor id or product string, CP210x, ESP32), or
-        None."""
-        for path in sorted(glob.glob(pattern)):
-            name = os.path.basename(path).lower()
-            if any(hint in name for hint in PORT_HINTS):
-                return path
-        return None
+        The socket under an open stream is shut down, which wakes a reader
+        blocked in recv() on Linux (the splash Pi) at once; on Windows
+        shutdown() does not interrupt a blocked recv, so there the thread
+        ends at the next byte from pi5 (a ping within 5 s) or at
+        STREAM_READ_TIMEOUT_S. The response itself is closed by the link
+        thread's own ``with``: closing it from here would wait on the
+        reader's buffer lock for as long as the blocked read lasts."""
+        self._stop.set()
+        with self._lock:
+            resp = self._resp
+        if resp is not None:
+            _shutdown_socket(resp)
+
+    def feed_sse(self, lines: Iterable[Any]) -> None:
+        """Parse SSE framing from an iterable of lines (bytes or str, with or
+        without the newline) until it ends or stop() is called.
+
+        A blank line dispatches the event: an unnamed or "message" event
+        whose data is a JSON dict -> on_model(dict) and on_alive(); "ping"
+        -> on_alive(); anything else is ignored at DEBUG. Several data lines
+        join with a newline; ": comment" lines and unknown fields are skipped.
+        """
+        event: Optional[str] = None
+        data: List[str] = []
+        for raw in lines:
+            if self._stop.is_set():
+                return
+            line = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+            line = line.rstrip("\r\n")
+            if line == "":
+                self._dispatch(event, data)
+                event, data = None, []
+                continue
+            if line.startswith(":"):
+                continue
+            field, _, value = line.partition(":")
+            if value.startswith(" "):
+                value = value[1:]
+            if field == "data":
+                data.append(value)
+            elif field == "event":
+                event = value
+            # id / retry / anything else: not used
+
+    def _dispatch(self, event: Optional[str], data: List[str]) -> None:
+        if not data:
+            return
+        if event == "ping":
+            self._mark_heard()
+            self._call(self._on_alive)
+            return
+        if event not in (None, "", "message"):
+            log.debug("pi5 stream: ignored %r event", event)
+            return
+        payload = "\n".join(data)
+        try:
+            obj = json.loads(payload)
+        except ValueError:
+            log.debug("pi5 stream: unparseable JSON: %s", payload[:160])
+            return
+        if not isinstance(obj, dict):
+            log.debug("pi5 stream: ignored non-object payload")
+            return
+        self._mark_heard()
+        self._call(self._on_alive)
+        self._call(self._on_model, obj)
+
+    def forward_cmd(self, body: Any, timeout: float = FETCH_TIMEOUT_S) -> Tuple[int, Dict[str, Any]]:
+        """POST body (as received; {} when it is not a dict) to pi5's
+        /api/quiniela/cmd and return (status, payload). pi5 validates the
+        command; a JSON-object answer comes back unchanged, status included.
+        pi5 unreachable -> (503, {"ok": false, "error": "pi5 not reachable: ..."});
+        a non-JSON body -> {"ok": false, "error": "non-JSON reply ..."} with
+        pi5's status, or 502 when that status was a 2xx (see _json_reply)."""
+        payload = body if isinstance(body, dict) else {}
+        req = urllib.request.Request(
+            self.base_url + "/api/quiniela/cmd",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
+            with self._opener(req, timeout) as resp:
+                status = int(getattr(resp, "status", 200) or 200)
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            try:
+                raw = exc.read()
+            except Exception:  # noqa: BLE001
+                raw = b""
+            finally:
+                exc.close()
+            return _json_reply(raw, exc.code)
+        except _NET_ERRORS as exc:
+            return 503, {"ok": False, "error": f"pi5 not reachable: {_reason(exc)}"}
+        return _json_reply(raw, status)
 
     # -- thread --------------------------------------------------------------
-    def _resolve_port(self) -> Optional[str]:
-        cfg = self._port_cfg if self._port_cfg is not None else getattr(config, "GATEWAY_PORT", None)
-        if cfg:
-            return str(cfg)
-        return self.autodetect()
+    def _default_sleeper(self, seconds: float) -> None:
+        self._stop.wait(seconds)
 
-    def _open_port(self, port: str) -> Any:
-        """The recipe from pi5/la_quiniela/bridge.py: build the port unopened,
-        never touch DTR/RTS (Linux raises both together on open, which the
-        ESP32's auto-reset circuit ignores; setting them separately reboots
-        it), take it exclusively, then open."""
-        ser = self._serial.Serial()
-        ser.port = port
-        ser.baudrate = BAUD
-        ser.bytesize = 8
-        ser.parity = "N"
-        ser.stopbits = 1
-        ser.timeout = READ_TIMEOUT_S
-        ser.write_timeout = 1.0
+    def _mark_heard(self) -> None:
+        with self._lock:
+            self._heard_at = self._clock()
+
+    @staticmethod
+    def _call(fn: Callable[..., Any], *args: Any) -> None:
         try:
-            ser.exclusive = True
-        except Exception:  # noqa: BLE001 — not every platform supports it
-            pass
-        ser.open()
-        return ser
-
-    def _attach_port(self, ser: Any, port: str = "?") -> None:
-        with self._ser_lock:
-            self._ser = ser
-            self.port = port
-        self._opened_at = self._clock()
-
-    def _detach_port(self) -> None:
-        with self._ser_lock:
-            ser, self._ser, self.port = self._ser, None, None
-        if ser is not None:
-            try:
-                ser.close()
-            except Exception:  # noqa: BLE001
-                pass
+            fn(*args)
+        except Exception:  # noqa: BLE001 — a relay bug must not kill the link
+            log.exception("pi5 model handler failed")
 
     def _run(self) -> None:
-        backoff = BACKOFF_MIN_S
         while not self._stop.is_set():
-            port = self._resolve_port()
-            if port is None:
-                if not self._no_port_logged:
-                    self._no_port_logged = True
-                    log.info("no gateway serial port found (%s); will keep looking", PORT_GLOB)
-                else:
-                    log.debug("no gateway serial port found; retry in %.0fs", backoff)
-                self._stop.wait(backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
-                continue
             try:
-                ser = self._open_port(port)
-            except Exception as exc:  # noqa: BLE001
-                if self._open_fail_logged != port:
-                    self._open_fail_logged = port
-                    log.warning("gateway port %s: open failed: %s", port, exc)
+                reason = self._stream()
+                if self._stop.is_set():
+                    break
+                if not self._stream_lost_warned:
+                    self._stream_lost_warned = True
+                    log.warning("pi5 stream lost (%s); polling /api/quiniela", reason)
                 else:
-                    log.debug("gateway port %s: open failed again: %s", port, exc)
-                self._stop.wait(backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
-                continue
+                    log.debug("pi5 stream still down (%s); polling /api/quiniela", reason)
+                self._poll_for(STREAM_RETRY_S)
+            except Exception:  # noqa: BLE001 — the link thread never dies
+                log.exception("pi5 link loop failed; retrying in %.0fs", BACKOFF_MIN_S)
+                self._sleeper(BACKOFF_MIN_S)
 
-            self._no_port_logged = False
-            self._open_fail_logged = None
-            backoff = BACKOFF_MIN_S
-            self._attach_port(ser, port)
-            log.info("gateway link up on %s", port)
-            try:
-                self._serve(ser)
-            except Exception as exc:  # noqa: BLE001 — unplug, EIO, decode, anything
-                log.warning("gateway link on %s lost: %s", port, exc)
-            finally:
-                self._detach_port()
-                log.info("gateway link down")
-            self._stop.wait(backoff)
-            backoff = min(backoff * 2, BACKOFF_MAX_S)
+    def _stream(self) -> str:
+        """Follow the stream until it ends or fails. Returns the reason."""
+        url = self.base_url + "/api/quiniela/stream"
+        req = urllib.request.Request(url, headers={"Accept": "text/event-stream"})
+        try:
+            with self._opener(req, STREAM_READ_TIMEOUT_S) as resp:
+                with self._lock:
+                    self._resp = resp
+                self._backoff = BACKOFF_MIN_S
+                self._poll_failing = False
+                if not self._stream_up_logged:
+                    self._stream_up_logged = True
+                    log.info("pi5 link up (stream) %s", url)
+                self._stream_lost_warned = False
+                self.feed_sse(resp)
+            reason = "stream ended"
+        except _NET_ERRORS as exc:
+            reason = _reason(exc)
+        finally:
+            with self._lock:
+                self._resp = None
+            self._stream_up_logged = False
+        return reason
 
-    def _serve(self, ser: Any) -> None:
-        """Read the open port until it fails or stop() is called."""
-        self._send_json_on(first=True)
-        buf = b""
-        while not self._stop.is_set():
-            waiting = ser.in_waiting
-            chunk = ser.read(waiting if waiting > 0 else 1)   # blocks <= READ_TIMEOUT_S
-            if chunk:
-                buf += chunk
-                while b"\n" in buf:
-                    raw, buf = buf.split(b"\n", 1)
-                    self.feed_line(raw.decode("utf-8", "replace"))
-                if len(buf) > MAX_LINE_BYTES:
-                    log.debug("gateway: dropping %d bytes with no newline", len(buf))
-                    buf = b""
-            self._maybe_resend_json()
+    def _poll_for(self, seconds: float) -> None:
+        deadline = self._clock() + seconds
+        while not self._stop.is_set() and self._clock() < deadline:
+            if self._poll_once():
+                self._backoff = BACKOFF_MIN_S
+                self._sleeper(POLL_INTERVAL_S)
+            else:
+                self._sleeper(self._backoff)
+                self._backoff = min(self._backoff * 2, BACKOFF_MAX_S)
 
-    def _send_json_on(self, first: bool = False) -> None:
-        self._last_json_sent = self._clock()
-        self._hello_pending = False
-        ok = self.send("json 1")
-        if first:
-            log.info("gateway: sent 'json 1' (%s)", "ok" if ok else "write failed")
-        else:
-            log.debug("gateway: re-sent 'json 1' (%s)", "ok" if ok else "write failed")
-
-    def _maybe_resend_json(self) -> None:
-        """Auto-emit is not persisted on the gateway, so "json 1" goes out
-        again when the gateway rebooted and whenever no state line has come
-        for JSON_RESEND_S (at most once per JSON_RESEND_S).
-
-        A reboot shows as a hello while the state stream is silent. The
-        gateway repeats hello every 2 s for as long as it has not had a
-        downlink state line (which this display never sends), so a hello
-        that arrives while state lines are still flowing (the last one under
-        HELLO_SILENCE_S ago) is a repeat and is dropped; re-sending on it
-        would make the gateway print an ack and an extra state line every
-        2 s for the whole event. A real reboot stops the 1 Hz state lines,
-        so the next hello (2 s later at the latest) re-sends, at most once
-        per JSON_MIN_GAP_S; the silence rule is the backstop either way.
-        """
-        now = self._clock()
-        since_sent = now - self._last_json_sent
-        with self._state_lock:
-            at = self._received_at
-        if self._hello_pending:
-            if at is not None and now - at <= HELLO_SILENCE_S:
-                log.debug("gateway hello while state lines flow: not a reboot")
-                self._hello_pending = False
-            elif since_sent >= JSON_MIN_GAP_S:
-                self._send_json_on()
-            return
-        last_activity = max(at if at is not None else 0.0, self._opened_at)
-        if now - last_activity > JSON_RESEND_S and since_sent >= JSON_RESEND_S:
-            self._send_json_on()
+    def _poll_once(self) -> bool:
+        url = self.base_url + "/api/quiniela"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        try:
+            with self._opener(req, FETCH_TIMEOUT_S) as resp:
+                raw = resp.read()
+            obj = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
+        except _NET_ERRORS as exc:
+            if not self._poll_failing:
+                self._poll_failing = True
+                log.warning("pi5 poll failed (%s); retrying with backoff", _reason(exc))
+            else:
+                log.debug("pi5 poll failed again (%s)", _reason(exc))
+            return False
+        except ValueError as exc:
+            log.debug("pi5 poll: invalid JSON: %s", exc)
+            return False
+        if not isinstance(obj, dict):
+            log.debug("pi5 poll: ignored non-object payload")
+            return False
+        if self._poll_failing:
+            self._poll_failing = False
+            log.info("pi5 link up (poll) %s", url)
+        self._mark_heard()
+        self._call(self._on_alive)
+        self._call(self._on_model, obj)
+        return True
 
 
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
-def validate_cmd(cmd: Any) -> Tuple[Optional[str], Optional[str]]:
-    """Check one line bound for the gateway. Returns (clean_cmd, None) or
-    (None, error). Only the first word is whitelisted; the gateway itself
-    validates the arguments and answers with an err line if it dislikes them."""
-    if not isinstance(cmd, str):
-        return None, "cmd must be a string"
-    text = cmd.strip()
-    if not text:
-        return None, "empty command"
-    if len(text) > CMD_MAX_LEN:
-        return None, f"command longer than {CMD_MAX_LEN} characters"
-    if "\n" in text or "\r" in text:
-        return None, "command must be a single line"
-    word = text.split()[0]
-    if word not in CMD_WHITELIST:
-        return None, f"command not allowed: {word} (allowed: {' '.join(sorted(CMD_WHITELIST))})"
-    return text, None
+def _json_reply(raw: Any, status: int) -> Tuple[int, Dict[str, Any]]:
+    """(status, body) to relay: pi5's reply as received when it is a JSON
+    object; otherwise a JSON error naming what it was. A non-JSON error page
+    (Flask's HTML 404/405/500) keeps its status; a non-JSON 2xx becomes 502,
+    because "ok" is the contract and a 200 must never say ok:false."""
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
+        obj = json.loads(text)
+    except (ValueError, UnicodeDecodeError):
+        obj = None
+    if isinstance(obj, dict):
+        return status, obj
+    error = {"ok": False, "error": f"non-JSON reply from pi5 (HTTP {status})"}
+    return (502 if 200 <= status < 300 else status), error
+
+
+def _shutdown_socket(resp: Any) -> None:
+    """Shut down the socket under an http.client response (urllib keeps it
+    at resp.fp.raw._sock) so a thread blocked reading it wakes up. A
+    response without one (a test fake) or a socket already gone is left
+    alone."""
+    sock = getattr(getattr(getattr(resp, "fp", None), "raw", None), "_sock", None)
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
 # Server-Sent Events
 # ---------------------------------------------------------------------------
 def sse_events(
-    target: Optional[BettingBoard] = None,
+    target: Optional[BoardRelay] = None,
     heartbeat_s: Optional[float] = None,
     wall: Callable[[], float] = time.time,
 ) -> Iterator[str]:
@@ -719,15 +593,16 @@ def sse_events(
 # ---------------------------------------------------------------------------
 # Module singletons and start-up
 # ---------------------------------------------------------------------------
-board = BettingBoard()
-link = GatewayLink(on_state=board.apply_state)
+board = BoardRelay()
+link = Pi5Link(on_model=board.apply_model, on_alive=board.touch)
 
 _started = False
+_stop = threading.Event()      # ends the ticker; not tied to the link
 
 
 def _tick_loop() -> None:
-    """Once a second, let the board notice the gateway going silent."""
-    while not link._stop.wait(1.0):
+    """Once a second, let the relay notice pi5 going silent."""
+    while not _stop.wait(1.0):
         try:
             board.tick()
         except Exception:  # noqa: BLE001
@@ -735,21 +610,13 @@ def _tick_loop() -> None:
 
 
 def start_link() -> None:
-    """Start the gateway link and the link_ok ticker. Idempotent, and a no-op
-    (with one WARNING) when pyserial is not installed."""
+    """Start the pi5 link and the link_ok ticker. Idempotent: tests and
+    tools pre-set _started = True before importing server to keep both
+    threads out of their process."""
     global _started
     if _started:
         return
     _started = True
-    if serial is None:
-        log.warning(
-            "pyserial is not installed; La Quiniela gateway link disabled "
-            "(pip install -r requirements.txt)"
-        )
-        return
     link.start()
     threading.Thread(target=_tick_loop, name="quiniela-tick", daemon=True).start()
-    log.info(
-        "quiniela gateway link started (port=%s)",
-        getattr(config, "GATEWAY_PORT", None) or "auto-detect",
-    )
+    log.info("quiniela pi5 link started (url=%s)", link.base_url)

@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-URL="${SPLASH_URL:-http://localhost:5000/display}"
+URL="${SPLASH_URL:-http://localhost:5001/display}"
 
 # --- Disable screen blanking / DPMS / screensaver -----------------------------
 # These are best-effort; they no-op if the binary isn't installed.

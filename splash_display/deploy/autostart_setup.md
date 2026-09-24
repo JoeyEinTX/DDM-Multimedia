@@ -70,9 +70,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable splash_display.service
 sudo systemctl start splash_display.service
 
-# Verify it is up
+# Verify it is up (the splash listens on 5001; pi5's dashboard keeps 5000)
 sudo systemctl status splash_display.service
-curl -fsS http://localhost:5000/api/slides | head -c 200; echo
+curl -fsS http://localhost:5001/api/slides | head -c 200; echo
 ```
 
 ---

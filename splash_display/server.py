@@ -6,9 +6,9 @@ Routes:
     GET /display             → renders the master slideshow page (kiosk URL)
     GET /api/slides          → returns a freshly shuffled JSON playlist
     GET /api/slide/<id>      → returns the rendered HTML fragment for one slide
-    GET /api/quiniela        → La Quiniela betting model (tokens per horse, pot, link state)
+    GET /api/quiniela        → La Quiniela betting model, relayed from pi5 (tokens per horse, pot, link state)
     GET /api/quiniela/stream → the same model as Server-Sent Events, on every change
-    POST /api/quiniela/cmd   → forwards one whitelisted command line to the cup gateway
+    POST /api/quiniela/cmd   → forwards the body to pi5's /api/quiniela/cmd and relays its answer
 
 Phase 2 will add a /upload endpoint and a back-channel into the Pi 5 dashboard.
 The structure here keeps content loading and playlist building isolated so a
@@ -523,13 +523,14 @@ def api_slide(slide_id: str):
 
 
 # ---------------------------------------------------------------------------
-# La Quiniela live board — gateway link + betting model (quiniela.py)
+# La Quiniela live board — pi5's betting model, relayed (quiniela.py)
 # ---------------------------------------------------------------------------
 @app.route("/api/quiniela")
 def api_quiniela():
-    """The betting model: tokens per horse, pot, leader, recent events,
-    link_ok, and board_states (the race states in which the board owns the
-    TV) so the frontend does not hard-code them."""
+    """The betting model as last received from pi5: tokens per horse, pot,
+    leader, recent events, link_ok (pi5's own, and pi5 heard within 5 s),
+    and board_states (the race states in which the board owns the TV) so
+    the frontend does not hard-code them."""
     return jsonify(quiniela.board.model())
 
 
@@ -553,16 +554,12 @@ def api_quiniela_stream():
 
 @app.route("/api/quiniela/cmd", methods=["POST"])
 def api_quiniela_cmd():
-    """Forward one command line to the gateway: body {"cmd": "state 1"}.
-    The first word must be one of state/horse/scratch/demo/roster/json."""
-    body = request.get_json(silent=True)
-    cmd = body.get("cmd") if isinstance(body, dict) else None
-    text, error = quiniela.validate_cmd(cmd)
-    if error:
-        return jsonify({"ok": False, "error": error}), 400
-    if not quiniela.link.connected:
-        return jsonify({"ok": False, "error": "gateway not connected"}), 503
-    return jsonify({"ok": quiniela.link.send(text)})
+    """Forward the JSON body (e.g. {"cmd": "state 1"}) to pi5's
+    /api/quiniela/cmd and relay its status and answer unchanged: pi5
+    validates the command (single source of truth). pi5 unreachable ->
+    503 {"ok": false, "error": "pi5 not reachable: ..."}."""
+    status, payload = quiniela.link.forward_cmd(request.get_json(silent=True))
+    return jsonify(payload), status
 
 
 @app.context_processor
@@ -581,16 +578,17 @@ def inject_brand_globals():
 # ---------------------------------------------------------------------------
 race_poller.start_poller()
 
-# La Quiniela gateway link: a daemon thread owning the gateway's USB serial
-# port (auto-detected) plus a 1 Hz ticker for link_ok. Idles harmlessly when
-# no gateway is plugged in or pyserial is missing.
+# La Quiniela pi5 link: a daemon thread following pi5's /api/quiniela/stream
+# (polling /api/quiniela while the stream is down) plus a 1 Hz ticker for
+# link_ok. Retries harmlessly forever when pi5 is unreachable.
 def _serves_requests() -> bool:
     """False in the werkzeug reloader's parent process (DEBUG = True), which
     only watches files and re-spawns the child that serves requests: if it
-    started the link too it would take the gateway port exclusively and the
-    child could never open it. werkzeug marks the child with
-    WERKZEUG_RUN_MAIN=true (the test behind its is_running_from_reloader()).
-    Under systemd (DEBUG = False, no reloader) there is one process."""
+    started the link too, pi5 would carry a second, useless SSE client (each
+    one holds a request thread open on pi5) and its log would show two
+    splashes. werkzeug marks the child with WERKZEUG_RUN_MAIN=true (the test
+    behind its is_running_from_reloader()). Under systemd (DEBUG = False, no
+    reloader) there is one process."""
     return not config.DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true"
 
 

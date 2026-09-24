@@ -47,5 +47,7 @@ pi5/animation_params.json
 *.ttf
 *.TTF
 
-# La Quiniela betting-model event log (splash_display/quiniela.py), one file per day
+# La Quiniela betting-model event log now lives on pi5 (pi5/data/quiniela_YYYY-MM-DD.jsonl,
+# covered by pi5/data/* above); splash_display/logs/ held the old splash-side log and stays
+# ignored so files left on a Pi from before the move keep out of git status
 splash_display/logs/

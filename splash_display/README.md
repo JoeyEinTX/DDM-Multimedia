@@ -2,7 +2,7 @@
 
 A Flask-driven TV splash slideshow for the **Derby de Mayo** annual party.
 Runs on a dedicated Raspberry Pi 4B (Pi OS Bookworm), boots straight into a
-Chromium kiosk pointed at `http://localhost:5000/display`, and rotates through
+Chromium kiosk pointed at `http://localhost:5001/display`, and rotates through
 splash pages and trivia cards on a weighted, freshly-shuffled cycle.
 
 This is **Phase 1**: file-based content, no remote upload. Phase 2 will add a
@@ -14,15 +14,14 @@ This is **Phase 1**: file-based content, no remote upload. Phase 2 will add a
 
 ```
 splash_display/
-├── server.py                # Flask app on :5000
+├── server.py                # Flask app on :5001 (pi5's dashboard keeps :5000)
 ├── config.py                # All tunables
-├── quiniela.py              # La Quiniela: gateway serial link, betting model, SSE
+├── quiniela.py              # La Quiniela: pi5 link (HTTP client), relayed model, SSE
 ├── requirements.txt
 ├── tests/
 │   └── test_quiniela.py     # python -m unittest -v tests.test_quiniela
 ├── tools/
-│   └── fake_gateway.py      # dev aid: the real server fed by a synthetic gateway
-├── logs/                    # quiniela_YYYY-MM-DD.jsonl event log (git-ignored)
+│   └── fake_pi5.py          # dev aid: the real server against a synthetic pi5
 ├── content/
 │   ├── trivia.json          # Trivia cards by category
 │   └── splash_pages.json    # Splash templates with timing
@@ -52,9 +51,9 @@ splash_display/
 | `GET /display` | Renders the master slideshow page (kiosk URL) |
 | `GET /api/slides` | Returns a freshly shuffled JSON playlist (~35 slides) |
 | `GET /api/slide/<id>` | Returns a single slide as an HTML fragment (debugging / Phase 2 hook) |
-| `GET /api/quiniela` | La Quiniela betting model as JSON (see [La Quiniela live board](#la-quiniela-live-board)) |
+| `GET /api/quiniela` | La Quiniela betting model as JSON, relayed from pi5 (see [La Quiniela live board](#la-quiniela-live-board)) |
 | `GET /api/quiniela/stream` | The same model as Server-Sent Events, on every change |
-| `POST /api/quiniela/cmd` | Forwards one whitelisted command line to the cup gateway |
+| `POST /api/quiniela/cmd` | Forwards the body to pi5's `/api/quiniela/cmd` and relays its answer |
 
 ### How the slideshow renders
 
@@ -119,10 +118,10 @@ chmod +x deploy/kiosk.sh
 From the Pi:
 
 ```bash
-curl -fsS http://localhost:5000/api/slides | python3 -m json.tool | head -40
+curl -fsS http://localhost:5001/api/slides | python3 -m json.tool | head -40
 ```
 
-Or hit `http://<pi-ip>:5000/display` from any browser on the LAN.
+Or hit `http://<pi-ip>:5001/display` from any browser on the LAN.
 
 ---
 
@@ -168,62 +167,71 @@ again to hide it.
 ## La Quiniela live board
 
 The party's cup gateway (`firmware/quiniela/ddm_gateway`, a WROOM-32 on USB)
-knows every cup's horse, token count and health. Plugged into this Pi it
-feeds `quiniela.py`, which keeps a live betting model and serves it to the
-TV. Nothing here is required for the slideshow: with no gateway plugged in
-(or no pyserial installed) the link idles and `/api/quiniela` reports
-`"link_ok": false`.
+knows every cup's horse, token count and health. It plugs into **DevPi**,
+where pi5's bridge (`pi5/la_quiniela/bridge.py`) owns the USB port, keeps
+the betting model and serves it. This app is an HTTP client of pi5 and
+re-serves the model to the TV, so the board keeps talking to its own origin:
 
-### Gateway link
+```
+gateway ──USB──> pi5 dashboard (:5000)              ──HTTP──> splash (:5001)
+                 owns the port; roster + telemetry              quiniela.Pi5Link follows
+                 -> betting model                               pi5's stream (polls while
+                 GET  /api/quiniela                             it is down) and re-serves
+                 GET  /api/quiniela/stream   (SSE)              the same three routes to
+                 POST /api/quiniela/cmd                         the TV board (/display)
+```
 
-- **Port.** `config.GATEWAY_PORT = None` auto-detects: the first
-  `/dev/serial/by-id/*` entry whose name contains `CH340`, `1a86` (the
-  CH34x vendor id: a CH340G is `usb-1a86_USB2.0-Serial-if00-port0`, newer
-  ones `usb-1a86_USB_Serial-...`), `USB2.0-Serial`, `USB_Serial`, `CP210`
-  or `ESP32`, case-insensitively. Set it explicitly (`"/dev/ttyUSB0"`)
-  when more than one USB-serial device is attached. 115200 8N1.
-- **DTR/RTS are never touched.** The port is built unopened, configured,
-  taken exclusively and only then opened: the recipe from pi5's bridge
-  (`pi5/la_quiniela/bridge.py`). Anything else pulses the ESP32's auto-reset
-  circuit, so this way restarting the service does not reboot the gateway.
-- **Handshake.** On connect the link writes `json 1`; from then on the
-  gateway prints one `{"t":"state",...}` line (up to about 2 KB, every
-  roster slot) whenever its picture of the cups changes. Only lines that
-  start with `{` and carry `"t":"state"` are parsed. Everything else on the
-  port (`# ` text, `hello`, `status`, `telem`, `cup_hello`, `err`) is
-  discarded at DEBUG.
-- **Re-send rules.** Auto-emit is not persisted on the gateway, so `json 1`
-  goes out again when the gateway rebooted, and whenever the port is open
-  but no state line has arrived for 5 s (at most once per 5 s). A reboot
-  is a `{"t":"hello"}` line while the state stream is silent: the gateway
-  prints hello at boot and repeats it every 2 s until it gets a downlink
-  state line (pi5's; this display never sends one), so a hello that
-  arrives while state lines are still flowing (the last one under 1.5 s
-  ago; they come every second once auto-emit is on) is a repeat and is
-  dropped. A real reboot stops the state lines, so the next hello re-sends
-  `json 1` (at most once per second); the 5 s silence rule is the backstop.
-- **Reconnect.** Any serial error, or the port disappearing, closes the
-  link; it retries with a 1 s backoff doubling to a 10 s cap, forever. "No
-  port found" is logged once at INFO, then at DEBUG.
-- **One owner.** Only one process can hold the USB port. pi5's bridge also
-  opens the gateway when its `LQ_SERIAL_PORT` is set, so a gateway is wired
-  to one host or the other; whichever opens second keeps failing. For the
-  same reason, with `config.DEBUG = True` the dev server's reloader parent
-  does not start the link; only the child process that serves requests
-  does.
-- `link_ok` is true while a state line has arrived in the last 5 s. A 1 Hz
-  ticker notices the gateway going silent and publishes that change; the
-  rest of the model keeps its last values.
+Nothing here is required for the slideshow: with pi5 unreachable the link
+keeps retrying, `/api/quiniela` reports `"link_ok": false` with an empty
+`board_states`, and the board stays hidden. pyserial is no longer needed on
+this Pi: only pi5 opens the USB port, and no serial device is ever touched
+here.
 
-### API
+### The pi5 link
+
+`quiniela.Pi5Link`, a daemon thread started with the app (`start_link()`),
+follows pi5 at `config.PI5_URL`:
+
+- **Stream first.** It opens `GET PI5_URL/api/quiniela/stream` and hands
+  every unnamed `data:` event (the full model as JSON) to the relay; pi5's
+  `event: ping` (sent after every 5 s of silence) counts as contact. A
+  stream silent for 15 s is dead (read timeout).
+- **Poll fallback.** When the stream ends or fails (pi5 down or restarting,
+  network gone) it logs one WARNING (`pi5 stream lost (...); polling
+  /api/quiniela`, then DEBUG for repeats) and polls `GET PI5_URL/api/quiniela`
+  once a second for 10 s, then tries the stream again; forever. A failed
+  poll sleeps a backoff of 1 s doubling to 10 s (any success resets it),
+  so an unreachable pi5 costs two connection attempts every 10 s. Every
+  exception is caught and logged; the thread never dies.
+- **`link_ok`** as served to the TV = pi5 heard (a model or a ping) within
+  the last 7.5 s AND pi5's own `link_ok` (its gateway alive). A 1 Hz ticker
+  flips it off when pi5 goes quiet and publishes that change; the rest of
+  the model keeps its last values. The next model or ping flips it back.
+  7.5 s clears one ping period with margin (pi5 pings after 5 s of silence
+  measured from its previous chunk, so a window of exactly 5 s flickered on
+  a healthy pi5) and stays under the page's own 10 s NO LINK rule.
+- **One client per process.** With `config.DEBUG = True` the dev server's
+  reloader parent does not start the link; only the child that serves
+  requests does (a second client would just hold a useless request thread
+  open on pi5). Under systemd there is one process.
+
+### Ports
+
+pi5's dashboard binds **5000**, this app **5001** (`config.FLASK_PORT`);
+sharing DevPi is fine. Only pi5 opens the gateway's USB port. The kiosk
+URL (`deploy/kiosk.sh`) and the curls below use 5001; the systemd unit is
+unchanged (it runs `server.py`, which reads the port from `config.py`).
+
+### API (relayed)
 
 | Route | Behavior |
 | --- | --- |
-| `GET /api/quiniela` | The betting model as JSON |
-| `GET /api/quiniela/stream` | Server-Sent Events: the full model on every change |
-| `POST /api/quiniela/cmd` | Forward one whitelisted command line to the gateway |
+| `GET /api/quiniela` | The betting model as last received from pi5 |
+| `GET /api/quiniela/stream` | Server-Sent Events: the full model on every change (the same bytes pi5's stream carries) |
+| `POST /api/quiniela/cmd` | The JSON body is forwarded to pi5's `/api/quiniela/cmd`; pi5 validates the command and its status and answer are relayed unchanged |
 
-The betting model, as `/api/quiniela` returns it and the stream carries it:
+The betting model, as `/api/quiniela` returns it and the stream carries it.
+pi5 builds it; the splash serves it untouched apart from `link_ok`:
 
 ```json
 {
@@ -233,7 +241,7 @@ The betting model, as `/api/quiniela` returns it and the stream carries it:
   "pot": 147.0, "total_tokens": 147,
   "horses": {
     "1": {"tokens": 0, "share": 0, "scratched": false, "online": false, "cup": null},
-    "7": {"tokens": 23, "share": 0.1565, "scratched": false, "online": true, "cup": 0}
+    "7": {"tokens": 23, "share": 0.1565, "scratched": false, "online": true, "cup": 7}
   },
   "leader": 7,
   "events": [ {"horse": 7, "delta": 1, "ts": 1695400000.0} ],
@@ -243,68 +251,69 @@ The betting model, as `/api/quiniela` returns it and the stream carries it:
 ```
 
 - `horses` has every horse `"1"`..`"20"`; a horse with no cup assigned looks
-  like the `"1"` entry above.
+  like the `"1"` entry above. `cup` is pi5's **1-based** cup number (the
+  old splash exposed the gateway's 0-based wire slot); the board only tests
+  it for `null`.
 - `share` = tokens / total_tokens (0 when the pot is empty). `leader` is the
   horse with most tokens (lowest number on a tie), `null` when nobody has
-  bet.
-- `online` = the cup reported within the last 6 s (`age` 0..6000 ms).
-- `events` are token deltas between consecutive state lines, newest first,
-  last 8. The first state line after start-up is the baseline and adds none.
-- Two cups claiming one horse: the lowest cup id wins (one WARNING logged).
-  Horse values outside 1..20 are ignored.
-- `board_states` = `config.QUINIELA_BOARD_STATES`, so the page does not
-  hard-code them.
+  bet. `online` = pi5 heard the cup within the last 6 s.
+- `events` are the last 8 bets, newest first, each `{"horse", "delta",
+  "ts"}`.
+- `board_states` are the race states in which the board owns the TV; pi5
+  decides them. Until pi5 has been heard the splash serves an empty model:
+  `link_ok` false, race state 0, `token_value` 1.0, every horse unassigned,
+  `board_states` `[]` (so the board stays hidden).
 
 ```bash
-curl -s localhost:5000/api/quiniela | python3 -m json.tool
+curl -s localhost:5001/api/quiniela | python3 -m json.tool
 
 # SSE. First a `data:` event with the current model, then one per change.
 # After every 5 s of silence: a ": heartbeat" comment and an "event: ping"
 # carrying {"ts": <unix time>}. An EventSource cannot see comments, so the
 # page listens for "ping" and shows NO LINK after 10 s without one.
-curl -sN localhost:5000/api/quiniela/stream
+curl -sN localhost:5001/api/quiniela/stream
 
-curl -s -X POST localhost:5000/api/quiniela/cmd \
+curl -s -X POST localhost:5001/api/quiniela/cmd \
      -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
-# 200 {"ok": true}                                    written to the gateway
-# 200 {"ok": false}                                   port open, write failed
-# 400 {"ok": false, "error": "..."}                   empty, over 200 chars, more
-#                                                     than one line, or the first
-#                                                     word is not one of
-#                                                     state horse scratch demo roster json
-# 503 {"ok": false, "error": "gateway not connected"}
+# pi5's answer, relayed as is:
+#   200 {"ok": true, "gateway_online": true, ...}      applied and sent to the gateway
+#   200 {"ok": true, "gateway_online": false, ...}     applied, gateway offline (pi5 re-sends on the next hello)
+#   400 {"ok": false, "error": "..."}                  pi5 rejected the command
+#   503 {"ok": false, "error": "bridge not initialised"} pi5 has no bridge
+# and from the splash itself:
+#   503 {"ok": false, "error": "pi5 not reachable: ..."}
+#   502 {"ok": false, "error": "non-JSON reply from pi5 (HTTP 200)"}  a 2xx that is not a JSON object
+# (a non-JSON error page, such as Flask's HTML 404 or 500, keeps its status
+#  with that same JSON shape; pi5's own route always answers JSON)
 ```
+
+Commands (pi5 validates; cup numbers are 1-based, as everywhere on DevPi):
+
+| `cmd` | Meaning |
+| --- | --- |
+| `state N` | Race state 0..6 (0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING, 5 WINNER, 6 AFTER_PARTY) |
+| `horse C H` | Cup C (1..20) carries horse H (1..20; 0 = no horse) |
+| `scratch C 1` / `scratch C 0` | Scratch / unscratch the horse on cup C |
+| `roster` | Answer with pi5's roster (20 MACs or null, `roster_rev`, `has_roster`); nothing is written |
+| `demo`, `json ...` | Rejected by pi5 (400): its bridge never forwards them to the gateway |
+
+The first word must be one of `state horse scratch demo roster json`, one
+line, at most 200 characters, case-sensitive; anything else is a 400 from
+pi5 (`"command not allowed: ..."`, `"empty command"`, ...).
 
 Stream headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`,
 `X-Accel-Buffering: no`, `Connection: keep-alive` (Flask's dev server, which
 the systemd unit runs, rewrites that last one to `close`; the stream still
 runs until one side hangs up). Event names: the model arrives as unnamed
-`data:` events (`onmessage`), the keep-alive as `ping`.
-
-### Event log
-
-With `config.QUINIELA_LOG = True` every model change (a horse's token count
-or scratch flag, or the race state; not `online` / `link_ok` flips) appends
-one compact line to `logs/quiniela_YYYY-MM-DD.jsonl` (local date; the
-directory is created on first write and is git-ignored):
-
-```json
-{"ts":1695400000.0,"race_state":1,"changes":[{"horse":7,"tokens":[22,23]}],"total_tokens":147}
-```
-
-`changes` entries are `{"horse": h, "tokens": [old, new]}`,
-`{"horse": h, "scratched": [old, new]}` or `{"race_state": [old, new]}`.
-A write failure logs one WARNING and disables the log until restart; it
-never touches the link or the TV.
+`data:` events (`onmessage`), the keep-alive as `ping`. The splash keeps
+pinging the TV while pi5 is unreachable; only `link_ok` changes.
 
 ### Config
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `GATEWAY_PORT` | `None` | Serial port of the gateway; `None` = auto-detect `/dev/serial/by-id` |
-| `TOKEN_VALUE` | `1.00` | Dollars per token; `pot = total_tokens x TOKEN_VALUE` |
-| `QUINIELA_LOG` | `True` | Write the JSONL event log |
-| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4]` | Race states in which the board owns the TV (exposed as `board_states`) |
+| `FLASK_PORT` | `5001` | This app's port (pi5's dashboard owns 5000 on DevPi) |
+| `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`) and the race roster (`/api/race`) both come from it |
 
 Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
 4 RUNNING, 5 WINNER, 6 AFTER_PARTY.
@@ -322,8 +331,8 @@ stays hidden and the slideshow is indistinguishable from before.
 **Takeover rule.** On load the page fetches `/api/quiniela` once and
 subscribes to `/api/quiniela/stream` (reconnecting on error with a 1 s
 backoff doubling to 30 s, reset by the next message). Whenever
-`board_states` (the model's copy of `config.QUINIELA_BOARD_STATES`; the
-page never hard-codes it) contains `race_state`:
+`board_states` (the model's copy of pi5's `config.QUINIELA_BOARD_STATES`,
+in `pi5/config.py`; the page never hard-codes it) contains `race_state`:
 
 - the playlist pauses in place (`window.ddmSlideshow.hold()` clears the
   slide timers, the current slide stays where it is) and the board
@@ -381,29 +390,39 @@ model says `link_ok: false` (the gateway itself has gone quiet). It hides
 as soon as either condition clears. It is only ever a mark: the board
 keeps its last data and never drops back to trivia on a hiccup.
 
-### Dev aid: fake gateway
+### Dev aid: fake pi5
 
-`tools/fake_gateway.py` runs the **real** server (`server.py`, every route
-and template) on `127.0.0.1` with a synthetic gateway feeding
-`quiniela.link.feed_line()` from a thread. No serial port is opened, the
-dashboard poller stays off and the JSONL event log is disabled, so it is
-safe on any machine:
+`tools/fake_pi5.py` serves a synthetic pi5 (the three `/api/quiniela`
+routes, SSE with pings) on `127.0.0.1:5078` and runs the **real** splash
+server (`server.py`, every route and template, the real `Pi5Link`) against
+it on `127.0.0.1:5077`. No serial port, the dashboard poller stays off, so
+it is safe on any machine:
 
 ```bash
 cd splash_display
-python tools/fake_gateway.py --phase open              # BETTING OPEN, 20 cups, leader, a scratch, an offline cup, recent events
-python tools/fake_gateway.py --phase final             # FINAL CALL
-python tools/fake_gateway.py --phase closed            # AT_THE_POST: BETTING CLOSED, board frozen
-python tools/fake_gateway.py --phase running           # RUNNING: BETTING CLOSED, still frozen
-python tools/fake_gateway.py --phase winner            # state 5: the playlist is back
-python tools/fake_gateway.py --phase idle              # state 0, link up: plain slideshow
-python tools/fake_gateway.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
-python tools/fake_gateway.py --phase open --stop-feed-after 0   # board up, link lost: NO LINK mark
-# --port 5077 (default), --period 15 (cycle), --host 127.0.0.1
+python tools/fake_pi5.py --phase open              # BETTING OPEN, 20 cups, leader, a scratch, an offline cup, recent events
+python tools/fake_pi5.py --phase final             # FINAL CALL
+python tools/fake_pi5.py --phase closed            # AT_THE_POST: BETTING CLOSED, board frozen
+python tools/fake_pi5.py --phase running           # RUNNING: BETTING CLOSED, still frozen
+python tools/fake_pi5.py --phase winner            # state 5: the playlist is back
+python tools/fake_pi5.py --phase idle              # state 0, link up: plain slideshow
+python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
+python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark (0 would stop it before the splash's first request)
+# --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle),
+# --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 ```
 
-Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. For
-automated 1080p frames drive headless Chrome over the DevTools protocol
+Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. The
+fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}` and
+`state N` switches its phase, so a curl through the real relay drives the
+takeover:
+
+```bash
+curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'   # board up
+curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'   # board down
+```
+
+For automated 1080p frames drive headless Chrome over the DevTools protocol
 (`--remote-debugging-port`, `Page.navigate`, wait a few seconds of real
 time, `Page.captureScreenshot`): the plain `--screenshot` flags do not
 wait for the stream. `--virtual-time-budget` never expires because the
@@ -412,19 +431,25 @@ open SSE request keeps headless virtual time paused (Chrome hangs), and
 
 ### First end-to-end test
 
+On DevPi with the gateway plugged in and both apps running (pi5's
+dashboard on 5000, this service on 5001):
+
 ```bash
-# on DevPi, gateway plugged in, splash_display service running
-curl -s localhost:5000/api/quiniela | jq .link_ok          # true
-# "demo" takes no argument and toggles the gateway's demo mode: the cups walk
-# through horse numbers, which proves the link end to end. The next command
-# turns demo off again on its own.
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"demo"}'
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"horse 0 7"}'
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
-# TV should now show the board. Drop a token in cup 0. Horse 7 ticks to 1.
+# pi5 owns the port and hears the gateway
+curl -s localhost:5000/api/lq/snapshot | python3 -c "import json,sys; s=json.load(sys.stdin); print(s['link']['port_open'], s['link']['gateway_online'])"
+# pi5's betting model: True BETTING_OPEN (or whatever state the gateway is in)
+curl -s localhost:5000/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
+# the splash relays it: same two values
+curl -s localhost:5001/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
+# cup 1 carries horse 7, then betting opens: the TV shows the board
+curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"horse 1 7"}'
+curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
+# drop a token into cup 1: horse 7 ticks to 1 on the TV
+# WINNER: the board yields to the playlist
+curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
 ```
 
-Unit tests, no port and no network needed:
+Unit tests, no port and no network beyond loopback needed:
 
 ```bash
 cd splash_display && python -m unittest -v tests.test_quiniela
@@ -449,5 +474,6 @@ be slotted in without touching the route layer or the slideshow frontend.
 - No `localStorage` or any browser storage — server is the only source of
   truth.
 - No `/upload` endpoint (Phase 2).
-- No modifications to the Pi 5 dashboard at `pi5/`. Splash and dashboard are
-  independent Flask apps running on independent Pis.
+- No direct access to the cup gateway. pi5 owns its USB port and the
+  betting model; this app only reads pi5 over HTTP (`config.PI5_URL`) and
+  can share DevPi with it (pi5 on 5000, this app on 5001).
