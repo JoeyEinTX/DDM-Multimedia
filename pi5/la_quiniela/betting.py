@@ -186,6 +186,15 @@ def _unassigned() -> Dict[str, Any]:
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None}
 
 
+def _roster_rev_of(snap: Any) -> Optional[int]:
+    """devpi.roster_rev from a snapshot, or None when it is missing. The bridge
+    bumps it in reset_link() and set_roster() (adopt_roster() included) and
+    never in set_state(), so a change between two consecutive snapshots is
+    exactly a reset-shaped transition: counts moved without a bet."""
+    devpi = snap.get("devpi") if isinstance(snap, dict) else None
+    return _as_int(devpi.get("roster_rev")) if isinstance(devpi, dict) else None
+
+
 class BettingBoard:
     """The betting model, its event log, its SSE subscribers and the thread
     that keeps it current.
@@ -222,6 +231,7 @@ class BettingBoard:
         self._refresh_lock = threading.Lock()   # serialises refresh(): snapshot then apply, in order
         self._subs: List["queue.Queue[str]"] = []
         self._seen_state = False
+        self._roster_rev: Optional[int] = None    # devpi.roster_rev of the last snapshot applied
         self._events: List[Dict[str, Any]] = []
         self._dup_warned: set = set()
         self._log_enabled = True
@@ -344,9 +354,24 @@ class BettingBoard:
 
     def apply_snapshot(self, snap: Any) -> bool:
         """Digest one bridge snapshot. Returns True if the model changed (and
-        was published to subscribers). Pure: no bridge, no port."""
+        was published to subscribers). Pure: no bridge, no port.
+
+        Events are the per-horse token deltas between this snapshot and the
+        last one, except across a reset-shaped transition: when devpi.roster_rev
+        moved (reset_link(), set_roster(), adopt_roster()) every count that
+        changed did so because horses were forgotten or cups re-mapped, not
+        because a token moved, so this snapshot is a fresh baseline and the
+        events list is cleared rather than filled with ghost removals. Likewise
+        a horse re-mapped to another cup (or unassigned) gets no event for the
+        count that came with the cup. A real removal (a token lifted out of a
+        cup, same cup, same roster) is still a negative event.
+
+        The log tells the two apart from bets: a reset is written as a
+        baseline record even when nothing else moved, and a count that came
+        with a cup move carries the move ("cup": [from, to]) in its change."""
         now_w = self._wall()
         horses, race_state, total, link_ok = self._digest(snap)
+        roster_rev = _roster_rev_of(snap)
 
         leader: Optional[int] = None
         best = 0
@@ -360,14 +385,28 @@ class BettingBoard:
             old = self._model
             old_horses = old["horses"]
 
+            # A fresh baseline: the first snapshot ever, or the first after a
+            # reset-shaped transition (roster_rev moved). Neither produces events.
+            fresh = (not self._seen_state
+                     or (roster_rev is not None and self._roster_rev is not None
+                         and roster_rev != self._roster_rev))
             changes: List[Dict[str, Any]] = []
             new_events: List[Dict[str, Any]] = []
             for n in range(1, HORSE_COUNT + 1):
                 key = str(n)
                 before, after = old_horses[key], horses[key]
                 if before["tokens"] != after["tokens"]:
-                    changes.append({"horse": n, "tokens": [before["tokens"], after["tokens"]]})
-                    if self._seen_state:   # the first snapshot is the baseline, not a bet
+                    change: Dict[str, Any] = {"horse": n, "tokens": [before["tokens"], after["tokens"]]}
+                    # A bet or a removal is a count that changed on the SAME cup;
+                    # a horse moved to another cup (or unassigned) brings that
+                    # cup's count with it, which is not a token moving. Outside
+                    # a baseline record (flagged as a whole) the log entry says
+                    # so, or a replay would read the jump as a bet.
+                    moved = before["cup"] != after["cup"]
+                    if moved and not fresh:
+                        change["cup"] = [before["cup"], after["cup"]]
+                    changes.append(change)
+                    if not fresh and not moved:
                         new_events.append(
                             {"horse": n, "delta": after["tokens"] - before["tokens"], "ts": now_w}
                         )
@@ -377,8 +416,13 @@ class BettingBoard:
                     )
             if old["race_state"] != race_state:
                 changes.append({"race_state": [old["race_state"], race_state]})
+            reset = fresh and self._seen_state      # a reset, not the first snapshot
             self._seen_state = True
-            if new_events:
+            if roster_rev is not None:
+                self._roster_rev = roster_rev
+            if reset:
+                self._events = []                   # no ghost removals on the ticker
+            elif new_events:
                 self._events = (new_events + self._events)[:MAX_EVENTS]
 
             token_value = self._token_value()
@@ -399,13 +443,15 @@ class BettingBoard:
             if changed:
                 model["updated"] = now_w
                 self._set_locked(model)
-            if changes:
+            if changes or reset:     # a reset leaves a trace even when nothing else moved
                 record = {
                     "ts": round(now_w, 3),
                     "race_state": race_state,
                     "changes": changes,
                     "total_tokens": total,
                 }
+                if reset:
+                    record["baseline"] = True       # counts moved by a reset, not by bets
         if record is not None:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed

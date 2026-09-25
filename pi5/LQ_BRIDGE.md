@@ -405,7 +405,19 @@ Exactly these eleven keys, from the snapshot as follows:
   board digests is a baseline, not a bet, so a restart never invents drops:
   the bridge seeds each cup's count from the `cups` table before the gateway
   is heard, and only a count that moved while pi5 was down shows up as a
-  (late but real) drop. The one exception is a fresh or deleted
+  (late but real) drop. A reset-shaped transition is a baseline too: when
+  `devpi.roster_rev` moves (`reset_link()`, `set_roster()`, `adopt_roster()`)
+  the events are cleared and nothing is diffed, so a pre-party
+  `POST /api/lq/dev/reset` leaves no `-50` ghosts on the ticker (found on the
+  bench, 2026-09-25); and a horse moved to another cup, or unassigned, gets no
+  event for the count that came with the cup. Only a count that changed on the
+  same cup under the same roster is a bet or a removal, and that cuts both
+  ways: cups emptied or re-tared between two races on one evening (same cups,
+  same roster) are removals, and their `-N` chips stay on the ticker into the
+  next BETTING_OPEN until eight newer bets push them off. Before a second
+  race, reset (`POST /api/lq/dev/reset`, which needs `LQ_DEV_ENDPOINTS`) or
+  restart pi5 once the zeros have been heard. The log records a reset as a
+  baseline (see the log below). The one exception is a fresh or deleted
   `la_subasta.db` started with tokens already in the cups: the baseline then
   holds zero for every cup, and the first telemetry shows those counts once
   as drops on the ticker.
@@ -487,7 +499,13 @@ git-ignored):
 {"ts":1777662847.2,"race_state":1,"changes":[{"horse":7,"tokens":[23,24]},{"horse":7,"scratched":[false,true]},{"race_state":[1,2]}],"total_tokens":24}
 ```
 
-An `online` or `link_ok` flip alone writes nothing. The first write failure
+An `online` or `link_ok` flip alone writes nothing. Two marks keep the log
+honest about what was not a bet: a reset-shaped transition (`roster_rev`
+moved, see `events` above) writes a record with `"baseline": true`, with an
+empty `changes` list when nothing else moved, so a roster change mid-race
+leaves a trace; and a count that came with a cup move under the same roster
+(the horse re-assigned or unassigned) carries the move in its change, e.g.
+`{"horse":3,"tokens":[0,51],"cup":[null,1]}`. The first write failure
 logs one WARNING and disables the log for the rest of the process; the model
 is unaffected.
 

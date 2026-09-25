@@ -315,6 +315,112 @@ def test_events_diff_newest_first_last_eight():
     _check("tokens followed", b.model()["horses"]["7"]["tokens"] == 34)
 
 
+def test_reset_and_remap_produce_no_ghost_bets():
+    """The 2026-09-25 bench defect: POST /api/lq/dev/reset zeroed the board and
+    the ticker showed #3 -50 and #2 -42. A moved roster_rev (reset_link,
+    set_roster, adopt_roster) is a fresh baseline that clears the events; a
+    horse moved between cups gets no event; a real drop or removal on the
+    same cup still does."""
+    b, wall, log_dir = fresh_board()
+
+    def live(roster_rev, h3=50, h2=42, state_rev=1, phase=1):
+        return snap(phase=phase, state_rev=state_rev, roster_rev=roster_rev, has_roster=True,
+                    cups=[cup_entry(1, horse=3, count=h3, online=True),
+                          cup_entry(2, horse=2, count=h2, online=True)])
+
+    b.apply_snapshot(live(1))
+    wall.advance(1)
+    b.apply_snapshot(live(1, h3=51))
+    _check("a bet before the reset is an event",
+           b.model()["events"] == [{"horse": 3, "delta": 1, "ts": wall.t}], str(b.model()["events"]))
+    _check("pot before the reset", b.model()["pot"] == 93.0)
+
+    # reset_link(): both revs bump, has_state/has_roster false, every cup's horse None,
+    # the counts themselves still sit on the cups.
+    wall.advance(1)
+    after_reset = snap(phase=0, state_rev=2, roster_rev=2, has_state=False, has_roster=False,
+                       cups=[cup_entry(1, count=51, online=True, mac="A0:B7:65:00:00:01"),
+                             cup_entry(2, count=42, online=True, mac="A0:B7:65:00:00:02")])
+    _check("the reset snapshot changes the model", b.apply_snapshot(after_reset))
+    m = b.model()
+    _check("after the reset: nothing bet, PRE_RACE",
+           m["total_tokens"] == 0 and m["pot"] == 0.0 and m["race_state"] == 0)
+    _check("the ticker is empty: no -51 / -42 ghosts", m["events"] == [], str(m["events"]))
+    _, lines = log_lines(log_dir)
+    _check("the log records the zeroing as a baseline, not bets",
+           lines[-1].get("baseline") is True
+           and {"horse": 3, "tokens": [51, 0]} in lines[-1]["changes"], str(lines[-1]))
+    wall.advance(1)
+    _check("a repeat of the zero picture is not a change", b.apply_snapshot(after_reset) is False)
+    _check("still no events", b.model()["events"] == [])
+
+    # adopt_roster() (roster_rev 3) then `horse 1 3` / `horse 2 2` (state_rev 3): the counts
+    # come back onto the horses. Neither is a bet.
+    wall.advance(1)
+    b.apply_snapshot(snap(phase=0, state_rev=2, roster_rev=3, has_state=False, has_roster=True,
+                          cups=[cup_entry(1, count=51, online=True, mac="A0:B7:65:00:00:01"),
+                                cup_entry(2, count=42, online=True, mac="A0:B7:65:00:00:02")]))
+    _check("adopt alone: no events", b.model()["events"] == [])
+    _, lines = log_lines(log_dir)
+    _check("adopt alone: the rev move is logged as a baseline with no changes",
+           lines[-1].get("baseline") is True and lines[-1]["changes"] == [], str(lines[-1]))
+    wall.advance(1)
+    b.apply_snapshot(live(3, h3=51, h2=42, state_rev=3, phase=0))
+    m = b.model()
+    _check("horses back on cups that already hold tokens: counts show, pot back",
+           m["horses"]["3"]["tokens"] == 51 and m["pot"] == 93.0)
+    _check("... but no +51 / +42 ghost bets", m["events"] == [], str(m["events"]))
+    _, lines = log_lines(log_dir)
+    _check("... and the log says the counts came with the cups (no baseline flag, not bets)",
+           "baseline" not in lines[-1]
+           and {"horse": 3, "tokens": [0, 51], "cup": [None, 1]} in lines[-1]["changes"]
+           and {"horse": 2, "tokens": [0, 42], "cup": [None, 2]} in lines[-1]["changes"], str(lines[-1]))
+
+    # From here on the same cups carry the same horses: real movement counts.
+    wall.advance(1)
+    b.apply_snapshot(live(3, h3=52, h2=42, state_rev=4, phase=1))
+    _check("a real drop after the reset is an event (state_rev alone never clears)",
+           b.model()["events"] == [{"horse": 3, "delta": 1, "ts": wall.t}], str(b.model()["events"]))
+    wall.advance(1)
+    b.apply_snapshot(live(3, h3=52, h2=41, state_rev=4, phase=1))
+    _check("a real removal is still a negative event",
+           b.model()["events"][0] == {"horse": 2, "delta": -1, "ts": wall.t}, str(b.model()["events"]))
+    _check("older events kept", len(b.model()["events"]) == 2)
+    _, lines = log_lines(log_dir)
+    _check("a bet's log entry is plain: no cup move, no baseline flag",
+           "baseline" not in lines[-1] and lines[-1]["changes"] == [{"horse": 2, "tokens": [42, 41]}],
+           str(lines[-1]))
+
+    # A horse moved to another cup: its tokens jump to that cup's count, no event.
+    wall.advance(1)
+    b.apply_snapshot(snap(phase=1, state_rev=5, roster_rev=3, has_roster=True,
+                          cups=[cup_entry(1, horse=3, count=52, online=True),
+                                cup_entry(2, count=41, online=True, mac="A0:B7:65:00:00:02"),
+                                cup_entry(4, horse=2, count=7, online=True)]))
+    m = b.model()
+    _check("horse 2 now on cup 4 with that cup's count",
+           m["horses"]["2"] == {"tokens": 7, "share": round(7 / 59, 4), "scratched": False,
+                                "online": True, "cup": 4}, str(m["horses"]["2"]))
+    _check("no event for the re-mapping",
+           len(m["events"]) == 2 and m["events"][0]["horse"] == 2 and m["events"][0]["delta"] == -1)
+    _, lines = log_lines(log_dir)
+    _check("the re-mapping is logged with the cup move",
+           {"horse": 2, "tokens": [41, 7], "cup": [2, 4]} in lines[-1]["changes"], str(lines[-1]))
+    wall.advance(1)
+    b.apply_snapshot(snap(phase=1, state_rev=5, roster_rev=3, has_roster=True,
+                          cups=[cup_entry(1, horse=3, count=52, online=True),
+                                cup_entry(4, horse=2, count=8, online=True)]))
+    _check("a drop on the new cup is a bet again",
+           b.model()["events"][0] == {"horse": 2, "delta": 1, "ts": wall.t})
+
+    # A second reset with events on the board clears them outright.
+    wall.advance(1)
+    b.apply_snapshot(snap(phase=0, state_rev=6, roster_rev=4, has_state=False, has_roster=False,
+                          cups=[cup_entry(1, count=52, online=True, mac="A0:B7:65:00:00:01"),
+                                cup_entry(4, count=8, online=True, mac="A0:B7:65:00:00:04")]))
+    _check("a reset clears the events that were showing", b.model()["events"] == [])
+
+
 def test_duplicate_horse_keeps_lowest_cup_and_warns_once():
     b, _, _ = fresh_board()
     cups = [cup_entry(4, horse=7, count=5), cup_entry(2, horse=7, count=9), cup_entry(3, horse=7, count=1)]
@@ -655,6 +761,9 @@ def test_real_bridge_feeds_the_board():
     m = board.model()
     _check("reset_link: PRE_RACE, no horses on cups", m["race_state"] == 0
            and all(h["cup"] is None for h in m["horses"].values()), str(m["horses"]["7"]))
+    _check("reset_link: the ticker is cleared, no -5 ghost", m["events"] == [], str(m["events"]))
+    _, lines = log_lines(log_dir)
+    _check("reset_link: the log record is a baseline", lines[-1].get("baseline") is True, str(lines[-1]))
     _check("refresh() with no bridge is False", BettingBoard().refresh() is False)
 
 
@@ -1118,6 +1227,7 @@ def main():
     _run("cmd — without a bridge is 503", test_cmd_without_bridge_is_503)
     _run("cmd — state", test_cmd_state)
     _run("cmd — horse / scratch, 1-based cups", test_cmd_horse_and_scratch_1_based)
+    _run("model — reset and re-mapping produce no ghost bets", test_reset_and_remap_produce_no_ghost_bets)
     _run("cmd — roster", test_cmd_roster)
     _run("cmd — demo / json refused", test_cmd_demo_and_json_refused)
     _run("cmd — usage errors", test_cmd_usage_errors)
