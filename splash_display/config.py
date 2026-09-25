@@ -74,9 +74,13 @@ TRIVIA_WEIGHTS = {
     "mexican_horse_racing": 12,
     "classic_derby": 12,
     "did_you_know": 10,
+    # princess_streets added 2026-09-25: hyperlocal Disney Streets of Midway
+    # Hills content, same spirit as chapel_downs. Weighted the same as
+    # chapel_downs since it's the other "our actual neighborhood" category.
+    "princess_streets": 18,
     # ddm_attractions removed in Phase 1.8 — its three cards duplicated the
     # dedicated splash pages (la_subasta / la_quiniela / derby_dash) verbatim.
-    # Sums to 93 now; internal normalization handles the actual distribution.
+    # Sums to 111 now; internal normalization handles the actual distribution.
 }
 
 # ---------------------------------------------------------------------------

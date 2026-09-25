@@ -1,6 +1,12 @@
 {
   "chapel_downs": [
     {
+      "id": "cd_swim_club",
+      "type": "fact",
+      "headline": "Before the Horses",
+      "body": "Chapel Downs wasn't always about Derby winners. The neighborhood — 334 homes, built mostly in the 1960s — takes its name from the property that came before it: the Chapel Downs swim club. The horse-racing street names came later, laid on top of a name that started as a pool."
+    },
+    {
       "id": "cd_carry_back",
       "type": "fact",
       "headline": "Carry Back Circle",
@@ -16,13 +22,13 @@
       "id": "cd_whirlaway",
       "type": "fact",
       "headline": "Whirlaway Road",
-      "body": "Named for the 1941 Triple Crown winner. Famous for a tail so long it dragged on the ground. Won the Derby by a record-tying 8 lengths."
+      "body": "Named for the 1941 Triple Crown winner. Famous for a long, flowing tail that earned him the nickname 'Mr. Longtail.' Won the Derby by 8 lengths — still a shared record more than 80 years later."
     },
     {
       "id": "cd_ponder",
       "type": "fact",
       "headline": "Ponder Place",
-      "body": "Named for the 1949 Derby winner. Son of Pensive (also a Derby winner). Three generations of Derby champs in one bloodline."
+      "body": "Named for the 1949 Derby winner. Son of Pensive (also a Derby winner), and grandsire of Needles, the 1956 winner. Three generations of Derby champs in one bloodline."
     },
     {
       "id": "cd_pensive",
@@ -31,10 +37,34 @@
       "body": "Named for the 1944 Derby winner. Sire of Ponder. Won the Derby and Preakness, lost the Belmont by half a length. Tragic — died young at age 8."
     },
     {
+      "id": "cd_tim_tam",
+      "type": "qa",
+      "question": "Which Chapel Downs street honors a horse that also gave its name to a chocolate cookie?",
+      "answer": "Tim Tam Circle. The 1958 Derby and Preakness winner fractured a bone in the Belmont and finished second, ending his Triple Crown bid. An Arnott's executive was at that Derby, loved the name, and saved it for a new biscuit line — Tim Tams hit shelves in Australia six years later, in 1964."
+    },
+    {
+      "id": "cd_venetian_way",
+      "type": "fact",
+      "headline": "Venetian Way Drive",
+      "body": "Named for the 1960 Kentucky Derby winner — a Sunny Blue Farm colt with no Calumet connection at all. Jockey Bill Hartack rode him to victory, the same rider who'd piloted Chapel Downs' own Tim Tam two years earlier."
+    },
+    {
+      "id": "cd_plaudit",
+      "type": "fact",
+      "headline": "Plaudit Place, 1898",
+      "body": "The oldest Derby winner with a street here. Jockey Willie Simms and trainer Edward D. Brown — both future Hall of Famers, and both Black — ran Plaudit down the favorite in the final strides to win by a nose."
+    },
+    {
+      "id": "cd_spokane",
+      "type": "fact",
+      "headline": "Spokane Circle's Montana Miracle",
+      "body": "The only Kentucky Derby winner ever foaled in Montana. Spokane beat the heavy favorite by a nose in 1889, the same year Montana became a state. Owner Noah Armstrong was so confident afterward he refused a $50,000 offer for the horse — a fortune at the time."
+    },
+    {
       "id": "cd_calumet_reveal",
       "type": "fact",
       "headline": "The Calumet Connection",
-      "body": "Whirlaway, Pensive, Ponder, and Citation were ALL Calumet Farm horses — the dominant racing dynasty of the 1940s. Chapel Downs is essentially a Calumet tribute neighborhood. Carry Back is the lone outlier — the rebel mom-and-pop horse in a neighborhood of aristocrats."
+      "body": "Whirlaway, Pensive, Ponder, Citation, and Tim Tam were ALL Calumet Farm horses — the dominant racing dynasty of the 1940s and '50s. That's five Calumet streets. Carry Back isn't the only rebel, though: Venetian Way, Plaudit, and Spokane round out four streets named for horses that had nothing to do with Calumet at all."
     }
   ],
 
@@ -55,7 +85,7 @@
       "id": "cb_running_style",
       "type": "fact",
       "headline": "Why 'Carry Back'?",
-      "body": "He was a closer — would hang back in the pack and explode in the stretch. The name fit the running style perfectly. In 1975 he was inducted into the National Museum of Racing Hall of Fame."
+      "body": "Not what you'd guess — owner Jack Price named him after a tax term, the 'carryback,' used in financing the purchase of his dam. It fit anyway: Carry Back was a closer who'd hang back in the pack and explode in the stretch. Inducted into the Hall of Fame in 1975."
     }
   ],
 
@@ -145,7 +175,7 @@
       "id": "mc_chocolate",
       "type": "qa",
       "question": "Where was chocolate-as-we-know-it invented?",
-      "answer": "Mexico. The cacao tree was first domesticated in the Amazon, but the Olmecs of southern Mexico were the first to ferment, roast, and grind cacao beans into a drink — over 3,000 years ago. The Aztecs prized chocolate so highly that cocoa beans were used as currency."
+      "answer": "Mexico gets most of the credit, but not all of it. Cacao was first domesticated in the Amazon, and the earliest known chocolate drink traces to Ecuador, over 5,000 years ago. Still, the Olmecs of southern Mexico were fermenting, roasting, and grinding cacao into a drink over 3,000 years ago — and the Aztecs prized it so highly that cocoa beans were literally used as currency."
     },
     {
       "id": "mc_tequila_law",
@@ -163,19 +193,19 @@
       "id": "mc_aztec_capital",
       "type": "qa",
       "question": "What was Mexico City before the Spanish arrived?",
-      "answer": "Tenochtitlán — the Aztec capital, built on a man-made island in Lake Texcoco. When Spanish conquistadors arrived in 1519, it was bigger than any European city of the time."
+      "answer": "Tenochtitlán — the Aztec capital, built on a man-made island in Lake Texcoco. When Spanish conquistadors arrived in 1519, it held an estimated 200,000+ people — bigger than London or Rome at the time, and in the same league as Europe's largest cities."
     },
     {
       "id": "mc_pinata_origin",
       "type": "fact",
       "headline": "The Piñata's Two Origins",
-      "body": "Aztec priests broke decorated clay pots filled with treasures to honor the god Huitzilopochtli — long before the Spanish arrived. A similar tradition existed in 14th-century Italy after Marco Polo brought it from China. Spanish missionaries in the 1500s blended both into the piñata we know today."
+      "body": "Aztec priests broke decorated clay pots filled with treasures to honor the god Huitzilopochtli — long before the Spanish arrived. Legend says a similar tradition reached 14th-century Italy after Marco Polo brought it back from China, though historians can't actually confirm that leg of the story. Confirmed or not, Spanish missionaries in the 1500s blended the Old World version with Aztec and Maya traditions into the piñata we know today."
     },
     {
       "id": "mc_lucha_libre",
       "type": "qa",
       "question": "What's the most iconic mask in Mexican wrestling?",
-      "answer": "El Santo's silver mask. He wore it for nearly 50 years — in the ring, in 50+ films, in public. He briefly removed it on TV on January 26, 1984. He died of a heart attack ten days later."
+      "answer": "El Santo's silver mask. He wore it for 40 years — in the ring, in 50+ films, in public. He briefly lifted it on Mexican TV in late January 1984. He died of a heart attack days later."
     },
     {
       "id": "mc_mole",
@@ -244,7 +274,7 @@
       "id": "mhr_escaramuza",
       "type": "fact",
       "headline": "Escaramuza",
-      "body": "The all-women's event in charrería. Eight riders in flowing dresses execute precision synchronized maneuvers at full gallop — sidesaddle. Often described as ballet on horseback. It became an official charrería event in 1992."
+      "body": "The all-women's event in charrería. Eight riders in flowing dresses execute precision synchronized maneuvers at full gallop — sidesaddle. Often described as ballet on horseback. It became an official charrería event around 1990, after decades as an unofficial crowd favorite."
     },
     {
       "id": "mhr_tequila_state",
@@ -256,7 +286,7 @@
       "id": "mhr_first_track",
       "type": "fact",
       "headline": "Hipódromo de las Américas",
-      "body": "Mexico City's main thoroughbred racetrack opened in 1943 — built during World War II when many US tracks were closed. It hosts the Derby Mexicano and the Handicap de las Américas, two of Latin America's most prestigious races."
+      "body": "Mexico City's main thoroughbred racetrack opened in 1943 — built during World War II when several US tracks had shut down. It hosts the Derby Mexicano and the Handicap de las Américas, two of Latin America's most prestigious races."
     }
   ],
 
@@ -271,7 +301,7 @@
       "id": "cd_juleps",
       "type": "fact",
       "headline": "120,000 Mint Juleps",
-      "body": "Churchill Downs serves around 120,000 mint juleps over Derby weekend — using thousands of pounds of fresh mint and tens of thousands of pounds of ice. The mint julep became the official Derby drink in 1938."
+      "body": "Churchill Downs serves well over 120,000 mint juleps over Derby weekend — using thousands of pounds of fresh mint and tens of thousands of pounds of ice. The mint julep became the official Derby drink in the 1930s."
     },
     {
       "id": "cd_roses",
@@ -319,7 +349,58 @@
       "id": "cd_my_old_kentucky_home",
       "type": "fact",
       "headline": "The Pre-Race Tradition",
-      "body": "Just before each Derby, the crowd sings 'My Old Kentucky Home' as the horses enter the track. The tradition began in 1921. It's the unofficial state song — and an unofficial trigger for tears."
+      "body": "Just before each Derby, the crowd sings 'My Old Kentucky Home' as the horses enter the track — a tradition dating to the 1920s or '30s (accounts differ on the exact year). It's been Kentucky's official state song since 1928 — and an unofficial trigger for tears."
+    }
+  ],
+
+  "princess_streets": [
+    {
+      "id": "ps_real_name",
+      "type": "fact",
+      "headline": "Not Actually 'Princess Streets'",
+      "body": "The neighborhood's real name is the Disney Streets of Midway Hills. Developers Robert Gump and William Gaynier platted it in the mid-1950s, bounded by Northaven Road, Midway Road, Royal Lane, and Rosser Road. 'Princess streets' is the nickname — Princess Circle and Princess Lane are just two of the roads in it."
+    },
+    {
+      "id": "ps_disney_letter",
+      "type": "qa",
+      "question": "Did Walt Disney personally approve the neighborhood's street names?",
+      "answer": "Depends who you ask. Developer Robert Gump's widow says he wrote Disney a letter asking permission and got one back granting it. A rival account says there was no letter at all — just a developer whose kids loved the movies. No copy of the letter has ever surfaced."
+    },
+    {
+      "id": "ps_streets_list",
+      "type": "fact",
+      "headline": "Pick a Fairy Tale, Any Fairy Tale",
+      "body": "Pinocchio, Cinderella, Snow White, Peter Pan, Sleepy, Wonderland, Dwarfs, Fantasia, Aladdin — plus Princess Circle and Princess Lane. Only two of those streets are actually named for princesses; the rest are just Disney (or Disney-adjacent) characters and stories."
+    },
+    {
+      "id": "ps_aladdin_mystery",
+      "type": "fact",
+      "headline": "The Aladdin Problem",
+      "body": "Every other street matches a Disney film from the right era — Snow White (1937), Pinocchio (1940), Cinderella (1950), Alice in Wonderland (1951), Peter Pan (1953). Then there's Aladdin Drive. Disney didn't make an Aladdin movie until 1992 — nearly 40 years after these streets were platted. Either the developer was clairvoyant, or this was always more 'fairy tale' than 'Disney.'"
+    },
+    {
+      "id": "ps_which_princesses",
+      "type": "qa",
+      "question": "Which actual Disney Princesses have streets named after them here?",
+      "answer": "Just Cinderella and Snow White. The official 'Disney Princess' marketing lineup — the one that includes Jasmine, from Aladdin — wasn't created until 2000. Snow White Drive and Cinderella Lane predate the franchise by nearly 50 years."
+    },
+    {
+      "id": "ps_rhapsody_house",
+      "type": "fact",
+      "headline": "Built in Seven Weeks",
+      "body": "The star of the 1955 Dallas Parade of Homes was the 'Rhapsody House' at 11116 Pinocchio Drive — an experimental pre-cast concrete design by architect Thomas Scott Dean, built start to finish in just seven weeks. The Parade drew over 100,000 visitors that year."
+    },
+    {
+      "id": "ps_lot_rules",
+      "type": "fact",
+      "headline": "The Fine Print",
+      "body": "Original deed restrictions in the Disney Streets required 100-foot lots, at least 1,500 square feet of house, and garages facing the side or rear — never the street. Traditional ranch and contemporary styles dominate, including at least one home designed by famed California architect Cliff May."
+    },
+    {
+      "id": "ps_conservation_fail",
+      "type": "fact",
+      "headline": "The Preservation Push That Fizzled",
+      "body": "Between 2008 and 2010, homeowners tried to get the neighborhood designated a conservation district to lock in its original mid-century character. The effort didn't have enough support and was dropped. No legal protection exists today — it's preserved by affection, not ordinance."
     }
   ],
 
@@ -352,13 +433,13 @@
       "id": "dyk_julep_origin",
       "type": "qa",
       "question": "Where did the mint julep come from?",
-      "answer": "Originally a medicinal drink in 18th-century Virginia — mint, sugar, water, and bourbon. It became the Derby's official drink in 1938. Tradition says it should be served in a silver or pewter cup with crushed ice."
+      "answer": "Originally a medicinal drink in 18th-century Virginia — mint, sugar, water, and bourbon. It became the Derby's official drink in the 1930s. Tradition says it should be served in a silver or pewter cup with crushed ice."
     },
     {
       "id": "dyk_horseshoes",
       "type": "fact",
       "headline": "Aluminum Horseshoes",
-      "body": "Modern racing horseshoes are aluminum and weigh roughly half a pound each. A racehorse wears four. They're replaced every few weeks — by a farrier, the specialized horse-shoe smith. The trade is centuries old."
+      "body": "Modern racing horseshoes are aluminum — just a few ounces each, roughly a third the weight of a steel shoe. A racehorse wears four. They're replaced every few weeks by a farrier, the specialized horseshoe smith. The trade is centuries old."
     },
     {
       "id": "dyk_jockey_career",
