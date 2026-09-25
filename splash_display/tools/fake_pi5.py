@@ -18,10 +18,13 @@ Nothing leaves loopback: no serial port, no dashboard poller.
     python tools/fake_pi5.py --phase idle          # state 0: playlist, link up
     python tools/fake_pi5.py --phase cycle         # idle -> open -> final -> closed -> running -> winner, forever
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
+    python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens, bars relative to the leader
+    python tools/fake_pi5.py --phase bench-reset   # bench, then a reset (counts 0, ticker cleared, state 0), then state 1 again; repeats
 
 Flags:
-    --phase {idle,open,final,closed,running,winner,cycle}   (default: open)
-    --period SECONDS       seconds per state in --phase cycle (default: 15)
+    --phase {idle,open,final,closed,running,winner,cycle,bench,bench-reset}   (default: open)
+    --period SECONDS       seconds per state in --phase cycle, and per step in
+                           --phase bench-reset (default: 15)
     --stop-feed-after N    after N s the fake pi5 stops answering: its stream
                            closes and GET /api/quiniela (and POST .../cmd)
                            return 503, so the splash's link_ok drops within
@@ -37,8 +40,9 @@ Flags:
                            config.PI5_URL = "http://127.0.0.1:5078"
 
 Both URLs are printed; open http://127.0.0.1:5077/display. The fake's
-``POST /api/quiniela/cmd`` answers ``{"ok": true, "echo": "<cmd>"}`` and
-``state N`` also switches the scenario's phase, so through the real relay
+``POST /api/quiniela/cmd`` answers ``{"ok": true, "echo": "<cmd>"}``;
+``state N`` switches the scenario's phase and ``reset`` plays pi5's reset
+(counts 0, ticker cleared, state 0), so through the real relay
 
     curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 
@@ -103,6 +107,11 @@ BASE_TOKENS = {
 }
 SCRATCHED = {13}
 OFFLINE = {11}
+# The picture from the first DevPi run (2026-09-25): a few horses in play,
+# nothing scratched, every cup online. 50 fills its bar, 42 sits at 84 %,
+# 8 at 16 %, 3 at 6 % (bars are relative to the leader, not to the pot).
+BENCH_TOKENS = {3: 50, 2: 42, 7: 8, 1: 3}
+BENCH_EVENTS = [3, 2, 3, 7, 1]
 # The last few bets, oldest first; they become the model's events.
 SEED_EVENTS = [7, 3, 15, 7, 10, 7, 18]
 
@@ -169,14 +178,16 @@ class FakePi5:
     """The scenario (phase, tokens, scratched, offline cups, events) and the
     three routes on a Flask app of its own."""
 
-    def __init__(self, phase: int) -> None:
+    def __init__(self, phase: int, tokens: Optional[Dict[int, int]] = None,
+                 scratched: Optional[Iterable[int]] = None, offline: Optional[Iterable[int]] = None,
+                 events: Optional[List[Dict[str, Any]]] = None) -> None:
         self._lock = threading.Lock()
         self._subs: List["queue.Queue[Optional[str]]"] = []
         self.phase = phase
-        self.tokens: Dict[int, int] = dict(BASE_TOKENS)
-        self.scratched: Set[int] = set(SCRATCHED)
-        self.offline: Set[int] = set(OFFLINE)
-        self.events: List[Dict[str, Any]] = seed_events()
+        self.tokens: Dict[int, int] = dict(BASE_TOKENS if tokens is None else tokens)
+        self.scratched: Set[int] = set(SCRATCHED if scratched is None else scratched)
+        self.offline: Set[int] = set(OFFLINE if offline is None else offline)
+        self.events: List[Dict[str, Any]] = seed_events() if events is None else list(events)
         self.stopped = False
         self._json = _dumps(self._build())
         self.app = self._make_app()
@@ -206,11 +217,14 @@ class FakePi5:
                 self.phase = int(phase)
                 self._publish_locked()
 
-    def reset(self, tokens: Dict[int, int], phase: Optional[int] = None) -> None:
-        """A fresh token table with no events (the start of a cycle)."""
+    def reset(self, tokens: Dict[int, int], phase: Optional[int] = None,
+              events: Optional[List[Dict[str, Any]]] = None) -> None:
+        """A fresh token table and, unless given, no events: what pi5's
+        model serves after reset_link() (a reset is a baseline, never a
+        list of removals) or at the start of a cycle."""
         with self._lock:
             self.tokens = dict(tokens)
-            self.events = []
+            self.events = [] if events is None else list(events)
             if phase is not None:
                 self.phase = int(phase)
             self._publish_locked()
@@ -302,6 +316,10 @@ class FakePi5:
             words = text.split()
             if words[0] == "state" and len(words) == 2 and words[1].isdigit():
                 fake.set_phase(int(words[1]))
+            elif words[0] == "reset":
+                # Not in pi5's whitelist (there it is POST /api/lq/dev/reset);
+                # here it plays that reset: counts 0, ticker cleared, PRE_RACE.
+                fake.reset({}, PHASES["idle"])
             print(f"fake pi5: cmd {text!r}", flush=True)
             return jsonify({"ok": True, "echo": text})
 
@@ -338,6 +356,38 @@ def run_cycle(fake: FakePi5, period: float) -> None:
                 time.sleep(1.0)
 
 
+def bench_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
+    now = time.time() if now is None else now
+    n = len(BENCH_EVENTS)
+    return [
+        {"horse": h, "delta": 1, "ts": round(now - 0.5 * (n - i), 3)}
+        for i, h in reversed(list(enumerate(BENCH_EVENTS)))
+    ]
+
+
+def run_bench_reset(fake: FakePi5, period: float) -> None:
+    """The 2026-09-25 sequence, forever: the bench picture with betting open
+    for `period` s; then the reset (counts 0, ticker cleared, state 0: the
+    board yields); 4 s later state 1 again with nothing bet (board up, empty
+    ticker, empty bars) for `period` s; then the picture comes back."""
+    while True:
+        print("-> bench (state 1): 50/42/8/3", flush=True)
+        fake.reset(BENCH_TOKENS, PHASES["open"], events=bench_events())
+        for _ in range(int(period)):
+            if fake.stopped:
+                return
+            time.sleep(1.0)
+        print("-> reset (state 0): counts 0, ticker cleared", flush=True)
+        fake.reset({}, PHASES["idle"])
+        time.sleep(4.0)
+        print("-> open again (state 1): nothing bet, ticker must be empty", flush=True)
+        fake.set_phase(PHASES["open"])
+        for _ in range(int(period)):
+            if fake.stopped:
+                return
+            time.sleep(1.0)
+
+
 def stop_feed_later(fake: FakePi5, after: float) -> None:
     time.sleep(max(0.0, after))
     fake.stop_feed()
@@ -350,8 +400,9 @@ def _client_host(host: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle"], default="open")
-    ap.add_argument("--period", type=float, default=15.0, help="seconds per state in --phase cycle")
+    ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle", "bench", "bench-reset"], default="open")
+    ap.add_argument("--period", type=float, default=15.0,
+                    help="seconds per state in --phase cycle, per step in --phase bench-reset")
     ap.add_argument("--stop-feed-after", type=float, default=None, metavar="SECONDS",
                     help="stop answering after this long (the splash's link_ok then drops); "
                          "use a few seconds, e.g. 3: with 0 the splash never receives a model")
@@ -361,8 +412,13 @@ def main() -> None:
     ap.add_argument("--no-splash", action="store_true", help="serve only the fake pi5")
     args = ap.parse_args()
 
-    phase = PHASES["idle"] if args.phase == "cycle" else PHASES[args.phase]
-    fake = FakePi5(phase)
+    if args.phase == "cycle":
+        fake = FakePi5(PHASES["idle"])
+    elif args.phase in ("bench", "bench-reset"):
+        fake = FakePi5(PHASES["open"], tokens=BENCH_TOKENS, scratched=(), offline=(),
+                       events=bench_events())
+    else:
+        fake = FakePi5(PHASES[args.phase])
     pi5_httpd = make_server(args.host, args.pi5_port, fake.app, threaded=True)
     threading.Thread(target=pi5_httpd.serve_forever, name="fake-pi5", daemon=True).start()
     pi5_url = f"http://{_client_host(args.host)}:{args.pi5_port}"
@@ -372,6 +428,8 @@ def main() -> None:
         threading.Thread(target=stop_feed_later, args=(fake, args.stop_feed_after), daemon=True).start()
     if args.phase == "cycle":
         threading.Thread(target=run_cycle, args=(fake, args.period), daemon=True).start()
+    elif args.phase == "bench-reset":
+        threading.Thread(target=run_bench_reset, args=(fake, args.period), daemon=True).start()
 
     if args.no_splash:
         try:

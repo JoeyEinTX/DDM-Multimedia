@@ -365,8 +365,10 @@ and bottom, the countdown's dark panel look):
 - Grid: 20 horse tiles, 5 wide x 4 tall, even gutters, filling the width.
   Each tile: the post position in its saddle-cloth colored block on the
   left; the token count on the right, the largest thing on the tile; a
-  thin bar along the bottom whose width is the horse's `share` (a full
-  tile is 100 % of the pot), in the saddle-cloth color (the near-black
+  thin bar along the bottom whose width is the horse's tokens relative to
+  the leader's (the leader fills its tile, as on a tote board; every bar is
+  empty while nobody has bet; `share` in the model is still the true
+  fraction of the pot), in the saddle-cloth color (the near-black
   cloths 6, 17, 19 use their number color), so the field's distribution
   reads at a glance. Scratched: tile dimmed and the cloth greyed, count
   hidden, a red X across the number block. Cup offline (`cup` assigned,
@@ -408,14 +410,16 @@ python tools/fake_pi5.py --phase winner            # state 5: the playlist is ba
 python tools/fake_pi5.py --phase idle              # state 0, link up: plain slideshow
 python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
 python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark (0 would stop it before the splash's first request)
-# --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle),
+python tools/fake_pi5.py --phase bench                     # the 2026-09-25 bench picture: 50/42/8/3 tokens, bars relative to the leader
+python tools/fake_pi5.py --phase bench-reset               # bench, then a reset (counts 0, ticker cleared, state 0), then state 1 again; repeats
+# --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 ```
 
 Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. The
-fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}` and
-`state N` switches its phase, so a curl through the real relay drives the
-takeover:
+fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}`;
+`state N` switches its phase and `reset` plays pi5's reset (counts 0, ticker
+cleared, state 0), so a curl through the real relay drives the takeover:
 
 ```bash
 curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'   # board up

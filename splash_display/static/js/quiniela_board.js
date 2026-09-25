@@ -198,17 +198,25 @@
     function renderTiles(m, animate) {
         const leader = m.leader == null ? null : Number(m.leader);
 
-        // The bar's width is the horse's share of the pot, as is: a full
-        // tile is 100 % of the tokens, so the bars read as shares of the
-        // field, not as ratios to the leader.
+        // The bar is relative to the leader, as on a tote board: the horse
+        // with the most tokens fills its tile and everyone else is a fraction
+        // of that, so twenty horses at even money still read from across the
+        // room (raw share would draw twenty 5 % slivers). Every horse at 0
+        // means every bar empty. The model's share field stays the true
+        // fraction of the pot; only the bar uses this.
+        let most = 0;
+        for (let n = 1; n <= HORSES; n++) {
+            const h = m.horses[String(n)] || {};
+            if (h.scratched) continue;
+            most = Math.max(most, parseInt(h.tokens, 10) || 0);
+        }
         for (let n = 1; n <= HORSES; n++) {
             const t = tiles[n];
             if (!t) continue;
             const h = m.horses[String(n)] || {};
             const tokens = Math.max(0, parseInt(h.tokens, 10) || 0);
             const scratched = !!h.scratched;
-            const share = scratched ? 0 : Math.max(0, Number(h.share) || 0);
-            const width = Math.min(1, share);
+            const width = (scratched || most === 0) ? 0 : Math.min(1, tokens / most);
 
             t.el.classList.toggle('is-scratched', scratched);
             t.el.classList.toggle('is-offline', h.cup != null && !h.online);
