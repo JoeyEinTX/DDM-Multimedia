@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La Quiniela admin</title>
+<style>
+  :root { --bg: #14140f; --card: #1f1f18; --line: #3a3a2e; --fg: #f3efe2; --dim: #b9b39f;
+          --gold: #ffd700; --green: #228b22; --rose: #dc143c; --ok: #4caf50; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px 12px 40px; background: var(--bg); color: var(--fg);
+         font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 22px; margin: 4px 0 12px; color: var(--gold); letter-spacing: .04em; }
+  h2 { font-size: 18px; margin: 0 0 10px; color: var(--gold); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            padding: 14px; margin-bottom: 14px; }
+  textarea, input[type=text], input[type=datetime-local] {
+    width: 100%; font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 48px; }
+  textarea { min-height: 420px; font-family: ui-monospace, Consolas, monospace; font-size: 16px; }
+  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 16px; border-radius: 10px;
+           border: 1px solid var(--line); background: #2c2c22; color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--green); border-color: var(--green); }
+  button.danger { background: var(--rose); border-color: var(--rose); }
+  button:disabled { opacity: .5; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .row > * { flex: 1 1 auto; }
+  .status { color: var(--dim); font-size: 15px; margin-top: 8px; min-height: 1.3em; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--rose); }
+  .horse { display: grid; grid-template-columns: 44px 1fr; gap: 6px 10px; align-items: center;
+           padding: 10px 0; border-top: 1px solid var(--line); }
+  .horse:first-of-type { border-top: 0; }
+  .num { font-size: 24px; font-weight: 800; color: var(--gold); text-align: center; }
+  .name { font-weight: 600; min-height: 1.3em; }
+  .note { color: var(--dim); font-size: 14px; }
+  .note.scr { color: var(--rose); }
+  .controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .controls label { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center;
+                    color: var(--dim); min-height: 40px; }
+  .controls input[type=checkbox] { width: 24px; height: 24px; }
+  #statusline { font-size: 16px; line-height: 1.6; }
+  #statusline b { color: var(--gold); }
+  .pill { display: inline-block; padding: 0 8px; border-radius: 999px; background: #2c2c22; margin-right: 6px; }
+  .pill.up { background: var(--green); } .pill.down { background: var(--rose); }
+</style>
+</head>
+<body>
+<h1>LA QUINIELA · ADMIN</h1>
+
+<section id="status">
+  <h2>Board</h2>
+  <div id="statusline">loading…</div>
+</section>
+
+<section id="names">
+  <h2>Horse names</h2>
+  <p class="note">One per line in post-position order. A leading <code>7.</code> names that horse;
+     a blank line leaves it alone.</p>
+  <textarea id="names-text" rows="20" spellcheck="false"></textarea>
+  <div class="row">
+    <button id="names-reload">Reload</button>
+    <button id="names-save" class="primary">Save names</button>
+  </div>
+  <div id="names-status" class="status"></div>
+</section>
+
+<section id="scratches">
+  <h2>Scratches</h2>
+  <p class="note">With a replacement the number stays live and its cup keeps counting.
+     <b>No replacement</b> scratches the cup at the gateway and takes its tokens out of the pot.</p>
+  <div id="scratch-list"></div>
+  <div id="scratch-status" class="status"></div>
+</section>
+
+<section id="closes">
+  <h2>Betting closes</h2>
+  <div id="closes-current" class="note">not set</div>
+  <div class="row">
+    <input id="closes-input" type="datetime-local" step="60">
+    <button id="closes-set" class="primary">Set</button>
+  </div>
+  <div class="row">
+    <button data-min="15">+15 min</button>
+    <button data-min="30">+30 min</button>
+    <button data-min="60">+60 min</button>
+    <button id="closes-clear" class="danger">Clear</button>
+  </div>
+  <div id="closes-status" class="status"></div>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var model = null, horses = {};
+
+  function say(id, text, cls) {
+    var el = $(id); el.textContent = text || ""; el.className = "status" + (cls ? " " + cls : "");
+  }
+  // Resolves {ok, status, body} for any reply, JSON or not (a Flask HTML 500
+  // or a proxy error page becomes {error: "HTTP 500"}); rejects only when
+  // the request itself failed. Callers report a rejection with fail().
+  function api(method, path, body) {
+    return fetch(path, { method: method, headers: { "Content-Type": "application/json" },
+                         body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" })
+      .then(function (r) {
+        return r.text().then(function (t) {
+          var j;
+          try { j = JSON.parse(t); } catch (e) { j = null; }
+          if (!j || typeof j !== "object") { j = { ok: false, error: "HTTP " + r.status }; }
+          return { ok: r.ok, status: r.status, body: j };
+        });
+      });
+  }
+  function fail(id) { return function () { say(id, "cannot reach pi5", "err"); }; }
+  function money(n) { return "$" + Math.round(Number(n) || 0); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  // ---- status line ---------------------------------------------------------
+  function renderStatus() {
+    if (!model) { $("statusline").textContent = "no model"; return; }
+    var online = 0, n;
+    for (n in model.horses) { if (model.horses[n].online) { online++; } }
+    var p = model.prizes || {};
+    $("statusline").innerHTML =
+      '<span class="pill ' + (model.link_ok ? "up" : "down") + '">' + (model.link_ok ? "LINK OK" : "NO LINK") + "</span>" +
+      '<span class="pill">' + esc(model.race_state_name) + "</span>" +
+      '<span class="pill">' + online + " cups online</span><br>" +
+      "Pot <b>" + money(model.pot) + "</b> · WIN <b>" + money(p.win) + "</b> · PLACE <b>" + money(p.place) +
+      "</b> · SHOW <b>" + money(p.show) + "</b>";
+    renderCloses();
+  }
+  // force: rebuild the scratch rows even while the operator is in one (the
+  // explicit reloads after a save or a scratch). The 5 s timer never forces.
+  function loadModel(force) {
+    return api("GET", "/api/quiniela").then(function (r) { model = r.body; renderStatus(); renderScratches(force === true); })
+      .catch(function () { $("statusline").textContent = "cannot reach /api/quiniela"; });
+  }
+
+  // ---- names -----------------------------------------------------------------
+  function namesText() {
+    var lines = [], n;
+    for (n = 1; n <= 20; n++) { lines.push(n + ". " + ((horses[n] && horses[n].name) || "")); }
+    return lines.join("\n");
+  }
+  function loadHorses() {
+    return api("GET", "/api/quiniela/horses").then(function (r) {
+      horses = r.body; $("names-text").value = namesText(); renderScratches(true);
+    });
+  }
+  $("names-reload").onclick = function () {
+    loadHorses().then(function () { say("names-status", "reloaded"); }).catch(fail("names-status"));
+  };
+  $("names-save").onclick = function () {
+    say("names-status", "saving…");
+    api("PUT", "/api/quiniela/horses", { text: $("names-text").value }).then(function (r) {
+      if (!r.ok) { say("names-status", r.body.error || "error " + r.status, "err"); return; }
+      horses = r.body.horses; $("names-text").value = namesText(); renderScratches(true);
+      say("names-status", "saved (rev " + r.body.names_rev + ")", "ok"); loadModel(true);
+    }).catch(fail("names-status"));
+  };
+
+  // ---- scratches -------------------------------------------------------------
+  // The rows are rebuilt with innerHTML, which would wipe a replacement name
+  // being typed and a ticked "No replacement" box. So the 5 s refresh only
+  // rebuilds when what the rows show (names, replacements, gateway flags)
+  // actually changed, never while the operator is in the list, and whatever
+  // was typed or ticked is carried over into the new rows. An explicit
+  // reload (after Save, Scratch or Undo) always rebuilds.
+  var scratchKey = null;
+  function scratchSignature() {
+    var flags = [], n, m;
+    for (n = 1; n <= 20; n++) { m = (model && model.horses && model.horses[n]) || {}; flags.push(m.scratched ? 1 : 0); }
+    return JSON.stringify([horses, flags]);
+  }
+  function renderScratches(force) {
+    var list = $("scratch-list"), key = scratchSignature();
+    if (!force) {
+      if (key === scratchKey) { return; }
+      if (list.contains(document.activeElement)) { return; }     // mid-typing: next tick
+    }
+    var saved = {};
+    Array.prototype.forEach.call(list.querySelectorAll(".horse"), function (row) {
+      var r = row.querySelector("[data-repl]"), c = row.querySelector("[data-norepl]");
+      if ((r && r.value) || (c && c.checked)) {
+        saved[row.getAttribute("data-horse")] = { repl: r ? r.value : "", norepl: !!(c && c.checked) };
+      }
+    });
+    buildScratches(list);
+    scratchKey = key;
+    Object.keys(saved).forEach(function (n) {
+      var row = list.querySelector('.horse[data-horse="' + n + '"]');
+      if (!row || row.querySelector("[data-undo]")) { return; }   // just scratched: nothing left to type
+      row.querySelector("[data-repl]").value = saved[n].repl;
+      row.querySelector("[data-norepl]").checked = saved[n].norepl;
+    });
+  }
+  function buildScratches(list) {
+    var html = "", n, h, m, note;
+    for (n = 1; n <= 20; n++) {
+      h = horses[n] || { name: "", replaced: null };
+      m = (model && model.horses && model.horses[n]) || {};
+      note = m.scratched ? '<div class="note scr">SCRATCHED at the gateway (tokens out of the pot)</div>'
+           : h.replaced != null ? '<div class="note scr">replaces ' + esc(h.replaced || "(unnamed)") + "</div>" : "";
+      html += '<div class="horse" data-horse="' + n + '">' +
+        '<div class="num">' + n + "</div>" +
+        '<div><div class="name">' + esc(h.name || "(no name)") + "</div>" + note + "</div>" +
+        '<div class="controls">' +
+          '<input type="text" placeholder="Replacement name" data-repl>' +
+          (m.scratched || h.replaced != null
+            ? '<button data-undo>Undo</button>'
+            : '<button class="danger" data-scratch>Scratch</button>') +
+          '<label><input type="checkbox" data-norepl> No replacement (scratch the cup at the gateway)</label>' +
+        "</div></div>";
+    }
+    list.innerHTML = html;
+  }
+  $("scratch-list").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button"); if (!btn) { return; }
+    var row = btn.closest(".horse"), horse = Number(row.getAttribute("data-horse"));
+    var body = { horse: horse }, path;
+    if (btn.hasAttribute("data-undo")) {
+      path = "/api/quiniela/unscratch";
+    } else {
+      path = "/api/quiniela/scratch";
+      var repl = row.querySelector("[data-repl]").value.trim();
+      var norepl = row.querySelector("[data-norepl]").checked;
+      if (!norepl && !repl) { say("scratch-status", "type a replacement name, or tick No replacement", "err"); return; }
+      if (!norepl) { body.replacement = repl; }
+    }
+    say("scratch-status", "working…");
+    api("POST", path, body).then(function (r) {
+      if (!r.ok) { say("scratch-status", r.body.error || "error " + r.status, "err"); return; }
+      say("scratch-status", "horse " + horse + ": " + (r.body.kind === "gateway" ? "gateway scratch " + (r.body.scratched ? "set" : "cleared")
+                                                       : "replacement " + (path.indexOf("unscratch") >= 0 ? "undone" : "saved")), "ok");
+      return loadHorses().then(function () { return loadModel(true); });
+    }).catch(fail("scratch-status"));
+  });
+
+  // ---- betting closes ----------------------------------------------------------
+  function localInputValue(epoch) {
+    var d = new Date(epoch * 1000), pad = function (x) { return (x < 10 ? "0" : "") + x; };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function renderCloses() {
+    var at = model && model.closes_at;
+    if (at == null) { $("closes-current").textContent = "not set"; return; }
+    var mins = Math.round((at - (model.now || Date.now() / 1000)) / 60);
+    $("closes-current").textContent = "closes " + new Date(at * 1000).toLocaleString() +
+      (mins >= 0 ? " (in " + mins + " min)" : " (" + (-mins) + " min ago)");
+    if (document.activeElement !== $("closes-input")) { $("closes-input").value = localInputValue(at); }
+  }
+  function putCloses(body) {
+    say("closes-status", "saving…");
+    api("PUT", "/api/quiniela/closes_at", body).then(function (r) {
+      if (!r.ok) { say("closes-status", r.body.error || "error " + r.status, "err"); return; }
+      say("closes-status", r.body.closes_at == null ? "cleared" : "set", "ok"); loadModel();
+    }).catch(fail("closes-status"));
+  }
+  $("closes-set").onclick = function () {
+    var v = $("closes-input").value; if (!v) { say("closes-status", "pick a date and time", "err"); return; }
+    putCloses({ at: new Date(v).getTime() / 1000 });
+  };
+  $("closes-clear").onclick = function () { putCloses({ at: null }); };
+  Array.prototype.forEach.call(document.querySelectorAll("#closes button[data-min]"), function (b) {
+    b.onclick = function () { putCloses({ in_minutes: Number(b.getAttribute("data-min")) }); };
+  });
+
+  loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
+  setInterval(function () { loadModel(false); }, 5000);
+})();
+</script>
+</body>
+</html>

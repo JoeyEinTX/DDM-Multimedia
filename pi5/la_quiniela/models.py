@@ -2,7 +2,8 @@
 #
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
-# cups, telemetry, events, lq_link_state. Raw sqlite3, like la_subasta/models.
+# cups, telemetry, events, lq_link_state, and the betting board's lq_horses
+# and lq_board. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -74,6 +75,21 @@ CREATE TABLE IF NOT EXISTS lq_link_state (
     roster_json TEXT
 );
 INSERT OR IGNORE INTO lq_link_state (id) VALUES (1);
+
+-- The betting board's own rows (la_quiniela/horses.py): horse names, which
+-- scratched horse a number now stands in for, and when betting closes.
+CREATE TABLE IF NOT EXISTS lq_horses (
+    horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 20),
+    name     TEXT    NOT NULL DEFAULT '',
+    replaced TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lq_board (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    names_rev INTEGER NOT NULL DEFAULT 0,
+    closes_at REAL
+);
+INSERT OR IGNORE INTO lq_board (id) VALUES (1);
 """
 
 # The shape each table must have if it already exists. A table of the same
@@ -85,6 +101,8 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
                   "seq", "dropped", "rssi", "up_rssi", "reason"],
     "events": ["id", "ts", "type", "cup_id", "detail"],
     "lq_link_state": ["id", "state_rev", "state_json", "roster_rev", "roster_json"],
+    "lq_horses": ["horse", "name", "replaced"],
+    "lq_board": ["id", "names_rev", "closes_at"],
 }
 
 
@@ -247,3 +265,31 @@ class LqDb:
         with self.txn() as conn:
             conn.execute("INSERT INTO events (ts, type, cup_id, detail) VALUES (?, ?, ?, ?)",
                          (ts, type_, cup_id, detail))
+
+    # -- betting board: horse names, replacements, closing time ---------------
+
+    def load_horses(self) -> Dict[int, Dict[str, Optional[str]]]:
+        """{horse: {"name": str, "replaced": str | None}} for every row present
+        (a horse never named has no row)."""
+        return {int(r["horse"]): {"name": r["name"] or "", "replaced": r["replaced"]}
+                for r in self.query("SELECT horse, name, replaced FROM lq_horses")}
+
+    def save_horse(self, horse: int, name: str, replaced: Optional[str]) -> None:
+        with self.txn() as conn:
+            conn.execute(
+                "INSERT INTO lq_horses (horse, name, replaced) VALUES (?, ?, ?) "
+                "ON CONFLICT(horse) DO UPDATE SET name = excluded.name, replaced = excluded.replaced",
+                (int(horse), name or "", replaced))
+
+    def load_board(self) -> Dict[str, Any]:
+        row = self.query_one("SELECT names_rev, closes_at FROM lq_board WHERE id = 1")
+        if row is None:
+            return {"names_rev": 0, "closes_at": None}
+        return {"names_rev": int(row["names_rev"] or 0),
+                "closes_at": float(row["closes_at"]) if row["closes_at"] is not None else None}
+
+    def save_board(self, names_rev: int, closes_at: Optional[float]) -> None:
+        with self.txn() as conn:
+            conn.execute("INSERT OR IGNORE INTO lq_board (id) VALUES (1)")
+            conn.execute("UPDATE lq_board SET names_rev = ?, closes_at = ? WHERE id = 1",
+                         (int(names_rev), float(closes_at) if closes_at is not None else None))

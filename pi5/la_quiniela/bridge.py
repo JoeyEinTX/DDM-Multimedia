@@ -257,6 +257,7 @@ class LqBridge:
         self.scratched: Dict[int, bool] = {cup: False for cup in P.CUP_NUMBERS}
         self.roster_rev = 0
         self.roster: Dict[int, str] = {}      # cup -> MAC, filled slots only
+        self.reset_count = 0                  # reset_link() calls this process; the board watches it
 
         self.db = LqDb(db_path or default_db_path())
         self.schema_error = self.db.check_shape()
@@ -1075,7 +1076,7 @@ class LqBridge:
                 "link": self._link_payload(),
                 "devpi": {"state_rev": self.state_rev, "roster_rev": self.roster_rev,
                           "phase": self.phase, "has_state": self.has_state,
-                          "has_roster": self.has_roster},
+                          "has_roster": self.has_roster, "reset_count": self.reset_count},
                 "cups": cups,
                 "unassigned": unassigned,
             }
@@ -1179,6 +1180,7 @@ class LqBridge:
             self.scratched = {cup: False for cup in P.CUP_NUMBERS}
             self.state_rev += 1
             self.roster_rev += 1
+            self.reset_count += 1
             self._persist()
             dropped = self.db.clear_cup_assignments(SIM_MAC_PREFIX)
             for mac in [m for m in self.cups if is_sim_mac(m)]:

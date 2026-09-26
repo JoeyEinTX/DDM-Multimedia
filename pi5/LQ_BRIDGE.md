@@ -81,6 +81,8 @@ then refuses to start. Timestamps are UTC ISO 8601 with a `Z`.
 | `telemetry` | append only: `ts`, `cup_id`, `mac`, `raw_weight`, `token_count`, `seq`, `dropped`, `rssi`, `up_rssi`, `reason` (`change` or `heartbeat`) |
 | `events` | audit log: `ts`, `type`, `cup_id` (nullable), `detail` (JSON) |
 | `lq_link_state` | one row: `state_rev`, `state_json`, `roster_rev`, `roster_json`; how the bridge answers a `hello` after a restart |
+| `lq_horses` | the betting board's: `horse` (PK, 1..20), `name` (as typed), `replaced` (the scratched horse this number stands in for, or NULL) |
+| `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
 
 Telemetry arrives about ten lines a second and DevPi runs on an SD card, so
 the database is written only when a token count changes, when the heartbeat
@@ -303,7 +305,7 @@ the gateway.
 | `set_state(phase, horses, scratched) -> rev` | `horses` and `scratched` are 20-item lists, position 0 = cup 1. Validated exactly as the gateway does (`ValueError` on bad input). Bumps `state_rev`, persists, updates `cups.horse`, sends if the port is open, emits `lq_update` for every cup whose horse or flag changed. Identical values are a no-op returning the current rev. |
 | `set_roster(macs) -> rev` | 20-item list, `None` or `""` for an empty slot. Rejects bad MACs, duplicates and `FF:FF:FF:FF:FF:FF`. Bumps `roster_rev`, persists, rewrites `cups.cup_id`, sends roster then state, emits a fresh `lq_snapshot`. |
 | `adopt_roster() -> rev` | Builds a roster from the cup numbers mirrored from the gateway and calls `set_roster`. |
-| `reset_link(reason) -> dict` | Forgets the roster and the state, clears `cups.cup_id` and `cups.horse`, deletes simulated cup rows, keeps the history, sends the gateway nothing. Returns the new revs and how many rows were deleted. |
+| `reset_link(reason) -> dict` | Forgets the roster and the state, clears `cups.cup_id` and `cups.horse`, deletes simulated cup rows, keeps the history, sends the gateway nothing. Returns the new revs and how many rows were deleted. Also bumps `reset_count` (in-memory, `get_snapshot()["devpi"]["reset_count"]`), which the betting board watches to clear the closing time. |
 | `get_snapshot() -> dict` | The `lq_snapshot` payload. |
 | `set_gateway_debug(on) -> bool` | Sends `{"t":"debug","on":...}`; True if it went out. |
 
@@ -339,13 +341,62 @@ against the README examples.
 ## Betting board (`/api/quiniela`)
 
 The splash display's TV board (`splash_display/templates/splash/quiniela_live.html`
-and `static/js/quiniela_board.js`) renders one JSON model: tokens per horse,
-shares, the leader, the last few drops, the race state and whether the link
-is up. That model is built here, in `la_quiniela/betting.py`, from the
-bridge's own picture (`get_snapshot()`), and served by `la_quiniela/board.py`
-at the three paths the page expects. The splash display is an HTTP client of
-these routes and re-serves them on its own origin, so the page itself never
-changed. Nothing in the board reads the serial port.
+and `static/js/quiniela_board.js`) renders one JSON model: the pot, the three
+prizes, tokens per horse, the horses' names, the last few drops, the race
+state and whether the link is up. That model is built here, in
+`la_quiniela/betting.py`, from the bridge's own picture (`get_snapshot()`)
+plus the operator's names (`la_quiniela/horses.py`), and served by
+`la_quiniela/board.py` at the three paths the page expects. The splash
+display is an HTTP client of these routes and re-serves them on its own
+origin, so the page itself never changed. Nothing in the board reads the
+serial port.
+
+### How La Quiniela pays
+
+- A token is $1 and one raffle ticket. After the race one token is drawn from
+  the WIN cup, one from the PLACE cup and one from the SHOW cup, and each
+  drawn token's owner takes that cup's **whole** prize. Nobody splits
+  anything and there are no odds; the only number per horse is how many
+  tokens are in its cup.
+- The prizes are fixed fractions of the pot, `LQ_SPLIT_WIN` / `LQ_SPLIT_PLACE`
+  / `LQ_SPLIT_SHOW` in `pi5/config.py` (0.60 / 0.25 / 0.15; they should sum to
+  1 and the board warns once if they do not).
+- Whole dollars, always summing to the pot: `place = round_half_up(pot *
+  LQ_SPLIT_PLACE)`, `show = round_half_up(pot * LQ_SPLIT_SHOW)`, `win = pot -
+  place - show`. Half up, never Python's `round()` (banker's rounding, which
+  calls 38.5 a 38): pot $154 gives place 38.50 -> **$39**, show 23.10 ->
+  **$23**, win **$92**; pot $0 gives 0 / 0 / 0; pot $1 gives win $1, place $0,
+  show $0. `round_half_up()` and `prizes_for(pot, split)` in `betting.py`.
+
+### Two kinds of scratch
+
+1. **With a replacement** (`POST /api/quiniela/scratch {"horse": 9,
+   "replacement": "Epic Ride"}`): the number stays live and the cup keeps
+   counting; the old name becomes `horses["9"].replaced`, the new one `name`,
+   and the pair appears in `scratches`. Nothing goes to the gateway.
+2. **No replacement** (`{"horse": 9}` alone): the bridge's existing scratch,
+   `set_state()` with the scratched flag on the cup carrying horse 9, so the
+   cup shows SCRATCHED and `horses["9"].scratched` is true as before. **Its
+   tokens are excluded from the pot and the prizes**; Joey refunds them by
+   hand. `total_tokens` still counts every cup. This pot rule is an
+   assumption about how a no-replacement scratch is settled; if the tokens
+   should stay in the pot instead, it is the one `if not h["scratched"]` in
+   `apply_snapshot()`.
+
+Changing names or scratches of either kind never produces an event on the
+ticker and never resets the baseline: events only ever come from token
+diffs, and names live outside the bridge's revisions.
+
+### Admin page
+
+`GET /quiniela/admin` (on pi5, port 5000, so `http://joeydevpi.local:5000/quiniela/admin`)
+is one plain page for a phone: the 20 names in a textarea (`1. NAME` lines,
+Save puts them back as text), a row per horse with a replacement box, a
+Scratch button, a "No replacement" checkbox for the gateway kind and Undo on
+any horse that is scratched or replaced, the closing time (a date-time picker
+plus +15 / +30 / +60 min and Clear), and a status line (race state, pot, the
+three prizes, link, cups online) refreshed every 5 s. Race state stays on
+`POST /api/quiniela/cmd`; the page has no buttons for it.
 
 ### Ports
 
@@ -366,6 +417,26 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see the translation table. |
+| `GET /api/quiniela/horses` | `{"1": {"name": "Encino", "replaced": null}, ...}`, names **as typed** (the model upper-cases them). |
+| `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n..."}` or the GET shape (`name` required, `replaced` optional per entry). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in post order; a leading `7.` / `#7` / `7)` / `7:` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
+| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": "Epic Ride"}` -> kind 1, `{"ok": true, "kind": "replacement", "horse": 9, "was": "Encino", "now": "Epic Ride", "names_rev": N}`. `{"horse": 9}` (or an empty / null replacement) -> kind 2 through `set_state()`, `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9, "scratched": true, "rev": R, "gateway_online": bool}`; 400 `horse 9 is not on any cup`, 503 `bridge not initialised`. |
+| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: a replacement is undone first if there is one, else the gateway flag on the horse's cup is cleared; 400 `horse 9 is not scratched` when neither applies. |
+| `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
+| `GET /quiniela/admin` | The admin page above. |
+
+The five new routes refresh the model synchronously before answering, so a
+`GET /api/quiniela` right after one already shows the change (the store's
+`on_change` also wakes the board thread). Errors are `{"ok": false, "error":
+...}`.
+
+```
+curl -X PUT  localhost:5000/api/quiniela/horses    -H 'Content-Type: application/json' -d '{"text": "1. Dornoch\n2. Sierra Leone\n9. Encino"}'
+curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9, "replacement": "Epic Ride"}'
+curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9}'
+curl -X POST localhost:5000/api/quiniela/unscratch -H 'Content-Type: application/json' -d '{"horse": 9}'
+curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"in_minutes": 30}'
+curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"at": null}'
+```
 
 They are deliberately not under `la_quiniela_bp`, whose `after_request`
 rewrites `Cache-Control`.
@@ -376,16 +447,30 @@ rewrites `Cache-Control`.
 {"link_ok": true,
  "race_state": 1, "race_state_name": "BETTING_OPEN",
  "token_value": 1.0, "pot": 33.0, "total_tokens": 33,
- "horses": {"1": {"tokens": 0, "share": 0.0, "scratched": false, "online": false, "cup": null},
-            "7": {"tokens": 23, "share": 0.697, "scratched": false, "online": true, "cup": 1},
+ "horses": {"1": {"tokens": 0, "share": 0.0, "scratched": false, "online": false, "cup": null,
+                  "name": "", "replaced": null},
+            "7": {"tokens": 23, "share": 0.697, "scratched": false, "online": true, "cup": 1,
+                  "name": "HONOR MARIE", "replaced": null},
+            "9": {"tokens": 10, "share": 0.303, "scratched": false, "online": true, "cup": 9,
+                  "name": "EPIC RIDE", "replaced": "ENCINO"},
             "...": "...20 entries, keys \"1\"..\"20\"..."},
  "leader": 7,
  "events": [{"horse": 7, "delta": 1, "ts": 1777662847.2}],
  "updated": 1777662847.2,
- "board_states": [1, 2, 3, 4]}
+ "board_states": [1, 2, 3, 4],
+ "now": 1777662850.4,
+ "closes_at": 1777664400.0,
+ "prizes": {"win": 20, "place": 8, "show": 5},
+ "split": {"win": 0.6, "place": 0.25, "show": 0.15},
+ "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS \u00b7 FINAL RESULTS HAND COUNTED",
+            "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
+ "names_rev": 4,
+ "scratches": [{"horse": 9, "was": "ENCINO", "now": "EPIC RIDE"}]}
 ```
 
-Exactly these eleven keys, from the snapshot as follows:
+The first eleven keys are the original contract and are unchanged; the rest
+are additive (the splash relays the whole model untouched). From the snapshot
+and the store as follows:
 
 - `link_ok` = `link.port_open and link.gateway_online`.
 - `race_state` = `devpi.phase` (DevPi's own phase, the one `set_state()`
@@ -398,7 +483,8 @@ Exactly these eleven keys, from the snapshot as follows:
   there, and the page only tests it for `null`. When two cups claim one horse
   the lowest cup number wins and one WARNING is logged per pair. `share` =
   `round(tokens / total, 4)`, 0.0 with no tokens.
-- `pot` = `round(total_tokens * token_value, 2)`.
+- `pot` = `round(tokens * token_value, 2)` over the horses whose cup is **not**
+  scratched at the gateway (kind 2 above); `total_tokens` is every cup.
 - `leader`: strictly the most tokens, the lowest horse number on a tie, `null`
   when every count is 0. Scratched horses are not excluded.
 - `events`: the last eight token changes, newest first. The first snapshot a
@@ -424,6 +510,31 @@ Exactly these eleven keys, from the snapshot as follows:
 - `updated`: wall time of the last change. A snapshot that changes nothing
   publishes nothing and leaves it alone.
 - `board_states`: the race states in which the page takes over the TV.
+- `now`: the server's clock, stamped when the model is serialised (`GET
+  /api/quiniela`, every SSE chunk), never stored and never part of the
+  changed-comparison, so the stream stays quiet between real changes. The
+  page counts down `closes_at` against it rather than the phone's clock.
+- `closes_at`: unix time or `null`, from `PUT /api/quiniela/closes_at`.
+  **A `reset_link()` clears it** (the board watches `devpi.reset_count`);
+  names survive a reset.
+- `prizes`: `{"win", "place", "show"}` whole dollars summing to `pot`, by the
+  rule above. `split`: the three fractions from config.
+- `chyron`: `LQ_CHYRON_LINES` from config, for the crawl along the bottom.
+- `names_rev`: the names store's revision, bumped by any name change, any
+  replacement scratch and its undo, persisted in `lq_board`; a change
+  publishes a model (it differs) but yields no events. A gateway
+  (no-replacement) scratch or unscratch is the bridge's state, versioned by
+  its state rev, and leaves `names_rev` alone (the model still publishes:
+  `scratched`, `pot` and `prizes` moved).
+- `horses[n].name` / `replaced`: the store's names **upper-cased** (`""` /
+  `null` when unset); `scratches`: `[{"horse", "was", "now"}]` for every horse
+  with a replacement, upper-cased too. `replaced` is `""` (not `null`) when
+  the scratched horse had no name yet: the `""` is what marks the number as
+  replaced so undo still works, and `scratches` then carries `"was": ""`
+  (the board's chyron prints `UNNAMED` there). A second replacement of the
+  same number keeps the horse actually scratched in `replaced` (the first
+  replacement never ran and is dropped), so undo goes straight back to it.
+- `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### `POST /api/quiniela/cmd`
 
@@ -463,10 +574,15 @@ each overridable by `DDM_<KEY>` in the environment or `pi5/.env`:
 | `TOKEN_VALUE` | `1.00` | Dollars per token, for the board's POT (`DDM_TOKEN_VALUE`, a float) |
 | `QUINIELA_LOG` | `True` | Write the JSONL log below (`DDM_QUINIELA_LOG`: 1/true/yes/on or 0/false/no/off) |
 | `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4]` | Race states in which the splash board owns the TV (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4`) |
+| `LQ_SPLIT_WIN` | `0.60` | The WIN prize's share of the pot; it takes the remainder after PLACE and SHOW (`DDM_LQ_SPLIT_WIN`) |
+| `LQ_SPLIT_PLACE` | `0.25` | The PLACE prize's share, rounded half up to whole dollars (`DDM_LQ_SPLIT_PLACE`) |
+| `LQ_SPLIT_SHOW` | `0.15` | The SHOW prize's share, likewise (`DDM_LQ_SPLIT_SHOW`) |
+| `LQ_CHYRON_LINES` | two lines | What crawls along the bottom of the board (`DDM_LQ_CHYRON_LINES`, lines separated by `\|`) |
 
 A value that does not parse is logged and the default kept; a `config.py`
 without these keys works unchanged. `load_board_settings()` in `betting.py`
-resolves them.
+resolves them, and warns once when the three splits do not sum to 1 within
+0.001.
 
 ### How the board follows the bridge
 
@@ -518,6 +634,9 @@ python -m la_quiniela.test_betting
 
 Hand-built snapshots and a real `LqBridge` over the smoke test's fake port
 exercise the model, the log, the settings, the listener hook, the thread,
-the command translation (byte-exact against `protocol.build_state_line`) and
-the three routes on a Flask test app. `test_smoke` also checks that importing
-`main.py` starts no `lq-board` thread and registers the three routes.
+the command translation (byte-exact against `protocol.build_state_line`),
+the prize rounding, both kinds of scratch, the names text parser, the
+closing time (and its reset), the `now` stamp, the two tables and every
+route on a Flask test app. `test_smoke` also checks that importing `main.py`
+starts no `lq-board` thread and registers the routes, the admin page
+included.

@@ -17,6 +17,14 @@
 # change; the one documented difference from the old splash model is that
 # horses[n].cup is the 1-based cup number (pi5's ID rule) rather than the
 # gateway's 0-based slot. The board only tests it for null.
+#
+# How La Quiniela pays, which is what the additive keys carry: a token is one
+# dollar and one raffle ticket. After the race one token is drawn from the WIN
+# cup, one from PLACE, one from SHOW, and each drawn token's owner takes that
+# cup's whole prize, a fixed fraction of the pot (prizes_for()). Nobody
+# splits anything and there are no odds; the only number per horse is how
+# many tokens are in its cup. Names, replacements and the closing time come
+# from the HorseStore (horses.py), never from the gateway.
 
 import json
 import logging
@@ -25,10 +33,12 @@ import queue
 import threading
 import time
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from la_quiniela import protocol as P
+from la_quiniela.horses import HorseStore
 
 log = logging.getLogger("la_quiniela.betting")
 
@@ -54,7 +64,16 @@ DEFAULTS: Dict[str, Any] = {
     "TOKEN_VALUE": 1.0,                       # dollars per token, for the POT
     "QUINIELA_LOG": True,                     # write pi5/data/quiniela_YYYY-MM-DD.jsonl
     "QUINIELA_BOARD_STATES": [1, 2, 3, 4],    # race states in which the board owns the TV
+    "LQ_SPLIT_WIN": 0.60,                     # the WIN prize's share of the pot (it takes the remainder)
+    "LQ_SPLIT_PLACE": 0.25,                   # the PLACE prize's share, rounded half up to whole dollars
+    "LQ_SPLIT_SHOW": 0.15,                    # the SHOW prize's share, likewise
+    "LQ_CHYRON_LINES": [                      # what crawls along the bottom of the board
+        "TOTALS BASED ON CHEAP CHINESE ELECTRONICS \u00b7 FINAL RESULTS HAND COUNTED",
+        "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS",
+    ],
 }
+SPLIT_KEYS = ("LQ_SPLIT_WIN", "LQ_SPLIT_PLACE", "LQ_SPLIT_SHOW")
+SPLIT_SUM_TOLERANCE = 0.001
 
 RACE_STATE_NAMES: Dict[int, str] = {int(p.value): p.name for p in P.Phase}
 
@@ -116,6 +135,27 @@ def _coerce_setting(key: str, value: Any, source: str) -> Tuple[bool, Any]:
             if out != out or out in (float("inf"), float("-inf")):
                 raise ValueError("not a finite number")
             return True, out
+        if key in SPLIT_KEYS:
+            if isinstance(value, bool):
+                raise ValueError("a bool is not a fraction")
+            out = float(value if not isinstance(value, str) else value.strip())
+            if out != out or not 0.0 <= out <= 1.0:
+                raise ValueError("expected a fraction between 0 and 1")
+            return True, out
+        if key == "LQ_CHYRON_LINES":
+            if isinstance(value, str):
+                items = value.split("|")
+            elif isinstance(value, (list, tuple)):
+                items = list(value)
+            else:
+                raise ValueError('expected a list of strings or a "|"-separated string')
+            lines: List[str] = []
+            for item in items:
+                if not isinstance(item, str):
+                    raise ValueError(f"{item!r} is not a string")
+                if item.strip():
+                    lines.append(item.strip())
+            return True, lines
         if key == "QUINIELA_LOG":
             if isinstance(value, bool):
                 return True, value
@@ -151,9 +191,12 @@ def _coerce_setting(key: str, value: Any, source: str) -> Tuple[bool, Any]:
 def load_board_settings(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """DEFAULTS, then the same-named attributes of pi5/config.py, then the
     DDM_<KEY> environment variables (DDM_TOKEN_VALUE a float, DDM_QUINIELA_LOG
-    a bool, DDM_QUINIELA_BOARD_STATES a comma list such as "1,2,3,4"), then
+    a bool, DDM_QUINIELA_BOARD_STATES a comma list such as "1,2,3,4", the
+    DDM_LQ_SPLIT_* fractions, DDM_LQ_CHYRON_LINES a "|"-separated list), then
     explicit overrides. A value that does not parse is logged and skipped;
-    nothing here raises, so importing the app cannot fail on a typo."""
+    nothing here raises, so importing the app cannot fail on a typo. Three
+    splits that do not sum to 1 are warned about once (win takes the
+    remainder regardless, so the prizes still sum to the pot)."""
     settings: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULTS.items()}
     try:
         import config as app_config  # pi5/config.py, on sys.path when the app runs
@@ -175,7 +218,50 @@ def load_board_settings(overrides: Optional[Dict[str, Any]] = None) -> Dict[str,
             if not ok:
                 continue
         settings[key] = value
+    _warn_split_sum(settings)
     return settings
+
+
+_split_warned: set = set()
+
+
+def _warn_split_sum(settings: Dict[str, Any]) -> None:
+    try:
+        parts = tuple(float(settings[k]) for k in SPLIT_KEYS)
+    except (KeyError, TypeError, ValueError):
+        return
+    if abs(sum(parts) - 1.0) <= SPLIT_SUM_TOLERANCE or parts in _split_warned:
+        return
+    _split_warned.add(parts)
+    log.warning("La Quiniela board: LQ_SPLIT_WIN + LQ_SPLIT_PLACE + LQ_SPLIT_SHOW = %.4f, not 1; "
+                "WIN takes the remainder after PLACE and SHOW", sum(parts))
+
+
+# -----------------------------------------------------------------------------
+# Prizes
+# -----------------------------------------------------------------------------
+
+def round_half_up(value: Any) -> int:
+    """To the nearest whole number, halves up: 38.5 -> 39. Python's round()
+    is banker's rounding and gives 38, which is not how a prize is called."""
+    return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def prizes_for(pot: Any, split: Dict[str, Any]) -> Dict[str, int]:
+    """Whole-dollar prizes that sum to the pot: PLACE and SHOW are their
+    fractions of the pot rounded half up, WIN is whatever is left, so
+    pot 154 -> 92 / 39 / 23 and pot 1 -> 1 / 0 / 0. The arithmetic is done in
+    Decimal from the printed values, so 154 * 0.25 is exactly 38.50. A pot
+    that is not a whole number of dollars (a fractional token value) is
+    itself rounded half up before WIN is taken."""
+    try:
+        whole = Decimal(str(pot))
+        place = round_half_up(whole * Decimal(str(split["place"])))
+        show = round_half_up(whole * Decimal(str(split["show"])))
+        win = round_half_up(whole) - place - show
+    except (InvalidOperation, ValueError, TypeError, KeyError):
+        return {"win": 0, "place": 0, "show": 0}
+    return {"win": win, "place": place, "show": show}
 
 
 # -----------------------------------------------------------------------------
@@ -183,7 +269,8 @@ def load_board_settings(overrides: Optional[Dict[str, Any]] = None) -> Dict[str,
 # -----------------------------------------------------------------------------
 
 def _unassigned() -> Dict[str, Any]:
-    return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None}
+    return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None,
+            "name": "", "replaced": None}
 
 
 def _roster_rev_of(snap: Any) -> Optional[int]:
@@ -193,6 +280,21 @@ def _roster_rev_of(snap: Any) -> Optional[int]:
     exactly a reset-shaped transition: counts moved without a bet."""
     devpi = snap.get("devpi") if isinstance(snap, dict) else None
     return _as_int(devpi.get("roster_rev")) if isinstance(devpi, dict) else None
+
+
+def _reset_count_of(snap: Any) -> Optional[int]:
+    """devpi.reset_count: how many times this bridge has reset_link()'d. A
+    move between two snapshots clears the closing time (names stay)."""
+    devpi = snap.get("devpi") if isinstance(snap, dict) else None
+    return _as_int(devpi.get("reset_count")) if isinstance(devpi, dict) else None
+
+
+def _with_now(text: str, now: float) -> str:
+    """The compact model JSON with the server's clock appended. The stored
+    model never holds "now" (it would make every snapshot a change), so it is
+    stamped here, at serialisation, onto the closing brace of a non-empty
+    object."""
+    return text[:-1] + ',"now":' + _dumps(now) + "}"
 
 
 class BettingBoard:
@@ -210,6 +312,10 @@ class BettingBoard:
     board (link_ok now comes from the snapshot, so nothing times out here);
     wall is unix time, for the timestamps in the model and the log. Both are
     injectable for tests, as is log_dir.
+
+    store is the HorseStore of names, replacements and the closing time: by
+    default one on the bridge's database (memory-only without a bridge). Its
+    on_change is wired to wake(), so an admin write refreshes the model.
     """
 
     def __init__(
@@ -219,6 +325,7 @@ class BettingBoard:
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
         log_dir: Optional[Path] = None,
+        store: Optional[HorseStore] = None,
     ) -> None:
         self.bridge = bridge
         self.settings: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v)
@@ -232,12 +339,16 @@ class BettingBoard:
         self._subs: List["queue.Queue[str]"] = []
         self._seen_state = False
         self._roster_rev: Optional[int] = None    # devpi.roster_rev of the last snapshot applied
+        self._reset_count: Optional[int] = None   # devpi.reset_count of the last snapshot applied
         self._events: List[Dict[str, Any]] = []
         self._dup_warned: set = set()
         self._log_enabled = True
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self.store: HorseStore = store if store is not None else HorseStore(getattr(bridge, "db", None))
+        if self.store.on_change is None:
+            self.store.on_change = self.wake
         self._model: Dict[str, Any] = self._empty_model()
         self._json: str = _dumps(self._model)
 
@@ -255,8 +366,27 @@ class BettingBoard:
         except (TypeError, ValueError):
             return list(DEFAULTS["QUINIELA_BOARD_STATES"])
 
+    def _split(self) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for name, key in (("win", "LQ_SPLIT_WIN"), ("place", "LQ_SPLIT_PLACE"), ("show", "LQ_SPLIT_SHOW")):
+            ok, value = _coerce_setting(key, self.settings.get(key, DEFAULTS[key]), "settings")
+            out[name] = float(value) if ok else float(DEFAULTS[key])
+        return out
+
+    def _chyron(self) -> List[str]:
+        ok, value = _coerce_setting("LQ_CHYRON_LINES",
+                                    self.settings.get("LQ_CHYRON_LINES", DEFAULTS["LQ_CHYRON_LINES"]),
+                                    "settings")
+        return list(value) if ok else list(DEFAULTS["LQ_CHYRON_LINES"])
+
+    def now(self) -> float:
+        """The server's clock, as stamped into every serialised model."""
+        return self._wall()
+
     # -- model ---------------------------------------------------------------
     def _empty_model(self) -> Dict[str, Any]:
+        horses = {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)}
+        split = self._split()
         return {
             "link_ok": False,
             "race_state": 0,
@@ -264,23 +394,49 @@ class BettingBoard:
             "token_value": self._token_value(),
             "pot": 0.0,
             "total_tokens": 0,
-            "horses": {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)},
+            "horses": self._name_horses(horses)[0],
             "leader": None,
             "events": [],
             "updated": self._wall(),
             "board_states": self._board_states(),
+            "closes_at": self.store.closes_at,
+            "prizes": prizes_for(0.0, split),
+            "split": split,
+            "chyron": self._chyron(),
+            "names_rev": self.store.names_rev,
+            "scratches": [],
         }
 
+    def _name_horses(self, horses: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]],
+                                                                      List[Dict[str, Any]]]:
+        """Add the store's name / replaced (upper-cased) to every horse entry
+        and list the replacement scratches. Mutates and returns horses."""
+        scratches: List[Dict[str, Any]] = []
+        names = self.store.horses()
+        for n in range(1, HORSE_COUNT + 1):
+            entry = names.get(n) or {}
+            name = (entry.get("name") or "").upper()
+            replaced = entry.get("replaced")
+            replaced = replaced.upper() if isinstance(replaced, str) else None
+            horses[str(n)]["name"] = name
+            horses[str(n)]["replaced"] = replaced
+            if replaced is not None:
+                scratches.append({"horse": n, "was": replaced, "now": name})
+        return horses, scratches
+
     def model(self) -> Dict[str, Any]:
-        """A fresh copy of the current model (safe to mutate)."""
+        """A fresh copy of the current model (safe to mutate), stamped with
+        "now", the server's clock."""
         with self._lock:
             text = self._json
-        return json.loads(text)
+        return json.loads(_with_now(text, self._wall()))
 
     def model_json(self) -> str:
-        """The current model as the compact JSON the SSE stream sends."""
+        """The current model as the compact JSON the SSE stream sends,
+        stamped with "now"."""
         with self._lock:
-            return self._json
+            text = self._json
+        return _with_now(text, self._wall())
 
     def link_ok(self) -> bool:
         with self._lock:
@@ -372,6 +528,7 @@ class BettingBoard:
         now_w = self._wall()
         horses, race_state, total, link_ok = self._digest(snap)
         roster_rev = _roster_rev_of(snap)
+        reset_count = _reset_count_of(snap)
 
         leader: Optional[int] = None
         best = 0
@@ -382,6 +539,17 @@ class BettingBoard:
 
         record: Optional[Dict[str, Any]] = None
         with self._lock:
+            # A reset_link() since the last snapshot ends the betting window:
+            # the closing time is cleared. Names survive a reset. The store's
+            # lock is a leaf (its on_change only sets our wake Event), so this
+            # is safe under our own lock.
+            if (reset_count is not None and self._reset_count is not None
+                    and reset_count != self._reset_count):
+                self.store.clear_closes_at()
+            if reset_count is not None:
+                self._reset_count = reset_count
+            horses, scratches = self._name_horses(horses)
+
             old = self._model
             old_horses = old["horses"]
 
@@ -426,18 +594,31 @@ class BettingBoard:
                 self._events = (new_events + self._events)[:MAX_EVENTS]
 
             token_value = self._token_value()
+            # The pot is what the prizes are drawn from: a cup scratched at
+            # the gateway (no replacement) is out of the game and its tokens
+            # are refunded by hand, so they leave the pot; total_tokens still
+            # counts every cup. A replacement scratch keeps the cup counting.
+            live = sum(h["tokens"] for h in horses.values() if not h["scratched"])
+            pot = round(live * token_value, 2)
+            split = self._split()
             model = {
                 "link_ok": bool(link_ok),
                 "race_state": race_state,
                 "race_state_name": race_state_name(race_state),
                 "token_value": token_value,
-                "pot": round(total * token_value, 2),
+                "pot": pot,
                 "total_tokens": total,
                 "horses": horses,
                 "leader": leader,
                 "events": list(self._events),
                 "updated": old["updated"],
                 "board_states": self._board_states(),
+                "closes_at": self.store.closes_at,
+                "prizes": prizes_for(pot, split),
+                "split": split,
+                "chyron": self._chyron(),
+                "names_rev": self.store.names_rev,
+                "scratches": scratches,
             }
             changed = model != old
             if changed:
@@ -458,7 +639,9 @@ class BettingBoard:
 
     def refresh(self) -> bool:
         """Take the bridge's snapshot and apply it. Returns True if the model
-        changed; False with no bridge.
+        changed. With no bridge the empty picture is applied instead (link
+        down, no cups), so names and the closing time from the store still
+        reach the model; that is a change only if the store moved.
 
         Serialised: two overlapping calls (the board thread and a
         start_board() on a running board) apply their snapshots in the order
@@ -466,7 +649,8 @@ class BettingBoard:
         and invent a negative drop."""
         bridge = self.bridge
         if bridge is None:
-            return False
+            with self._refresh_lock:
+                return self.apply_snapshot({})
         # Lock order is refresh lock -> bridge RLock (get_snapshot) -> board
         # lock (apply), never the reverse: the bridge calls our listener
         # (wake(), an Event set) while holding its RLock, and Flask request
@@ -481,8 +665,10 @@ class BettingBoard:
     def _set_locked(self, model: Dict[str, Any]) -> None:
         self._model = model
         self._json = _dumps(model)
-        for q in self._subs:
-            _offer(q, self._json)
+        if self._subs:
+            stamped = _with_now(self._json, self._wall())
+            for q in self._subs:
+                _offer(q, stamped)
 
     # -- subscribers ---------------------------------------------------------
     def subscribe(self) -> "queue.Queue[str]":

@@ -88,3 +88,8 @@ LQ_DEV_ENDPOINTS = _lq_env('LQ_DEV_ENDPOINTS', False)     # enables POST /api/lq
 TOKEN_VALUE = 1.00  # dollars per token, for the board's POT
 QUINIELA_LOG = True  # pi5/data/quiniela_YYYY-MM-DD.jsonl, one line per token/scratch/state change
 QUINIELA_BOARD_STATES = [1, 2, 3, 4]  # race states in which the splash board owns the TV
+# How La Quiniela pays: one token is drawn per cup and takes that cup's whole prize, these fractions of the pot (DDM_LQ_SPLIT_*, DDM_LQ_CHYRON_LINES with | between lines override)
+LQ_SPLIT_WIN = 0.60
+LQ_SPLIT_PLACE = 0.25
+LQ_SPLIT_SHOW = 0.15
+LQ_CHYRON_LINES = ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED", "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"]

@@ -9,6 +9,7 @@ from la_quiniela.blueprint import (
 from la_quiniela.bridge import LQ_ROOM, LqBridge, load_settings
 from la_quiniela.protocol import Phase, cup_to_wire, wire_to_cup
 from la_quiniela.betting import BettingBoard, load_board_settings, sse_events, validate_cmd
+from la_quiniela.horses import HorseStore, parse_names_text
 from la_quiniela.board import (
     get_board, init_board, quiniela_board_bp, start_board, stop_board,
 )
@@ -19,4 +20,5 @@ __all__ = [
     "cup_to_wire", "wire_to_cup",
     "quiniela_board_bp", "init_board", "get_board", "start_board", "stop_board",
     "BettingBoard", "load_board_settings", "validate_cmd", "sse_events",
+    "HorseStore", "parse_names_text",
 ]

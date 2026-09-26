@@ -1518,7 +1518,9 @@ def test_import_main_starts_nothing():
     _check("/api/lq/snapshot route registered", "/api/lq/snapshot" in rules)
     _check("/api/lq/dev/state route registered", "/api/lq/dev/state" in rules)
     _check("La Subasta routes still registered", "/la-subasta/api/state" in rules)
-    for path in ("/api/quiniela", "/api/quiniela/stream", "/api/quiniela/cmd"):
+    for path in ("/api/quiniela", "/api/quiniela/stream", "/api/quiniela/cmd", "/api/quiniela/horses",
+                 "/api/quiniela/scratch", "/api/quiniela/unscratch", "/api/quiniela/closes_at",
+                 "/quiniela/admin"):
         _check(f"{path} route registered", path in rules)
 
 
