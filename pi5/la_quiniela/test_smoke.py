@@ -325,6 +325,9 @@ def test_phase_enum_matches_header():
            all(P.Phase[name].value == value for name, value in parsed.items()), str(parsed))
     m2 = re.search(r"#define DDM_MAX_CUPS\s+(\d+)", text)
     _check("NUM_CUPS matches DDM_MAX_CUPS", m2 and int(m2.group(1)) == P.NUM_CUPS)
+    m3 = re.search(r"#define DDM_MAX_HORSE\s+(\d+)", text)
+    _check("MAX_HORSE matches DDM_MAX_HORSE", m3 is not None and int(m3.group(1)) == P.MAX_HORSE,
+           f"header {m3.group(1) if m3 else None}, protocol {P.MAX_HORSE}")
 
 
 def test_garbage_lines_ignored():
@@ -628,7 +631,7 @@ def test_set_state_validation_and_persistence():
                       (("1", HORSES_1_TO_20, NO_SCR), "string phase"),
                       ((1, HORSES_1_TO_20[:19], NO_SCR), "19 horses"),
                       ((1, HORSES_1_TO_20 + [1], NO_SCR), "21 horses"),
-                      ((1, [21] + HORSES_1_TO_20[1:], NO_SCR), "horse 21"),
+                      ((1, [P.MAX_HORSE + 1] + HORSES_1_TO_20[1:], NO_SCR), f"horse {P.MAX_HORSE + 1}"),
                       ((1, [1.0] + HORSES_1_TO_20[1:], NO_SCR), "float horse"),
                       ((1, HORSES_1_TO_20, [2] + NO_SCR[1:]), "scratched 2"),
                       ((1, HORSES_1_TO_20, NO_SCR[:19]), "19 scratched")):

@@ -14,6 +14,7 @@ import io
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -41,10 +42,11 @@ from la_quiniela.betting import (  # noqa: E402
 )
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.board import (  # noqa: E402
-    DEMO_REFUSED, JSON_REFUSED, USAGE_CLOSES_AT, USAGE_HORSE, USAGE_SCRATCH, USAGE_STATE, get_board,
+    DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_HORSE, USAGE_SCRATCH, USAGE_STATE,
+    get_board,
     init_board, quiniela_board_bp, start_board, stop_board,
 )
-from la_quiniela.horses import HorseStore, parse_names_text  # noqa: E402
+from la_quiniela.horses import HorseStore, in_field, parse_names_text  # noqa: E402
 from la_quiniela.models import LqDb  # noqa: E402
 from la_quiniela.test_smoke import (  # noqa: E402
     HORSES_1_TO_20, MAC_A, MAC_B, NO_SCR, SCR_CUP7, FakeClock, _fresh_bridge, drain, status, telem,
@@ -56,7 +58,13 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
-              "name": "", "replaced": None}
+              "name": "", "replaced": None, "in_field": False}
+
+
+def unassigned(n):
+    """The empty entry for horse n: in the field for 1..20, not for the also-eligibles 21..24."""
+    return dict(UNASSIGNED, in_field=int(n) <= 20)
+
 SPLIT = {"win": 0.60, "place": 0.25, "show": 0.15}
 
 
@@ -216,8 +224,9 @@ def test_empty_snapshot_model_shape():
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
     _check("pot 0.0, total 0", m["pot"] == 0.0 and m["total_tokens"] == 0)
-    _check("horses 1..20", sorted(m["horses"], key=int) == [str(n) for n in range(1, 21)])
-    _check("every horse unassigned", all(h == UNASSIGNED for h in m["horses"].values()))
+    _check("horses 1..24", sorted(m["horses"], key=int) == [str(n) for n in range(1, 25)])
+    _check("every horse unassigned: 1-20 in the field, 21-24 not",
+           all(h == unassigned(n) for n, h in m["horses"].items()), str(m["horses"]["21"]))
     _check("leader None, events []", m["leader"] is None and m["events"] == [])
     _check("updated is the wall time of the change", m["updated"] == wall.t)
     _check("board_states from settings", m["board_states"] == list(DEFAULTS["QUINIELA_BOARD_STATES"]))
@@ -238,9 +247,10 @@ def test_tokens_share_leader_online_scratched():
            m["pot"] == round(23 * float(DEFAULTS["TOKEN_VALUE"]), 2), str(m["pot"]))
     h7, h3, h12 = m["horses"]["7"], m["horses"]["3"], m["horses"]["12"]
     _check("horse 7 entry", h7 == {"tokens": 23, "share": round(23 / 33, 4), "scratched": False,
-                                   "online": True, "cup": 1, "name": "", "replaced": None}, str(h7))
+                                   "online": True, "cup": 1, "name": "", "replaced": None, "in_field": True}, str(h7))
     _check("horse 3 tokens/share", h3["tokens"] == 10 and h3["share"] == round(10 / 33, 4))
-    _check("horse 3 scratched and offline", h3["scratched"] is True and h3["online"] is False)
+    _check("horse 3 scratched and offline, so out of the field", h3["scratched"] is True and h3["online"] is False
+           and h3["in_field"] is False)
     _check("horse 3 cup is the 1-based cup number", h3["cup"] == 2)
     _check("horse 12 online with share 0", h12["online"] is True and h12["share"] == 0)
     _check("leader 7", m["leader"] == 7)
@@ -264,7 +274,7 @@ def test_odd_entries_never_raise():
         {"cup": 1, "horse": 5, "count": None, "online": False},              # never heard: count None
         {"cup": 2, "horse": None, "count": 4},                               # no horse
         {"cup": 3, "horse": 0, "count": 4},                                  # horse 0 = unassigned
-        {"cup": 4, "horse": 21, "count": 4},                                 # out of range
+        {"cup": 4, "horse": 25, "count": 4},                                 # out of range (24 is the cap)
         {"cup": "5", "horse": "8", "count": "6", "scratched": "1", "online": "true"},  # strings
         {"horse": 9, "count": 3},                                            # no cup
         "garbage",                                                           # not a dict
@@ -276,15 +286,15 @@ def test_odd_entries_never_raise():
     m = b.model()
     _check("count None reads as 0 tokens", m["horses"]["5"] == {"tokens": 0, "share": 0, "scratched": False,
                                                                 "online": False, "cup": 1, "name": "",
-                                                                "replaced": None}, str(m["horses"]["5"]))
+                                                                "replaced": None, "in_field": True}, str(m["horses"]["5"]))
     _check("string fields are coerced", m["horses"]["8"] == {"tokens": 6, "share": 0.75, "scratched": True,
                                                               "online": True, "cup": 5, "name": "",
-                                                              "replaced": None}, str(m["horses"]["8"]))
+                                                              "replaced": None, "in_field": False}, str(m["horses"]["8"]))
     _check("negative tokens clamp to 0, cup kept", m["horses"]["10"]["tokens"] == 0 and m["horses"]["10"]["cup"] == 7
            and m["horses"]["10"]["online"] is True)
     _check("float count, None scratched", m["horses"]["14"]["tokens"] == 2 and m["horses"]["14"]["scratched"] is False)
-    for n in (1, 2, 4, 9, 11, 12, 13, 20):
-        _check(f"horse {n} untouched", m["horses"][str(n)] == UNASSIGNED, str(m["horses"][str(n)]))
+    for n in (1, 2, 4, 9, 11, 12, 13, 20, 21, 24):
+        _check(f"horse {n} untouched", m["horses"][str(n)] == unassigned(n), str(m["horses"][str(n)]))
     _check("total 8", m["total_tokens"] == 8)
     # Missing / wrong-typed sections never raise either.
     for odd in ({}, None, [], "x", {"devpi": {"phase": "x"}, "cups": {"cup": 1}, "link": "nope"},
@@ -409,7 +419,7 @@ def test_reset_and_remap_produce_no_ghost_bets():
     m = b.model()
     _check("horse 2 now on cup 4 with that cup's count",
            m["horses"]["2"] == {"tokens": 7, "share": round(7 / 59, 4), "scratched": False,
-                                "online": True, "cup": 4, "name": "", "replaced": None}, str(m["horses"]["2"]))
+                                "online": True, "cup": 4, "name": "", "replaced": None, "in_field": True}, str(m["horses"]["2"]))
     _check("no event for the re-mapping",
            len(m["events"]) == 2 and m["events"][0]["horse"] == 2 and m["events"][0]["delta"] == -1)
     _, lines = log_lines(log_dir)
@@ -737,7 +747,8 @@ def test_real_bridge_feeds_the_board():
     _check("set_state changes the model", board.refresh())
     m = board.model()
     _check("phase from devpi", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
-    _check("horse n on cup n, 1-based", all(m["horses"][str(n)]["cup"] == n for n in range(1, 21)))
+    _check("horse n on cup n, 1-based; 21-24 on none", all(m["horses"][str(n)]["cup"] == n for n in range(1, 21))
+           and all(m["horses"][str(n)]["cup"] is None for n in range(21, 25)))
     _check("scratched from devpi state", m["horses"]["7"]["scratched"] is True and m["horses"]["8"]["scratched"] is False)
     _check("no telemetry yet: 0 tokens, offline", m["total_tokens"] == 0 and not any(h["online"] for h in m["horses"].values()))
     b.handle_raw_line(telem(6, MAC_A, count=3))          # wire 6 -> cup 7 -> horse 7
@@ -745,7 +756,7 @@ def test_real_bridge_feeds_the_board():
     m = board.model()
     _check("count -> tokens on the horse of that cup", m["horses"]["7"] == {"tokens": 3, "share": 1.0, "scratched": True,
                                                                              "online": True, "cup": 7, "name": "",
-                                                                             "replaced": None}, str(m["horses"]["7"]))
+                                                                             "replaced": None, "in_field": False}, str(m["horses"]["7"]))
     _check("any line puts the gateway online -> link_ok", m["link_ok"] is True)
     _check("leader, pot (horse 7 is scratched at the gateway: its 3 tokens count but are out of the pot)",
            m["leader"] == 7 and m["pot"] == 0.0 and m["total_tokens"] == 3, str((m["leader"], m["pot"])))
@@ -1069,7 +1080,7 @@ def test_cmd_usage_errors():
     cases = [("state", USAGE_STATE), ("state 7", USAGE_STATE), ("state -1", USAGE_STATE), ("state x", USAGE_STATE),
              ("state 1 2", USAGE_STATE), ("state 1.0", USAGE_STATE),
              ("horse", USAGE_HORSE), ("horse 1", USAGE_HORSE), ("horse 1 2 3", USAGE_HORSE), ("horse 0 7", USAGE_HORSE),
-             ("horse 21 1", USAGE_HORSE), ("horse 1 21", USAGE_HORSE), ("horse 1 -1", USAGE_HORSE), ("horse a b", USAGE_HORSE),
+             ("horse 21 1", USAGE_HORSE), ("horse 1 25", USAGE_HORSE), ("horse 1 -1", USAGE_HORSE), ("horse a b", USAGE_HORSE),
              ("scratch", USAGE_SCRATCH), ("scratch 1", USAGE_SCRATCH), ("scratch 0 1", USAGE_SCRATCH),
              ("scratch 21 1", USAGE_SCRATCH), ("scratch 1 2", USAGE_SCRATCH), ("scratch 1 yes", USAGE_SCRATCH),
              ("scratch 1 1 1", USAGE_SCRATCH)]
@@ -1105,7 +1116,7 @@ def test_model_route():
     m = r.get_json()
     _check("the 18 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
-    _check("20 horses, no tokens, no leader", len(m["horses"]) == 20 and m["total_tokens"] == 0 and m["leader"] is None)
+    _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
            and m["board_states"] == list(DEFAULTS["QUINIELA_BOARD_STATES"]))
     _check("get_board() is the one init_board made", get_board().bridge is b)
@@ -1216,6 +1227,9 @@ DERBY_2024 = ["Dornoch", "Sierra Leone", "Mystik Dan", "Catching Freedom", "Cata
               "West Saratoga", "Endlessly", "Domestic Product", "Grand Mo the First", "Fierceness",
               "Stronghold", "Resilience", "Society Man"]
 DERBY_TEXT = "\n".join(f"{n}. {name}" for n, name in enumerate(DERBY_2024, 1))
+ALSO_ELIGIBLE = ["Mugatu", "Ocelli", "Epic Ride", "Society Girl"]      # 21..24 in these tests
+FIELD_24 = DERBY_2024 + ALSO_ELIGIBLE
+FIELD_24_TEXT = "\n".join(f"{n}. {name}" for n, name in enumerate(FIELD_24, 1))
 
 
 def test_round_half_up_and_prizes():
@@ -1284,63 +1298,100 @@ def test_names_and_replacement_scratch_in_the_model():
     q = b.subscribe()
     _, lines = log_lines(log_dir)
     n_lines = len(lines)
-    _check("no names yet: every name empty, names_rev 0, no scratches",
+    _check("no names yet: every name empty, no replaced, names_rev 0, no scratches",
            all(h["name"] == "" and h["replaced"] is None for h in b.model()["horses"].values())
            and b.model()["names_rev"] == 0 and b.model()["scratches"] == [])
     _check("the board's store is memory-only without a bridge", b.store._db is None)
     b._wake.clear()
-    _check("set_names bumps names_rev and wakes the board",
-           b.store.set_names({9: "  Encino ", 3: "Fierceness"}) is True and b.store.names_rev == 1 and b._wake.is_set())
+    _check("set_names bumps names_rev and wakes the board (an also-eligible can be named ahead of time)",
+           b.store.set_names({9: "  Encino ", 3: "Fierceness", 22: "Ocelli"}) is True and b.store.names_rev == 1 and b._wake.is_set())
     _check("the same names again change nothing", b.store.set_names({9: "Encino"}) is False and b.store.names_rev == 1)
-    _check("stored as typed (stripped)", b.store.horses()[9] == {"name": "Encino", "replaced": None})
+    _check("stored as typed (stripped), name only", b.store.horses()[9] == {"name": "Encino"}, str(b.store.horses()[9]))
     wall.advance(1)
     _check("the next apply of the SAME snapshot is a change (names differ)", b.apply_snapshot(picture) is True)
     m = b.model()
     _check("served upper-cased", m["horses"]["9"]["name"] == "ENCINO" and m["horses"]["3"]["name"] == "FIERCENESS")
+    _check("the also-eligible's name is served too, out of the field", m["horses"]["22"]["name"] == "OCELLI"
+           and m["horses"]["22"]["in_field"] is False and m["horses"]["22"]["cup"] is None, str(m["horses"]["22"]))
     _check("names_rev in the model", m["names_rev"] == 1)
     _check("published once", q.qsize() == 1)
     _check("...with no events: names are not bets", m["events"] == [], str(m["events"]))
     _check("...and no log line: nothing about tokens moved", len(log_lines(log_dir)[1]) == n_lines)
-    done = b.store.scratch_replace(9, " Epic Ride ")
-    _check("scratch_replace returns was / now as typed", done == {"was": "Encino", "now": "Epic Ride"}, str(done))
-    b.apply_snapshot(picture)
+    # The renumber, the way the routes do it: the record goes into the store
+    # and the cup's new number arrives in the next snapshot.
+    done = b.store.scratch_replace(9, 22)
+    _check("scratch_replace returns was / now with the names as typed",
+           done == {"was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}, str(done))
+    _check("names_rev 2, the record on file", b.store.names_rev == 2 and b.store.scratches() == {9: 22})
+    _check("the record lookups", b.store.replacement_of(9) == 22 and b.store.replaced_by(22) == 9
+           and b.store.replacement_of(22) is None and b.store.replaced_by(9) is None
+           and b.store.active_number(9) == 22 and b.store.active_number(3) == 3)
+    wall.advance(1)
+    renumbered = snap(cups=[cup_entry(1, horse=22, count=12, online=True), cup_entry(2, horse=3, count=5, online=True)])
+    b.apply_snapshot(renumbered)
     m = b.model()
-    _check("horse 9: name EPIC RIDE, replaced ENCINO, tokens kept, not scratched at the gateway",
-           m["horses"]["9"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True,
-                                "cup": 1, "name": "EPIC RIDE", "replaced": "ENCINO"}, str(m["horses"]["9"]))
-    _check("scratches lists it, upper-cased", m["scratches"] == [{"horse": 9, "was": "ENCINO", "now": "EPIC RIDE"}])
+    _check("horse 22: cup 1 and its 12 tokens, OCELLI replacing ENCINO, in the field, not scratched at the gateway",
+           m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True,
+                                 "cup": 1, "name": "OCELLI", "replaced": "ENCINO", "in_field": True}, str(m["horses"]["22"]))
+    _check("horse 9: no cup, no tokens, out of the field, its name kept",
+           m["horses"]["9"] == {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
+                                "name": "ENCINO", "replaced": None, "in_field": False}, str(m["horses"]["9"]))
+    _check("scratches lists the record, upper-cased",
+           m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}], str(m["scratches"]))
     _check("the pot still counts the cup: 17, prizes 10 / 4 / 3", m["pot"] == 17.0 and m["total_tokens"] == 17
            and m["prizes"] == {"win": 10, "place": 4, "show": 3}, str((m["pot"], m["prizes"])))
-    _check("names_rev 2, still no events, still no log line",
-           m["names_rev"] == 2 and m["events"] == [] and len(log_lines(log_dir)[1]) == n_lines)
+    _check("names_rev 2 and NO events: the count came with the cup", m["names_rev"] == 2 and m["events"] == [], str(m["events"]))
+    _, lines = log_lines(log_dir)
+    _check("the log carries the cup marks, not a bet",
+           lines[-1]["changes"] == [{"horse": 9, "tokens": [12, 0], "cup": [1, None]},
+                                    {"horse": 22, "tokens": [0, 12], "cup": [None, 1]}] and "baseline" not in lines[-1], str(lines[-1]))
     wall.advance(1)
-    b.apply_snapshot(snap(cups=[cup_entry(1, horse=9, count=13, online=True), cup_entry(2, horse=3, count=5, online=True)]))
-    _check("a real drop after the scratch is still an event (same cup, same roster)",
-           b.model()["events"] == [{"horse": 9, "delta": 1, "ts": wall.t}], str(b.model()["events"]))
-    _check("a replacement of a horse with no name: was ''", b.store.scratch_replace(1, "Late Entry") == {"was": "", "now": "Late Entry"})
-    b.apply_snapshot(picture)
-    _check("...shows in scratches with was ''", {"horse": 1, "was": "", "now": "LATE ENTRY"} in b.model()["scratches"])
-    _check("unscratch_replace restores the name", b.store.unscratch_replace(9) is True
-           and b.store.horses()[9] == {"name": "Encino", "replaced": None})
-    _check("unscratch_replace with nothing to undo is False", b.store.unscratch_replace(9) is False)
-    b.store.unscratch_replace(1)
-    b.apply_snapshot(picture)
-    m = b.model()
-    _check("model back to ENCINO, no scratches", m["horses"]["9"]["name"] == "ENCINO"
-           and m["horses"]["9"]["replaced"] is None and m["scratches"] == [] and m["names_rev"] == 5)
-    for bad in ((0, "x"), (21, "x"), ("x", "x"), (9, ""), (9, "   "), (9, 5), (9, "x" * 81)):
+    renumbered = snap(cups=[cup_entry(1, horse=22, count=13, online=True), cup_entry(2, horse=3, count=5, online=True)])
+    b.apply_snapshot(renumbered)
+    _check("a real drop after the renumber is an event on 22 (same cup, same roster)",
+           b.model()["events"] == [{"horse": 22, "delta": 1, "ts": wall.t}], str(b.model()["events"]))
+    # What the records alone can refuse (the routes add what needs the bridge).
+    for bad, why in (((9, 23), "horse 9 is not in the field"), ((3, 22), "22 is in use"), ((3, 9), "9 is in use"),
+                     ((3, 3), "3 is in use"), ((0, 21), "not in 1-24"), ((25, 21), "not in 1-24"),
+                     (("x", 21), "must be a number 1-24"), ((3, 0), "not in 1-24"), ((3, 25), "not in 1-24"),
+                     ((3, "x"), "must be a number 1-24"), ((3, 21, 5), "must be a string"), ((3, 21, "x" * 81), "longer than 80")):
         try:
             b.store.scratch_replace(*bad)
-            _check(f"scratch_replace{bad!r:.30} rejected", False)
-        except ValueError:
-            _check(f"scratch_replace{bad!r:.30} rejected", True)
-    for bad in ({0: "x"}, {"21": "x"}, {9: 5}, {9: "x" * 81}):
+            _check(f"scratch_replace{bad!r:.30} rejected: {why}", False)
+        except ValueError as exc:
+            _check(f"scratch_replace{bad!r:.30} rejected: {why}", why in str(exc), str(exc))
+    for bad in ({0: "x"}, {"25": "x"}, {9: 5}, {9: "x" * 81}):
         try:
             b.store.set_names(bad)
             _check(f"set_names({bad!r:.30}) rejected", False)
         except ValueError:
             _check(f"set_names({bad!r:.30}) rejected", True)
-    _check("nothing was written by the rejected calls", b.store.names_rev == 5)
+    _check("nothing was written by the rejected calls", b.store.names_rev == 2 and b.store.scratches() == {9: 22})
+    # A replacement of a horse with no name, the name given to the record's now.
+    done = b.store.scratch_replace(1, 21, " Late Entry ")
+    _check("an unnamed horse replaced: was '', and the name given (stripped) becomes now's",
+           done == {"was": {"number": 1, "name": ""}, "now": {"number": 21, "name": "Late Entry"}}, str(done))
+    b.apply_snapshot(renumbered)
+    m = b.model()
+    _check("...first in scratches (ordered by was.number) with was ''",
+           m["scratches"][0] == {"was": {"number": 1, "name": ""}, "now": {"number": 21, "name": "LATE ENTRY"}}, str(m["scratches"]))
+    _check("21 is in the field with replaced '' (a record, an unnamed horse); 1 is out",
+           m["horses"]["21"]["in_field"] is True and m["horses"]["21"]["replaced"] == "" and m["horses"]["1"]["in_field"] is False)
+    _check("a replacement with an empty name keeps the stored one", b.store.unscratch_replace(1) == 21
+           and b.store.scratch_replace(1, 21, "")["now"] == {"number": 21, "name": "Late Entry"})
+    _check("unscratch_replace returns the now and removes the record", b.store.unscratch_replace(9) == 22
+           and b.store.scratches() == {1: 21} and b.store.names_rev == 6)
+    _check("unscratch_replace with nothing to undo is None, no bump", b.store.unscratch_replace(9) is None and b.store.names_rev == 6)
+    _check("22's name stays stored", b.store.horses()[22] == {"name": "Ocelli"})
+    b.store.unscratch_replace(1)
+    b.apply_snapshot(snap(cups=[cup_entry(1, horse=9, count=13, online=True), cup_entry(2, horse=3, count=5, online=True)]))
+    m = b.model()
+    _check("model back: ENCINO on cup 1 with the tokens and in the field, 22 out with no replaced, no scratches, names_rev 7",
+           m["horses"]["9"]["name"] == "ENCINO" and m["horses"]["9"]["cup"] == 1 and m["horses"]["9"]["tokens"] == 13
+           and m["horses"]["9"]["in_field"] is True and m["horses"]["22"]["in_field"] is False
+           and m["horses"]["22"]["replaced"] is None and m["scratches"] == [] and m["names_rev"] == 7, str(m["horses"]["9"]))
+    _check("...and the undo produced no event either (the cup moved back)", m["events"] == [{"horse": 22, "delta": 1, "ts": wall.t}],
+           str(m["events"]))
     # An injected store is used as given, and the empty model already carries its names.
     store = HorseStore()
     store.set_names({4: "Catching Freedom"})
@@ -1352,11 +1403,58 @@ def test_names_and_replacement_scratch_in_the_model():
            m["horses"]["4"]["name"] == "CATCHING FREEDOM" and m["closes_at"] == 1_700_000_900.0 and m["names_rev"] == 1)
 
 
+def test_in_field_rules():
+    _check("a plain field: 1-20 in, 21-24 out", [n for n in range(1, 25) if in_field(n, {})] == list(range(1, 21)))
+    _check("a replaced field: 9 out, 22 in, 21 still out", in_field(9, {9: 22}) is False and in_field(22, {9: 22}) is True
+           and in_field(21, {9: 22}) is False)
+    _check("a no-replacement scratch: 20 out, nobody in for it", in_field(20, {}, {20}) is False and in_field(19, {}, {20}) is True)
+    _check("a now that was scratched at the gateway is out", in_field(22, {9: 22}, {22}) is False)
+    _check("a chain: 22 out again, 23 in", in_field(22, {9: 22, 22: 23}) is False and in_field(23, {9: 22, 22: 23}) is True)
+    _check("the was wins over the 1-20 rule and over being a now", in_field(3, {3: 21}) is False and in_field(21, {3: 21, 21: 24}) is False)
+    # In the model, from the snapshot and the store together.
+    b, _, _ = fresh_board()
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=n, count=1) for n in range(1, 21)]))
+    m = b.model()
+    _check("model, plain field: 1-20 in_field true, 21-24 false",
+           [n for n in range(1, 25) if m["horses"][str(n)]["in_field"]] == list(range(1, 21)) and m["scratches"] == [])
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=n, count=1) for n in range(1, 21) if n != 15]))
+    _check("model: a horse on no cup is still in the field (1-20 rule)", b.model()["horses"]["15"]["in_field"] is True
+           and b.model()["horses"]["15"]["cup"] is None)
+    b.store.scratch_replace(9, 22)
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=(22 if n == 9 else n), count=1) for n in range(1, 21)]))
+    m = b.model()
+    _check("model, replaced field: 9 out, 22 in on cup 9", m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["in_field"] is True
+           and m["horses"]["22"]["cup"] == 9 and [n for n in range(1, 25) if m["horses"][str(n)]["in_field"]] == [n for n in range(1, 23) if n not in (9, 21)])
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=(22 if n == 9 else n), count=1, scratched=(n == 20)) for n in range(1, 21)]))
+    m = b.model()
+    _check("model, a gateway scratch on cup 20: 20 out, listed with now null after the record",
+           m["horses"]["20"]["in_field"] is False and m["horses"]["20"]["scratched"] is True
+           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}},
+                                  {"was": {"number": 20, "name": ""}, "now": None}], str(m["scratches"]))
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=(22 if n == 9 else n), count=1, scratched=(n == 9)) for n in range(1, 21)]))
+    m = b.model()
+    _check("model, the now itself scratched at the gateway: 22 out, one scratches entry (the record) for 9, one for 22",
+           m["horses"]["22"]["in_field"] is False
+           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}},
+                                  {"was": {"number": 22, "name": ""}, "now": None}], str(m["scratches"]))
+    b.apply_snapshot(snap(cups=[cup_entry(n, horse=(23 if n == 3 else n), count=1) for n in range(1, 21)]))
+    m = b.model()
+    _check("model, a cup carrying 23 with no record: 23 is not in the field (an also-eligible only stands in through a record), 3 still is",
+           m["horses"]["23"]["in_field"] is False and m["horses"]["23"]["cup"] == 3 and m["horses"]["3"]["in_field"] is True)
+
+
 def test_parse_names_text():
     names = parse_names_text(DERBY_TEXT)
     _check("20 prefixed lines -> 20 names", names == {n: name for n, name in enumerate(DERBY_2024, 1)}, str(names))
     plain = parse_names_text("\n".join(DERBY_2024))
     _check("20 plain lines -> post-position order", plain == names)
+    full = parse_names_text("\n".join(FIELD_24))
+    _check("24 plain lines -> 24 names, 21-24 the also-eligibles", full == {n: name for n, name in enumerate(FIELD_24, 1)}
+           and full[22] == "Ocelli", str(full))
+    _check("24 prefixed lines likewise", parse_names_text(FIELD_24_TEXT) == full)
+    _check("a '22.' prefix names the also-eligible; so do '#24' and '21)'",
+           parse_names_text("22. Ocelli") == {22: "Ocelli"} and parse_names_text("#24 X\n21) Y") == {24: "X", 21: "Y"})
+    _check("a 21st plain line is horse 21", parse_names_text("\n".join(DERBY_2024) + "\nMugatu")[21] == "Mugatu")
     mixed = parse_names_text("Dornoch\n\n#3 Mystik Dan\n7 Honor Marie\n5) Fierce\n6: Just A Touch\n20.Society Man\n  12 .  Track Phantom ")
     _check("line order, blank leaves alone, every punctuated prefix wins over line order, and in a list that is "
            "not consistently numbered a bare '7 Honor Marie' is line 4's name",
@@ -1377,11 +1475,11 @@ def test_parse_names_text():
     _check("a year is a name too", parse_names_text("2024 Derby") == {1: "2024 Derby"})
     _check("inner whitespace folded, ends stripped", parse_names_text("  Sierra   Leone  ") == {1: "Sierra Leone"})
     _check("empty text -> nothing to change", parse_names_text("") == {} and parse_names_text("\n\n") == {})
-    _check("blank lines past the 20th are fine", parse_names_text("\n".join(DERBY_2024) + "\n\n\n") == plain)
-    gap = "\n".join(name if n != 3 else "" for n, name in enumerate(DERBY_2024, 1))
-    _check("prefixed lines past the 20th are fine", parse_names_text(gap + "\n3. Mystik")[3] == "Mystik")
-    for bad, why in (("\n".join(DERBY_2024) + "\nExtra", "more than 20"), ("21. X", "not in 1-20"), ("0. X", "not in 1-20"),
-                     ("#0 X", "not in 1-20"), ("3. A\n3. B", "named twice"), ("A\n1. B", "named twice"),
+    _check("blank lines past the 24th are fine", parse_names_text("\n".join(FIELD_24) + "\n\n\n") == full)
+    gap = "\n".join(name if n != 3 else "" for n, name in enumerate(FIELD_24, 1))
+    _check("prefixed lines past the 24th are fine", parse_names_text(gap + "\n3. Mystik")[3] == "Mystik")
+    for bad, why in (("\n".join(FIELD_24) + "\nExtra", "more than 24"), ("25. X", "not in 1-24"), ("0. X", "not in 1-24"),
+                     ("#0 X", "not in 1-24"), ("3. A\n3. B", "named twice"), ("A\n1. B", "named twice"),
                      (5, "must be a string"), ("x" * 81, "longer than 80")):
         try:
             parse_names_text(bad)
@@ -1390,51 +1488,139 @@ def test_parse_names_text():
             _check(f"{bad!r:.30} -> ValueError {why}", why in str(exc), str(exc))
 
 
-def test_second_replacement_keeps_the_scratched_horse():
-    b, wall, log_dir = fresh_board()
-    picture = snap(cups=[cup_entry(1, horse=9, count=12, online=True)])
-    b.apply_snapshot(picture)
-    b.store.set_names({9: "Encino"})
-    done = b.store.scratch_replace(9, "Epic Ride")
-    _check("first replacement: was Encino", done == {"was": "Encino", "now": "Epic Ride"}, str(done))
-    done = b.store.scratch_replace(9, "Third Horse")
-    _check("second replacement: was is still Encino, the horse actually scratched",
-           done == {"was": "Encino", "now": "Third Horse"}, str(done))
-    _check("stored: name Third Horse, replaced Encino (Epic Ride never ran and is dropped)",
-           b.store.horses()[9] == {"name": "Third Horse", "replaced": "Encino"}, str(b.store.horses()[9]))
-    _check("names_rev bumped twice", b.store.names_rev == 3)
-    b.apply_snapshot(picture)
-    m = b.model()
-    _check("the chyron pair is ENCINO -> THIRD HORSE", m["scratches"] == [{"horse": 9, "was": "ENCINO", "now": "THIRD HORSE"}]
-           and m["horses"]["9"]["replaced"] == "ENCINO", str(m["scratches"]))
-    _check("undo goes straight back to Encino", b.store.unscratch_replace(9) is True
-           and b.store.horses()[9] == {"name": "Encino", "replaced": None})
-    _check("nothing left to undo", b.store.unscratch_replace(9) is False)
-    # An unnamed horse: "" marks it as replaced, and a second replacement keeps that "".
-    done = b.store.scratch_replace(3, "Late Entry")
-    _check("unnamed horse replaced: was ''", done == {"was": "", "now": "Late Entry"})
-    done = b.store.scratch_replace(3, "Later Entry")
-    _check("...and again: was '' still, so undo still works", done == {"was": "", "now": "Later Entry"}
-           and b.store.horses()[3] == {"name": "Later Entry", "replaced": ""})
-    _check("undo of an unnamed horse clears the name", b.store.unscratch_replace(3) is True
-           and b.store.horses()[3] == {"name": "", "replaced": None})
-    # Through the routes, on a real bridge and database.
-    br, port, sio, clk = _fresh_bridge()
-    br._open_port()
-    client = _make_board_app(br).test_client()
-    br.set_state(1, HORSES_1_TO_20, NO_SCR)
-    client.put("/api/quiniela/horses", json={"text": DERBY_TEXT})
-    client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": "Epic Ride"})
-    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": "Third Horse"})
-    body = r.get_json()
-    _check("POST scratch twice -> 200, was Encino both times", r.status_code == 200 and body["was"] == "Encino"
-           and body["now"] == "Third Horse" and body["names_rev"] == 3, str(body))
+def test_routes_scratch_rejections():
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    b.set_state(1, [0 if h == 15 else h for h in HORSES_1_TO_20], NO_SCR)     # cup 15 empty: 15 is in the field on no cup
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    port.written.clear()
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": "Epic Ride"})
+    _check("the old string shape -> 400 that says the shape",
+           r.status_code == 400 and r.get_json() == {"ok": False, "error": REPLACEMENT_SHAPE}, str(r.get_json()))
+    cases = ((({"horse": 9, "replacement": {"number": 3, "name": "X"}}), "3 is in use"),          # carried by cup 3
+             (({"horse": 9, "replacement": {"number": 15}}), "15 is in use"),                      # in the field, on no cup
+             (({"horse": 9, "replacement": {"number": 9}}), "9 is in use"),                        # N == H
+             (({"horse": 25, "replacement": {"number": 22}}), "horse must be a number 1-24"),
+             (({"horse": 21, "replacement": {"number": 22}}), "horse 21 is not in the field"),     # an also-eligible not standing in
+             (({"horse": 9, "replacement": {"number": 0}}), "replacement number must be 1-24"),
+             (({"horse": 9, "replacement": {"number": 25}}), "replacement number must be 1-24"),
+             (({"horse": 9, "replacement": {"number": "x"}}), "replacement number must be 1-24"),
+             (({"horse": 9, "replacement": {"number": True}}), REPLACEMENT_SHAPE),
+             (({"horse": 9, "replacement": {}}), REPLACEMENT_SHAPE),
+             (({"horse": 9, "replacement": 22}), REPLACEMENT_SHAPE),
+             (({"horse": 9, "replacement": [22]}), REPLACEMENT_SHAPE),
+             (({"horse": 9, "replacement": ""}), REPLACEMENT_SHAPE),
+             (({"horse": 9, "replacement": {"number": 22, "name": 5}}), "replacement name must be a string"),
+             (({"horse": 9, "replacement": {"number": 22, "name": "x" * 81}}), "replacement name longer than 80 characters"))
+    for body, why in cases:
+        r = client.post("/api/quiniela/scratch", json=body)
+        _check(f"{body!r:.62} -> 400 {why}", r.status_code == 400 and r.get_json() == {"ok": False, "error": why},
+               f"{r.status_code} {r.get_json()}")
+    _check("nothing reached the gateway, no record, names_rev untouched",
+           port.written == [] and get_board().store.scratches() == {} and get_board().store.names_rev == 1 and b.horses[9] == 9)
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    _check("9 -> 22 goes through", r.status_code == 200 and b.horses[9] == 22 and len(port.lines()) == 1)
+    b.set_state(1, b.get_snapshot() and [b.horses[c] for c in P.CUP_NUMBERS], [c == 20 for c in P.CUP_NUMBERS])   # cup 20 scratched at the gateway
+    port.written.clear()
+    for body, why in (({"horse": 9, "replacement": {"number": 23}}, "horse 9 is not in the field"),   # the was of a record
+                      ({"horse": 3, "replacement": {"number": 9}}, "9 is in use"),                     # the was of a record
+                      ({"horse": 3, "replacement": {"number": 22}}, "22 is in use"),                   # the now of a record
+                      ({"horse": 20, "replacement": {"number": 23}}, "horse 20 is not in the field"),  # scratched at the gateway
+                      ({"horse": 3, "replacement": {"number": 20}}, "20 is in use"),                   # carried by cup 20, scratched
+                      ({"horse": 9}, "horse 9 is not on any cup")):                                   # the gateway kind on a horse that left
+        r = client.post("/api/quiniela/scratch", json=body)
+        _check(f"{body!r:.62} -> 400 {why}", r.status_code == 400 and r.get_json() == {"ok": False, "error": why},
+               f"{r.status_code} {r.get_json()}")
+    _check("still nothing more to the gateway, the one record", port.written == [] and get_board().store.scratches() == {9: 22})
+    # A second also-eligible can stand in for another horse, and 22 (in the field) can itself be replaced.
+    r = client.post("/api/quiniela/scratch", json={"horse": 3, "replacement": {"number": 21}})
+    _check("3 -> 21: a second record, 21 unnamed", r.status_code == 200 and r.get_json()["now"] == {"number": 21, "name": "Mugatu"}
+           and get_board().store.scratches() == {9: 22, 3: 21}, str(r.get_json()))
+    r = client.post("/api/quiniela/scratch", json={"horse": 22, "replacement": {"number": 23}})
+    _check("22 -> 23: the cup that was 9 is 23 now, records chain", r.status_code == 200 and r.get_json()["cup"] == 9 and b.horses[9] == 23
+           and get_board().store.scratches() == {9: 22, 3: 21, 22: 23}, str(r.get_json()))
     m = client.get("/api/quiniela").get_json()
-    _check("model: THIRD HORSE replacing ENCINO", m["horses"]["9"] ["name"] == "THIRD HORSE"
-           and m["horses"]["9"]["replaced"] == "ENCINO" and m["scratches"] == [{"horse": 9, "was": "ENCINO", "now": "THIRD HORSE"}])
+    _check("the model: 9 and 22 out, 23 in on cup 9 replacing OCELLI, three scratches ordered by was",
+           m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["in_field"] is False and m["horses"]["23"]["in_field"] is True
+           and m["horses"]["23"]["cup"] == 9 and m["horses"]["23"]["replaced"] == "OCELLI"
+           and [s["was"]["number"] for s in m["scratches"]] == [3, 9, 20, 22], str(m["scratches"]))
+    _check("no free number left among 21-24 but 24", [n for n in range(21, 25) if not any(
+        n in (s["was"]["number"], (s["now"] or {}).get("number")) for s in m["scratches"])] == [24])
+    # A chain is undone last record first: with 22 -> 23 standing, dropping the 9 -> 22 record would leave the cup on 23
+    # with no record for it and 22 out of the field with no way back.
+    port.written.clear()
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
-    _check("unscratch restores Encino in one step", r.status_code == 200 and r.get_json()["name"] == "Encino"
-           and HorseStore(br.db).horses()[9] == {"name": "Encino", "replaced": None}, str(r.get_json()))
+    _check("undo 9 while 22 -> 23 stands -> 400 undo 22 first, nothing moved",
+           r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9: undo 22 first"} and port.written == []
+           and b.horses[9] == 23 and get_board().store.scratches() == {9: 22, 3: 21, 22: 23}, f"{r.status_code} {r.get_json()}")
+    r = client.post("/api/quiniela/unscratch", json={"horse": 22})
+    _check("undo 22 first: cup 9 back to 22", r.status_code == 200 and r.get_json()["cup"] == 9 and b.horses[9] == 22, str(r.get_json()))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("then undo 9: cup 9 back to 9, 3 -> 21 still stands", r.status_code == 200 and r.get_json()["cup"] == 9 and b.horses[9] == 9
+           and get_board().store.scratches() == {3: 21}, str(r.get_json()))
+
+
+def test_scratch_before_adoption_and_the_horse_command():
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    port.written.clear()
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    body = r.get_json()
+    _check("a scratch before any cup carries 9: recorded, cup null, nothing sent, no state made",
+           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": None, "names_rev": 2,
+                                             "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}
+           and port.written == [] and not b.has_state, str(body))
+    m = client.get("/api/quiniela").get_json()
+    _check("the model: 9 out, 22 in on no cup, the record listed",
+           m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["in_field"] is True and m["horses"]["22"]["cup"] is None
+           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}], str(m["scratches"]))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 1 9"})
+    body = r.get_json()
+    _check("horse 1 9 assigns 22 and says so", r.status_code == 200 and body["ok"] is True and body["horse"] == 22 and body["cup"] == 1
+           and body["note"] == "9 is scratched; cup assigned 22" and body["rev"] == 1, str(body))
+    _check("the line carries 22 on wire index 0, byte-exact", port.lines() == [state_line(1, 0, [22] + [0] * 19, NO_SCR_B)], str(port.lines()))
+    get_board().refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("the model: 22 on cup 1, 9 on none", m["horses"]["22"]["cup"] == 1 and m["horses"]["9"]["cup"] is None)
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 2 3"})
+    _check("an unscratched number is assigned as given, no note", r.get_json()["horse"] == 3 and "note" not in r.get_json(), str(r.get_json()))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 3 22"})
+    _check("22 itself can be named in the command (it is a plain number, not a was)", r.get_json()["horse"] == 22 and "note" not in r.get_json())
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 3 0"})
+    _check("horse 3 0 still unassigns, no note", r.get_json()["horse"] == 0 and "note" not in r.get_json() and b.horses[3] == 0)
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 1 24"})
+    _check("an also-eligible that is the now of no record is refused, cup 1 untouched",
+           r.status_code == 400 and r.get_json()["error"] == "24 is not in the field; scratch a horse with 24 as the replacement first"
+           and b.horses[1] == 22, str(r.get_json()))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 1 22"})
+    _check("...22, the now of a record, is accepted as given", r.status_code == 200 and r.get_json()["horse"] == 22 and b.horses[1] == 22)
+    n_lines = len(port.lines())
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    body = r.get_json()
+    _check("undo: cup 1 carries 22, so it goes back to 9 through set_state",
+           r.status_code == 200 and body["kind"] == "replacement" and body["cup"] == 1 and b.horses[1] == 9
+           and get_board().store.scratches() == {} and len(port.lines()) == n_lines + 1
+           and port.lines()[-1] == state_line(b.state_rev, 0, [9, 3] + [0] * 18, NO_SCR_B), str(body))
+    # A chain: 9 -> 22, then 22 -> 23. The horse command follows it to the end; undo walks back one step at a time.
+    client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22}})
+    r = client.post("/api/quiniela/scratch", json={"horse": 22, "replacement": {"number": 23, "name": "Epic Ride"}})
+    _check("9 -> 22 -> 23: cup 1 carries 23", r.status_code == 200 and r.get_json()["cup"] == 1 and b.horses[1] == 23, str(r.get_json()))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 4 9"})
+    _check("horse 4 9 follows the chain to 23", r.get_json()["horse"] == 23 and r.get_json()["note"] == "9 is scratched; cup assigned 23"
+           and b.horses[4] == 23, str(r.get_json()))
+    client.post("/api/quiniela/cmd", json={"cmd": "horse 4 0"})
+    r = client.post("/api/quiniela/unscratch", json={"horse": 22})
+    _check("undo 22: cup 1 back to 22", r.status_code == 200 and r.get_json()["cup"] == 1 and b.horses[1] == 22
+           and get_board().store.scratches() == {9: 22}, str(r.get_json()))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("undo 9: cup 1 back to 9, no records", r.status_code == 200 and r.get_json()["cup"] == 1 and b.horses[1] == 9
+           and get_board().store.scratches() == {}, str(r.get_json()))
+    _check("23's name stays stored", get_board().store.horses()[23] == {"name": "Epic Ride"})
+    r = client.post("/api/quiniela/unscratch", json={"horse": 22})
+    _check("nothing left to undo -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 22 is not scratched")
 
 
 def test_kind2_scratch_removes_tokens_from_the_pot():
@@ -1453,18 +1639,21 @@ def test_kind2_scratch_removes_tokens_from_the_pot():
     b.set_state(1, HORSES_1_TO_20, scr)                  # the gateway kind: the cup's scratched flag
     board.refresh()
     m = board.model()
-    _check("horse 9 scratched at the gateway", m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["tokens"] == 10)
+    _check("horse 9 scratched at the gateway, out of the field", m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["tokens"] == 10
+           and m["horses"]["9"]["in_field"] is False)
     _check("its tokens leave the pot: 5, prizes 3 / 1 / 1", m["pot"] == 5.0 and m["prizes"] == {"win": 3, "place": 1, "show": 1},
            str((m["pot"], m["prizes"])))
     _check("total_tokens still counts every cup: 15", m["total_tokens"] == 15)
     _check("share unchanged (of every cup)", m["horses"]["9"]["share"] == round(10 / 15, 4))
-    _check("a gateway scratch is not a replacement: no scratches entry, no name change, and names_rev (the "
+    _check("a gateway scratch is not a record: scratches carries {was, now: null}, no replaced, and names_rev (the "
            "names store's revision) stays put; the bridge's state rev is what moved",
-           m["scratches"] == [] and m["horses"]["9"]["replaced"] is None and m["names_rev"] == 0)
+           m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": None}] and m["horses"]["9"]["replaced"] is None
+           and m["names_rev"] == 0 and board.store.scratches() == {}, str(m["scratches"]))
     _check("no event for the scratch", m["events"] == [], str(m["events"]))
     b.set_state(1, HORSES_1_TO_20, NO_SCR)
     board.refresh()
-    _check("unscratched at the gateway: the pot is back", board.model()["pot"] == 15.0)
+    _check("unscratched at the gateway: the pot is back, 9 in the field, no scratches", board.model()["pot"] == 15.0
+           and board.model()["horses"]["9"]["in_field"] is True and board.model()["scratches"] == [])
 
 
 def test_reset_clears_closes_at_and_keeps_names():
@@ -1476,47 +1665,141 @@ def test_reset_clears_closes_at_and_keeps_names():
     b.handle_raw_line(telem(8, MAC_A, count=10))
     board.refresh()
     board.store.set_names({9: "Encino", 3: "Fierceness"})
-    board.store.scratch_replace(3, "Late Entry")
+    board.store.scratch_replace(3, 21, "Late Entry")
     board.store.set_closes_at(1_700_000_600.0)
     board.refresh()
     m = board.model()
-    _check("before the reset: names, a replacement, closes_at", m["horses"]["9"]["name"] == "ENCINO"
-           and m["scratches"] == [{"horse": 3, "was": "FIERCENESS", "now": "LATE ENTRY"}] and m["closes_at"] == 1_700_000_600.0)
+    record = {"was": {"number": 3, "name": "FIERCENESS"}, "now": {"number": 21, "name": "LATE ENTRY"}}
+    _check("before the reset: names, a record, closes_at", m["horses"]["9"]["name"] == "ENCINO"
+           and m["scratches"] == [record] and m["closes_at"] == 1_700_000_600.0, str(m["scratches"]))
     _check("persisted: a second store on the same db reads them", HorseStore(b.db).closes_at == 1_700_000_600.0
-           and HorseStore(b.db).horses()[9]["name"] == "Encino" and HorseStore(b.db).names_rev == 2)
+           and HorseStore(b.db).horses()[9]["name"] == "Encino" and HorseStore(b.db).names_rev == 2
+           and HorseStore(b.db).scratches() == {3: 21})
     b.reset_link("test")
     _check("reset_count moved", b.get_snapshot()["devpi"]["reset_count"] == 1)
     board.refresh()
     m = board.model()
     _check("after the reset: closes_at cleared", m["closes_at"] is None and board.store.closes_at is None)
     _check("...in the database too", HorseStore(b.db).closes_at is None)
-    _check("...names and the replacement stay, names_rev untouched", m["horses"]["9"]["name"] == "ENCINO"
-           and m["scratches"] == [{"horse": 3, "was": "FIERCENESS", "now": "LATE ENTRY"}] and m["names_rev"] == 2)
+    _check("...names and the record stay, names_rev untouched", m["horses"]["9"]["name"] == "ENCINO"
+           and m["scratches"] == [record] and m["names_rev"] == 2 and m["horses"]["21"]["in_field"] is True)
     _check("...PRE_RACE, no cups, no ghosts", m["race_state"] == 0 and m["events"] == [] and m["pot"] == 0.0)
     board.store.set_closes_at(1_700_000_900.0)
     board.refresh()
     _check("a second refresh without a reset keeps a new closes_at", board.model()["closes_at"] == 1_700_000_900.0)
-    # DevPi's database has the old four tables: check_shape passes and init_schema adds the two.
+    # DevPi's database has the old four tables: check_shape passes and init_schema adds the three.
     path = str(tmpdir() / "old.db")
     db = LqDb(path)
     db.init_schema()
-    db.conn.executescript("DROP TABLE lq_horses; DROP TABLE lq_board;")
+    db.conn.executescript("DROP TABLE lq_horses; DROP TABLE lq_scratches; DROP TABLE lq_board;")
     _check("check_shape() passes on a database without the new tables", db.check_shape() is None)
     db.init_schema()
-    _check("init_schema() adds them, empty", db.load_horses() == {} and db.load_board() == {"names_rev": 0, "closes_at": None})
-    db.save_horse(9, "Encino", None)
-    db.save_horse(9, "Epic Ride", "Encino")
+    _check("init_schema() adds them, empty", db.load_horses() == {} and db.load_scratches() == {}
+           and db.load_board() == {"names_rev": 0, "closes_at": None})
+    db.save_horse(9, "Encino")
+    db.save_horse(9, "Epic Ride")
     db.save_board(3, 12.5)
-    _check("save_horse upserts, save_board updates", db.load_horses() == {9: {"name": "Epic Ride", "replaced": "Encino"}}
+    _check("save_horse upserts, save_board updates", db.load_horses() == {9: {"name": "Epic Ride", "replaced": None}}
            and db.load_board() == {"names_rev": 3, "closes_at": 12.5})
-    _check("a store loads them", HorseStore(db).horses()[9] == {"name": "Epic Ride", "replaced": "Encino"}
+    _check("a store loads them", HorseStore(db).horses()[9] == {"name": "Epic Ride"}
            and HorseStore(db).names_rev == 3 and HorseStore(db).closes_at == 12.5)
-    db.conn.executescript("DROP TABLE lq_horses; DROP TABLE lq_board;")
+    db.conn.executescript("DROP TABLE lq_horses; DROP TABLE lq_scratches; DROP TABLE lq_board;")
     with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
         store = HorseStore(db)
     _check("a database without the tables leaves a memory-only store and one ERROR",
            store._db is None and len(cap.messages("cannot read")) == 1 and store.set_names({1: "x"}) is True)
     db.close()
+
+
+def test_lq_horses_migration_and_scratches_table():
+    """DevPi's la_subasta.db has lq_horses with CHECK (horse BETWEEN 1 AND 20)
+    from 275a64f; init_schema() rebuilds it for 1..24 and adds lq_scratches."""
+    path = str(tmpdir() / "devpi.db")
+    db = LqDb(path)
+    db.conn.executescript("""
+        CREATE TABLE lq_horses (
+            horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 20),
+            name     TEXT    NOT NULL DEFAULT '',
+            replaced TEXT
+        );
+        INSERT INTO lq_horses VALUES (9, 'Encino', NULL), (17, 'Fierceness', NULL), (3, 'Mystik Dan', 'Dornoch');
+        CREATE TABLE lq_board (
+            id        INTEGER PRIMARY KEY CHECK (id = 1),
+            names_rev INTEGER NOT NULL DEFAULT 0,
+            closes_at REAL
+        );
+        INSERT INTO lq_board VALUES (1, 4, NULL);
+    """)
+    try:
+        db.conn.execute("INSERT INTO lq_horses (horse, name) VALUES (22, 'Ocelli')")
+        _check("the old CHECK refuses horse 22", False)
+    except sqlite3.IntegrityError:
+        _check("the old CHECK refuses horse 22", True)
+    _check("check_shape() passes on the old table (it compares column names only)", db.check_shape() is None)
+    db.init_schema()
+    sql = db.query_one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lq_horses'")["sql"]
+    _check("init_schema() rebuilt lq_horses with the 1..24 CHECK", "BETWEEN 1 AND 24" in sql and "BETWEEN 1 AND 20" not in sql, sql)
+    _check("...rows kept, the legacy replaced value included",
+           db.load_horses() == {3: {"name": "Mystik Dan", "replaced": "Dornoch"}, 9: {"name": "Encino", "replaced": None},
+                                17: {"name": "Fierceness", "replaced": None}}, str(db.load_horses()))
+    _check("...lq_board untouched", db.load_board() == {"names_rev": 4, "closes_at": None})
+    _check("...no lq_horses_new left behind, lq_scratches created empty",
+           db.query_one("SELECT name FROM sqlite_master WHERE name = 'lq_horses_new'") is None and db.load_scratches() == {})
+    _check("check_shape() still passes", db.check_shape() is None)
+    db.save_horse(22, "Ocelli")
+    _check("horse 22 fits now", db.load_horses()[22] == {"name": "Ocelli", "replaced": None})
+    _check("a second init_schema() finds nothing to migrate and changes nothing",
+           db._migrate_lq_horses() is False and db.init_schema() is None and db.load_horses()[22]["name"] == "Ocelli"
+           and db.load_horses()[3]["replaced"] == "Dornoch")
+    # An lq_horses_new left by an interrupted run does not block the rebuild.
+    db.conn.executescript("CREATE TABLE lq_horses_new (x INTEGER); DROP TABLE lq_horses;"
+                          "CREATE TABLE lq_horses (horse INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 20), "
+                          "name TEXT NOT NULL DEFAULT '', replaced TEXT); INSERT INTO lq_horses VALUES (5, 'Catalytic', NULL);")
+    db.init_schema()
+    _check("a stale lq_horses_new is dropped and the rebuild goes through",
+           db.load_horses() == {5: {"name": "Catalytic", "replaced": None}} and db.query_one(
+               "SELECT name FROM sqlite_master WHERE name = 'lq_horses_new'") is None
+           and "BETWEEN 1 AND 24" in db.query_one("SELECT sql FROM sqlite_master WHERE name = 'lq_horses'")["sql"])
+    db.conn.execute("UPDATE lq_horses SET replaced = 'Dornoch' WHERE horse = 5")
+    # lq_scratches: one row per replacement record, was the key.
+    db.save_scratch(9, 22)
+    db.save_scratch(9, 23)
+    db.save_scratch(1, 21)
+    _check("save_scratch upserts on was", db.load_scratches() == {9: 23, 1: 21}, str(db.load_scratches()))
+    db.delete_scratch(9)
+    db.delete_scratch(9)
+    _check("delete_scratch removes, twice is fine", db.load_scratches() == {1: 21})
+    for bad in ((0, 21), (25, 21), (9, 0), (9, 25)):
+        try:
+            db.save_scratch(*bad)
+            _check(f"lq_scratches CHECK refuses {bad}", False)
+        except sqlite3.IntegrityError:
+            _check(f"lq_scratches CHECK refuses {bad}", True)
+    _check("...and nothing was written by them", db.load_scratches() == {1: 21})
+    # The legacy replaced column: one WARNING at load, the store ignores it, the next save clears it.
+    with capture_logs("la_quiniela.horses") as cap:
+        store = HorseStore(db)
+    _check("one WARNING for the legacy name-swap on horse 5",
+           cap.messages() == ["La Quiniela horses: legacy name-swap replacement on horse 5 ignored; "
+                              "scratch it again with a number"], str(cap.messages()))
+    _check("the store ignores it and loads the record from lq_scratches",
+           store.horses()[5] == {"name": "Catalytic"} and store.scratches() == {1: 21} and store.names_rev == 4)
+    store.set_names({5: "Catalytic II"})
+    _check("the next save of that horse writes replaced NULL", db.load_horses()[5] == {"name": "Catalytic II", "replaced": None})
+    with capture_logs("la_quiniela.horses") as cap:
+        HorseStore(db)
+    _check("...so the next load has nothing to warn about", cap.messages() == [], str(cap.messages()))
+    _check("a store without a database has no records", HorseStore().scratches() == {})
+    # A fresh database gets the new shape straight away; a wrong lq_scratches is reported like any other table.
+    db2 = LqDb(str(tmpdir() / "fresh.db"))
+    db2.init_schema()
+    _check("a fresh database: lq_horses 1..24, lq_scratches, check_shape passes",
+           "BETWEEN 1 AND 24" in db2.query_one("SELECT sql FROM sqlite_master WHERE name = 'lq_horses'")["sql"]
+           and db2.load_scratches() == {} and db2.check_shape() is None and db2._migrate_lq_horses() is False)
+    db2.conn.executescript("DROP TABLE lq_scratches; CREATE TABLE lq_scratches (was INTEGER, now INTEGER, extra TEXT);")
+    _check("a wrong-shaped lq_scratches is reported, never altered", (db2.check_shape() or "").startswith("table lq_scratches already exists"))
+    db.close()
+    db2.close()
 
 
 def test_routes_horses_get_and_put():
@@ -1525,14 +1808,23 @@ def test_routes_horses_get_and_put():
     client = _make_board_app(b).test_client()
     r = client.get("/api/quiniela/horses")
     _check("GET /api/quiniela/horses 200, no-store", r.status_code == 200 and r.headers.get("Cache-Control") == "no-store")
-    _check("20 entries, empty", r.get_json() == {str(n): {"name": "", "replaced": None} for n in range(1, 21)}, str(r.get_json()))
+    _check("24 entries, empty, name only", r.get_json() == {str(n): {"name": ""} for n in range(1, 25)}, str(r.get_json()))
     r = client.put("/api/quiniela/horses", json={"text": DERBY_TEXT})
     body = r.get_json()
     _check("PUT text -> ok, names_rev 1, horses as typed", r.status_code == 200 and body["ok"] is True and body["names_rev"] == 1
-           and body["horses"]["9"] == {"name": "Encino", "replaced": None} and body["horses"]["17"]["name"] == "Fierceness", str(body))
+           and body["horses"]["9"] == {"name": "Encino"} and body["horses"]["17"]["name"] == "Fierceness"
+           and body["horses"]["22"] == {"name": ""}, str(body))
     m = client.get("/api/quiniela").get_json()
     _check("the model follows synchronously, upper-cased", m["horses"]["9"]["name"] == "ENCINO" and m["names_rev"] == 1)
     _check("GET round trip as typed", client.get("/api/quiniela/horses").get_json() == body["horses"])
+    r = client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    h = r.get_json()["horses"]
+    _check("PUT 24 lines: the also-eligibles named, names_rev 2", r.status_code == 200 and r.get_json()["names_rev"] == 2
+           and h["21"]["name"] == "Mugatu" and h["22"]["name"] == "Ocelli" and h["24"]["name"] == "Society Girl", str(h))
+    r = client.put("/api/quiniela/horses", json={"text": "22. Ocelli II"})
+    _check("PUT a '22.' prefix names the also-eligible alone", r.status_code == 200 and r.get_json()["horses"]["22"] == {"name": "Ocelli II"}
+           and r.get_json()["horses"]["21"]["name"] == "Mugatu" and client.get("/api/quiniela").get_json()["horses"]["22"]["name"] == "OCELLI II")
+    client.put("/api/quiniela/horses", json={"text": DERBY_TEXT + "\n21.\n22.\n23.\n24."})
     r = client.put("/api/quiniela/horses", json={"text": "Dornoch\n\n#3 Mystik Dan II\n7 Honor Marie II\n5) Fierce\n6: Just A Touch\n20. Society Man II"})
     h = r.get_json()["horses"]
     _check("line order, blank line leaves horse 2, punctuated prefixes win over line order, and in this plain "
@@ -1540,56 +1832,112 @@ def test_routes_horses_get_and_put():
            and h["1"]["name"] == "Dornoch" and h["2"]["name"] == "Sierra Leone" and h["3"]["name"] == "Mystik Dan II"
            and h["4"]["name"] == "7 Honor Marie II" and h["7"]["name"] == "Honor Marie" and h["5"]["name"] == "Fierce"
            and h["6"]["name"] == "Just A Touch" and h["20"]["name"] == "Society Man II", str(h))
-    _check("names_rev 2", r.get_json()["names_rev"] == 2)
+    _check("names_rev 5", r.get_json()["names_rev"] == 5)
     r = client.put("/api/quiniela/horses", json={"text": "1. Dornoch"})
-    _check("an unchanged name does not bump names_rev", r.status_code == 200 and r.get_json()["names_rev"] == 2)
-    for bad, why in (({"text": "\n".join(DERBY_2024) + "\nExtra"}, "more than 20"), ({"text": "21. X"}, "not in 1-20"),
-                     ({"text": "0. X"}, "not in 1-20"), ({"text": 5}, "must be a string"), ({"1": {"nope": 1}}, "expected"),
-                     ({"1": "Dornoch"}, "expected"), ({"0": {"name": "x"}}, "not in 1-20"), ({"1": {"name": 5}}, "must be a string"),
-                     ({"1": {"name": "x", "replaced": 5}}, "must be a string")):
+    _check("an unchanged name does not bump names_rev", r.status_code == 200 and r.get_json()["names_rev"] == 5)
+    for bad, why in (({"text": "\n".join(FIELD_24) + "\nExtra"}, "more than 24"), ({"text": "25. X"}, "not in 1-24"),
+                     ({"text": "0. X"}, "not in 1-24"), ({"text": 5}, "must be a string"), ({"1": {"nope": 1}}, "expected"),
+                     ({"1": "Dornoch"}, "expected"), ({"0": {"name": "x"}}, "not in 1-24"), ({"25": {"name": "x"}}, "not in 1-24"),
+                     ({"1": {"name": 5}}, "must be a string")):
         r = client.put("/api/quiniela/horses", json=bad)
         _check(f"PUT {bad!r:.40} -> 400 {why}", r.status_code == 400 and r.get_json()["ok"] is False
                and why in r.get_json()["error"], f"{r.status_code} {r.get_json()}")
     r = client.put("/api/quiniela/horses", data="[]", content_type="application/json")
     _check("a non-object body -> 400", r.status_code == 400)
     _check("nothing changed by the 400s", client.get("/api/quiniela/horses").get_json() == h)
-    r = client.put("/api/quiniela/horses", json={"1": {"name": "Dornoch II", "replaced": "Dornoch"}, "2": {"name": "Sierra Leone"}})
-    _check("the dict shape: name required, replaced optional", r.status_code == 200
-           and r.get_json()["horses"]["1"] == {"name": "Dornoch II", "replaced": "Dornoch"}
-           and r.get_json()["horses"]["2"] == {"name": "Sierra Leone", "replaced": None}, str(r.get_json()))
+    r = client.put("/api/quiniela/horses", json={"1": {"name": "Dornoch II", "replaced": "Dornoch"}, "2": {"name": "Sierra Leone"},
+                                                 "23": {"name": "Epic Ride"}})
+    _check("the dict shape: name required, a legacy replaced key ignored, 1..24", r.status_code == 200
+           and r.get_json()["horses"]["1"] == {"name": "Dornoch II"} and r.get_json()["horses"]["2"] == {"name": "Sierra Leone"}
+           and r.get_json()["horses"]["23"] == {"name": "Epic Ride"}, str(r.get_json()))
     m = client.get("/api/quiniela").get_json()
-    _check("...and the model lists the replacement", m["scratches"] == [{"horse": 1, "was": "DORNOCH", "now": "DORNOCH II"}])
+    _check("...and the model lists no scratch for it (replaced is not settable)", m["scratches"] == [] and m["horses"]["1"]["replaced"] is None)
     r = client.put("/api/quiniela/horses", json={"1": {"name": "Dornoch", "replaced": None}})
-    _check("replaced null clears it", r.get_json()["horses"]["1"] == {"name": "Dornoch", "replaced": None}
+    _check("replaced null is ignored too", r.get_json()["horses"]["1"] == {"name": "Dornoch"}
            and client.get("/api/quiniela").get_json()["scratches"] == [])
-    _check("persisted on the bridge's database", HorseStore(b.db).horses()[3]["name"] == "Mystik Dan II")
+    _check("persisted on the bridge's database", HorseStore(b.db).horses()[3]["name"] == "Mystik Dan II"
+           and HorseStore(b.db).horses()[23] == {"name": "Epic Ride"})
 
 
 def test_routes_scratch_and_unscratch():
+    """The renumber on a real bridge, through the routes: 9 -> 22 keeps the
+    cup and its tokens under 22, produces no events, never moves the pot;
+    undo puts 9 back the same way. Then the gateway kind, as before."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    client = _make_board_app(b).test_client()
+    wall = FakeClock(1_700_000_000.0)
+    log_dir = tmpdir() / "logs"
+    client = _make_board_app(b, wall=wall, log_dir=log_dir).test_client()
     b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    b.handle_raw_line(telem(8, MAC_A, count=4))          # cup 9 -> horse 9
-    client.put("/api/quiniela/horses", json={"text": DERBY_TEXT})
+    b.handle_raw_line(telem(8, MAC_A, count=10))          # wire 8 -> cup 9 -> horse 9
+    b.handle_raw_line(telem(2, MAC_B, count=5))           # wire 2 -> cup 3 -> horse 3
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})     # refreshes: the baseline
+    wall.advance(1)
+    b.handle_raw_line(telem(8, MAC_A, count=12))          # a real bet on 9, so the ticker has something to keep
+    get_board().refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("before: 9 on cup 9 with 12 tokens, one event, pot 17, names_rev 1",
+           m["horses"]["9"]["cup"] == 9 and m["horses"]["9"]["tokens"] == 12 and m["events"] == [{"horse": 9, "delta": 2, "ts": wall.t}]
+           and m["pot"] == 17.0 and m["names_rev"] == 1, str((m["horses"]["9"], m["events"], m["pot"])))
+    events_before = m["events"]
     port.written.clear()
-    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": "Epic Ride"})
+    wall.advance(1)
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
     body = r.get_json()
-    _check("scratch with a replacement -> kind replacement", r.status_code == 200
-           and body == {"ok": True, "kind": "replacement", "horse": 9, "was": "Encino", "now": "Epic Ride", "names_rev": 2}, str(body))
-    _check("nothing went to the gateway", port.written == [])
+    _check("scratch 9 -> 22: kind replacement, cup 9, names_rev 2, names as typed",
+           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": 9, "names_rev": 2,
+                                             "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}, str(body))
+    horses = [22 if h == 9 else h for h in HORSES_1_TO_20]
+    _check("one state line went down with 22 on cup 9 (wire index 8), byte-exact",
+           port.lines() == [state_line(2, 1, horses, NO_SCR_B)], str(port.lines()))
+    _check("the bridge's cup 9 carries 22", b.horses[9] == 22)
     m = client.get("/api/quiniela").get_json()
-    _check("the model: EPIC RIDE replacing ENCINO, tokens kept, not scratched, pot 4",
-           m["horses"]["9"]["name"] == "EPIC RIDE" and m["horses"]["9"]["replaced"] == "ENCINO"
-           and m["horses"]["9"]["scratched"] is False and m["horses"]["9"]["tokens"] == 4 and m["pot"] == 4.0
-           and m["scratches"] == [{"horse": 9, "was": "ENCINO", "now": "EPIC RIDE"}], str(m["horses"]["9"]))
-    _check("no event", m["events"] == [], str(m["events"]))
+    _check("the model: 22 on cup 9 with the 12 tokens, in the field, OCELLI replacing ENCINO",
+           m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True, "cup": 9,
+                                 "name": "OCELLI", "replaced": "ENCINO", "in_field": True}, str(m["horses"]["22"]))
+    _check("9 left the field: no cup, 0 tokens, name kept",
+           m["horses"]["9"] == {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
+                                "name": "ENCINO", "replaced": None, "in_field": False}, str(m["horses"]["9"]))
+    _check("scratches carries the record", m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}])
+    _check("NO events: the ticker is exactly as before", m["events"] == events_before, str(m["events"]))
+    _check("the pot did not move: 17, total 17, prizes 10 / 4 / 3", m["pot"] == 17.0 and m["total_tokens"] == 17
+           and m["prizes"] == {"win": 10, "place": 4, "show": 3}, str((m["pot"], m["prizes"])))
+    _check("names_rev bumped once", m["names_rev"] == 2)
+    _, lines = log_lines(log_dir)
+    _check("the log: cup marks on both horses, not a bet, not a baseline",
+           lines[-1]["changes"] == [{"horse": 9, "tokens": [12, 0], "cup": [9, None]}, {"horse": 22, "tokens": [0, 12], "cup": [None, 9]}]
+           and "baseline" not in lines[-1], str(lines[-1]))
+    _check("persisted: the record and the name on the bridge's database",
+           HorseStore(b.db).scratches() == {9: 22} and HorseStore(b.db).horses()[22] == {"name": "Ocelli"})
+    wall.advance(1)
+    b.handle_raw_line(telem(8, MAC_A, count=13))
+    get_board().refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("a bet in the cup after the renumber is a bet on 22", m["events"][0] == {"horse": 22, "delta": 1, "ts": wall.t}
+           and m["horses"]["22"]["tokens"] == 13 and m["pot"] == 18.0, str(m["events"]))
+    events_before = m["events"]
+    # Undo.
+    wall.advance(1)
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
-    _check("unscratch undoes the replacement first", r.status_code == 200 and r.get_json()["kind"] == "replacement"
-           and r.get_json()["name"] == "Encino", str(r.get_json()))
+    body = r.get_json()
+    _check("unscratch 9: kind replacement, cup 9 back, names_rev 3",
+           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": 9, "names_rev": 3,
+                                             "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}, str(body))
+    _check("the line carries 9 on cup 9 again, byte-exact", port.lines()[-1] == state_line(3, 1, HORSES_1_TO_20, NO_SCR_B)
+           and len(port.lines()) == 2, str(port.lines()[-1]))
     m = client.get("/api/quiniela").get_json()
-    _check("the model: ENCINO back, no scratches", m["horses"]["9"]["name"] == "ENCINO" and m["scratches"] == [])
-    for body in ({"horse": 9}, {"horse": 9, "replacement": ""}, {"horse": 9, "replacement": None}, {"horse": "9", "replacement": "  "}):
+    _check("9 back on cup 9 with the 13 tokens, in the field", m["horses"]["9"]["cup"] == 9 and m["horses"]["9"]["tokens"] == 13
+           and m["horses"]["9"]["in_field"] is True and m["horses"]["9"]["replaced"] is None, str(m["horses"]["9"]))
+    _check("22 out of the field, no cup, no tokens, its name still stored",
+           m["horses"]["22"]["in_field"] is False and m["horses"]["22"]["cup"] is None and m["horses"]["22"]["tokens"] == 0
+           and m["horses"]["22"]["name"] == "OCELLI" and client.get("/api/quiniela/horses").get_json()["22"] == {"name": "Ocelli"})
+    _check("no events from the undo, pot still 18, no scratches", m["events"] == events_before and m["pot"] == 18.0 and m["scratches"] == [],
+           str(m["events"]))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("neither kind applies -> 400", r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9 is not scratched"})
+    # The gateway kind, exactly as before.
+    port.written.clear()
+    for body in ({"horse": 9}, {"horse": 9, "replacement": None}, {"horse": "9"}):
         r = client.post("/api/quiniela/scratch", json=body)
         got = r.get_json()
         _check(f"{body!r:.45} -> kind gateway on cup 9", r.status_code == 200 and got["ok"] is True and got["kind"] == "gateway"
@@ -1597,37 +1945,43 @@ def test_routes_scratch_and_unscratch():
     scr = [False] * 20
     scr[8] = True
     _check("one state line went down (the repeats were no-ops), byte-exact",
-           port.lines() == [state_line(2, 1, HORSES_1_TO_20, scr)], str(port.lines()))
+           port.lines() == [state_line(4, 1, HORSES_1_TO_20, scr)], str(port.lines()))
     m = client.get("/api/quiniela").get_json()
-    _check("the model: scratched, tokens out of the pot", m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["tokens"] == 4
-           and m["total_tokens"] == 4 and m["pot"] == 0.0 and m["prizes"] == {"win": 0, "place": 0, "show": 0})
+    _check("the model: scratched, out of the field, tokens out of the pot, a no-replacement entry in scratches",
+           m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["in_field"] is False and m["horses"]["9"]["tokens"] == 13
+           and m["total_tokens"] == 18 and m["pot"] == 5.0 and m["prizes"] == {"win": 3, "place": 1, "show": 1}
+           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": None}], str((m["pot"], m["scratches"])))
+    _check("names_rev untouched by the gateway kind, no events", m["names_rev"] == 3 and m["events"] == events_before)
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     got = r.get_json()
     _check("unscratch clears the gateway flag", r.status_code == 200 and got["kind"] == "gateway" and got["scratched"] is False
-           and got["rev"] == 3 and port.lines()[-1] == state_line(3, 1, HORSES_1_TO_20, [False] * 20), str(got))
-    _check("the pot is back", client.get("/api/quiniela").get_json()["pot"] == 4.0)
-    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
-    _check("neither kind applies -> 400", r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9 is not scratched"})
+           and got["rev"] == 5 and port.lines()[-1] == state_line(5, 1, HORSES_1_TO_20, [False] * 20), str(got))
+    m = client.get("/api/quiniela").get_json()
+    _check("the pot is back, 9 in the field, no scratches", m["pot"] == 18.0 and m["horses"]["9"]["in_field"] is True and m["scratches"] == [])
     b.set_state(1, [0 if h == 15 else h for h in HORSES_1_TO_20], NO_SCR)
     r = client.post("/api/quiniela/scratch", json={"horse": 15})
-    _check("a horse on no cup -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 15 is not on any cup")
-    r = client.post("/api/quiniela/scratch", json={"horse": 15, "replacement": "Sub"})
-    _check("...but a replacement scratch needs no cup", r.status_code == 200 and r.get_json()["kind"] == "replacement")
-    for bad in ({"horse": 0}, {"horse": 21}, {"horse": "x"}, {"horse": True}, {"horse": None}, {}, [], "x",
-                {"horse": 9, "replacement": 5}):
+    _check("the gateway kind on a horse on no cup -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 15 is not on any cup")
+    port.written.clear()
+    r = client.post("/api/quiniela/scratch", json={"horse": 15, "replacement": {"number": 21}})
+    _check("...but a replacement scratch needs no cup: recorded with cup null, nothing sent", r.status_code == 200
+           and r.get_json()["kind"] == "replacement" and r.get_json()["cup"] is None and port.written == [], str(r.get_json()))
+    m = client.get("/api/quiniela").get_json()
+    _check("...21 in the field on no cup, DOMESTIC PRODUCT as replaced, its own stored name",
+           m["horses"]["21"]["in_field"] is True and m["horses"]["21"]["cup"] is None and m["horses"]["21"]["replaced"] == "DOMESTIC PRODUCT"
+           and m["horses"]["21"]["name"] == "MUGATU" and m["horses"]["15"]["in_field"] is False, str(m["horses"]["21"]))
+    for bad in ({"horse": 0}, {"horse": 25}, {"horse": "x"}, {"horse": True}, {"horse": None}, {}, [], "x"):
         for path in ("/api/quiniela/scratch", "/api/quiniela/unscratch"):
-            if path.endswith("unscratch") and bad == {"horse": 9, "replacement": 5}:
-                continue
             r = client.post(path, json=bad)
             _check(f"POST {path[14:]} {bad!r:.30} -> 400", r.status_code == 400 and r.get_json()["ok"] is False, f"{r.status_code} {r.get_json()}")
     get_board().bridge = None
     r = client.post("/api/quiniela/scratch", json={"horse": 9})
     _check("gateway kind without a bridge -> 503", r.status_code == 503 and r.get_json()["error"] == "bridge not initialised")
-    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": "Epic Ride"})
-    _check("a replacement scratch needs no bridge", r.status_code == 200 and r.get_json()["kind"] == "replacement")
-    _check("...and the model followed without a bridge", client.get("/api/quiniela").get_json()["horses"]["9"]["name"] == "EPIC RIDE")
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    _check("a replacement scratch needs no bridge: recorded, cup null", r.status_code == 200 and r.get_json()["kind"] == "replacement"
+           and r.get_json()["cup"] is None, str(r.get_json()))
+    _check("...and the model followed without a bridge", client.get("/api/quiniela").get_json()["horses"]["22"]["replaced"] == "ENCINO")
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
-    _check("...and is undone without one", r.status_code == 200 and r.get_json()["kind"] == "replacement")
+    _check("...and is undone without one", r.status_code == 200 and r.get_json()["kind"] == "replacement" and r.get_json()["cup"] is None)
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     _check("nothing left to undo without a bridge -> 400", r.status_code == 400)
 
@@ -1670,6 +2024,12 @@ def test_admin_page():
                                                                 "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela")))
     _check("no CDN, no external script", "<script src=" not in html and "https://" not in html and "http://" not in html)
     _check("no race-state buttons", "/api/quiniela/cmd" not in html)
+    _check("24 name lines and the also-eligibles caption", 'rows="24"' in html and "also-eligibles" in html)
+    _check("a replacement number picker, a name box, No replacement and Undo",
+           all(s in html for s in ("<select", "data-repl-num", "data-repl-name", "data-norepl", "data-undo", "No replacement")))
+    _check("sends the replacement as {number, name}", "replacement = { number:" in html)
+    _check("Undo is withheld on a chained record, with the reason", '" \u00b7 undo #"' in html and "disabled" in html)
+    _check("reads in_field and scratches from the model", "in_field" in html and "scratches" in html)
     _check("well under 400 lines", html.count("\n") < 400, str(html.count("\n")))
 
 
@@ -1759,12 +2119,15 @@ def main():
     _run("payout — round_half_up and prizes_for", test_round_half_up_and_prizes)
     _run("payout — now is stamped at serialisation only", test_now_is_stamped_at_serialisation_only)
     _run("payout — names and a replacement scratch in the model", test_names_and_replacement_scratch_in_the_model)
+    _run("renumber — in_field: a plain field, a replaced field, a gateway scratch", test_in_field_rules)
     _run("payout — parse_names_text", test_parse_names_text)
-    _run("payout — a second replacement keeps the scratched horse", test_second_replacement_keeps_the_scratched_horse)
+    _run("renumber — POST /api/quiniela/scratch rejections", test_routes_scratch_rejections)
+    _run("renumber — a scratch before adoption and the horse command", test_scratch_before_adoption_and_the_horse_command)
     _run("payout — a gateway scratch takes its tokens out of the pot", test_kind2_scratch_removes_tokens_from_the_pot)
     _run("payout — reset clears closes_at, keeps names; the tables", test_reset_clears_closes_at_and_keeps_names)
+    _run("renumber — the lq_horses migration and the lq_scratches table", test_lq_horses_migration_and_scratches_table)
     _run("payout — GET/PUT /api/quiniela/horses", test_routes_horses_get_and_put)
-    _run("payout — POST /api/quiniela/scratch and /unscratch", test_routes_scratch_and_unscratch)
+    _run("renumber — POST /api/quiniela/scratch and /unscratch on a real bridge", test_routes_scratch_and_unscratch)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
     _run("settings — the payout keys", test_settings_new_keys)

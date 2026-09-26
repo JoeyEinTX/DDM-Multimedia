@@ -2,14 +2,15 @@
 #
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
-# cups, telemetry, events, lq_link_state, and the betting board's lq_horses
-# and lq_board. Raw sqlite3, like la_subasta/models.
+# cups, telemetry, events, lq_link_state, and the betting board's lq_horses,
+# lq_scratches and lq_board. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
 # Cup numbers in these tables are 1-based, the DevPi convention.
 
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -76,12 +77,24 @@ CREATE TABLE IF NOT EXISTS lq_link_state (
 );
 INSERT OR IGNORE INTO lq_link_state (id) VALUES (1);
 
--- The betting board's own rows (la_quiniela/horses.py): horse names, which
--- scratched horse a number now stands in for, and when betting closes.
+-- The betting board's own rows (la_quiniela/horses.py): horse names (1..20
+-- the field, 21..24 the also-eligibles; 24 is protocol.MAX_HORSE), the
+-- replacement scratches, and when betting closes. lq_horses.replaced is a
+-- legacy column from the name-swap replacement (kept NULL, never read for
+-- anything but a warning); a database created with CHECK (horse BETWEEN 1
+-- AND 20) is rebuilt by init_schema() (see _migrate_lq_horses).
 CREATE TABLE IF NOT EXISTS lq_horses (
-    horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 20),
+    horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 24),
     name     TEXT    NOT NULL DEFAULT '',
     replaced TEXT
+);
+
+-- One row per replacement scratch: horse `was` left the field and its cup
+-- now carries horse `now`. A no-replacement (gateway) scratch is the
+-- bridge's scratched flag and is never stored here.
+CREATE TABLE IF NOT EXISTS lq_scratches (
+    was INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
+    now INTEGER NOT NULL CHECK (now BETWEEN 1 AND 24)
 );
 
 CREATE TABLE IF NOT EXISTS lq_board (
@@ -102,8 +115,13 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "events": ["id", "ts", "type", "cup_id", "detail"],
     "lq_link_state": ["id", "state_rev", "state_json", "roster_rev", "roster_json"],
     "lq_horses": ["horse", "name", "replaced"],
+    "lq_scratches": ["was", "now"],
     "lq_board": ["id", "names_rev", "closes_at"],
 }
+
+# The CHECK the first lq_horses carried (horses 1..20). A table whose CREATE
+# statement still says so is rebuilt with the 1..24 CHECK.
+_OLD_HORSE_CHECK = re.compile(r"BETWEEN\s+1\s+AND\s+20\b", re.I)
 
 
 class LqDb:
@@ -138,8 +156,36 @@ class LqDb:
         return None
 
     def init_schema(self) -> None:
+        """Create the tables that are missing and migrate the one that
+        changed shape. Idempotent."""
         with self.lock:
+            self._migrate_lq_horses()
             self.conn.executescript(SCHEMA_SQL)
+
+    def _migrate_lq_horses(self) -> bool:
+        """lq_horses was created with CHECK (horse BETWEEN 1 AND 20) and is
+        live on DevPi with that CHECK. SQLite cannot alter a CHECK, so a table
+        whose CREATE statement still says 1 AND 20 is rebuilt (create the new
+        shape, copy the rows, drop, rename) in one transaction. Returns
+        whether it did. A second call finds the 1..24 CHECK and does nothing;
+        an lq_horses_new left by an interrupted run is dropped first."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lq_horses'").fetchone()
+        if row is None or not _OLD_HORSE_CHECK.search(row["sql"] or ""):
+            return False
+        with self.txn() as conn:
+            conn.execute("DROP TABLE IF EXISTS lq_horses_new")
+            conn.execute(
+                "CREATE TABLE lq_horses_new ("
+                "    horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 24),"
+                "    name     TEXT    NOT NULL DEFAULT '',"
+                "    replaced TEXT"
+                ")")
+            conn.execute("INSERT INTO lq_horses_new (horse, name, replaced) "
+                         "SELECT horse, name, replaced FROM lq_horses")
+            conn.execute("DROP TABLE lq_horses")
+            conn.execute("ALTER TABLE lq_horses_new RENAME TO lq_horses")
+        return True
 
     def close(self) -> None:
         with self.lock:
@@ -266,20 +312,38 @@ class LqDb:
             conn.execute("INSERT INTO events (ts, type, cup_id, detail) VALUES (?, ?, ?, ?)",
                          (ts, type_, cup_id, detail))
 
-    # -- betting board: horse names, replacements, closing time ---------------
+    # -- betting board: horse names, replacement scratches, closing time ------
 
     def load_horses(self) -> Dict[int, Dict[str, Optional[str]]]:
         """{horse: {"name": str, "replaced": str | None}} for every row present
-        (a horse never named has no row)."""
+        (a horse never named has no row). "replaced" is the legacy name-swap
+        column: the store only warns about a row that still has it set."""
         return {int(r["horse"]): {"name": r["name"] or "", "replaced": r["replaced"]}
                 for r in self.query("SELECT horse, name, replaced FROM lq_horses")}
 
-    def save_horse(self, horse: int, name: str, replaced: Optional[str]) -> None:
+    def save_horse(self, horse: int, name: str) -> None:
+        """Upsert the name. The legacy replaced column is written NULL."""
         with self.txn() as conn:
             conn.execute(
-                "INSERT INTO lq_horses (horse, name, replaced) VALUES (?, ?, ?) "
-                "ON CONFLICT(horse) DO UPDATE SET name = excluded.name, replaced = excluded.replaced",
-                (int(horse), name or "", replaced))
+                "INSERT INTO lq_horses (horse, name, replaced) VALUES (?, ?, NULL) "
+                "ON CONFLICT(horse) DO UPDATE SET name = excluded.name, replaced = NULL",
+                (int(horse), name or ""))
+
+    def load_scratches(self) -> Dict[int, int]:
+        """{was: now} for every replacement scratch on record."""
+        return {int(r["was"]): int(r["now"])
+                for r in self.query("SELECT was, now FROM lq_scratches")}
+
+    def save_scratch(self, was: int, now: int) -> None:
+        with self.txn() as conn:
+            conn.execute(
+                "INSERT INTO lq_scratches (was, now) VALUES (?, ?) "
+                "ON CONFLICT(was) DO UPDATE SET now = excluded.now",
+                (int(was), int(now)))
+
+    def delete_scratch(self, was: int) -> None:
+        with self.txn() as conn:
+            conn.execute("DELETE FROM lq_scratches WHERE was = ?", (int(was),))
 
     def load_board(self) -> Dict[str, Any]:
         row = self.query_one("SELECT names_rev, closes_at FROM lq_board WHERE id = 1")

@@ -23,8 +23,16 @@
 # cup, one from PLACE, one from SHOW, and each drawn token's owner takes that
 # cup's whole prize, a fixed fraction of the pot (prizes_for()). Nobody
 # splits anything and there are no odds; the only number per horse is how
-# many tokens are in its cup. Names, replacements and the closing time come
-# from the HorseStore (horses.py), never from the gateway.
+# many tokens are in its cup. Names, the replacement records and the closing
+# time come from the HorseStore (horses.py), never from the gateway.
+#
+# Horses are numbers 1..24 (protocol.MAX_HORSE): 1..20 the field, 21..24 the
+# also-eligibles. A replacement scratch is a renumber (The Puma, #9, out;
+# Ocelli in as #22, on the same cup): the model's in_field / replaced /
+# scratches come from the store's records plus the bridge's scratched flags,
+# and because the cup's tokens simply show up under the new number, the
+# same-cup rule below means a renumber produces no event and never changes
+# the pot.
 
 import json
 import logging
@@ -38,7 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from la_quiniela import protocol as P
-from la_quiniela.horses import HorseStore
+from la_quiniela.horses import HorseStore, in_field
 
 log = logging.getLogger("la_quiniela.betting")
 
@@ -49,7 +57,7 @@ log = logging.getLogger("la_quiniela.betting")
 BASE_DIR = Path(__file__).resolve().parent.parent          # pi5/
 LOG_DIR = BASE_DIR / "data"          # quiniela_YYYY-MM-DD.jsonl lives here (git-ignored)
 
-HORSE_COUNT = P.MAX_HORSE            # 20
+HORSE_COUNT = P.MAX_HORSE            # 24: the model's horses map is keyed "1".."24"
 MAX_EVENTS = 8                       # the "recent drops" ring the board shows
 SSE_HEARTBEAT_S = 5.0                # ping after this much silence
 SSE_QUEUE_SIZE = 32                  # per-subscriber queue; the oldest is dropped when full
@@ -269,8 +277,12 @@ def prizes_for(pot: Any, split: Dict[str, Any]) -> Dict[str, int]:
 # -----------------------------------------------------------------------------
 
 def _unassigned() -> Dict[str, Any]:
+    """A horse no cup carries. name / replaced / in_field are filled in by
+    _name_horses(): in_field is true for 1..20 unless scratched, so an
+    unassigned horse in the field still reads in_field true; 21..24 read
+    false until they stand in for someone."""
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None,
-            "name": "", "replaced": None}
+            "name": "", "replaced": None, "in_field": False}
 
 
 def _roster_rev_of(snap: Any) -> Optional[int]:
@@ -409,19 +421,36 @@ class BettingBoard:
 
     def _name_horses(self, horses: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]],
                                                                       List[Dict[str, Any]]]:
-        """Add the store's name / replaced (upper-cased) to every horse entry
-        and list the replacement scratches. Mutates and returns horses."""
-        scratches: List[Dict[str, Any]] = []
+        """Add what the store knows to every horse entry and list the
+        scratches. Mutates and returns horses.
+
+        name: the store's name, upper-cased ("" when unset). in_field: the
+        rule in horses.in_field(), from the store's records and the cups
+        the gateway has scratched: 1..20 true unless scratched either kind,
+        21..24 true only while standing in for a scratched horse. replaced:
+        the upper-cased name of the horse n stands in for (the "was" of the
+        record whose "now" is n), else None. scratches: one entry per
+        scratch ordered by was.number, {"was": {"number", "name"}, "now":
+        {"number", "name"}} for a replacement record and {"was": {...},
+        "now": None} for a cup scratched at the gateway with no record;
+        names upper-cased, "" when unnamed."""
         names = self.store.horses()
+        records = self.store.scratches()
+        gateway = {n for n in range(1, HORSE_COUNT + 1) if horses[str(n)]["scratched"]}
+        by_now = {now: was for was, now in records.items()}
+
+        def named(n: int) -> Dict[str, Any]:
+            return {"number": n, "name": ((names.get(n) or {}).get("name") or "").upper()}
+
         for n in range(1, HORSE_COUNT + 1):
-            entry = names.get(n) or {}
-            name = (entry.get("name") or "").upper()
-            replaced = entry.get("replaced")
-            replaced = replaced.upper() if isinstance(replaced, str) else None
-            horses[str(n)]["name"] = name
-            horses[str(n)]["replaced"] = replaced
-            if replaced is not None:
-                scratches.append({"horse": n, "was": replaced, "now": name})
+            entry = horses[str(n)]
+            entry["name"] = named(n)["name"]
+            entry["replaced"] = named(by_now[n])["name"] if n in by_now else None
+            entry["in_field"] = in_field(n, records, gateway)
+        scratches: List[Dict[str, Any]] = []
+        for was in sorted(set(records) | gateway):
+            now = records.get(was)
+            scratches.append({"was": named(was), "now": named(now) if now is not None else None})
         return horses, scratches
 
     def model(self) -> Dict[str, Any]:
@@ -446,7 +475,7 @@ class BettingBoard:
         """Turn one bridge snapshot into (horses, race_state, total_tokens,
         link_ok).
 
-        Every horse 1..20 gets an entry. A cup claims a horse through its
+        Every horse 1..24 gets an entry. A cup claims a horse through its
         "horse" field; two cups claiming the same horse keep the lowest cup
         number, with one WARNING per (horse, kept, dup). Missing or odd
         fields never raise.
@@ -520,7 +549,11 @@ class BettingBoard:
         events list is cleared rather than filled with ghost removals. Likewise
         a horse re-mapped to another cup (or unassigned) gets no event for the
         count that came with the cup. A real removal (a token lifted out of a
-        cup, same cup, same roster) is still a negative event.
+        cup, same cup, same roster) is still a negative event. A replacement
+        scratch is exactly such a re-mapping (horse 9 goes cup 1 -> None and
+        horse 22 None -> cup 1, tokens along), so a renumber yields no event,
+        does not touch the baseline, and other horses' bets in the same
+        snapshot still count.
 
         The log tells the two apart from bets: a reset is written as a
         baseline record even when nothing else moved, and a count that came
@@ -569,7 +602,11 @@ class BettingBoard:
                     # a horse moved to another cup (or unassigned) brings that
                     # cup's count with it, which is not a token moving. Outside
                     # a baseline record (flagged as a whole) the log entry says
-                    # so, or a replay would read the jump as a bet.
+                    # so, or a replay would read the jump as a bet. The one
+                    # blind spot: a token that lands in a renumbered cup in the
+                    # very snapshot that carries the renumber is counted (count,
+                    # pot, log) but not tickered, because on that horse the
+                    # count change is also a cup move.
                     moved = before["cup"] != after["cup"]
                     if moved and not fresh:
                         change["cup"] = [before["cup"], after["cup"]]
@@ -597,7 +634,8 @@ class BettingBoard:
             # The pot is what the prizes are drawn from: a cup scratched at
             # the gateway (no replacement) is out of the game and its tokens
             # are refunded by hand, so they leave the pot; total_tokens still
-            # counts every cup. A replacement scratch keeps the cup counting.
+            # counts every cup. A replacement scratch keeps the cup counting
+            # under its new number, so a renumber never changes the pot.
             live = sum(h["tokens"] for h in horses.values() if not h["scratched"])
             pot = round(live * token_value, 2)
             split = self._split()

@@ -12,12 +12,13 @@
          font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   h1 { font-size: 22px; margin: 4px 0 12px; color: var(--gold); letter-spacing: .04em; }
   h2 { font-size: 18px; margin: 0 0 10px; color: var(--gold); }
+  h3 { font-size: 16px; margin: 18px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
             padding: 14px; margin-bottom: 14px; }
-  textarea, input[type=text], input[type=datetime-local] {
+  textarea, input[type=text], input[type=datetime-local], select {
     width: 100%; font: inherit; color: var(--fg); background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 48px; }
-  textarea { min-height: 420px; font-family: ui-monospace, Consolas, monospace; font-size: 16px; }
+  textarea { min-height: 500px; font-family: ui-monospace, Consolas, monospace; font-size: 16px; }
   button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 16px; border-radius: 10px;
            border: 1px solid var(--line); background: #2c2c22; color: var(--fg); cursor: pointer; }
   button.primary { background: var(--green); border-color: var(--green); }
@@ -31,13 +32,15 @@
            padding: 10px 0; border-top: 1px solid var(--line); }
   .horse:first-of-type { border-top: 0; }
   .num { font-size: 24px; font-weight: 800; color: var(--gold); text-align: center; }
+  .num.ae { color: var(--dim); }
   .name { font-weight: 600; min-height: 1.3em; }
   .note { color: var(--dim); font-size: 14px; }
   .note.scr { color: var(--rose); }
-  .controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-  .controls label { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center;
-                    color: var(--dim); min-height: 40px; }
+  .controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; gap: 8px; }   /* one column: at half width the picker clipped "#21 GREAT WHITE" on a phone */
+  .controls label { display: flex; gap: 10px; align-items: center; color: var(--dim); min-height: 40px; }
   .controls input[type=checkbox] { width: 24px; height: 24px; }
+  .undo { grid-column: 2; justify-self: start; }
+  .empty { color: var(--dim); padding: 6px 0; }
   #statusline { font-size: 16px; line-height: 1.6; }
   #statusline b { color: var(--gold); }
   .pill { display: inline-block; padding: 0 8px; border-radius: 999px; background: #2c2c22; margin-right: 6px; }
@@ -54,9 +57,10 @@
 
 <section id="names">
   <h2>Horse names</h2>
-  <p class="note">One per line in post-position order. A leading <code>7.</code> names that horse;
-     a blank line leaves it alone.</p>
-  <textarea id="names-text" rows="20" spellcheck="false"></textarea>
+  <p class="note">One per line in program order. A leading <code>7.</code> names that horse;
+     a blank line leaves it alone. <b>Lines 21–24 are the also-eligibles</b>: name them ahead
+     of time; they join the field only when they replace a scratched horse.</p>
+  <textarea id="names-text" rows="24" spellcheck="false"></textarea>
   <div class="row">
     <button id="names-reload">Reload</button>
     <button id="names-save" class="primary">Save names</button>
@@ -66,9 +70,14 @@
 
 <section id="scratches">
   <h2>Scratches</h2>
-  <p class="note">With a replacement the number stays live and its cup keeps counting.
-     <b>No replacement</b> scratches the cup at the gateway and takes its tokens out of the pot.</p>
+  <p class="note">A scratched horse is replaced <b>by number</b>, as at Churchill: pick the number
+     that draws in (one of 21–24 not yet used) and its cup becomes that number, tokens and all. Nothing moves on
+     the mantle. Tick <b>No replacement</b> to scratch the cup at the gateway instead; its tokens
+     leave the pot.</p>
+  <h3>In the field</h3>
   <div id="scratch-list"></div>
+  <h3>Scratched</h3>
+  <div id="scratched-list"></div>
   <div id="scratch-status" class="status"></div>
 </section>
 
@@ -91,6 +100,7 @@
 <script>
 (function () {
   "use strict";
+  var HORSES = 24, FIELD = 20;
   var $ = function (id) { return document.getElementById(id); };
   var model = null, horses = {};
 
@@ -116,6 +126,8 @@
   function money(n) { return "$" + Math.round(Number(n) || 0); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function storedName(n) { return (horses[n] && horses[n].name) || ""; }
+  function label(n) { var s = storedName(n); return "#" + n + (s ? " " + s.toUpperCase() : ""); }
 
   // ---- status line ---------------------------------------------------------
   function renderStatus() {
@@ -141,7 +153,7 @@
   // ---- names -----------------------------------------------------------------
   function namesText() {
     var lines = [], n;
-    for (n = 1; n <= 20; n++) { lines.push(n + ". " + ((horses[n] && horses[n].name) || "")); }
+    for (n = 1; n <= HORSES; n++) { lines.push(n + ". " + storedName(n)); }
     return lines.join("\n");
   }
   function loadHorses() {
@@ -162,81 +174,138 @@
   };
 
   // ---- scratches -------------------------------------------------------------
-  // The rows are rebuilt with innerHTML, which would wipe a replacement name
-  // being typed and a ticked "No replacement" box. So the 5 s refresh only
-  // rebuilds when what the rows show (names, replacements, gateway flags)
-  // actually changed, never while the operator is in the list, and whatever
-  // was typed or ticked is carried over into the new rows. An explicit
-  // reload (after Save, Scratch or Undo) always rebuilds.
+  // Two lists from the model: a row per horse in the field (in_field), with
+  // the replacement number to pick and the name to give it, and a row per
+  // scratched horse (the model's scratches: a record, or a cup scratched at
+  // the gateway) with Undo. The rows are rebuilt with innerHTML, which would
+  // wipe a number being picked, a name being typed and a ticked "No
+  // replacement" box. So the 5 s refresh only rebuilds when what the rows
+  // show (names, who is in the field, cups, scratches) actually changed,
+  // never while the operator is in the list, and whatever was picked, typed
+  // or ticked is carried over into the new rows. An explicit reload (after
+  // Save, Scratch or Undo) always rebuilds.
   var scratchKey = null;
+  function horseState(n) { return (model && model.horses && model.horses[n]) || {}; }
   function scratchSignature() {
     var flags = [], n, m;
-    for (n = 1; n <= 20; n++) { m = (model && model.horses && model.horses[n]) || {}; flags.push(m.scratched ? 1 : 0); }
-    return JSON.stringify([horses, flags]);
+    for (n = 1; n <= HORSES; n++) { m = horseState(n); flags.push([m.in_field ? 1 : 0, m.scratched ? 1 : 0, m.cup == null ? 0 : m.cup]); }
+    return JSON.stringify([horses, flags, (model && model.scratches) || []]);
+  }
+  // A number nobody has: no cup carries it, it is not in the field, and it
+  // is not the was or now of any scratch. Only an also-eligible can be one:
+  // a 1-20 number is either in the field or scratched (the was of an entry),
+  // and the route refuses it either way ("15 is in use").
+  function unusedNumbers() {
+    var used = {}, out = [], n, m;
+    for (n = 1; n <= HORSES; n++) { m = horseState(n); if (m.cup != null || m.in_field) { used[n] = true; } }
+    ((model && model.scratches) || []).forEach(function (s) {
+      if (s.was) { used[s.was.number] = true; }
+      if (s.now) { used[s.now.number] = true; }
+    });
+    for (n = FIELD + 1; n <= HORSES; n++) { if (!used[n]) { out.push(n); } }
+    return out;
   }
   function renderScratches(force) {
-    var list = $("scratch-list"), key = scratchSignature();
+    var list = $("scratch-list"), done = $("scratched-list"), key = scratchSignature();
     if (!force) {
       if (key === scratchKey) { return; }
-      if (list.contains(document.activeElement)) { return; }     // mid-typing: next tick
+      if (list.contains(document.activeElement) || done.contains(document.activeElement)) { return; }     // mid-typing: next tick
     }
     var saved = {};
     Array.prototype.forEach.call(list.querySelectorAll(".horse"), function (row) {
-      var r = row.querySelector("[data-repl]"), c = row.querySelector("[data-norepl]");
-      if ((r && r.value) || (c && c.checked)) {
-        saved[row.getAttribute("data-horse")] = { repl: r ? r.value : "", norepl: !!(c && c.checked) };
-      }
+      var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]"), c = row.querySelector("[data-norepl]");
+      saved[row.getAttribute("data-horse")] = { num: s ? s.value : "", name: r ? r.value : "", norepl: !!(c && c.checked) };
     });
-    buildScratches(list);
+    buildScratches(list, done);
     scratchKey = key;
     Object.keys(saved).forEach(function (n) {
       var row = list.querySelector('.horse[data-horse="' + n + '"]');
-      if (!row || row.querySelector("[data-undo]")) { return; }   // just scratched: nothing left to type
-      row.querySelector("[data-repl]").value = saved[n].repl;
+      if (!row) { return; }                                          // just scratched: nothing left to carry
+      var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]");
+      var kept = !!(saved[n].num && s.querySelector('option[value="' + saved[n].num + '"]'));
+      if (kept) { s.value = saved[n].num; }
+      // The name comes over with its pick, or when it was typed (not the old
+      // pick's prefill); otherwise the row keeps the prefill for the new first
+      // free number, so a Scratch cannot name it after the number that is gone.
+      if (kept || saved[n].name !== storedName(Number(saved[n].num))) { r.value = saved[n].name; }
       row.querySelector("[data-norepl]").checked = saved[n].norepl;
     });
   }
-  function buildScratches(list) {
-    var html = "", n, h, m, note;
-    for (n = 1; n <= 20; n++) {
-      h = horses[n] || { name: "", replaced: null };
-      m = (model && model.horses && model.horses[n]) || {};
-      note = m.scratched ? '<div class="note scr">SCRATCHED at the gateway (tokens out of the pot)</div>'
-           : h.replaced != null ? '<div class="note scr">replaces ' + esc(h.replaced || "(unnamed)") + "</div>" : "";
+  function optionsHtml(free) {
+    if (!free.length) { return '<option value="">(no free number)</option>'; }
+    return free.map(function (n) { return '<option value="' + n + '">' + esc(label(n)) + "</option>"; }).join("");
+  }
+  function buildScratches(list, done) {
+    var html = "", n, m, free = unusedNumbers(), first = free.length ? free[0] : null;
+    for (n = 1; n <= HORSES; n++) {
+      m = horseState(n);
+      if (!m.in_field) { continue; }
       html += '<div class="horse" data-horse="' + n + '">' +
-        '<div class="num">' + n + "</div>" +
-        '<div><div class="name">' + esc(h.name || "(no name)") + "</div>" + note + "</div>" +
+        '<div class="num' + (n > FIELD ? " ae" : "") + '">' + n + "</div>" +
+        '<div><div class="name">' + esc(storedName(n) || "(no name)") + "</div>" +
+          '<div class="note">' + (m.cup == null ? "no cup yet" : "cup " + m.cup) +
+          (m.replaced != null ? " · replaces " + esc(m.replaced || "(unnamed)") : "") + "</div></div>" +
         '<div class="controls">' +
-          '<input type="text" placeholder="Replacement name" data-repl>' +
-          (m.scratched || h.replaced != null
-            ? '<button data-undo>Undo</button>'
-            : '<button class="danger" data-scratch>Scratch</button>') +
+          '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
+          '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">' +
+          '<button class="danger" data-scratch>Scratch</button>' +
           '<label><input type="checkbox" data-norepl> No replacement (scratch the cup at the gateway)</label>' +
         "</div></div>";
     }
-    list.innerHTML = html;
+    list.innerHTML = html || '<div class="empty">nobody in the field</div>';
+    html = "";
+    var scratches = (model && model.scratches) || [];
+    scratches.forEach(function (s) {
+      var was = s.was || {}, now = s.now;
+      // A chain (9 -> 22, then 22 -> 23) is undone last record first; the
+      // route refuses the other order, so the button is withheld with the reason.
+      var chained = !!now && scratches.some(function (o) { return o.was && o.now && o.was.number === now.number; });
+      html += '<div class="horse" data-horse="' + was.number + '">' +
+        '<div class="num' + (was.number > FIELD ? " ae" : "") + '">' + was.number + "</div>" +
+        '<div><div class="name">' + esc(was.name || "(no name)") + "</div>" +
+          '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") +
+                                            (chained ? " · undo #" + now.number + " first" : "")
+                                          : "no replacement: cup scratched at the gateway, tokens out of the pot") + "</div></div>" +
+        '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
+        "</div>";
+    });
+    done.innerHTML = html || '<div class="empty">no scratches</div>';
   }
-  $("scratch-list").addEventListener("click", function (ev) {
+  $("scratch-list").addEventListener("change", function (ev) {
+    var sel = ev.target.closest("[data-repl-num]"); if (!sel) { return; }
+    sel.closest(".horse").querySelector("[data-repl-name]").value = storedName(Number(sel.value));
+  });
+  function onScratchClick(ev) {
     var btn = ev.target.closest("button"); if (!btn) { return; }
     var row = btn.closest(".horse"), horse = Number(row.getAttribute("data-horse"));
-    var body = { horse: horse }, path;
+    var body = { horse: horse }, path, what;
     if (btn.hasAttribute("data-undo")) {
       path = "/api/quiniela/unscratch";
     } else {
       path = "/api/quiniela/scratch";
-      var repl = row.querySelector("[data-repl]").value.trim();
+      var num = row.querySelector("[data-repl-num]").value;
+      var name = row.querySelector("[data-repl-name]").value.trim();
       var norepl = row.querySelector("[data-norepl]").checked;
-      if (!norepl && !repl) { say("scratch-status", "type a replacement name, or tick No replacement", "err"); return; }
-      if (!norepl) { body.replacement = repl; }
+      if (!norepl && !num) { say("scratch-status", "no free number: tick No replacement", "err"); return; }
+      if (!norepl) { body.replacement = { number: Number(num), name: name }; }
     }
     say("scratch-status", "working…");
     api("POST", path, body).then(function (r) {
       if (!r.ok) { say("scratch-status", r.body.error || "error " + r.status, "err"); return; }
-      say("scratch-status", "horse " + horse + ": " + (r.body.kind === "gateway" ? "gateway scratch " + (r.body.scratched ? "set" : "cleared")
-                                                       : "replacement " + (path.indexOf("unscratch") >= 0 ? "undone" : "saved")), "ok");
+      if (r.body.kind === "gateway") {
+        what = "horse " + horse + ": gateway scratch " + (r.body.scratched ? "set" : "cleared");
+      } else if (path.indexOf("unscratch") >= 0) {
+        what = "horse " + horse + " is back; #" + r.body.now.number + " out of the field";
+      } else {
+        what = "#" + horse + " scratched; " + (r.body.cup == null ? "no cup yet" : "cup " + r.body.cup) +
+               " is now #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
+      }
+      say("scratch-status", what, "ok");
       return loadHorses().then(function () { return loadModel(true); });
     }).catch(fail("scratch-status"));
-  });
+  }
+  $("scratch-list").addEventListener("click", onScratchClick);
+  $("scratched-list").addEventListener("click", onScratchClick);
 
   // ---- betting closes ----------------------------------------------------------
   function localInputValue(epoch) {

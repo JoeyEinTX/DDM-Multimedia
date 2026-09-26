@@ -18,7 +18,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 LINE_PROTO_VERSION = 1            # the "v" the gateway reports in its hello line
 NUM_CUPS = 20                     # DDM_MAX_CUPS in ddm_common.h
 MAX_LINE_BYTES = 1024             # both directions, excluding the newline
-MAX_HORSE = 20                    # horse numbers 1..20, 0 = unassigned
+MAX_HORSE = 24                    # horse numbers 1..24, 0 = unassigned; mirrors DDM_MAX_HORSE in ddm_common.h
+                                  # (1..20 the field, 21..24 the also-eligibles; test_smoke pins the two together)
 CUP_NUMBERS = tuple(range(1, NUM_CUPS + 1))   # 1..20: the DevPi side
 WIRE_IDS = tuple(range(NUM_CUPS))             # 0..19: the gateway side
 BROADCAST_MAC = "FF:FF:FF:FF:FF:FF"
