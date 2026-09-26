@@ -205,6 +205,13 @@ Cloth cloth(uint8_t n) {
     case 18: return { RGB(0x22,0x8B,0x22), RGB(0xFF,0xCD,0x00) };
     case 19: return { RGB(0x00,0x00,0x8B), RGB(0xE3,0x18,0x37) };
     case 20: return { RGB(0xFF,0x00,0xFF), RGB(0xFF,0xCD,0x00) };
+    // 21..24: the also-eligibles, which keep their program number when they
+    // draw in (DDM_MAX_HORSE). Placeholder cloths, the same as the board's;
+    // change here and in splash_display/static/js/quiniela_board.js together.
+    case 21: return { RGB(0xFF,0xDA,0xB9), C_BLACK };
+    case 22: return { RGB(0x00,0x80,0x80), C_WHITE };
+    case 23: return { RGB(0x80,0x80,0x00), C_WHITE };
+    case 24: return { RGB(0x2F,0x4F,0x4F), C_WHITE };
     default: return { RGB(0x80,0x80,0x80), C_WHITE };
   }
 }

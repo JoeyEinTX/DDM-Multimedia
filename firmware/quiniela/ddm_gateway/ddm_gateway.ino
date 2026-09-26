@@ -652,7 +652,7 @@ static void printHelp() {
   textf("Commands (newline-terminated; every reply starts with '# '):");
   textf("  state <0-6>              set raceState  (0 PRE_RACE 1 BETTING_OPEN 2 FINAL_CALL");
   textf("                           3 AT_THE_POST 4 RUNNING 5 WINNER 6 AFTER_PARTY)");
-  textf("  horse <cupId> <0-20>     assign horse to cup (0 = unassigned); cupId is 0-based");
+  textf("  horse <cupId> <0-%d>     assign horse to cup (0 = unassigned; 21-24 also-eligibles); cupId is 0-based", DDM_MAX_HORSE);
   textf("  scratch <cupId> <0|1>    set/clear scratched flag");
   textf("  roster                   dump MAC-to-ID table");
   textf("  demo                     toggle demo mode (horse walk every 3s)");
@@ -694,7 +694,7 @@ static void handleCommand(char* line) {
 
   } else if (strncmp(line, "horse ", 6) == 0 && sscanf(line + 6, "%d %d", &a, &b) == 2) {
     if (a < 0 || a >= DDM_MAX_CUPS) { textf("ERR cupId 0-%d", DDM_MAX_CUPS - 1); return; }
-    if (b < 0 || b > 20)            { textf("ERR horse 0-20"); return; }
+    if (b < 0 || b > DDM_MAX_HORSE) { textf("ERR horse 0-%d", DDM_MAX_HORSE); return; }
     demoOff("horse command");
     statePkt.horseForCup[a] = (uint8_t)b;
     startBroadcast("horse command");
@@ -768,7 +768,7 @@ static bool jsonU8Array(JsonVariantConst v, long lo, long hi, uint8_t* out) {
   return true;
 }
 
-// {"t":"state","rev":42,"phase":1,"horse":[20 x 0..20],"scr":[20 x 0|1]}
+// {"t":"state","rev":42,"phase":1,"horse":[20 x 0..DDM_MAX_HORSE],"scr":[20 x 0|1]}
 // A full snapshot, never a delta. Idempotent: the same line twice is normal.
 static void jsonState(JsonObjectConst root, const char* line) {
   long    rev, phase;
@@ -776,7 +776,7 @@ static void jsonState(JsonObjectConst root, const char* line) {
 
   if (!jsonIntIn(root["rev"], 1, LONG_MAX, &rev) ||
       !jsonIntIn(root["phase"], DDM_PRE_RACE, DDM_AFTER_PARTY, &phase) ||
-      !jsonU8Array(root["horse"], 0, 20, horse) ||
+      !jsonU8Array(root["horse"], 0, DDM_MAX_HORSE, horse) ||
       !jsonU8Array(root["scr"], 0, 1, scr)) {
     emitErr("invalid", line);
     return;

@@ -51,6 +51,14 @@
  * DdmStatePacket by 2 bytes per cup — watch the 250-byte ESP-NOW ceiling. */
 #define DDM_MAX_CUPS 20
 
+/* Highest horse (program) number a cup can carry. 1..20 is the field; 21..24
+ * are the also-eligibles, which keep their own program number when they draw
+ * in (a replacement scratch renumbers the cup: the cup that was 9 becomes 22).
+ * A uint8_t already holds it, so no packet layout changes and
+ * DDM_PROTO_VERSION stays. The gateway validates against it; the cup's cloth
+ * table goes up to it; pi5 mirrors it (la_quiniela/protocol.py MAX_HORSE). */
+#define DDM_MAX_HORSE 24
+
 /* ---------------------------------------------------------------------------
  * ESP-NOW payload ceiling
  *
@@ -92,7 +100,7 @@ struct __attribute__((packed)) DdmStatePacket {
   uint8_t  msgType;                    /* == DDM_MSG_STATE                    */
   uint32_t seq;                        /* monotonic; cups detect drops via gaps */
   uint8_t  raceState;                  /* a DdmRaceState value                */
-  uint8_t  horseForCup[DDM_MAX_CUPS];  /* index = cup ID, value = horse 1..20,
+  uint8_t  horseForCup[DDM_MAX_CUPS];  /* index = cup ID, value = horse 1..24,
                                         * 0 = unassigned                      */
   uint8_t  scratched[DDM_MAX_CUPS];    /* index = cup ID, 0 = running, 1 = scratched */
 };

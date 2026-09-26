@@ -466,8 +466,14 @@ All of these must hold or the whole line is rejected with `err` / `invalid`:
 
 - `rev` present, integer ≥ 1
 - `phase` integer 0..6 (the `DdmRaceState` range)
-- `horse` an array of **exactly** `DDM_MAX_CUPS` (20) integers, each 0..20
-  (0 = unassigned), index = cup ID
+- `horse` an array of **exactly** `DDM_MAX_CUPS` (20) integers, each
+  0..`DDM_MAX_HORSE` (24; 0 = unassigned), index = cup ID. 21..24 are the
+  also-eligibles: at Churchill an also-eligible that draws in keeps its own
+  program number, so a replacement scratch renumbers the cup (the cup that was
+  9 becomes 22) rather than renaming 9. Both sketches must be flashed from
+  `DDM_MAX_HORSE` on for that: an older gateway answers `err invalid` to a
+  state line carrying 21..24, and an older cup shows them on the grey default
+  cloth.
 - `scr` an array of **exactly** `DDM_MAX_CUPS` integers, each 0 or 1
 
 On a valid line, in this order: `phase`, `horse[]` and `scr[]` go into the
@@ -797,7 +803,7 @@ tolerance in grid units, default 1.4.
 
 | Component | State |
 | --------- | ----- |
-| `ddm_common.h` — ESP-NOW protocol | ✅ defined |
+| `ddm_common.h` — ESP-NOW protocol | ✅ defined (`DDM_MAX_HORSE` 24 since 2026-09-26; packet layout unchanged) |
 | `ddm_gateway/` — gateway sketch | ✅ implemented (JSON serial line protocol to DevPi, silent boot, roster from DevPi, bench commands, demo mode) |
 | `ddm_cup/` — cup sketch | ✅ implemented (bench test: display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
 
