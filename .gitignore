@@ -46,6 +46,8 @@ pi5/animation_params.json
 # Font sources: Impact is licensed with Windows; only the traced ddm_font.h is committed
 *.ttf
 *.TTF
+# Anton is OFL (SIL Open Font License 1.1, splash_display/static/fonts/OFL-Anton.txt): ours to ship as the board's Impact fallback
+!splash_display/static/fonts/Anton-Regular.ttf
 
 # La Quiniela betting-model event log now lives on pi5 (pi5/data/quiniela_YYYY-MM-DD.jsonl,
 # covered by pi5/data/* above); splash_display/logs/ held the old splash-side log and stays

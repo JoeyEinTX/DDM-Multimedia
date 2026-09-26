@@ -331,6 +331,36 @@ class RelayTests(RelayCase):
             self.board.touch()
         self.assertTrue(self.board.model()["link_ok"])
 
+    def test_now_is_stamped_at_serve_time_never_stored(self) -> None:
+        # pi5 stamps "now" when it serialises; the relay must do the same, or a
+        # TV loading on a quiet board would anchor CLOSES IN to a clock as old
+        # as the last bet. Found on the 2026-09-25 verification run.
+        self.assertNotIn("now", self.board.model(), "no stamp before pi5 has sent one")
+        m = pi5_model(tokens={7: 1}, closes_at=1_600_001_000.0, now=1_600_000_000.0)
+        self.assertTrue(self.board.apply_model(m))
+        self.wall.advance(218)
+        served = self.board.model()
+        self.assertEqual(served["now"], self.wall.now, "fresh, not pi5's 218 s old stamp")
+        self.assertEqual(served["closes_at"], 1_600_001_000.0)
+        self.assertEqual(json.loads(self.board.model_json())["now"], self.wall.now)
+        # The same picture with a newer stamp is not a change.
+        self.assertFalse(self.board.apply_model(pi5_model(tokens={7: 1}, closes_at=1_600_001_000.0,
+                                                          now=1_600_000_100.0)))
+        # A publish carries a fresh stamp too.
+        q = self.board.subscribe()
+        self.wall.advance(1)
+        self.assertTrue(self.board.apply_model(pi5_model(tokens={7: 2}, closes_at=1_600_001_000.0,
+                                                         now=1_600_000_200.0)))
+        self.assertEqual(json.loads(q.get_nowait())["now"], self.wall.now)
+        # ...and so does the link_ok flip a tick publishes.
+        self.clock.advance(quiniela.LINK_TIMEOUT_S + 1)
+        self.wall.advance(quiniela.LINK_TIMEOUT_S + 1)
+        self.assertTrue(self.board.tick())
+        flipped = json.loads(q.get_nowait())
+        self.assertIs(flipped["link_ok"], False)
+        self.assertEqual(flipped["now"], self.wall.now)
+        self.assertEqual(flipped["horses"]["7"]["tokens"], 2)
+
     def test_key_order_does_not_count_as_a_change(self) -> None:
         """The stream carries pi5's key order, the poll fallback (jsonify)
         sorted keys: the same model in another order is not republished."""

@@ -238,31 +238,71 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "link_ok": true,
   "race_state": 1, "race_state_name": "BETTING_OPEN",
   "token_value": 1.0,
-  "pot": 147.0, "total_tokens": 147,
+  "pot": 154.0, "total_tokens": 154,
   "horses": {
-    "1": {"tokens": 0, "share": 0, "scratched": false, "online": false, "cup": null},
-    "7": {"tokens": 23, "share": 0.1565, "scratched": false, "online": true, "cup": 7}
+    "1": {"tokens": 0, "share": 0, "scratched": false, "online": false, "cup": null,
+          "name": "", "replaced": null},
+    "7": {"tokens": 23, "share": 0.1494, "scratched": false, "online": true, "cup": 7,
+          "name": "HONOR MARIE", "replaced": null},
+    "9": {"tokens": 7, "share": 0.0455, "scratched": false, "online": true, "cup": 9,
+          "name": "EPIC RIDE", "replaced": "ENCINO"}
   },
   "leader": 7,
   "events": [ {"horse": 7, "delta": 1, "ts": 1695400000.0} ],
   "updated": 1695400000.0,
-  "board_states": [1, 2, 3, 4]
+  "board_states": [1, 2, 3, 4],
+  "now": 1695400003.2,
+  "closes_at": 1695400900.0,
+  "prizes": {"win": 92, "place": 39, "show": 23},
+  "split": {"win": 0.60, "place": 0.25, "show": 0.15},
+  "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
+             "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
+  "names_rev": 2,
+  "scratches": [ {"horse": 9, "was": "ENCINO", "now": "EPIC RIDE"} ]
 }
 ```
 
 - `horses` has every horse `"1"`..`"20"`; a horse with no cup assigned looks
   like the `"1"` entry above. `cup` is pi5's **1-based** cup number (the
   old splash exposed the gateway's 0-based wire slot); the board only tests
-  it for `null`.
+  it for `null`. `name` is served upper-cased (`""` when unset; the board
+  then shows `HORSE n`); `replaced` is the upper-cased name of the
+  scratched horse this number replaced, `""` when that horse had no name
+  yet (the chyron prints `UNNAMED`), or `null` when nothing was replaced.
+- Two kinds of scratch. With a replacement the number stays live, the cup
+  keeps counting, the old name moves to `replaced` and the pair is listed
+  in `scratches`. Without one, `scratched` is true and **its tokens are
+  out of `pot` and `prizes`** (refunds are settled by hand); `total_tokens`
+  stays the sum of every cup. Neither kind produces an event.
+- `pot` = the tokens in play x `token_value`. `prizes` are whole dollars
+  that always sum to the pot: place and show are the pot times their
+  split, rounded half up (Decimal `ROUND_HALF_UP`, never Python's
+  banker's `round()`: 38.5 is $39), win takes the rest. 154 gives
+  92 / 39 / 23; 1 gives 1 / 0 / 0. `split` is pi5's `LQ_SPLIT_*` config,
+  `chyron` its `LQ_CHYRON_LINES`.
+- `now` is the server's clock when the JSON was built (never stored, never
+  part of change detection, so the stream stays quiet between real
+  changes). pi5 stamps it, and this relay stamps its own on every serve and
+  publish rather than re-serving pi5's, so a page that loads on a quiet
+  board gets a fresh clock, not one as old as the last bet. `closes_at` is
+  when betting closes on that same clock, or `null`. The board counts down
+  from their difference. `names_rev` is the names
+  store's revision: it bumps on any name change, replacement scratch or
+  its undo and is persisted; a gateway (no-replacement) scratch is pi5's
+  bridge state, versioned separately, and leaves it alone.
 - `share` = tokens / total_tokens (0 when the pot is empty). `leader` is the
   horse with most tokens (lowest number on a tie), `null` when nobody has
-  bet. `online` = pi5 heard the cup within the last 6 s.
+  bet. Both stay in the model; nothing on the board depends on them.
+  `online` = pi5 heard the cup within the last 6 s.
 - `events` are the last 8 bets, newest first, each `{"horse", "delta",
   "ts"}`.
 - `board_states` are the race states in which the board owns the TV; pi5
   decides them. Until pi5 has been heard the splash serves an empty model:
   `link_ok` false, race state 0, `token_value` 1.0, every horse unassigned,
-  `board_states` `[]` (so the board stays hidden).
+  `board_states` `[]` (so the board stays hidden), and none of the
+  additive keys (`now`, `closes_at`, `prizes`, `split`, `chyron`,
+  `names_rev`, `scratches`, `name`, `replaced`); the board tolerates
+  their absence.
 
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -m json.tool
@@ -345,48 +385,111 @@ in `pi5/config.py`; the page never hard-codes it) contains `race_state`:
 
 **Banner** (top right), by `race_state`:
 
-| State | Banner | Tiles, pot, ticker |
+| State | Banner | Rows, pot, prizes |
 | --- | --- | --- |
-| 1 `BETTING_OPEN` | BETTING OPEN (green) | live |
-| 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing — the only looping animation) | live |
-| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED | **frozen** at the values shown when the state was entered; back in 1 or 2 they go live again |
+| 1 `BETTING_OPEN` | BETTING OPEN (green), CLOSES IN under it | live |
+| 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing), CLOSES IN under it | live |
+| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen** at the values shown when the state was entered (names and the chyron stay live); back in 1 or 2 they go live again |
 
 The freeze only holds while the board is up. A board coming up already in
 3 or 4 — a page loaded mid-race, or the server restarted during the race —
 paints the live model first, so it never shows an earlier hidden paint of
 an empty model (POT $0, every count 0).
 
-**Layout** (1920x1080, built for a TV across the room; serape band top
-and bottom, the countdown's dark panel look):
+**How La Quiniela pays, and so what the board shows.** A token is $1.
+After the race one token is drawn from the WIN cup, one from the PLACE
+cup and one from the SHOW cup, and each drawn token's owner takes that
+cup's whole prize, a fixed fraction of the pot (60 / 25 / 15 % by
+default). Nobody splits anything, so a token is a raffle ticket for a
+fixed prize and the only number that matters per horse is how many tokens
+are in its cup. No odds, no share bars: the board shows the pot, the three
+prizes and the bets per horse, nothing else.
 
-- Header: `la_quiniela.png` left; the pot centered and big — `POT $147`
-  (whole dollars while `TOKEN_VALUE` is a whole number, else two
-  decimals); the banner right.
-- Grid: 20 horse tiles, 5 wide x 4 tall, even gutters, filling the width.
-  Each tile: the post position in its saddle-cloth colored block on the
-  left; the token count on the right, the largest thing on the tile; a
-  thin bar along the bottom whose width is the horse's tokens relative to
-  the leader's (the leader fills its tile, as on a tote board; every bar is
-  empty while nobody has bet; `share` in the model is still the true
-  fraction of the pot), in the saddle-cloth color (the near-black
-  cloths 6, 17, 19 use their number color), so the field's distribution
-  reads at a glance. Scratched: tile dimmed and the cloth greyed, count
-  hidden, a red X across the number block. Cup offline (`cup` assigned,
-  `online` false): a small dim dot in the tile's corner. Leader: a subtle
-  yellow border.
-- Ticker: one line along the bottom, the last eight `events` as `#7 +1`
-  chips, newest sliding in from the right.
+**Layout** (1920x1080, built for a TV across the room; 14 px serape band
+top and bottom; the design is `tools/board_reference.html`, a static mock
+the live board follows pixel for pixel where practical):
+
+- Header (196 px, three cells 480 / flexible / 480): `la_quiniela.png`
+  left, cropped to a 150 px medallion. Centre: `POT` with `$1 A TOKEN`
+  muted beside it (from `token_value`: `$1` while it is a whole number,
+  else `$1.50`), the pot at 104 px (whole dollars while the token is,
+  else two decimals), and under it three prize tiles `WIN $92` (gold
+  outline) `PLACE $39` `SHOW $23` from `prizes`. Right: the state banner
+  and under it `CLOSES IN 14:22`, counted down locally from `closes_at`
+  against the newest `now` the model carried (an older stamp never moves
+  it back), so the TV's clock never matters; at zero it reads
+  `CLOSING 0:00`; hidden when `closes_at` is null and in states 3 and
+  above. Every message carries a fresh `now` (pi5 and the relay both stamp
+  it at serve time), so a page that loads on a quiet board starts right.
+- Rows: two columns of ten (1-10 left, 11-20 right, 22 px gutter, 6 px
+  between rows, `HORSE` / `BETS` column headers), filling the height. Each
+  row: the post position in its saddle-cloth coloured block (56 px); the
+  name at 38 px, shrunk step by step down to 20 px until it fits its cell
+  (never wraps, never an ellipsis; `HORSE 7` while no name is set); the
+  bets at 58 px, right-aligned, tabular, or `NO BETS` at 22 px muted when
+  the cup is empty. Leader (most tokens among the horses still running,
+  when anyone has bet): gold border and a soft glow. Scratched with no
+  replacement (`scratched` true): name struck through, `SCRATCHED` in red
+  in the bets slot (its tokens are already out of the pot and the
+  prizes), and the saddle cloth dimmed a little (not in the reference; the
+  one `.qb-row.is-scratched .qb-saddle` rule, delete it to match the
+  reference exactly). A replacement scratch (`replaced` set) is a live row under the
+  new name; it shows in the chyron. Cup offline (`cup` assigned, `online`
+  false): a small dim dot in the row's corner.
+- Toast: a new positive bet (`events` newest first, keyed `horse:ts`
+  against the previous message; the newest new positive one) pops a card
+  in the centre of the screen in that horse's saddle-cloth colours (cloth
+  as background, the number block inverted, white border, drop shadow):
+  number, name, `+1 BET` / `+N BETS`; a long name shrinks (64 px down to
+  36 px) and the card never grows past the screen. Pop in ~150 ms, hold
+  2.5 s once up, drop out ~200 ms; a newer bet replaces it and restarts
+  the hold. No toast on the first model after load, on a poll/stream
+  duplicate, on a negative event, on a horse scratched at the gateway
+  (its row says SCRATCHED and the pot does not move, so a token dropped
+  in that cup is not a bet), while the board is hidden, or while the
+  picture is frozen.
+- Chyron: a 50 px band along the bottom, a red `FINE PRINT` tab fixed at
+  the left, the rest a continuous right-to-left crawl at ~120 px/s (one
+  CSS transform animation over a track whose content is repeated; the
+  duration is computed from the track's width after layout). Content, in
+  order: `chyron[0]`; then, when `scratches` is not empty, `SCRATCHED`
+  followed by each replacement as saddle-cloth badge, struck-through old
+  name, gold arrow, new name; then the remaining `chyron` lines, gold
+  diamonds between items. It is rebuilt when `chyron`, `scratches` or
+  `names_rev` change, swapping the content at the loop boundary so the
+  text never jumps (at once if nothing is crawling yet).
 
 **Motion.** A changed count ticks to the new value over ~500 ms (a
-`requestAnimationFrame` tween writing the number) and the tile pulses
-once, ~400 ms (scale 1.03 plus a white overlay's opacity). Bars are a
-`scaleX` transform with a 600 ms transition. Chips are keyed by
-`horse:ts`, so a re-render never replays their entry. Everything is
-transform / opacity only so it stays smooth on a Pi 5 in kiosk Chromium;
-nothing loops except the FINAL CALL pulse.
+`requestAnimationFrame` tween writing the number) and the row pulses
+once, ~400 ms (scale 1.015 plus a white overlay's opacity). The toast and
+the crawl are transform / opacity too. Everything is transform / opacity
+only so it stays smooth on a Pi 5 in kiosk Chromium; nothing loops except
+the crawl and the FINAL CALL pulse (the crawl is paused while the board
+is hidden).
+
+**What the board reads.** Of the model: `race_state`, `board_states`,
+`link_ok`, `token_value`, `pot`, `horses[n].tokens / scratched / online /
+cup / name / replaced`, `events`, and the additive keys `now`,
+`closes_at`, `prizes`, `chyron`, `scratches`, `names_rev`. Every one of
+the additive keys is optional: before pi5 has been heard the splash's
+empty model carries none of them and the board renders without errors
+(hidden, since `board_states` is empty; prizes read `$0`, no countdown,
+an empty chyron). `share` and `leader` stay in the model; nothing on the
+board depends on them (the leader is computed from the counts of the
+horses still running).
+
+**Type.** Impact everywhere (`font-family: Impact, "Anton", sans-serif`,
+everything upper-cased by `text-transform`). Impact is licensed with
+Windows and not in the repo; **Anton** (SIL Open Font License 1.1) is
+shipped as the fallback in `static/fonts/Anton-Regular.ttf` with its
+licence beside it (`OFL-Anton.txt`; the root `.gitignore` ignores `*.ttf`
+except this one). To get the real Impact on the Pi: copy
+`C:\Windows\Fonts\impact.ttf` to `~/.fonts/` on DevPi and run
+`fc-cache -f`; Chromium picks it up on the next launch. Names are
+re-fitted when the web font arrives.
 
 **NO LINK mark.** A small dim `NO LINK` mark sits in the top-right corner
-of the board (above the banner, never over a tile) when no SSE message of
+of the board (above the banner, never over a row) when no SSE message of
 any kind — a model or a `ping` — has arrived for 10 s, or when the latest
 model says `link_ok: false` (the gateway itself has gone quiet). It hides
 as soon as either condition clears. It is only ever a mark: the board
@@ -410,16 +513,31 @@ python tools/fake_pi5.py --phase winner            # state 5: the playlist is ba
 python tools/fake_pi5.py --phase idle              # state 0, link up: plain slideshow
 python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
 python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark (0 would stop it before the splash's first request)
-python tools/fake_pi5.py --phase bench                     # the 2026-09-25 bench picture: 50/42/8/3 tokens, bars relative to the leader
-python tools/fake_pi5.py --phase bench-reset               # bench, then a reset (counts 0, ticker cleared, state 0), then state 1 again; repeats
+python tools/fake_pi5.py --phase bench                     # the 2026-09-25 bench picture: 50/42/8/3 tokens
+python tools/fake_pi5.py --phase bench-reset               # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
+python tools/fake_pi5.py --phase redesign                  # tools/board_reference.html's picture: the Derby 2024 field, two replacement
+                                                           # scratches (9 Encino -> Epic Ride, 14 Endlessly -> Mugatu), POT $154 = WIN $92 /
+                                                           # PLACE $39 / SHOW $23, closes in 15 min, a bet on horse 7 every 4 s (the toast fires)
+python tools/fake_pi5.py --phase redesign-static           # the same picture with nothing moving, for side-by-side screenshots
 # --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 ```
 
+The older phases carry no horse names, so the board shows `HORSE n`;
+every phase carries the full contract (`now`, `closes_at`, `prizes`,
+`split`, `chyron`, `names_rev`, `scratches`, `name` / `replaced`).
+
 Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. The
 fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}`;
-`state N` switches its phase and `reset` plays pi5's reset (counts 0, ticker
-cleared, state 0), so a curl through the real relay drives the takeover:
+`state N` switches its phase, `reset` plays pi5's reset (counts 0, events
+cleared, state 0), `scratch C 1` / `scratch C 0` flips the kind-2
+scratch on cup C (its tokens leave the pot; the row reads SCRATCHED) and
+`name N Some Long Name` renames horse N (`names_rev` bumps, no event;
+`name N` alone clears it), which is how to watch a long name shrink to fit
+its row (38 px down to 20 px). Post the fake-only commands (`reset`,
+`name`) to the fake itself on 5078: the real relay forwards everything to
+pi5 unchecked, but pi5 would reject them. Through the relay, `state N`
+drives the takeover:
 
 ```bash
 curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'   # board up

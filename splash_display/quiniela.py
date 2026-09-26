@@ -123,6 +123,14 @@ class BoardRelay:
     LINK_TIMEOUT_S; the rest of the model is pi5's, untouched. Every change
     is published (as compact JSON) to every subscriber queue.
 
+    "now" is the one key treated like pi5 treats it: a server clock stamped
+    when the model is serialised (model(), model_json(), each publish), never
+    stored and never part of the changed-comparison. pi5 stamps its own at
+    its serialisation, so re-serving that text would hand a TV that loads on
+    a quiet board a clock as old as the last bet, and its CLOSES IN countdown
+    would run long by that much. The stamp is only added once pi5 has sent a
+    model with one, so the empty model keeps its shape.
+
     clock is a monotonic seconds source (contact timing); wall is unix time
     (the "updated" stamp of a link_ok flip). Both are injectable for tests.
     """
@@ -138,6 +146,7 @@ class BoardRelay:
         self._subs: List["queue.Queue[str]"] = []
         self._heard_at: Optional[float] = None
         self._pi5_link_ok = False          # link_ok as pi5 last reported it
+        self._stamp_now = False            # pi5's models carry "now": stamp ours at serve time
         self._model: Dict[str, Any] = self.empty_model()
         self._json: str = _dumps(self._model)
 
@@ -161,15 +170,27 @@ class BoardRelay:
         }
 
     def model(self) -> Dict[str, Any]:
-        """A fresh copy of the current model (safe to mutate)."""
+        """A fresh copy of the current model (safe to mutate), "now" stamped."""
         with self._lock:
             text = self._json
-        return json.loads(text)
+            stamp = self._stamp_now
+        m = json.loads(text)
+        if stamp:
+            m["now"] = round(self._wall(), 3)
+        return m
 
     def model_json(self) -> str:
-        """The current model as the compact JSON the SSE stream sends."""
+        """The current model as the compact JSON the SSE stream sends, "now"
+        stamped at this moment."""
         with self._lock:
-            return self._json
+            if not self._stamp_now:
+                return self._json
+            return self._stamped_json_locked(self._model)
+
+    def _stamped_json_locked(self, model: Dict[str, Any]) -> str:
+        m = dict(model)
+        m["now"] = round(self._wall(), 3)
+        return _dumps(m)
 
     def pi5_ok(self) -> bool:
         """pi5 heard (a model or a ping) within LINK_TIMEOUT_S."""
@@ -190,6 +211,8 @@ class BoardRelay:
             return False
         served = dict(m)
         served["link_ok"] = bool(m.get("link_ok"))   # just received: pi5 is fresh by definition
+        has_now = "now" in served
+        served.pop("now", None)                      # stamped at serve time, never stored
         try:
             text = _dumps(served)
         except (TypeError, ValueError) as exc:
@@ -198,6 +221,8 @@ class BoardRelay:
         with self._lock:
             self._heard_at = self._clock()
             self._pi5_link_ok = served["link_ok"]
+            if has_now:
+                self._stamp_now = True
             # Compare as dicts, not as text: the stream carries pi5's key
             # order and the poll fallback (jsonify) sorted keys, and the
             # same model in another order is not a change worth publishing.
@@ -232,8 +257,10 @@ class BoardRelay:
     def _set_locked(self, model: Dict[str, Any], text: str) -> None:
         self._model = model
         self._json = text
-        for q in self._subs:
-            _offer(q, text)
+        if self._subs:
+            out = self._stamped_json_locked(model) if self._stamp_now else text
+            for q in self._subs:
+                _offer(q, out)
 
     # -- subscribers ---------------------------------------------------------
     def subscribe(self) -> "queue.Queue[str]":

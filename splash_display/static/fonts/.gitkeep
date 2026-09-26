@@ -1,2 +1,3 @@
-# Drop custom font files (woff2/ttf) in this directory and declare @font-face
-# rules in static/css/ddm_style.css. Phase 1 ships system fonts only.
+# Custom fonts for the splash display. Anton-Regular.ttf (SIL Open Font
+# License 1.1, see OFL-Anton.txt) ships here as the La Quiniela board's
+# fallback for Impact and is declared in static/css/quiniela_board.css.

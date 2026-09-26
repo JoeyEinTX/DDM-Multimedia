@@ -1,0 +1,119 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "ImpactLocal"; src: local("Impact"); }
+:root{ --bg:#0f2a24; --tile:#0b1f1b; --edge:#1f3d35; --gold:#e8c53a; --text:#f4f1e8; --amber:#ffb020; --muted:#8fa39b; }
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:"ImpactLocal",Impact,"Anton",sans-serif;color:var(--text);letter-spacing:.5px}
+.strip{height:14px;background:repeating-linear-gradient(90deg,#e31837 0 22px,#ffcd00 22px 44px,#00843d 44px 66px,#40e0d0 66px 88px,#ff6600 88px 110px,#ff00ff 110px 132px)}
+.wrap{padding:6px 32px 0 32px;height:1052px;display:flex;flex-direction:column}
+header{height:196px;display:grid;grid-template-columns:480px 1fr 480px;align-items:center}
+.logo{width:150px;height:150px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#f6d36b,#b9821a 60%,#6d4a10);display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 6px #2b4a3f,0 8px 30px #000a}
+.logo span{font-size:36px;color:#3b2408;text-align:center;line-height:.9;text-shadow:0 2px 0 #f9e7a8}
+.pot{text-align:center}
+.pot .lbl{font-size:28px;color:var(--gold);letter-spacing:6px}
+.pot .amt{font-size:104px;line-height:.95;text-shadow:0 6px 0 #062119,0 10px 30px #000c}
+.prizes{display:flex;justify-content:center;gap:14px;margin-top:8px}
+.prize{display:flex;align-items:baseline;gap:10px;background:#0b1f1b;border:2px solid var(--edge);border-radius:12px;padding:4px 18px 6px}
+.prize .k{font-size:24px;letter-spacing:4px;color:var(--muted)}
+.prize .v{font-size:40px;line-height:1;font-variant-numeric:tabular-nums}
+.prize.win{border-color:var(--gold)}
+.prize.win .k{color:var(--gold)}
+.prize.win .v{color:var(--gold);text-shadow:0 3px 0 #000a}
+.status{justify-self:end;text-align:right}
+.banner{display:inline-block;background:#2f8f4e;border:4px solid #9fdc8f;border-radius:14px;padding:4px 30px;font-size:42px;letter-spacing:5px;color:#fff;box-shadow:0 8px 24px #0009}
+.closes{margin-top:6px;font-size:32px;color:var(--gold);letter-spacing:3px}
+.closes b{color:#fff;font-size:42px;margin-left:12px;font-variant-numeric:tabular-nums}
+.toast{position:absolute;left:50%;top:640px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:22px;background:#FF6600;color:#000;border:5px solid #fff;border-radius:22px;padding:14px 40px 14px 22px;font-size:64px;letter-spacing:2px;white-space:nowrap;box-shadow:0 0 0 4px #FF6600,0 24px 60px #000d}
+.toast .num{width:84px;height:84px;font-size:58px;background:#000;color:#FF6600;box-shadow:none}
+.toast .plus{margin-left:18px;font-size:64px;color:#fff;text-shadow:0 4px 0 #0008}
+.toast .plus small{font-size:30px;letter-spacing:3px;margin-left:8px;color:#fff}
+.spacer{height:14px}
+.cols{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:22px;padding-bottom:8px;min-height:0}
+.col{display:flex;flex-direction:column;min-height:0}
+.hdr{flex:0 0 30px;display:grid;grid-template-columns:62px 1fr 150px;column-gap:16px;padding:0 14px 0 8px;align-items:end;font-size:22px;letter-spacing:3px;color:var(--gold)}
+.hdr .r{text-align:right}
+.rows{flex:1;display:grid;grid-template-rows:repeat(10,1fr);gap:6px;margin-top:4px;min-height:0}
+.row{background:var(--tile);border:2px solid var(--edge);border-radius:12px;display:grid;grid-template-columns:62px 1fr 150px;align-items:center;column-gap:16px;padding:0 14px 0 8px;overflow:hidden}
+.row.leader{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold) inset,0 0 22px #e8c53a55}
+.num{width:56px;height:56px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:40px;box-shadow:0 3px 0 #0007}
+.name{font-size:38px;text-transform:uppercase;white-space:nowrap;overflow:hidden;min-width:0}
+.bets{font-size:58px;line-height:1;text-align:right;font-variant-numeric:tabular-nums}
+.bets.none{font-size:22px;color:var(--muted);letter-spacing:3px}
+.shot{text-align:right;font-size:34px;color:var(--amber);letter-spacing:2px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.shot small{font-size:22px;color:var(--muted);letter-spacing:3px;margin-right:8px}
+.shot.none{color:#3f5a52}
+.foot{height:50px;margin-bottom:6px}
+.chyron{height:50px;background:#0b1f1b;border:2px solid var(--edge);border-radius:12px;display:flex;align-items:stretch;overflow:hidden}
+.chyron .tab{flex:0 0 auto;display:flex;align-items:center;background:#e31837;color:#fff;padding:0 18px;font-size:22px;letter-spacing:4px;z-index:1}
+.chyron .crawl{flex:1;position:relative;overflow:hidden}
+.chyron .track{position:absolute;top:0;height:100%;display:flex;align-items:center;white-space:nowrap;font-size:26px;letter-spacing:1.5px;color:var(--text);animation:crawl 40s linear infinite;will-change:transform}
+@keyframes crawl{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.chyron .item{display:inline-flex;align-items:center;gap:12px;padding:0 34px}
+.chyron .sep{color:var(--gold);font-size:22px}
+.chyron .lbl{color:#e31837;letter-spacing:4px;margin-right:6px}
+.chyron .badge{width:34px;height:34px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:24px}
+.chyron .was{text-decoration:line-through;color:var(--muted)}
+.chyron .arrow{color:var(--gold)}
+</style></head><body>
+<div class="strip"></div>
+<div class="wrap">
+<header>
+  <div class="logo"><span>LA<br>QUINIELA</span></div>
+  <div class="pot"><div class="lbl">POT <span style="color:var(--muted);letter-spacing:3px;font-size:24px;margin-left:10px">$1 A TOKEN</span></div><div class="amt" id="pot">$0</div>
+    <div class="prizes">
+      <div class="prize win"><span class="k">WIN</span><span class="v" id="pw">$0</span></div>
+      <div class="prize"><span class="k">PLACE</span><span class="v" id="pp">$0</span></div>
+      <div class="prize"><span class="k">SHOW</span><span class="v" id="ps">$0</span></div>
+    </div>
+  </div>
+  <div class="status"><div class="banner">BETTING OPEN</div><div class="closes">CLOSES IN<b>14:22</b></div></div>
+</header>
+<div class="toast"><span class="num">7</span><span>HONOR MARIE</span><span class="plus">+1<small>BET</small></span></div>
+<div class="spacer"></div>
+<div class="cols">
+  <div class="col"><div class="hdr"><span></span><span>HORSE</span><span class="r">BETS</span></div><div class="rows" id="c1"></div></div>
+  <div class="col"><div class="hdr"><span></span><span>HORSE</span><span class="r">BETS</span></div><div class="rows" id="c2"></div></div>
+</div>
+<div class="foot"><div class="chyron"><span class="tab">FINE PRINT</span><div class="crawl"><div class="track" id="track"></div></div></div></div>
+</div>
+<div class="strip"></div>
+<script>
+const SADDLE={1:['#E31837','#FFF'],2:['#FFF','#000'],3:['#0033A0','#FFF'],4:['#FFCD00','#000'],5:['#00843D','#FFF'],6:['#000','#FFD700'],7:['#FF6600','#000'],8:['#FF69B4','#000'],9:['#40E0D0','#000'],10:['#663399','#FFF'],11:['#808080','#E31837'],12:['#32CD32','#000'],13:['#8B4513','#FFF'],14:['#800000','#FFCD00'],15:['#C4B7A6','#000'],16:['#87CEEB','#E31837'],17:['#000080','#FFF'],18:['#228B22','#FFCD00'],19:['#00008B','#E31837'],20:['#FF00FF','#FFCD00']};
+const NAMES={1:'Dornoch',2:'Sierra Leone',3:'Mystik Dan',4:'Catching Freedom',5:'Catalytic',6:'Just Steel',7:'Honor Marie',8:'Just a Touch',9:'Epic Ride',10:'T O Password',11:'Forever Young',12:'Track Phantom',13:'West Saratoga',14:'Mugatu',15:'Domestic Product',16:'Grand Mo the First',17:'Fierceness',18:'Stronghold',19:'Resilience',20:'Society Man'};
+const TOK={1:11,2:18,3:14,4:6,5:0,6:3,7:23,8:9,9:7,10:2,11:16,12:12,13:4,14:0,15:1,16:0,17:19,18:5,19:0,20:4};
+const TOKEN_VALUE=1, WIN_SHARE=0.60, PLACE_SHARE=0.25, SHOW_SHARE=0.15;
+const pot=Object.values(TOK).reduce((a,b)=>a+b,0)*TOKEN_VALUE;
+const money=x=>'$'+(Math.round(x*100)/100).toFixed(2).replace(/\.00$/,'');
+document.getElementById('pot').textContent='$'+pot;
+// whole dollars: PLACE and SHOW round to the nearest dollar, WIN takes the rest so the three always sum to the pot
+const placePrize=Math.round(pot*PLACE_SHARE), showPrize=Math.round(pot*SHOW_SHARE), winPrize=pot-placePrize-showPrize;
+document.getElementById('pw').textContent='$'+winPrize;
+document.getElementById('pp').textContent='$'+placePrize;
+document.getElementById('ps').textContent='$'+showPrize;
+const max=Math.max(...Object.values(TOK));
+for(let h=1;h<=20;h++){
+  const t=TOK[h],[bg,fg]=SADDLE[h];
+  document.getElementById(h<=10?'c1':'c2').insertAdjacentHTML('beforeend',`<div class="row ${t===max?'leader':''}">
+    <div class="num" style="background:${bg};color:${fg}">${h}</div>
+    <div class="name">${NAMES[h]}</div>
+    <div class="bets ${t?'':'none'}">${t?t:'NO BETS'}</div>
+  </div>`);
+}
+document.querySelectorAll('.name').forEach(el=>{
+  let fs=38; el.style.fontSize=fs+'px';
+  while(el.scrollWidth>el.clientWidth && fs>20){ fs--; el.style.fontSize=fs+'px'; }
+});
+
+// crawl content: fine-print lines + scratched horses, duplicated once so the loop is seamless
+const LINES=['TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED','NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS'];
+const SCRATCHES=[{horse:9,was:'ENCINO',now:'EPIC RIDE'},{horse:14,was:'ENDLESSLY',now:'MUGATU'}];
+function crawlHtml(){ const items=[];
+  items.push(`<span class="item">${LINES[0]}</span>`);
+  if(SCRATCHES.length){ items.push(`<span class="item"><span class="lbl">SCRATCHED</span>`+SCRATCHES.map(x=>{const [bg,fg]=SADDLE[x.horse];return `<span class="badge" style="background:${bg};color:${fg}">${x.horse}</span><span class="was">${x.was}</span><span class="arrow">▶</span><span>${x.now}</span>`;}).join('<span style="width:18px"></span>')+`</span>`); }
+  for(const l of LINES.slice(1)) items.push(`<span class="item">${l}</span>`);
+  return items.join('<span class="sep">◆</span>'); }
+const one=crawlHtml(); document.getElementById('track').innerHTML=one+'<span class="sep">◆</span>'+one+'<span class="sep">◆</span>';
+// a static render catches the crawl mid-scroll
+document.getElementById('track').style.animationDelay='-6s';
+</script></body></html>
