@@ -115,6 +115,7 @@
 #define SETTLE_RING             20  // samples (~2 s) that must be flat before the settled load is trusted
 #define SETTLE_SPREAD         1200  // max-min over those samples that still counts as flat (idle noise is far below)
 #define SETTLE_AMBIGUOUS     0.35f  // settled load within this many tokens of a half: leave the count alone and say so
+#define HANDLING_TOKENS          8  // a single-sample step this big (either way) is a hand, a dump or a bump, never a bet: DISTURBED
 #define TARE_HOLD_MS          3000  // BOOT held this long re-tares
 #define ORIENT_HOLD_MS       15000  // BOOT kept held this long steps the display orientation (saved); far past
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
@@ -520,6 +521,8 @@ long       countsPerToken = COUNTS_PER_TOKEN;  // per cup, NVS "cpt" (serial c<N
 long       tokenThreshold = TOKEN_THRESHOLD;   // half of countsPerToken
 uint32_t   tLastEvent    = 0;        // last drop/remove/tare: fast tracking and the settle check hang off it
 bool       settlePending = false;    // an event happened; compare the settled load with the count once quiet
+bool       disturbed     = false;    // DISTURBED: the cup is being handled; no events, no baseline, no settle until it rests
+long       prevReading   = 0;        // the sample before lastReading (single-sample step detection)
 long       ring[SETTLE_RING];        // the last ~2 s of samples, for the settle check
 uint8_t    ringN         = 0;        // valid samples in ring (0 after every event)
 uint8_t    ringI         = 0;
@@ -834,7 +837,8 @@ void drawOverlay() {
   else
     snprintf(line, sizeof(line), "TOKENS:%u  NET:%+ld  %s", tokens, lastReading - tare,
              scalePhase == SCALE_WARMUP ? "WARMUP" :
-             scalePhase == SCALE_TARING ? "TARING" : "OK");
+             scalePhase == SCALE_TARING ? "TARING" :
+             disturbed                  ? "HANDLED" : "OK");
   drawTextLeft(line, x0, y + 5 + 3 * pitch, cap, C_WHITE, C_BLACK);
 }
 
@@ -1088,6 +1092,21 @@ static void panelUseDefaultOrientation() {                          // serial 'x
 // and stores counts/token in NVS: load cells differ by a few percent per
 // unit, and at 50 tokens 2% is a whole token.
 //
+// DISTURBED (bench, 2026-09-25): the sleeve rides on a cantilever bar load
+// cell, so tipping the cup to dump it swings the sleeve's mass off the beam
+// and the cell reads below the tare, sometimes tens of tokens' worth. The
+// plunge was counted as a removal (right) and the baseline snapped to the
+// negative reading, so setting the cup back down looked like a +45-token
+// drop. A reading below empty by more than half a token (net <
+// -tokenThreshold), or a single-sample step of more than HANDLING_TOKENS
+// either way, means a hand, a dump or a bump, never a bet: the cup goes
+// DISTURBED. While DISTURBED nothing counts, the baseline is left alone, the
+// settle check does not run, telemetry keeps the last good tokenCount and the
+// overlay says HANDLED. It ends when the ring is flat again with net >=
+// -tokenThreshold: tokens = round(net / countsPerToken) clamped at 0, one
+// `[handled] ... (re-baselined)` line, no event. A dump therefore reads
+// 50 -> 0 once, which is the truth.
+//
 // Everything here is non-blocking: the ADC is only read when is_ready() says
 // a conversion is waiting, so the display and the radio never stall on it.
 // ===========================================================================
@@ -1098,6 +1117,7 @@ static void scaleStartTare(const char* why, bool blink) {
   confirmN   = 0;
   tokens     = 0;                       // a tare means "this is empty"
   settlePending = false;
+  disturbed  = false;
   ringN = 0; ringI = 0;
   Serial.printf("[tare] %s: averaging %d samples\n", why, SCALE_TARE_SAMPLES);
   if (blink) {
@@ -1154,6 +1174,7 @@ static void scaleCalibrate(long n) {
   tokens        = (uint16_t)n;
   baseline      = (float)settled;
   settlePending = false;
+  disturbed     = false;                                  // the operator says the cup is at rest with n tokens
   Serial.printf("[cal] saved to NVS; tokens set to %ld\n", n);
 }
 
@@ -1196,6 +1217,36 @@ static void scaleApplySettled() {
   tokens        = (uint16_t)nS;
   baseline      = (float)settled;
   settlePending = false;
+  disturbed     = false;
+}
+
+// DISTURBED: entered from the RUNNING path below, left here once the cup is
+// at rest again. The exit is a re-baseline, never an event.
+static void scaleEnterDisturbed(const char* reason, long value, float est) {
+  disturbed     = true;
+  confirmN      = 0;
+  settlePending = false;                // the settle check waits for the exit
+  ringN = 0; ringI = 0;                 // the exit wants SETTLE_RING fresh, flat samples
+  if (reason[0] == 'b')
+    Serial.printf("[handled] enter reason=%s net=%ld est=%.2f\n", reason, value, est);
+  else
+    Serial.printf("[handled] enter reason=%s step=%ld est=%.2f\n", reason, value, est);
+}
+
+static void scaleDisturbedCheck(uint32_t now) {
+  long settled;
+  if (!scaleSettled(&settled)) return;                    // still moving, or being held
+  long net = settled - tare;
+  if (net < -tokenThreshold) return;                      // flat but lighter than empty: still tilted or lifted
+  long nS = lroundf((float)net / (float)countsPerToken);
+  if (nS < 0) nS = 0;
+  Serial.printf("[handled] tokens %u -> %ld net=%ld (re-baselined)\n", tokens, nS, net);
+  tokens        = (uint16_t)nS;
+  baseline      = (float)settled;
+  disturbed     = false;
+  settlePending = false;
+  confirmN      = 0;
+  tLastEvent    = now;
 }
 
 static void scaleTick(uint32_t now) {
@@ -1212,6 +1263,7 @@ static void scaleTick(uint32_t now) {
   long r = hx711.read();
   uint32_t dt = now - tScaleSample;
   tScaleSample = now;
+  prevReading  = lastReading;
   lastReading  = r;
 
   switch (scalePhase) {
@@ -1234,6 +1286,21 @@ static void scaleTick(uint32_t now) {
       ring[ringI] = r;
       ringI = (uint8_t)((ringI + 1) % SETTLE_RING);
       if (ringN < SETTLE_RING) ringN++;
+
+      if (disturbed) {                                    // handled: count nothing until it rests
+        scaleDisturbedCheck(now);
+        return;
+      }
+      long net  = r - tare;
+      long step = r - prevReading;
+      if (net < -tokenThreshold) {                        // lighter than empty: tilted, lifted, sleeve off the beam
+        scaleEnterDisturbed("below-empty", net, (float)net / (float)countsPerToken);
+        return;
+      }
+      if (labs(step) > HANDLING_TOKENS * countsPerToken) { // nobody moves eight tokens in one sample
+        scaleEnterDisturbed("step", step, (float)step / (float)countsPerToken);
+        return;
+      }
 
       float delta = (float)r - baseline;
       if (fabsf(delta) < (float)tokenThreshold) {

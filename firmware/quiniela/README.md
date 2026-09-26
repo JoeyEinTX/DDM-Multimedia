@@ -649,6 +649,19 @@ token of a half is left alone and printed as `[settle] ambiguous ... (left
 alone)`, so a slightly mis-calibrated cup cannot flip-flop. `s` over serial
 applies the settled load immediately.
 
+Handling rule (`DISTURBED`): a reading lighter than empty by more than half a
+token, or a single-sample step of more than `HANDLING_TOKENS` (8) tokens either
+way, is a hand, a dump or a bump, never a bet. The cup stops counting, leaves
+its baseline alone, skips the settle check, keeps reporting the last good count
+and shows `HANDLED` on the overlay until the reading is flat again and no
+lighter than empty; then `tokens = round(net / counts-per-token)` (never below
+0) with one `[handled] tokens N -> M net=... (re-baselined)` line and no
+`[drop]` or `[remove]`. Dumping a cup between races is expected and handled
+this way: the count goes to 0 once, with no phantom bets (the sleeve rides on a
+cantilever load cell, so a tipped cup reads below its tare and setting it back
+down used to look like a 45-token drop). The pi5 reset should still follow a
+dump so the ticker clears.
+
 Because the settled weight decides, each cup's counts-per-token has to be its
 own (`c<N>` or the menu's `CAL 10`): load cells differ by a few percent per
 unit, and at 50 tokens a 2% error is a whole token.
@@ -689,7 +702,9 @@ survive that; with the sleeve they had turned into the miscount and are gone.
   count on a normal screen; the splash display does that.
 
 Serial prints one line per event, `[drop] +1 tokens=7 step=6240 baseline=43512`
-or `[remove] -1 ...`, so a bench session can be grepped. If no HX711 answers at
+or `[remove] -1 ...`, plus `[handled] enter reason=below-empty net=...` /
+`[handled] enter reason=step step=... est=...` and `[handled] tokens N -> M
+net=... (re-baselined)` around a handled cup, so a bench session can be grepped. If no HX711 answers at
 boot the cup runs without counting and the overlay says `no HX711`.
 
 ## Touch menu
