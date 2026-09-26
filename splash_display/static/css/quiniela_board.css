@@ -21,7 +21,8 @@
    crawl and the FINAL CALL banner pulse.
 
    Designed for 1920x1080 seen from across a room: header 196 px, two
-   columns of ten rows, a 50 px chyron along the bottom.
+   columns of ten row slots (the field, in numeric order), a 50 px chyron
+   along the bottom.
    ===================================================================== */
 
 @font-face {
@@ -241,7 +242,12 @@
 }
 
 /* ---------------------------------------------------------------------
-   Two columns of ten rows: 1-10 left, 11-20 right
+   Two columns of ten row slots. The JS fills them with the field (every
+   horse with in_field true, in numeric order): the first ten left, the
+   rest right. A field short of twenty leaves the trailing slots empty,
+   and an empty slot is nothing at all: the grid keeps its ten tracks so
+   the rows above it keep their height, but there is no element, no
+   border, no placeholder.
    --------------------------------------------------------------------- */
 .qb-cols {
     flex: 1 1 auto;
@@ -296,15 +302,16 @@
     transform: scale(1);
 }
 
-/* Leader: most tokens among the horses still running. Gold border and a
+/* Leader: most tokens among the horses in the field. Gold border and a
    soft glow, as the reference. */
 .qb-row.is-leader {
     border-color: var(--qb-gold);
     box-shadow: 0 0 0 2px var(--qb-gold) inset, 0 0 22px #e8c53a55;
 }
 
-/* Saddle cloth: colored block with the post position. Colors are set
-   inline by the JS from its SADDLE table. */
+/* Saddle cloth: colored block with the program number. Colors are set
+   inline by the JS from its SADDLE table (1-20 the field's cloths, 21-24
+   the also-eligibles' placeholders, the same as the cup firmware). */
 .qb-saddle {
     width: 56px;
     height: 56px;
@@ -329,8 +336,8 @@
 }
 
 /* Bets: the count, right-aligned and tabular; NO BETS at 22 px muted when
-   the cup is empty; SCRATCHED in red when the horse is out with no
-   replacement (its tokens are out of the pot). */
+   the cup is empty. A scratched horse (either kind) has no row at all: it
+   is out of the field and shows in the chyron instead. */
 .qb-bets {
     font-size: 58px;
     line-height: 1;
@@ -343,23 +350,6 @@
     font-size: 22px;
     letter-spacing: 3px;
     color: var(--qb-muted);
-}
-
-.qb-row.is-scratched .qb-bets {
-    font-size: 22px;
-    letter-spacing: 3px;
-    color: var(--qb-red);
-}
-
-.qb-row.is-scratched .qb-name {
-    text-decoration: line-through;
-    text-decoration-thickness: 4px;
-    color: var(--qb-muted);
-}
-
-.qb-row.is-scratched .qb-saddle {
-    filter: grayscale(0.6);
-    opacity: 0.8;
 }
 
 /* Cup offline: a small dim dot in the corner, nothing alarming. */
@@ -494,9 +484,9 @@
 }
 
 /* ---------------------------------------------------------------------
-   Chyron: FINE PRINT tab fixed at the left, the rest a continuous crawl
-   (a track whose content is repeated, translateX 0 -> -50 %, duration set
-   by the JS from the track's width at ~120 px/s).
+   Chyron: a continuous crawl edge to edge inside the band (a track whose
+   content is repeated, translateX 0 -> -50 %, duration set by the JS from
+   the track's width at ~120 px/s). No tab: the band is all crawl.
    --------------------------------------------------------------------- */
 .qb-foot {
     flex: 0 0 50px;
@@ -511,19 +501,6 @@
     border-radius: 12px;
     background: var(--qb-tile);
     overflow: hidden;
-}
-
-.qb-chyron-tab {
-    position: relative;
-    z-index: 1;
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    padding: 0 18px;
-    background: var(--qb-red);
-    color: #fff;
-    font-size: 22px;
-    letter-spacing: 4px;
 }
 
 .qb-crawl {
@@ -585,12 +562,17 @@
     line-height: 1;
 }
 
+/* A replacement scratch: badge, the old name struck through, the arrow,
+   the new badge and name. A scratch with no replacement: badge, name and
+   a muted "· TOKENS REFUNDED". */
 .qb-crawl-was {
     text-decoration: line-through;
     color: var(--qb-muted);
 }
 
 .qb-crawl-arrow { color: var(--qb-gold); }
+
+.qb-crawl-note { color: var(--qb-muted); }
 
 .qb-crawl-gap {
     display: inline-block;

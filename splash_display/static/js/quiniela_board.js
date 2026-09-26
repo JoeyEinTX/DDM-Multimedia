@@ -12,6 +12,16 @@
    there are no odds and no shares here: the board shows the pot, the three
    prizes, and how many tokens sit in each horse's cup.
 
+   Horses are numbers 1-24: 1-20 the field, 21-24 the also-eligibles, who
+   are not in the field until one replaces a scratched horse and, as at
+   Churchill, keeps its own program number (The Puma #9 scratches, Ocelli
+   runs as #22, not as #9). The rows are the field: every horse the model
+   marks in_field, in numeric order, the first ten down the left column
+   and the rest down the right. A scratched horse (either kind) is never a
+   row; a field short of twenty leaves the trailing slots empty. The row
+   set is rebuilt whenever it changes, with no motion of its own: a horse
+   that draws in appears with its count, the scratched one is gone.
+
    Takeover rule: while model.race_state is in model.board_states (the
    server exposes pi5's QUINIELA_BOARD_STATES as "board_states"; nothing is
    hard-coded here) the board crossfades in over the playlist and calls
@@ -23,22 +33,25 @@
    or ping), or as soon as the model itself reports link_ok false.
 
    Freeze rule: in the states whose banner says BETTING CLOSED (3
-   AT_THE_POST, 4 RUNNING) the rows, pot and prizes keep the values shown
-   when the state was entered and the CLOSES IN line is hidden; the banner
-   stays live, and so do the names and the chyron (a late name correction
-   still shows). Back in 1 or 2 the live model renders again. The freeze
-   only holds while the board is up: a hidden board always takes the live
-   model, so a page that loads mid-race, or a board coming back after the
-   server restarted, shows the field rather than an earlier hidden paint
-   of an empty model.
+   AT_THE_POST, 4 RUNNING) the rows (the set and the counts), pot and
+   prizes keep the values shown when the state was entered and the CLOSES
+   IN line is hidden; the banner stays live, and so do the names and the
+   chyron (a late name correction still shows). Back in 1 or 2 the live
+   model renders again. The freeze only holds while the board is up: a
+   hidden board always takes the live model, so a page that loads
+   mid-race, or a board coming back after the server restarted, shows the
+   field rather than an earlier hidden paint of an empty model.
 
    The model (GET /api/quiniela, relayed from pi5 untouched). The board
    reads: race_state, board_states, link_ok, token_value, pot, horses[n]
-   {tokens, scratched, online, cup, name, replaced}, events[{horse, delta,
+   {tokens, in_field, scratched, online, cup, name}, events[{horse, delta,
    ts}], and the additive keys now, closes_at, prizes{win,place,show},
-   chyron[], scratches[{horse,was,now}], names_rev. Every new key is
-   optional: before pi5 has been heard the model carries none of them and
-   the board renders without errors (hidden, since board_states is empty).
+   chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
+   names_rev. Every new key is optional: before pi5 has been heard the
+   model carries none of them and the board renders without errors
+   (hidden, since board_states is empty). Without in_field (that empty
+   model, or an older pi5) the field is horses 1-20 that are not
+   scratched.
 
    Motion: count changes tween over ~500 ms (requestAnimationFrame writing
    the number) and pulse the row once via a 400 ms CSS animation; the toast
@@ -55,7 +68,9 @@
     const BACKOFF_MIN_MS = 1000;
     const BACKOFF_MAX_MS = 30000;
     const COUNT_TWEEN_MS = 500;
-    const HORSES         = 20;
+    const HORSES         = 24;      // 1-20 the field, 21-24 the also-eligibles
+    const FIELD_MAX      = 20;      // without in_field, horses 1-20 are the field
+    const SLOTS_PER_COL  = 10;      // the first ten rows go left, the rest right
     const NAME_MAX_PX    = 38;      // the name shrinks from here ...
     const NAME_MIN_PX    = 20;      // ... down to here, never wraps
     const TOAST_IN_MS    = 150;     // the pop, matches .qb-toast.is-shown's transition
@@ -66,7 +81,9 @@
     const CRAWL_PX_S     = 120;     // chyron speed
     const CLOSES_TICK_MS = 250;     // the countdown is checked 4x a second, written once a second
 
-    // Kentucky Derby saddle-cloth colors by post position.
+    // Kentucky Derby saddle-cloth colors by program number: 1-20 the
+    // field's, 21-24 placeholders for the also-eligibles, the same as the
+    // cup firmware shows.
     const SADDLE = {
       1:{bg:'#E31837',fg:'#FFFFFF'},  2:{bg:'#FFFFFF',fg:'#000000'},  3:{bg:'#0033A0',fg:'#FFFFFF'},
       4:{bg:'#FFCD00',fg:'#000000'},  5:{bg:'#00843D',fg:'#FFFFFF'},  6:{bg:'#000000',fg:'#FFD700'},
@@ -74,7 +91,9 @@
      10:{bg:'#663399',fg:'#FFFFFF'}, 11:{bg:'#808080',fg:'#E31837'}, 12:{bg:'#32CD32',fg:'#000000'},
      13:{bg:'#8B4513',fg:'#FFFFFF'}, 14:{bg:'#800000',fg:'#FFCD00'}, 15:{bg:'#C4B7A6',fg:'#000000'},
      16:{bg:'#87CEEB',fg:'#E31837'}, 17:{bg:'#000080',fg:'#FFFFFF'}, 18:{bg:'#228B22',fg:'#FFCD00'},
-     19:{bg:'#00008B',fg:'#E31837'}, 20:{bg:'#FF00FF',fg:'#FFCD00'}
+     19:{bg:'#00008B',fg:'#E31837'}, 20:{bg:'#FF00FF',fg:'#FFCD00'},
+     21:{bg:'#FFDAB9',fg:'#000000'}, 22:{bg:'#008080',fg:'#FFFFFF'}, 23:{bg:'#808000',fg:'#FFFFFF'},
+     24:{bg:'#2F4F4F',fg:'#FFFFFF'}
     };
     const SADDLE_FALLBACK = { bg: '#808080', fg: '#FFFFFF' };
 
@@ -103,6 +122,8 @@
     const closesEl      = $('qb-closes');
     const closesLabelEl = $('qb-closes-label');
     const closesTimeEl  = $('qb-closes-time');
+    const colEls        = [$('qb-col-left'), $('qb-col-right')];
+    const rowTpl        = $('qb-row-tpl');
     const trackEl       = $('qb-track');
     const toastEl       = $('qb-toast');
     const toastNumEl    = $('qb-toast-num');
@@ -112,24 +133,34 @@
     const toastPlusEl   = toastEl.querySelector('.qb-toast-plus');
     const noLinkEl      = $('qb-nolink');
 
-    const rows = {};   // horse -> { el, name, bets, displayed, target, raf, nameText, scratched }
-    board.querySelectorAll('.qb-row[data-horse]').forEach((el) => {
-        const n = parseInt(el.dataset.horse, 10);
+    // The rows on screen: horse -> { el, name, bets, displayed, target, raf,
+    // nameText }, built from the model's field (renderField). A horse out
+    // of the field has no entry, and its record goes with its row, so a
+    // horse that comes back (an unscratch) snaps to its count rather than
+    // tweening from a value nobody saw.
+    const rows = {};
+    let field = [];        // the horses with rows, in numeric order
+    let fieldKey = '';     // field.join(','): the row set is rebuilt when it changes
+
+    function makeRow(n) {
+        const el = rowTpl.content.firstElementChild.cloneNode(true);
+        el.dataset.horse = String(n);
         const saddle = el.querySelector('.qb-saddle');
         const colors = SADDLE[n] || SADDLE_FALLBACK;
         saddle.style.background = colors.bg;
         saddle.style.color = colors.fg;
+        saddle.textContent = String(n);
         el.addEventListener('animationend', (e) => {
             if (e.target === el) el.classList.remove('is-pulse');
         });
-        rows[n] = {
+        return {
             el,
             name: el.querySelector('.qb-name'),
             bets: el.querySelector('.qb-bets'),
             displayed: null, target: null, raf: null,
-            nameText: null, scratched: false,
+            nameText: null,
         };
-    });
+    }
 
     function relativeLuminance(hex) {
         const v = parseInt(hex.slice(1), 16);
@@ -257,7 +288,7 @@
 
     // Names are written only when they change, and re-fitted then.
     function renderNames(m) {
-        for (let n = 1; n <= HORSES; n++) {
+        for (const n of field) {
             const r = rows[n];
             if (!r) continue;
             const text = horseName(m.horses[String(n)], n);
@@ -280,52 +311,77 @@
     }
 
     function refitNames() {
-        for (let n = 1; n <= HORSES; n++) if (rows[n]) fitName(rows[n].name);
+        for (const n of field) if (rows[n]) fitName(rows[n].name);
+    }
+
+    // The field: every horse with in_field true, in numeric order. A horse
+    // without the key (the relay's empty model before pi5 is heard, or an
+    // older pi5) is in the field when it is 1-20 and not scratched.
+    function fieldOf(m) {
+        const out = [];
+        for (let n = 1; n <= HORSES; n++) {
+            const h = m.horses[String(n)];
+            if (!h || typeof h !== 'object') continue;
+            const inField = h.in_field != null ? !!h.in_field : (n <= FIELD_MAX && !h.scratched);
+            if (inField) out.push(n);
+        }
+        return out;
+    }
+
+    // The row set follows the field: rows for horses that left it are
+    // removed (record and all), horses new to it get a row, and every row
+    // is (re)appended in order, the first ten left and the rest right.
+    // appendChild moves a row that is already there, so nothing is ever
+    // duplicated and a field that only shifted (9 gone, 22 in) reflows
+    // without any motion of its own.
+    function renderField(m) {
+        const next = fieldOf(m);
+        const key = next.join(',');
+        if (key === fieldKey) return;
+        fieldKey = key;
+        field = next;
+        const keep = new Set(next);
+        for (const k of Object.keys(rows)) {
+            const n = Number(k);
+            if (keep.has(n)) continue;
+            cancelTween(rows[n]);
+            rows[n].el.remove();
+            delete rows[n];
+        }
+        next.forEach((n, i) => {
+            if (!rows[n]) rows[n] = makeRow(n);
+            colEls[i < SLOTS_PER_COL ? 0 : 1].appendChild(rows[n].el);
+        });
     }
 
     function renderRows(m, animate) {
-        // Leader: most tokens among the horses still running, only when
+        renderField(m);
+        // Leader: most tokens among the horses in the field, only when
         // somebody has bet; the lowest number on a tie.
         let leader = null;
         let most = 0;
-        for (let n = 1; n <= HORSES; n++) {
+        for (const n of field) {
             const h = m.horses[String(n)] || {};
-            if (h.scratched) continue;
             const tokens = parseInt(h.tokens, 10) || 0;
             if (tokens > most) { most = tokens; leader = n; }
         }
-        for (let n = 1; n <= HORSES; n++) {
+        for (const n of field) {
             const r = rows[n];
-            if (!r) continue;
             const h = m.horses[String(n)] || {};
             const tokens = Math.max(0, parseInt(h.tokens, 10) || 0);
-            const scratched = !!h.scratched;
-
-            r.el.classList.toggle('is-scratched', scratched);
             r.el.classList.toggle('is-offline', h.cup != null && !h.online);
             r.el.classList.toggle('is-leader', leader === n);
-            setCount(r, tokens, scratched, animate);
+            setCount(r, tokens, animate);
         }
     }
 
-    // Writes the bets cell. Scratched with no replacement: SCRATCHED, the
-    // count is out of the pot. Animated: tween from the value on screen and
-    // pulse the row once. Not animated (first paint, or board hidden): snap.
-    function setCount(r, tokens, scratched, animate) {
-        if (scratched) {
-            cancelTween(r);
-            r.target = tokens;
-            r.displayed = tokens;
-            r.scratched = true;
-            r.el.classList.remove('is-empty');
-            setText(r.bets, 'Scratched');
-            return;
-        }
-        const wasScratched = r.scratched;
-        r.scratched = false;
-        if (r.target === tokens && !wasScratched) return;
+    // Writes the bets cell. Animated: tween from the value on screen and
+    // pulse the row once. Not animated (first paint, a row new to the
+    // field, or board hidden): snap.
+    function setCount(r, tokens, animate) {
+        if (r.target === tokens) return;
         r.target = tokens;
-        if (!animate || r.displayed == null || wasScratched) {
+        if (!animate || r.displayed == null) {
             cancelTween(r);
             paintCount(r, tokens);
             return;
@@ -416,9 +472,10 @@
     // poll/stream duplicate, while the board is hidden, or while the
     // picture is frozen (betting closed). Nor for a horse scratched at the
     // gateway: pi5 still reports the cup's token deltas, but those tokens
-    // are out of the pot and the row says SCRATCHED, so a token dropped in
-    // that cup is not a bet and the board must not announce one. Its key is
-    // still consumed, so an unscratch later does not toast it.
+    // are out of the pot and the horse is out of the field, so a token
+    // dropped in that cup is not a bet and the board must not announce
+    // one. Its key is still consumed, so an unscratch later does not toast
+    // it. A renumber (9 -> 22) produces no event on pi5, so nothing here.
     let seenKeys = new Set();
     let toastHoldTimer = null;
     let toastOutTimer = null;
@@ -441,10 +498,13 @@
         }
         seenKeys = keys;
         if (first || !visible || frozen || !pick) return;
-        showToast(pick);
+        showToast(m, pick);
     }
 
-    function showToast(ev) {
+    // The card names the horse by the number the event carries, which is
+    // its current program number (after 9 -> 22 pi5 reports 22), in that
+    // number's cloth, with the name straight from the model.
+    function showToast(m, ev) {
         const n = parseInt(ev.horse, 10);
         const delta = parseInt(ev.delta, 10) || 0;
         const c = SADDLE[n] || SADDLE_FALLBACK;
@@ -455,13 +515,13 @@
         toastNumEl.style.background = c.fg;
         toastNumEl.style.color = c.bg;
         toastNumEl.textContent = String(n);
-        toastNameEl.textContent = rows[n] && rows[n].nameText ? rows[n].nameText : 'HORSE ' + n;
+        toastNameEl.textContent = horseName(m.horses && m.horses[String(n)], n);
         fitToastName();
         toastDeltaEl.textContent = '+' + delta;
         toastUnitEl.textContent = delta === 1 ? 'Bet' : 'Bets';
         // The "+1" is white with a dark shadow, except on the light cloths
-        // (white, yellow, turquoise, lime, sky, khaki) where it takes the
-        // cloth's own text colour.
+        // (white, yellow, turquoise, lime, sky, khaki, peach) where it takes
+        // the cloth's own text colour.
         toastPlusEl.style.color = relativeLuminance(c.bg) > 0.4 ? c.fg : '#FFFFFF';
 
         clearTimeout(toastHoldTimer);
@@ -506,9 +566,11 @@
     }
 
     // ---- Chyron -----------------------------------------------------
-    // Content, in order: chyron[0]; SCRATCHED and every replacement
-    // scratch (badge, struck-through old name, arrow, new name) when there
-    // are any; the remaining chyron lines. Gold diamonds between items.
+    // Content, in order: chyron[0]; SCRATCHED and every scratch when there
+    // are any (a replacement: the scratched horse's badge and name struck
+    // through, the arrow, the replacement's badge and name; no replacement:
+    // badge, name and a muted "· TOKENS REFUNDED"; an unnamed horse prints
+    // HORSE n); the remaining chyron lines. Gold diamonds between items.
     // The track holds the content repeated (an even number of copies, at
     // least two, enough to cover the crawl twice) and translates 0 -> -50 %
     // so the loop is seamless; the duration comes from the track's width
@@ -536,23 +598,43 @@
         else applyCrawl(html);
     }
 
+    // One side of a scratch record, {number, name} -> {n, name}, or null
+    // for anything else (the older string-shaped entries, junk).
+    function scratchSide(x) {
+        if (!x || typeof x !== 'object') return null;
+        const n = parseInt(x.number, 10);
+        if (!Number.isFinite(n)) return null;
+        return { n, name: horseName(x, n) };
+    }
+
+    function crawlBadge(n) {
+        const c = SADDLE[n] || SADDLE_FALLBACK;
+        return '<span class="qb-crawl-badge" style="background:' + c.bg + ';color:' + c.fg + '">' + n + '</span>';
+    }
+
     function buildCrawl(lines, scratches) {
         const item = (inner) => '<span class="qb-crawl-item">' + inner + '</span>';
         const items = [];
         if (lines.length) items.push(item(esc(lines[0])));
-        if (scratches.length) {
-            const parts = scratches.map((x) => {
-                const n = parseInt(x && x.horse, 10);
-                const c = SADDLE[n] || SADDLE_FALLBACK;
-                // was is "" when the scratched horse had no name yet (pi5
-                // keeps the "" as its replaced marker): print a placeholder
-                // so the crawl never shows a blank before the arrow.
-                const was = x && x.was != null ? String(x.was) : '';
-                return '<span class="qb-crawl-badge" style="background:' + c.bg + ';color:' + c.fg + '">' + (Number.isFinite(n) ? n : '?') + '</span>'
-                     + '<span class="qb-crawl-was">' + esc(was.trim() ? was : 'UNNAMED') + '</span>'
-                     + '<span class="qb-crawl-arrow">▶</span>'
-                     + '<span>' + esc(x && x.now != null ? x.now : '') + '</span>';
-            });
+        const parts = [];
+        for (const x of scratches) {
+            const was = scratchSide(x && x.was);
+            if (!was) continue;                            // not the record shape: ignored
+            if (x.now == null) {
+                parts.push(crawlBadge(was.n)
+                    + '<span>' + esc(was.name) + '</span>'
+                    + '<span class="qb-crawl-note">· Tokens refunded</span>');
+                continue;
+            }
+            const now = scratchSide(x.now);
+            if (!now) continue;
+            parts.push(crawlBadge(was.n)
+                + '<span class="qb-crawl-was">' + esc(was.name) + '</span>'
+                + '<span class="qb-crawl-arrow">▶</span>'
+                + crawlBadge(now.n)
+                + '<span>' + esc(now.name) + '</span>');
+        }
+        if (parts.length) {
             items.push(item('<span class="qb-crawl-lbl">Scratched</span>' + parts.join('<span class="qb-crawl-gap"></span>')));
         }
         for (const l of lines.slice(1)) items.push(item(esc(l)));

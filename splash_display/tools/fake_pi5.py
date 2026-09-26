@@ -20,8 +20,9 @@ Nothing leaves loopback: no serial port, no dashboard poller.
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
     python tools/fake_pi5.py --phase bench-reset   # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
-    python tools/fake_pi5.py --phase redesign      # the board_reference.html picture: Derby 2024 field, two replacement
-                                                   # scratches, POT $154, closes in 15 min, a bet on horse 7 every 4 s (toast)
+    python tools/fake_pi5.py --phase redesign      # the 2026 Derby field: three also-eligibles drawn in (5 -> 21, 9 -> 22,
+                                                   # 13 -> 23), 20 scratched at the gateway, 19 rows, POT $150, closes in
+                                                   # 15 min, a bet on horse 7 every 4 s (toast)
     python tools/fake_pi5.py --phase redesign-static   # the same picture, nothing moving (screenshots)
 
 Flags:
@@ -50,23 +51,34 @@ Both URLs are printed; open http://127.0.0.1:5077/display. The fake's
     curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 
 puts the board up on the TV and ``state 5`` takes it down again; ``scratch C 1``
-/ ``scratch C 0`` flips the kind-2 scratch on cup C (its tokens leave the pot);
-``name N Some Long Name`` renames horse N (names_rev bumps, no event; ``name N``
-alone clears it), which is how to watch a long name shrink to fit its row.
+/ ``scratch C 0`` flips the kind-2 scratch on cup C (the horse on that cup
+leaves the field, its tokens leave the pot); ``renumber A B`` is the
+replacement scratch: the cup that carries horse A now carries horse B, which
+keeps its own number (the 2026 Derby: The Puma #9 scratched and Ocelli ran
+as #22), so B appears on the board with A's tokens where 22 sorts and A is
+gone (the redesign feed's bet on 7 then lands under B: the token is the
+cup's); ``renumber B A`` undoes it; ``name N Some Long Name`` renames horse N
+(1-24; names_rev bumps, no event; ``name N`` alone clears it), which is how
+to watch a long name shrink to fit its row.
 
 Static phases carry 20 cups (cup n on horse n), tokens spread with a clear
-leader (horse 7), one scratched horse (13), one offline cup (horse 11) and a
-handful of recent events already in the model; they carry no names, so the
-board shows HORSE n. ``cycle`` walks the race states about every 15 s with
-tokens climbing while betting is open, and keeps a slow trickle of bets
-going in AT_THE_POST so the freeze rule is visible.
+leader (horse 7), one scratched horse (13, at the gateway: out of the field,
+its tokens out of the pot), one offline cup (horse 11) and a handful of
+recent events already in the model; they carry no names, so the board shows
+HORSE n. ``cycle`` walks the race states about every 15 s with tokens
+climbing while betting is open, and keeps a slow trickle of bets going in
+AT_THE_POST so the freeze rule is visible.
 
-The model carries every key of pi5's contract, including the additive ones
-the redesigned board reads: ``now`` (stamped when the JSON is built),
-``closes_at``, ``prizes`` (whole dollars, place and show rounded half up,
-win the remainder), ``split``, ``chyron``, ``names_rev``, ``scratches`` and
-``horses[n].name`` / ``replaced``. A kind-2 scratch (no replacement) keeps
-its tokens in ``total_tokens`` but out of ``pot`` and the prizes.
+The model carries every key of pi5's contract: horses ``"1"``..``"24"``
+(1-20 the field, 21-24 the also-eligibles, in the field only while standing
+in for a scratched horse), each with ``in_field``, ``name`` and ``replaced``;
+``now`` (stamped when the JSON is built), ``closes_at``, ``prizes`` (whole
+dollars, place and show rounded half up, win the remainder), ``split``,
+``chyron``, ``names_rev`` and ``scratches`` (one record per scratch:
+``{"was": {"number", "name"}, "now": {"number", "name"}}`` for a replacement,
+``"now": null`` for a gateway scratch, ordered by was.number). A gateway
+scratch keeps its tokens in ``total_tokens`` but out of ``pot`` and the
+prizes; a renumber moves the cup's tokens with it and never changes the pot.
 """
 
 from __future__ import annotations
@@ -81,7 +93,7 @@ import threading
 import time
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 HERE = Path(__file__).resolve().parent.parent      # splash_display/
 if str(HERE) not in sys.path:
@@ -109,6 +121,9 @@ BOARD_STATES = [1, 2, 3, 4]
 TOKEN_VALUE = 1.0
 HEARTBEAT_S = 5.0        # pi5's SSE ping cadence
 MAX_EVENTS = 8
+MAX_HORSE = 24           # DDM_MAX_HORSE: 1-20 the field, 21-24 the also-eligibles
+FIELD_MAX = 20
+CUPS = 20
 # pi5's LQ_SPLIT_WIN / _PLACE / _SHOW and LQ_CHYRON_LINES, as the model serves them.
 SPLIT = {"win": 0.60, "place": 0.25, "show": 0.15}
 CHYRON_LINES = [
@@ -135,20 +150,26 @@ BENCH_EVENTS = [3, 2, 3, 7, 1]
 # The last few bets, oldest first; they become the model's events.
 SEED_EVENTS = [7, 3, 15, 7, 10, 7, 18]
 
-# --phase redesign: tools/board_reference.html's picture. The 2024 Derby
-# field in post order, two replacement scratches (the number stays live, the
-# old name goes to `replaced`), the reference's counts (POT $154 -> WIN $92,
-# PLACE $39, SHOW $23), betting closes in 15 minutes.
-DERBY_2024 = [
-    "Dornoch", "Sierra Leone", "Mystik Dan", "Catching Freedom", "Catalytic",
-    "Just Steel", "Honor Marie", "Just a Touch", "Encino", "T O Password",
-    "Forever Young", "Track Phantom", "West Saratoga", "Endlessly", "Domestic Product",
-    "Grand Mo the First", "Fierceness", "Stronghold", "Resilience", "Society Man",
+# --phase redesign: the 2026 Derby field in post order plus the named
+# also-eligibles, three of whom drew in (5 -> 21, 9 -> 22, 13 -> 23: the
+# cups that were 5, 9 and 13 now carry 21, 22 and 23 with their tokens,
+# each keeping its own program number), 20 scratched at the gateway with
+# nobody drawn in (its 4 tokens out of the pot). tools/board_reference.html's
+# counts for the numbered cups (154 tokens in all, so POT $150 -> WIN $89,
+# PLACE $38, SHOW $23), betting closes in 15 minutes. Nineteen rows: the
+# last slot is blank, 22 and 23 sit at the bottom of the right column.
+DERBY_2026 = [
+    "Renegade", "Albus", "Intrepido", "Litmus Test", "Right to Party",
+    "Commandment", "Danon Bourbon", "So Happy", "The Puma", "Wonder Dean",
+    "Incredibolt", "Chief Wallabee", "Silent Tactic", "Potente", "Emerging Market",
+    "Pavlovian", "Six Speed", "Further Ado", "Golden Tempo", "Fulleffort",
 ]
-REDESIGN_REPLACED = {9: "Encino", 14: "Endlessly"}
-REDESIGN_NAMES = {n: name for n, name in enumerate(DERBY_2024, 1)}
-REDESIGN_NAMES.update({9: "Epic Ride", 14: "Mugatu"})
-REDESIGN_TOKENS = {
+ALSO_ELIGIBLE_2026 = {21: "Great White", 22: "Ocelli", 23: "Robusta"}
+REDESIGN_NAMES = {n: name for n, name in enumerate(DERBY_2026, 1)}
+REDESIGN_NAMES.update(ALSO_ELIGIBLE_2026)
+REDESIGN_RENUMBERS = [(5, 21), (9, 22), (13, 23)]     # (was, now), applied in order
+REDESIGN_SCRATCHED = {20}
+REDESIGN_TOKENS = {           # by horse before the renumbers: 5's count lands on 21, etc.
     1: 11, 2: 18, 3: 14, 4: 6,  5: 0,
     6: 3,  7: 23, 8: 9,  9: 7,  10: 2,
     11: 16, 12: 12, 13: 4, 14: 0, 15: 1,
@@ -179,6 +200,11 @@ def prizes_for(pot: float) -> Dict[str, int]:
     return {"win": win, "place": place, "show": show}
 
 
+def default_cups() -> Dict[int, int]:
+    """Cup n on horse n, 1-20: horse -> cup."""
+    return {n: n for n in range(1, CUPS + 1)}
+
+
 def build_model(
     phase: int,
     tokens: Dict[int, int],
@@ -188,46 +214,71 @@ def build_model(
     updated: Optional[float] = None,
     link_ok: bool = True,
     names: Optional[Dict[int, str]] = None,
-    replaced: Optional[Dict[int, str]] = None,
+    cup_of: Optional[Dict[int, int]] = None,
+    replacements: Optional[Dict[int, int]] = None,
     closes_at: Optional[float] = None,
     names_rev: int = 0,
     chyron: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """The contract's model: share 4 dp, pot 2 dp, leader = strictly most
-    tokens (lowest horse on a tie, None when nothing is bet), cup numbers
-    1-based (cup n on horse n), events newest first, at most 8. A kind-2
-    scratch (scratched, no replacement) keeps its tokens in total_tokens
-    and share's denominator but out of the pot and the prizes. Names are
-    served upper-cased ("" when unset); `replaced` is the upper-cased name
-    of the horse this number replaced, or None. `now` is stamped here, when
-    the model is built."""
+    """The contract's model: horses "1".."24"; share 4 dp, pot 2 dp, leader =
+    strictly most tokens (lowest horse on a tie, None when nothing is bet;
+    as on pi5 a scratched horse is not excluded); cup numbers 1-based
+    (`cup_of` is horse -> cup, cup n on horse n by default; a horse with no
+    cup has cup None and is offline); events newest first, at most 8.
+
+    `replacements` is now -> was, one entry per replacement scratch (9 -> 22
+    is {22: 9}). `in_field`: 1-20 unless scratched either way, 21-24 only
+    while the "now" of a record; the "was" of a record, or a horse whose
+    cup carries the gateway scratched flag, is out. `replaced` is the
+    upper-cased name of the horse this one stands in for ("" when it had
+    none), else None. `scratches` is one record per scratch, ordered by
+    was.number: a replacement {"was": {number, name}, "now": {number,
+    name}}, a gateway scratch {"was": {...}, "now": None}. Names are served
+    upper-cased ("" when unset). A gateway scratch keeps its tokens in
+    total_tokens and share's denominator but out of the pot and the prizes.
+    `now` is stamped here, when the model is built."""
     scratched, offline = set(scratched), set(offline)
     names = names or {}
-    replaced = replaced or {}
-    counts = {n: max(0, int(tokens.get(n, 0))) for n in range(1, 21)}
+    cup_of = default_cups() if cup_of is None else dict(cup_of)
+    replacements = dict(replacements or {})
+    nows = set(replacements)
+    wases = set(replacements.values())
+    counts = {n: max(0, int(tokens.get(n, 0))) for n in range(1, MAX_HORSE + 1)}
     total = sum(counts.values())
     in_pot = sum(t for n, t in counts.items() if n not in scratched)
     pot = round(in_pot * TOKEN_VALUE, 2)
+
+    def name_of(n: int) -> str:
+        return str(names.get(n) or "").upper()
+
     horses: Dict[str, Dict[str, Any]] = {}
     scratches: List[Dict[str, Any]] = []
     leader: Optional[int] = None
     best = 0
-    for n in range(1, 21):
+    for n in range(1, MAX_HORSE + 1):
         t = counts[n]
-        was = replaced.get(n)
+        cup = cup_of.get(n)
+        was = replacements.get(n)
+        gateway_scratched = n in scratched and cup is not None
+        in_field = (n <= FIELD_MAX or n in nows) and n not in wases and not gateway_scratched
         horses[str(n)] = {
             "tokens": t,
             "share": round(t / total, 4) if total else 0.0,
-            "scratched": n in scratched,
-            "online": n not in offline,
-            "cup": n,
-            "name": str(names.get(n) or "").upper(),
-            "replaced": str(was).upper() if was else None,
+            "in_field": in_field,
+            "scratched": gateway_scratched,
+            "online": cup is not None and n not in offline,
+            "cup": cup,
+            "name": name_of(n),
+            "replaced": name_of(was) if was is not None else None,
         }
-        if was:
-            scratches.append({"horse": n, "was": str(was).upper(), "now": str(names.get(n) or "").upper()})
+        if was is not None:
+            scratches.append({"was": {"number": was, "name": name_of(was)},
+                              "now": {"number": n, "name": name_of(n)}})
+        if gateway_scratched:               # a now scratched at the gateway in turn: both entries, as pi5 sends them
+            scratches.append({"was": {"number": n, "name": name_of(n)}, "now": None})
         if t > best:
             leader, best = n, t
+    scratches.sort(key=lambda s: s["was"]["number"])
     return {
         "link_ok": bool(link_ok),
         "race_state": int(phase),
@@ -261,13 +312,17 @@ def seed_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
 
 
 class FakePi5:
-    """The scenario (phase, tokens, scratched, offline cups, events) and the
-    three routes on a Flask app of its own."""
+    """The scenario (phase, tokens, scratched, offline cups, events, names,
+    which cup carries which horse, the replacement records) and the three
+    routes on a Flask app of its own. Tokens, the gateway scratched flag and
+    the offline state are keyed by horse here and travel with the cup on a
+    renumber, which is what makes them the cup's."""
 
     def __init__(self, phase: int, tokens: Optional[Dict[int, int]] = None,
                  scratched: Optional[Iterable[int]] = None, offline: Optional[Iterable[int]] = None,
                  events: Optional[List[Dict[str, Any]]] = None,
-                 names: Optional[Dict[int, str]] = None, replaced: Optional[Dict[int, str]] = None,
+                 names: Optional[Dict[int, str]] = None,
+                 renumbers: Iterable[Tuple[int, int]] = (),
                  closes_at: Optional[float] = None, names_rev: int = 0) -> None:
         self._lock = threading.Lock()
         self._subs: List["queue.Queue[Optional[str]]"] = []
@@ -277,18 +332,21 @@ class FakePi5:
         self.offline: Set[int] = set(OFFLINE if offline is None else offline)
         self.events: List[Dict[str, Any]] = seed_events() if events is None else list(events)
         self.names: Dict[int, str] = dict(names or {})
-        self.replaced: Dict[int, str] = dict(replaced or {})
+        self.cup_of: Dict[int, int] = default_cups()
+        self.replacements: Dict[int, int] = {}       # now -> was
         self.closes_at: Optional[float] = closes_at
         self.names_rev = int(names_rev)
         self.stopped = False
+        for was, now in renumbers:
+            self._renumber_locked(was, now)
         self._json = _dumps(self._build())
         self.app = self._make_app()
 
     # -- scenario ------------------------------------------------------------
     def _build(self) -> Dict[str, Any]:
         return build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
-                           names=self.names, replaced=self.replaced, closes_at=self.closes_at,
-                           names_rev=self.names_rev)
+                           names=self.names, cup_of=self.cup_of, replacements=self.replacements,
+                           closes_at=self.closes_at, names_rev=self.names_rev)
 
     def _publish_locked(self) -> None:
         self._json = _dumps(self._build())
@@ -324,27 +382,84 @@ class FakePi5:
             self._publish_locked()
 
     def bump(self, horse: int, delta: int = 1) -> None:
-        """One bet: tokens and an event, newest first."""
+        """One bet: tokens and an event, newest first. The token lands in
+        the CUP: after `renumber 7 24` a bet aimed at 7 counts, and toasts,
+        under 24 (_carried_locked), as pi5 reports the cup's new number."""
         with self._lock:
+            horse = self._carried_locked(horse)
             self.tokens[horse] = max(0, self.tokens.get(horse, 0) + delta)
             self.events = ([{"horse": horse, "delta": delta, "ts": round(time.time(), 3)}]
                            + self.events)[:MAX_EVENTS]
             self._publish_locked()
 
-    def set_scratched(self, horse: int, on: bool) -> None:
-        """A kind-2 scratch (pi5's `scratch C 1` / `scratch C 0`; cup n is
-        horse n here): the flag flips, no event, the horse's tokens leave
-        (or rejoin) the pot. names_rev is the names store's revision on pi5
-        and a gateway scratch does not touch it (the bridge's state rev is
-        what moves), so it stays put here too."""
+    def _carried_locked(self, horse: int) -> int:
+        """The number the cup that carried `horse` carries now: a horse with
+        a cup is its own answer; a renumbered one is followed through the
+        records (7 -> 24, or 7 -> 24 -> 21 after a second renumber)."""
+        was_to_now = {was: now for now, was in self.replacements.items()}
+        seen = set()
+        while horse not in self.cup_of and horse in was_to_now and horse not in seen:
+            seen.add(horse)
+            horse = was_to_now[horse]
+        return horse
+
+    def horse_on(self, cup: int) -> Optional[int]:
+        for horse, c in self.cup_of.items():
+            if c == cup:
+                return horse
+        return None
+
+    def set_scratched(self, cup: int, on: bool) -> None:
+        """A kind-2 scratch (pi5's `scratch C 1` / `scratch C 0`) on cup C:
+        the flag flips on the horse that cup carries, no event, the horse
+        leaves (or rejoins) the field and its tokens leave (or rejoin) the
+        pot. names_rev is the names store's revision on pi5 and a gateway
+        scratch does not touch it (the bridge's state rev is what moves),
+        so it stays put here too."""
         with self._lock:
-            if on == (horse in self.scratched):
+            horse = self.horse_on(cup)
+            if horse is None or on == (horse in self.scratched):
                 return
             if on:
                 self.scratched.add(horse)
             else:
                 self.scratched.discard(horse)
             self._publish_locked()
+
+    def _renumber_locked(self, was: int, now: int) -> bool:
+        """pi5's replacement scratch: the cup that carries horse `was` now
+        carries horse `now`, which keeps its own program number. The cup's
+        tokens, gateway flag and offline state come along (it is the same
+        cup), `was` leaves the field as the "was" of a record whose "now"
+        is `now`, no event, and names_rev bumps (pi5's names store versions
+        a replacement). `renumber now was` afterwards is the undo: the cup
+        goes back and the record is dropped. Refused (False) when `was` has
+        no cup or `now` already has one."""
+        if not (1 <= was <= MAX_HORSE and 1 <= now <= MAX_HORSE) or was == now:
+            return False
+        if was not in self.cup_of or now in self.cup_of:
+            return False
+        self.cup_of[now] = self.cup_of.pop(was)
+        self.tokens[now] = self.tokens.pop(was, 0)
+        if was in self.scratched:
+            self.scratched.discard(was)
+            self.scratched.add(now)
+        if was in self.offline:
+            self.offline.discard(was)
+            self.offline.add(now)
+        if self.replacements.get(was) == now:
+            del self.replacements[was]          # the undo of an earlier `renumber now was`
+        else:
+            self.replacements[now] = was
+        self.names_rev += 1
+        return True
+
+    def renumber(self, was: int, now: int) -> bool:
+        with self._lock:
+            ok = self._renumber_locked(was, now)
+            if ok:
+                self._publish_locked()
+            return ok
 
     def set_name(self, horse: int, name: str) -> None:
         """An operator's name change (pi5's PUT /api/quiniela/horses): the
@@ -444,7 +559,14 @@ class FakePi5:
                 fake.reset({}, PHASES["idle"])
             elif words[0] == "scratch" and len(words) == 3 and words[1].isdigit() and words[2] in ("0", "1"):
                 fake.set_scratched(int(words[1]), words[2] == "1")
-            elif words[0] == "name" and len(words) >= 2 and words[1].isdigit() and 1 <= int(words[1]) <= 20:
+            elif words[0] == "renumber" and len(words) == 3 and words[1].isdigit() and words[2].isdigit():
+                # Not a pi5 command (there the admin page does it); here the
+                # cup on horse A becomes horse B, tokens and all: A leaves
+                # the field, B appears where its number sorts, no event.
+                if not fake.renumber(int(words[1]), int(words[2])):
+                    return jsonify({"ok": False, "error": f"cannot renumber {words[1]} -> {words[2]}: "
+                                                          "A needs a cup and B must have none"}), 400
+            elif words[0] == "name" and len(words) >= 2 and words[1].isdigit() and 1 <= int(words[1]) <= MAX_HORSE:
                 # Not a pi5 command (there it is PUT /api/quiniela/horses); here
                 # it renames horse N (the rest of the line, empty clears) so a
                 # long name's shrink-to-fit can be watched on the board.
@@ -567,8 +689,8 @@ def main() -> None:
         fake = FakePi5(PHASES["open"], tokens=BENCH_TOKENS, scratched=(), offline=(),
                        events=bench_events())
     elif args.phase in ("redesign", "redesign-static"):
-        fake = FakePi5(PHASES["open"], tokens=REDESIGN_TOKENS, scratched=(), offline=(),
-                       events=redesign_events(), names=REDESIGN_NAMES, replaced=REDESIGN_REPLACED,
+        fake = FakePi5(PHASES["open"], tokens=REDESIGN_TOKENS, scratched=REDESIGN_SCRATCHED, offline=(),
+                       events=redesign_events(), names=REDESIGN_NAMES, renumbers=REDESIGN_RENUMBERS,
                        closes_at=time.time() + REDESIGN_CLOSES_IN_S, names_rev=2)
     else:
         fake = FakePi5(PHASES[args.phase])

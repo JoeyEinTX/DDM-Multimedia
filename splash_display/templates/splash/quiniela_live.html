@@ -7,9 +7,13 @@
    board_states, holding the playlist in place through window.ddmSlideshow.
    Styles: static/css/quiniela_board.css. Design: tools/board_reference.html.
 
-   Everything the JS touches is addressed by id or data-horse; the 20 rows
-   (1-10 left, 11-20 right) are rendered here once so the JS only ever
-   writes text, classes and inline colours. #}
+   Everything the JS touches is addressed by id or data-horse. The rows
+   are not rendered here: the two columns start empty and the JS fills
+   them from the model's field (every horse with in_field true, in numeric
+   order, the first ten left and the rest right; a short field leaves the
+   trailing slots empty), cloning #qb-row-tpl for each horse. So a
+   scratched horse never has a row and an also-eligible that draws in
+   (21-24) gets one where its number sorts. #}
 <div id="quiniela-board" class="qb" aria-hidden="true" data-state="">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
@@ -40,27 +44,28 @@
     </header>
 
     <div class="qb-cols">
-        {% for col in (1, 11) %}
+        {% for side in ('left', 'right') %}
         <div class="qb-col">
             <div class="qb-hdr"><span></span><span>Horse</span><span class="qb-hdr-r">Bets</span></div>
-            <div class="qb-rows" id="qb-col-{{ col }}">
-                {% for n in range(col, col + 10) %}
-                <div class="qb-row is-empty" data-horse="{{ n }}">
-                    <div class="qb-saddle">{{ n }}</div>
-                    <div class="qb-name">Horse {{ n }}</div>
-                    <div class="qb-bets">No bets</div>
-                    <div class="qb-offline-dot"></div>
-                    <div class="qb-row-flash"></div>
-                </div>
-                {% endfor %}
-            </div>
+            <div class="qb-rows" id="qb-col-{{ side }}"></div>
         </div>
         {% endfor %}
     </div>
 
+    {# One row, cloned by the JS per horse in the field; the number, the
+       saddle-cloth colours, the name and the count are written by the JS. #}
+    <template id="qb-row-tpl">
+        <div class="qb-row is-empty" data-horse="">
+            <div class="qb-saddle"></div>
+            <div class="qb-name"></div>
+            <div class="qb-bets">No bets</div>
+            <div class="qb-offline-dot"></div>
+            <div class="qb-row-flash"></div>
+        </div>
+    </template>
+
     <div class="qb-foot">
         <div class="qb-chyron" id="qb-chyron">
-            <span class="qb-chyron-tab">Fine print</span>
             <div class="qb-crawl"><div class="qb-crawl-track" id="qb-track"></div></div>
         </div>
     </div>
