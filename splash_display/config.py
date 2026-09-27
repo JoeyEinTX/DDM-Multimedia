@@ -42,19 +42,31 @@ TRANSITION_FADE_MS = 600
 READING_SPEED_MULTIPLIER = 1.0
 
 # Fact cards (headline + body word count)
+# 2026-09-27: MAX_DURATION_MS was 18000 with MS_PER_WORD 250. Our actual card
+# copy runs 20-74 words (avg ~43) and the cap kicked in at 40 words -- so 28
+# of 48 fact cards (58%) were hitting the ceiling and getting cut off
+# identically regardless of length, effectively disabling the adaptive part
+# of "adaptive duration" for most of the deck. Slower per-word pace (320ms,
+# ~187 effective wpm -- more realistic for a display people glance at rather
+# than sit and read) plus a higher ceiling fixes all but the 1-2 genuine
+# outliers (currently mc_pinata_origin at 74 words), which still get a
+# generous 28s rather than being clipped to 18s.
 MIN_DURATION_MS = 8000
-MAX_DURATION_MS = 18000
-MS_PER_WORD = 250
+MAX_DURATION_MS = 28000
+MS_PER_WORD = 320
 
 # Q&A questions
 QA_QUESTION_BASE_MS = 6000
-QA_QUESTION_PER_WORD_MS = 200
-QA_QUESTION_MAX_MS = 10000
+QA_QUESTION_PER_WORD_MS = 220
+QA_QUESTION_MAX_MS = 11000
 
-# Q&A answers — faster than fact cards (reader primed by the question)
+# Q&A answers — faster pace than fact cards (reader primed by the question),
+# but same 2026-09-27 fix: answers run up to 66 words and the old 13000 cap
+# was clipping 10 of 24 cards. Raised cap and slowed per-word pace so length
+# actually differentiates dwell time again.
 QA_ANSWER_MIN_MS = 6000
-QA_ANSWER_PER_WORD_MS = 200
-QA_ANSWER_MAX_MS = 13000
+QA_ANSWER_PER_WORD_MS = 280
+QA_ANSWER_MAX_MS = 22000
 
 # ---------------------------------------------------------------------------
 # Trivia category weights (relative; normalized internally)
