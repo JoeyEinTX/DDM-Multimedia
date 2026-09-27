@@ -4,6 +4,8 @@ A wireless LED display system for horse racing betting entertainment at an annua
 
 ## 🏇 Project Overview
 
+Race night: see `RACE_NIGHT.md` (the La Quiniela checklist, one action per line).
+
 **Event Context:** Guests buy $1 tickets, write their name, and place them in cups numbered 1-20 (one per horse). After the race, winners are drawn from the Win/Place/Show cups. Winnings split 70/20/10.
 
 ## System Architecture

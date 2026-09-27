@@ -8,6 +8,8 @@ splash pages and trivia cards on a weighted, freshly-shuffled cycle.
 This is **Phase 1**: file-based content, no remote upload. Phase 2 will add a
 `/upload` endpoint and integration with the Pi 5 dashboard.
 
+Race night: see `RACE_NIGHT.md` at the repo root.
+
 ---
 
 ## Architecture at a glance

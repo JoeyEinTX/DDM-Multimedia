@@ -1,5 +1,7 @@
 # La Quiniela bridge (`pi5/la_quiniela/`)
 
+Race night: see `RACE_NIGHT.md` at the repo root.
+
 The DevPi end of the La Quiniela gateway link. A daemon thread inside the
 Flask app talks to the ESP32 gateway over USB serial:
 
