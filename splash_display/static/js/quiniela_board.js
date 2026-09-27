@@ -78,19 +78,23 @@
    Motion: count changes tween over ~500 ms (requestAnimationFrame writing
    the number) and pulse the row once via a 400 ms CSS animation; the toast
    is a 150 ms pop / 200 ms drop on transform and opacity; the chyron crawl
-   is one CSS transform animation. Everything is transform/opacity only
-   (see quiniela_board.css).
+   is one CSS transform animation; in "dots" a name too long for its row
+   scrolls by one transform animation of its own. Everything is
+   transform/opacity only (see quiniela_board.css).
 
    Looks. The board's data-look (the server writes it: ?look= on the URL,
-   else config.QUINIELA_LOOK) is "impact", "dots" or "numbers". The layout
-   and everything in this file are the same for all three; in the tote
-   look the stylesheet sets the tote's fields (data-tote, and the crawl's
-   text) in the dot-matrix face, one element a field as before, and the
-   only thing that differs here is how a text that is too wide is made to
-   fit: the Impact look steps the font size down a pixel at a time, the
-   tote look steps the dot pitch down (font-size = 8 x pitch, whole
-   pitches only, so the dots stay on the pixel grid), and sizes the strip
-   of tiles behind the text to a whole number of tiles.
+   else config.QUINIELA_LOOK, "dots" unless set) is "impact", "dots" or
+   "numbers". In the tote looks the stylesheet sets the tote's fields
+   (data-tote, and the crawl's text) in the dot-matrix face, one element a
+   field as in "impact", and a text that is too wide is made to fit by
+   stepping the dot pitch down (font-size = 8 x pitch, whole pitches only,
+   so the dots stay on the pixel grid) where the Impact look steps the
+   font size, the strip of tiles behind it a whole number of tiles. The
+   rows of "dots" are the exception: each row is one strip of tiles from
+   the cloth to the row's right edge, the same pitch and the same number
+   of tiles in every row (layoutStrips), the bets in its last tiles and
+   the name in the rest but one; a name longer than that does not shrink,
+   it scrolls (updateScroll).
    ===================================================================== */
 (() => {
     'use strict';
@@ -116,11 +120,23 @@
     // cell 6 wide). A name starts at the first and steps down to the second.
     const DOT_EM  = 8;
     const DOT_CELL = 6;
-    const NAME_PITCH         = [7, 3];     // 15 tiles in a row's name cell at 7, 18 at 6
     const RESULT_NAME_PITCH  = [12, 4];
     const RESULT_COUNT_PITCH = [10, 5];
     const RESULT_PRIZE_PITCH = [18, 8];
     const TOTE_FACE = '56px "DDM Tote"';
+    // The rows of "dots": one strip of tiles each (layoutStrips). The pitch
+    // comes from the row's height: the tile, 8 pitches tall, clears it by
+    // STRIP_CLEAR_PX above and below, whole pitches, never more than
+    // STRIP_PITCH_MAX, the dotted names' size at their largest (a 56 px tile
+    // in the 64 px row of the 1080-line board). A name longer than its area
+    // scrolls a whole tile at a time at the crawl's speed (a tile every
+    // 350 ms at pitch 7), its start held SCROLL_HOLD_START_MS, its end
+    // SCROLL_HOLD_END_MS, then straight back to the start (updateScroll).
+    const STRIP_PITCH_MAX = 7;
+    const STRIP_PITCH_MIN = 3;
+    const STRIP_CLEAR_PX  = 2;
+    const SCROLL_HOLD_START_MS = 2000;
+    const SCROLL_HOLD_END_MS   = 1000;
     const TOAST_IN_MS    = 150;     // the pop, matches .qb-toast.is-shown's transition
     const TOAST_HOLD_MS  = 2500;    // fully up for this long, then ...
     const TOAST_OUT_MS   = 200;     // ... the drop, matches .qb-toast.is-leaving
@@ -171,9 +187,9 @@
 
     // ---- Look --------------------------------------------------------
     const LOOKS = ['impact', 'dots', 'numbers'];
-    const look = LOOKS.includes(board.dataset.look) ? board.dataset.look : 'impact';
+    const look = LOOKS.includes(board.dataset.look) ? board.dataset.look : 'dots';
     board.dataset.look = look;
-    const dottedNames   = look === 'dots';      // names in the dot-matrix face
+    const dottedNames   = look === 'dots';      // names in the dot-matrix face, the rows one strip each
     const dottedFigures = look !== 'impact';    // figures and the crawl
 
     const potEl         = $('qb-pot');
@@ -215,13 +231,16 @@
     }
 
     // The rows on screen: horse -> { el, name, bets, displayed, target, raf,
-    // nameText }, built from the model's field (renderField). A horse out
-    // of the field has no entry, and its record goes with its row, so a
-    // horse that comes back (an unscratch) snaps to its count rather than
-    // tweening from a value nobody saw.
+    // nameText, and in "dots" digits, need, scroll, scrollKey }, built from
+    // the model's field (renderField). A horse out of the field has no
+    // entry, and its record goes with its row, so a horse that comes back
+    // (an unscratch) snaps to its count rather than tweening from a value
+    // nobody saw.
     const rows = {};
     let field = [];        // the horses with rows, in numeric order
     let fieldKey = '';     // field.join(','): the row set is rebuilt when it changes
+    let stripPitch = 0;    // "dots": every row's strip, its dot pitch in px ...
+    let stripTiles = 0;    // ... and its length in tiles (layoutStrips); 0 until measured
 
     function makeRow(n) {
         const el = rowTpl.content.firstElementChild.cloneNode(true);
@@ -240,6 +259,8 @@
             bets: el.querySelector('.qb-bets'),
             displayed: null, target: null, raf: null,
             nameText: null,
+            // "dots": the bets' tiles, the tiles the name needs, its scroll
+            digits: 1, need: 0, scroll: null, scrollKey: '',
         };
     }
 
@@ -275,6 +296,7 @@
         board.classList.add('is-visible');
         board.setAttribute('aria-hidden', 'false');
         flushCrawl();              // a swap during the fade-in is invisible
+        syncScrolls();
         const s = slideshow();
         if (s && typeof s.hold === 'function') s.hold();
     }
@@ -286,6 +308,7 @@
         board.setAttribute('aria-hidden', 'true');
         dismissToast();
         flushCrawl();
+        syncScrolls();             // a hidden board spends nothing on names nobody sees
         const s = slideshow();
         if (s && typeof s.release === 'function') s.release();
     }
@@ -411,16 +434,111 @@
             if (text === r.nameText) continue;
             r.nameText = text;
             r.name.textContent = text;
-            fitName(r.name);
+            fitName(r);
         }
     }
 
     // The reference's fit: start at 38 px and step down until the text
-    // fits its cell, but never below 20 px. No wrap, no ellipsis. In the
-    // tote look it is the dot pitch that steps down.
-    function fitName(el) {
-        if (dottedNames) fitTiles(el, NAME_PITCH);
-        else fitText(el, NAME_MAX_PX, NAME_MIN_PX);
+    // fits its cell, but never below 20 px. No wrap, no ellipsis. In "dots"
+    // nothing shrinks: the name keeps the strip's pitch and scrolls when it
+    // is longer than its area.
+    function fitName(r) {
+        if (dottedNames) measureName(r);
+        else fitText(r.name, NAME_MAX_PX, NAME_MIN_PX);
+    }
+
+    // ---- The rows of "dots": one strip of tiles each -----------------
+    // Every row's strip has the same pitch and the same number of tiles,
+    // taken from one row's room (.qb-strip-cell: from just right of the
+    // cloth to the row's right edge, inside the padding): the pitch from
+    // its height, the tiles from its width, whole tiles, the pixels left
+    // over to the padding. They go on the board as --qb-strip-pitch and
+    // --qb-strip-tiles, which the stylesheet sizes every strip from. The
+    // room is measured without transforms (offsetWidth/Height), so a row
+    // that is pulsing measures as it stands. Returns whether they changed;
+    // then every row's name is measured again.
+    function layoutStrips() {
+        if (!dottedNames) return false;
+        const cell = board.querySelector('.qb-rows .qb-strip-cell');
+        if (!cell || !cell.offsetWidth || !cell.offsetHeight) return false;
+        const pitch = Math.max(STRIP_PITCH_MIN, Math.min(STRIP_PITCH_MAX,
+            Math.floor((cell.offsetHeight - 2 * STRIP_CLEAR_PX) / DOT_EM)));
+        const tiles = Math.max(3, Math.floor(cell.offsetWidth / (DOT_CELL * pitch)));
+        if (pitch === stripPitch && tiles === stripTiles) return false;
+        stripPitch = pitch;
+        stripTiles = tiles;
+        board.style.setProperty('--qb-strip-pitch', pitch + 'px');
+        board.style.setProperty('--qb-strip-tiles', String(tiles));
+        for (const n of field) if (rows[n]) measureName(rows[n]);
+        return true;
+    }
+
+    // How many tiles a row's name needs: its width in the face, in whole
+    // tiles (the face is one tile a character; a character it lacks falls
+    // back to Impact, which the width still counts).
+    function measureName(r) {
+        if (!stripPitch) return;
+        const tile = DOT_CELL * stripPitch;
+        r.need = r.nameText ? Math.ceil(r.name.offsetWidth / tile - 0.05) : 0;
+        updateScroll(r);
+    }
+
+    // The bets take as many tiles as they have digits, the name's area the
+    // rest but one dark tile, so a count of 10 takes a tile from the name.
+    function setDigits(r, digits) {
+        if (digits === r.digits) return;
+        r.digits = digits;
+        r.el.style.setProperty('--qb-digits', String(digits));
+        updateScroll(r);
+    }
+
+    // A name longer than its area scrolls inside it, right to left, and
+    // only it: the area clips it at its edges, the dark tile and the bets
+    // never move. The start held SCROLL_HOLD_START_MS, then one whole tile
+    // at a time at the crawl's speed until the name's last character is in
+    // the area's last tile, that held SCROLL_HOLD_END_MS, then straight back
+    // to the start, and again. Whole tiles, not a smooth slide: the tiles
+    // and their unlit bulbs are the strip's and stay put, so a character
+    // always sits in a tile as it does on the dashboard's ticker; a smooth
+    // slide would drag the lit dots across the dark ones between them. One
+    // Web Animation on the name's transform per row, run by the compositor,
+    // each row on its own clock. A name that fits (again) stands still at
+    // the start of its area.
+    function updateScroll(r) {
+        if (!stripPitch) return;
+        const area = Math.max(1, stripTiles - r.digits - 1);
+        const over = r.need - area;
+        const key = over > 0 ? [over, stripPitch, r.nameText].join('|') : '';
+        if (key === r.scrollKey) return;
+        r.scrollKey = key;
+        if (r.scroll) { r.scroll.cancel(); r.scroll = null; }
+        if (over <= 0 || typeof r.name.animate !== 'function') return;
+        const tile = DOT_CELL * stripPitch;
+        const stepMs = tile / CRAWL_PX_S * 1000;
+        const total = SCROLL_HOLD_START_MS + (over - 1) * stepMs + SCROLL_HOLD_END_MS;
+        const at = (k) => 'translateX(' + (-k * tile) + 'px)';
+        const frames = [{ offset: 0, transform: at(0), easing: 'step-end' }];
+        for (let k = 1; k <= over; k++) {
+            frames.push({ offset: (SCROLL_HOLD_START_MS + (k - 1) * stepMs) / total, transform: at(k), easing: 'step-end' });
+        }
+        frames.push({ offset: 1, transform: at(over) });
+        r.scroll = r.name.animate(frames, { duration: total, iterations: Infinity });
+        if (!rowsShowing()) r.scroll.pause();
+    }
+
+    // The scrolls run only while the rows are on screen: not while the
+    // board is hidden, nor while the results screen stands in their place.
+    function rowsShowing() {
+        return visible && board.dataset.view !== 'results';
+    }
+
+    function syncScrolls() {
+        const on = rowsShowing();
+        for (const n of field) {
+            const r = rows[n];
+            if (!r || !r.scroll) continue;
+            if (on) r.scroll.play(); else r.scroll.pause();
+        }
     }
 
     function fitText(el, maxPx, minPx) {
@@ -485,7 +603,7 @@
     }
 
     function refitNames() {
-        for (const n of field) if (rows[n]) fitName(rows[n].name);
+        for (const n of field) if (rows[n]) fitName(rows[n]);
         for (const place of PLACES) {
             const r = resultRows[place];
             if (r.nameText != null) fitResultName(r.name);
@@ -496,6 +614,7 @@
     // A face that arrives late changes every width: the names are fitted
     // again and the crawl is measured again (it restarts from its start).
     function refitAll() {
+        layoutStrips();
         refitNames();
         if (crawlHtml != null) applyCrawl(crawlHtml);
     }
@@ -556,6 +675,7 @@
         if (board.dataset.view !== view) {
             board.dataset.view = view;
             resultsEl.setAttribute('aria-hidden', on ? 'false' : 'true');
+            syncScrolls();         // the rows' scrolls stop under the results screen
         }
         if (!on) return;
         const from = shown || m;
@@ -627,6 +747,7 @@
             const n = Number(k);
             if (keep.has(n)) continue;
             cancelTween(rows[n]);
+            if (rows[n].scroll) rows[n].scroll.cancel();
             rows[n].el.remove();
             delete rows[n];
         }
@@ -634,6 +755,7 @@
             if (!rows[n]) rows[n] = makeRow(n);
             colEls[i < SLOTS_PER_COL ? 0 : 1].appendChild(rows[n].el);
         });
+        layoutStrips();            // "dots": the strips' pitch and length, once there is a row to measure
     }
 
     function renderRows(m, animate) {
@@ -672,10 +794,17 @@
         pulse(r.el);
     }
 
+    // An empty cup reads NO BETS, or in "dots" a dim 0 in one tile; there
+    // the count's digits are the bets' tiles, as the tween writes them.
     function paintCount(r, v) {
         r.displayed = v;
         r.el.classList.toggle('is-empty', v === 0);
-        setText(r.bets, v === 0 ? 'No bets' : String(v));
+        if (dottedNames) {
+            setText(r.bets, String(v));
+            setDigits(r, String(v).length);
+        } else {
+            setText(r.bets, v === 0 ? 'No bets' : String(v));
+        }
     }
 
     function cancelTween(r) {
@@ -1029,6 +1158,15 @@
     // Anton arrives late where Impact is missing: the names' widths change.
     // So does every dotted width when the tote face arrives.
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(refitNames);
+    // In "dots" a window that changes size (a kiosk settling into full
+    // screen) measures the strips again.
+    if (dottedNames) {
+        let resizeRaf = null;
+        window.addEventListener('resize', () => {
+            if (resizeRaf) return;
+            resizeRaf = requestAnimationFrame(() => { resizeRaf = null; layoutStrips(); });
+        });
+    }
     if (dottedFigures && document.fonts && document.fonts.load) {
         document.fonts.load(TOTE_FACE, '$0A').then(refitAll, () => {});
     }

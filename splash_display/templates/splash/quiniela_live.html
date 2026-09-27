@@ -27,7 +27,7 @@
    the tote look draws in its dot-matrix face ("num": a figure, "name": a
    horse's name; the crawl's text is marked by the JS). Cloths, the banner,
    the toast and every label stay as they are. #}
-<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('impact') }}">
+<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('dots') }}">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
     <header class="qb-header">
@@ -86,12 +86,22 @@
     </div>
 
     {# One row, cloned by the JS per horse in the field; the number, the
-       saddle-cloth colours, the name and the count are written by the JS. #}
+       saddle-cloth colours, the name and the count are written by the JS.
+       In the tote look (dots) the name and the bets share one strip of
+       tiles from the cloth to the row's right edge: .qb-strip-cell is the
+       room for it, .qb-strip the whole tiles, .qb-namebox the name's area
+       (it clips a name that scrolls), the bets in the strip's last tiles.
+       In impact and numbers the three wrappers are display: contents, so
+       the name and the bets are the row's grid items as they always were. #}
     <template id="qb-row-tpl">
         <div class="qb-row is-empty" data-horse="">
             <div class="qb-saddle"></div>
-            <div class="qb-name" data-tote="name"></div>
-            <div class="qb-bets" data-tote="num">No bets</div>
+            <div class="qb-strip-cell">
+                <div class="qb-strip">
+                    <div class="qb-namebox"><div class="qb-name" data-tote="name"></div></div>
+                    <div class="qb-bets" data-tote="num">No bets</div>
+                </div>
+            </div>
             <div class="qb-offline-dot"></div>
             <div class="qb-row-flash"></div>
         </div>

@@ -26,6 +26,12 @@ Nothing leaves loopback: no serial port, no dashboard poller.
                                                    # screen keeps 4 / 11 / 7 bets: the model's closing, as on pi5; a page
                                                    # loaded now shows them too) -> AFTER_PARTY (the playlist); repeats
     python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving (screenshots)
+    python tools/fake_pi5.py --phase strip         # the tote look's rows (open /display?look=dots): twenty names, ten of them
+                                                   # too long for their row at 1920 px (GRAND MO THE FIRST, CATCHING FREEDOM at
+                                                   # 104 bets...) and scrolling, counts of 0 (a dim 0), 7, 23 and 104; a bet on
+                                                   # GRAND MO THE FIRST every 4 s takes it 7 -> 12, crossing 9 -> 10 (its name
+                                                   # area gives up a tile mid-scroll), then back to 7; repeats
+    python tools/fake_pi5.py --phase strip-static  # the same picture, nothing moving (screenshots)
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
     python tools/fake_pi5.py --phase bench-reset   # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
@@ -36,7 +42,7 @@ Nothing leaves loopback: no serial port, no dashboard poller.
 
 Flags:
     --phase {idle,open,final,closed,running,winner,after,cycle,bench,bench-reset,redesign,redesign-static,
-             results,results-static}   (default: open)
+             results,results-static,strip,strip-static}   (default: open)
     --period SECONDS       seconds per state in --phase cycle, and per step in
                            --phase bench-reset and --phase results (default: 15)
     --stop-feed-after N    after N s the fake pi5 stops answering: its stream
@@ -213,6 +219,30 @@ REDESIGN_BUMP_HORSE = 7
 RESULTS_TOKENS = {**REDESIGN_TOKENS, 19: 4}
 RESULTS_WPS = (19, 1, 22)
 RESULTS_EMPTY_AFTER_S = 3.0       # the winners' cups are emptied for the draw this long after the results
+
+# --phase strip: the tote look's rows. At 1920 x 1080 a row's strip is
+# nineteen tiles, and a name has 19 - digits - 1 of them (17, 16 or 15), so
+# a name scrolls when it is longer than that. Three real names (Grand Mo
+# the First and Catching Freedom from the 2024 field, Emerging Market from
+# the 2026 one) and made-up ones fill the field: ten rows scroll, ten sit
+# still (Emerging Market fits here even at three digits; on a narrower
+# screen it scrolls too). Counts of 0 (a dim 0), 7, 23 and 104 give every
+# bet width. A bet on 2 every 4 s takes Grand Mo the First 7 -> 12, crossing
+# 9 -> 10 (its name area gives up a tile mid-scroll), then its cup goes
+# back to 7 and it climbs again. No closing time: nothing on the board ticks.
+STRIP_NAMES = {
+    1: "Renegade", 2: "Grand Mo the First", 3: "So Happy", 4: "Catching Freedom", 5: "Emerging Market",
+    6: "Whiskey in the Jar", 7: "Potente", 8: "Bluegrass Thunder", 9: "Albus", 10: "Twin Spires Dancer",
+    11: "Mint Julep Madness", 12: "Six Speed", 13: "Louisville Legend", 14: "Further Ado", 15: "Churchill Charmer",
+    16: "Intrepido", 17: "Roses for the King", 18: "Golden Tempo", 19: "Pavlovian", 20: "Silver Spur Saloon",
+}
+STRIP_TOKENS = {
+    1: 23, 2: 7, 3: 0, 4: 104, 5: 12, 6: 31, 7: 9, 8: 45, 9: 14, 10: 5,
+    11: 56, 12: 2, 13: 12, 14: 8, 15: 18, 16: 0, 17: 3, 18: 4, 19: 11, 20: 27,
+}
+STRIP_BUMP_HORSE = 2
+STRIP_BUMP_EVERY_S = 4.0
+STRIP_BUMP_FROM, STRIP_BUMP_TO = 7, 12
 
 
 def mac_of(cup: int) -> str:
@@ -849,6 +879,27 @@ def run_results(fake: FakePi5, period: float) -> None:
             return
 
 
+def strip_bet(fake: FakePi5) -> int:
+    """One step of --phase strip: a bet on STRIP_BUMP_HORSE, or, once it has
+    STRIP_BUMP_TO, its cup back to STRIP_BUMP_FROM (one removal, no toast).
+    Returns the count."""
+    with fake._lock:
+        count = fake.tokens.get(STRIP_BUMP_HORSE, 0)
+    fake.bump(STRIP_BUMP_HORSE, STRIP_BUMP_FROM - count if count >= STRIP_BUMP_TO else 1)
+    with fake._lock:
+        return fake.tokens.get(STRIP_BUMP_HORSE, 0)
+
+
+def run_strip(fake: FakePi5) -> None:
+    """A step every STRIP_BUMP_EVERY_S s: 7 -> 12 (crossing 9 -> 10), back
+    to 7, and again."""
+    while not fake.stopped:
+        time.sleep(STRIP_BUMP_EVERY_S)
+        if fake.stopped:
+            return
+        strip_bet(fake)
+
+
 def stop_feed_later(fake: FakePi5, after: float) -> None:
     time.sleep(max(0.0, after))
     fake.stop_feed()
@@ -862,7 +913,7 @@ def _client_host(host: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle", "bench", "bench-reset", "redesign", "redesign-static",
-                                                         "results", "results-static"],
+                                                         "results", "results-static", "strip", "strip-static"],
                     default="open")
     ap.add_argument("--period", type=float, default=15.0,
                     help="seconds per state in --phase cycle, per step in --phase bench-reset and --phase results")
@@ -889,6 +940,9 @@ def main() -> None:
                        scratched=REDESIGN_SCRATCHED, offline=(), events=[], names=REDESIGN_NAMES,
                        renumbers=REDESIGN_RENUMBERS, names_rev=2,
                        results=RESULTS_WPS if args.phase == "results-static" else None)
+    elif args.phase in ("strip", "strip-static"):
+        fake = FakePi5(PHASES["open"], tokens=STRIP_TOKENS, scratched=(), offline=(), events=[],
+                       names=STRIP_NAMES, names_rev=1)
     else:
         fake = FakePi5(PHASES[args.phase])
     pi5_httpd = make_server(args.host, args.pi5_port, fake.app, threaded=True)
@@ -906,6 +960,8 @@ def main() -> None:
         threading.Thread(target=run_redesign, args=(fake,), daemon=True).start()
     elif args.phase == "results":
         threading.Thread(target=run_results, args=(fake, args.period), daemon=True).start()
+    elif args.phase == "strip":
+        threading.Thread(target=run_strip, args=(fake,), daemon=True).start()
 
     if args.no_splash:
         try:

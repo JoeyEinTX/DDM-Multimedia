@@ -398,7 +398,7 @@ pinging the TV while pi5 is unreachable; only `link_ok` changes.
 | --- | --- | --- |
 | `FLASK_PORT` | `5001` | This app's port (pi5's dashboard owns 5000 on DevPi) |
 | `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`) and the race roster (`/api/race`) both come from it |
-| `QUINIELA_LOOK` | `"impact"` | The board's look: `"impact"`, `"dots"` (the tote look) or `"numbers"` (the tote look, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
+| `QUINIELA_LOOK` | `"dots"` | The board's look: `"dots"` (the tote look, what the TV shows), `"impact"` or `"numbers"` (the tote look's figures, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
 
 Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
 4 RUNNING, 5 WINNER, 6 AFTER_PARTY.
@@ -555,10 +555,11 @@ the live board follows pixel for pixel where practical):
 **Motion.** A changed count ticks to the new value over ~500 ms (a
 `requestAnimationFrame` tween writing the number) and the row pulses
 once, ~400 ms (scale 1.015 plus a white overlay's opacity). The toast and
-the crawl are transform / opacity too. Everything is transform / opacity
-only so it stays smooth on a Pi 5 in kiosk Chromium; nothing loops except
-the crawl and the FINAL CALL pulse (the crawl is paused while the board
-is hidden).
+the crawl are transform / opacity too, and so is a scrolling name in
+`dots`. Everything is transform / opacity only so it stays smooth on a
+Pi 5 in kiosk Chromium; nothing loops except the crawl, the FINAL CALL
+pulse and, in `dots`, a name too long for its row (the crawl is paused
+while the board is hidden, the names too, and under the results screen).
 
 **What the board reads.** Of the model: `race_state`, `board_states`,
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
@@ -571,22 +572,28 @@ an empty chyron). `share`, `leader` and `replaced` stay in the model;
 nothing on the board depends on them (the leader is computed from the
 counts of the horses in the field).
 
-**The tote look.** The board has two looks and one layout. `impact` is
-the board described above. `dots` is the tote look: the dashboard's amber
-dots on black tiles, on the tote's fields and nothing else.
+**The tote look.** The board has two looks. `impact` is the board
+described above. `dots` is the tote look: the dashboard's amber dots on
+black tiles, on the tote's fields and nothing else, and it is what the TV
+shows.
 
 ```
-http://joeydevpi.local:5001/?look=dots      the tote look
-http://joeydevpi.local:5001/?look=impact    Impact, the board as it has been
-http://joeydevpi.local:5001/?look=numbers   the tote look, the names left in Impact
+http://joeydevpi.local:5001/                the tote look (the default)
+http://joeydevpi.local:5001/?look=impact    Impact, the board as it was before the tote look
+http://joeydevpi.local:5001/?look=numbers   the tote look's figures, the names left in Impact
 ```
 
-`config.QUINIELA_LOOK` is the default (`"impact"` as shipped, so nothing
-changes on the TV until it is changed); `?look=` on the URL wins, for that
-page, on `/` and on `/display` alike (the redirect keeps the query). A
-value that names no look is the default, and a `QUINIELA_LOOK` that names
-none is `impact`, logged once. The page carries the look in the board's
-`data-look`.
+`config.QUINIELA_LOOK` is the default (`"dots"` as shipped, and `dots`
+when the key is missing); `?look=` on the URL wins, for that page, on `/`
+and on `/display` alike (the redirect keeps the query). A value that names
+no look is the default, and a `QUINIELA_LOOK` that names none is `dots`,
+logged once. The page carries the look in the board's `data-look`.
+
+*A row in `dots`* is one strip of tiles from just right of the cloth to the row's right edge:
+- every row the same: the pitch from the row's height (7, a 56 px tile in the 64 px row at 1080 lines), the tiles from its width (19 at 1920 px; the pixels left over go to the padding);
+- the bets in the strip's last tiles, one a digit, a dim `0` for an empty cup; the name left in the rest but one dark tile (`tiles - digits - 1`);
+- a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at the crawl's 120 px/s until its last character is in the area's last tile, held 1 s, back to the start;
+- whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again.
 
 - **Dotted** in `dots`: the pot, the three prizes, every row's name and
   bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
@@ -602,8 +609,9 @@ none is `impact`, logged once. The page carries the look in the board's
   columns, rows, cloths, chyron, the results rows. Measured on both
   screens, 79 boxes each: all within half a pixel of their Impact place
   but the header's three prize tiles and their labels, which hug their
-  text and so are wider by the width of the dotted figures. Only the text
-  inside the fields differs.
+  text and so are wider by the width of the dotted figures. Inside the
+  rows `dots` has its own strip (above); `numbers` keeps the Impact
+  look's name cell and bets column.
 
 *How it is drawn.* One element per field, exactly as in the Impact look:
 the text is set in a face whose glyphs are the dots. **DDM Tote**
@@ -638,20 +646,35 @@ pitches, which keeps every dot on the pixel grid:
 | --- | --- | --- |
 | Pot | 104 px | pitch 12 (96 px) |
 | Header prizes | 40 px | pitch 5 |
-| Row name | 38 px, down to 20 | pitch 7, down to 3: fifteen tiles in the cell at 7, eighteen at 6 |
-| Row bets | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
+| Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles to the row's edge (19 at 1920 px); a long name scrolls; a dim `0` |
+| Row bets (`numbers`) | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
 | Crawl | 26 px | pitch 4 |
 | Results name | 100 px, down to 44 | pitch 12, down to 4 |
 | Results bets | 88 px | pitch 10, down to 5 |
 | Results prize | 150 px, down to 80 | pitch 18, down to 8 |
 
-A name that does not fit steps its row's pitch down a pixel at a time, the
-way the Impact look steps the font size; it never wraps and never gets an
-ellipsis. `GRAND MO THE FIRST`, eighteen characters, fits its row at pitch
-6 (eighteen tiles of 36 px in the 647 px cell; the last half pitch of a
-tile is margin, which is the half pitch of grace the fit allows). The
-strip behind a name is always a whole number of tiles, the ones past the
-name unlit.
+On the results screen a name that does not fit steps its pitch down a
+pixel at a time, the way the Impact look steps the font size; it never
+wraps and never gets an ellipsis, and the strip behind it is always a
+whole number of tiles, the ones past the name unlit. A row's name in
+`dots` never shrinks: it scrolls.
+
+Which names scroll depends on the screen: at 1920 px a row has 19 tiles,
+so a name scrolls past 17, 16 or 15 characters (one, two or three digits
+of bets), which only the longest names reach (`GRAND MO THE FIRST`, 18;
+`CATCHING FREEDOM`, 16, once it has 100 bets). A narrower screen has
+fewer tiles at the same pitch: at 1680 px, 16, and `EMERGING MARKET` and
+`CATCHING FREEDOM` scroll too. `tools/fake_pi5.py --phase strip` puts ten
+scrolling rows on a 1920 px board.
+
+With ten rows scrolling, the crawl running and a bet every 4 s (`--phase
+strip`, headless Chrome at 1920x1080, 12 s, CPU 6x slower, measured as the
+table below): worst frame 11.2 ms in four runs of five and 27.8 ms in one,
+none over 34 ms, no long task; 16.8 ms with software raster, as before
+the scroll (the rows as they were, same feed: 11.1 ms, 16.8). Each scroll is one Web
+Animation on the name's transform, run by the compositor (the trace shows
+no compositing failure); they pause while the board is hidden or the
+results screen covers the rows.
 
 *Why not DOM dots.* The dashboard, the countdown slide and the roster
 slide each draw their dots as elements, 35 to a character, from three
@@ -735,6 +758,11 @@ python tools/fake_pi5.py --phase redesign                  # the 2026 Derby fiel
                                                            # at the gateway: 19 rows, POT $150 = WIN $89 / PLACE $38 / SHOW $23, closes in 15 min,
                                                            # a bet on horse 7 every 4 s (the toast fires)
 python tools/fake_pi5.py --phase redesign-static           # the same picture with nothing moving, for side-by-side screenshots
+python tools/fake_pi5.py --phase strip                     # the tote look's rows: twenty names, ten too long for a 1920 px row
+                                                           # (they scroll), counts of 0, 7, 23 and 104; a bet on 2 Grand Mo the
+                                                           # First every 4 s takes it 7 -> 12 (9 -> 10: its name area gives up a
+                                                           # tile mid-scroll), then back to 7; no closing time, nothing else ticks
+python tools/fake_pi5.py --phase strip-static              # the same picture with nothing moving
 # --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset or results step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 ```

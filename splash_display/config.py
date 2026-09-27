@@ -199,15 +199,16 @@ DEBUG = False
 PI5_URL = "http://joeydevpi.local:5000"
 
 # How the La Quiniela board draws its tote fields (README, "The tote look"):
-#   "impact"   Impact everywhere, the board as it has been
-#   "dots"     the tote look: the pot, the prizes, every row's name and bets,
-#              the crawl and the results screen's names and figures in the
-#              dashboard's amber dot-matrix; cloths, banner and toast as before
-#   "numbers"  the same, the names left in Impact
-# This is the default; ?look=dots (or impact, numbers) on the board's URL
+#   "dots"     the tote look: the pot, the prizes, every row (one strip of
+#              tiles: the name, the bets at its end), the crawl and the
+#              results screen's names and figures in the dashboard's amber
+#              dot-matrix; cloths, banner and toast as before
+#   "impact"   Impact everywhere, the board as it was before the tote look
+#   "numbers"  the tote look's figures, the names left in Impact
+# This is the default; ?look=impact (or numbers, dots) on the board's URL
 # overrides it for that page, which is how to compare them on the TV:
-#   http://joeydevpi.local:5001/?look=dots
-QUINIELA_LOOK = "impact"
+#   http://joeydevpi.local:5001/?look=impact
+QUINIELA_LOOK = "dots"
 
 # Live race roster is fetched from pi5 every POLL_INTERVAL_S (race_poller.py).
 # If unreachable, the horse_roster splash silently drops from rotation until

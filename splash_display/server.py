@@ -441,24 +441,26 @@ def build_playlist() -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # The looks of the La Quiniela board (config.QUINIELA_LOOK, ?look=).
 QUINIELA_LOOKS = ("impact", "dots", "numbers")
+DEFAULT_LOOK = "dots"          # the tote look, when config names none
 _bad_looks: set = set()
 
 
 def board_look(requested: Any = None) -> str:
     """The look the board page is served with: ?look= when it names one,
-    else config.QUINIELA_LOOK, else "impact". Case does not matter. A
-    config value that names no look is logged once."""
+    else config.QUINIELA_LOOK, else DEFAULT_LOOK ("dots"). Case does not
+    matter. A config value that names no look is logged once."""
     text = str(requested).strip().lower() if requested is not None else ""
     if text in QUINIELA_LOOKS:
         return text
-    configured = getattr(config, "QUINIELA_LOOK", "impact")
+    configured = getattr(config, "QUINIELA_LOOK", DEFAULT_LOOK)
     text = str(configured).strip().lower() if configured is not None else ""
     if text in QUINIELA_LOOKS:
         return text
     if text not in _bad_looks:
         _bad_looks.add(text)
-        log.warning("config.QUINIELA_LOOK %r is not one of %s: using impact", configured, ", ".join(QUINIELA_LOOKS))
-    return "impact"
+        log.warning("config.QUINIELA_LOOK %r is not one of %s: using %s", configured,
+                    ", ".join(QUINIELA_LOOKS), DEFAULT_LOOK)
+    return DEFAULT_LOOK
 
 
 @app.route("/")

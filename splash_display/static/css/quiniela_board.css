@@ -361,6 +361,13 @@
     box-shadow: 0 3px 0 #0007;
 }
 
+/* The strip's wrappers (the tote look's one strip of tiles per row, at the
+   end of this file) are no boxes here: the name and the bets are the
+   row's grid items. */
+.qb-strip-cell,
+.qb-strip,
+.qb-namebox { display: contents; }
+
 /* The name: 38 px, shrunk by the JS down to 20 px until it fits its
    cell; never wraps, never an ellipsis. */
 .qb-name {
@@ -801,10 +808,12 @@
    The face's cell is 6 dot pitches wide and 8 tall (the 5x7 matrix and
    half a pitch of margin all round), and its em is 8 pitches, so
    font-size = 8 x pitch: 56 px is a 7 px pitch, the dashboard's. Sizes
-   here are whole pitches, which keeps every dot on the pixel grid, and a
-   name that does not fit steps the PITCH down (the JS), never the dot
-   spacing. Behind the text, one tile a character (0.75em x 1em): the
-   black tile and its 35 unlit bulbs.
+   here are whole pitches, which keeps every dot on the pixel grid. Behind
+   the text, one tile a character (0.75em x 1em): the black tile and its
+   35 unlit bulbs. In "dots" a row is one strip of such tiles, the name
+   and the bets in it, every row the same pitch and length; on the results
+   screen a name that does not fit steps the PITCH down (the JS), never
+   the dot spacing.
    ===================================================================== */
 @font-face {
     font-family: "DDM Tote";
@@ -858,23 +867,93 @@
     font-size: 40px;
 }
 
-/* Rows. The name: a 7 px pitch (fifteen tiles in the cell), stepped down
-   by the JS to 6 (eighteen), 5, 4, 3 until the name fits; the strip is
-   whole tiles, the ones past the name unlit. The bets: three tiles at the
-   right, the count lit from the right; NO BETS at a 3 px pitch, dim. */
-.qb[data-look="dots"] .qb-name {
-    font-size: 56px;
-    line-height: 1;
+/* Rows in "dots": one strip of tiles, from just right of the cloth to the
+   row's right edge, as many whole tiles as the room holds (the pixels left
+   over go to the padding). Every row has the same pitch and the same
+   number of tiles: the JS measures one row's room (.qb-strip-cell) and
+   sets them on the board, --qb-strip-pitch from its height (the tile
+   clears it by 2 px above and below, whole pitches, 7 at most: a 56 px
+   tile in the 64 px row of the 1080-line board, the dotted names' size at
+   their largest) and --qb-strip-tiles from its width. The bets sit in the
+   strip's last tiles, as many as they have digits (the row's
+   --qb-digits), a dim 0 when the cup is empty; one dark tile at least
+   between them and the name, whose area is the rest (tiles - digits - 1),
+   the name left in it. A name longer than its area scrolls inside it (the
+   JS moves .qb-name a tile at a time; .qb-namebox clips it at the area's
+   edges). The tiles are the strip's, so they never move. The row's one
+   track is its own height whatever the strip's (minmax), so the room the
+   JS measures is the row's, never the strip's. */
+.qb[data-look="dots"] .qb-row {
+    grid-template-columns: 62px 1fr;
+    grid-template-rows: minmax(0, 1fr);
 }
 
-.qb:is([data-look="dots"], [data-look="numbers"]) .qb-bets {
+.qb[data-look="dots"] .qb-strip-cell {
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+    min-width: 0;
+}
+
+.qb[data-look="dots"] .qb-strip {
+    display: block;
+    position: relative;
+    flex: none;
+    font-size: calc(var(--qb-strip-pitch, 7px) * 8);
+    width: calc(var(--qb-strip-tiles, 19) * 0.75em);
+    height: 1em;
+    background-image: var(--qb-tote-tile);
+    background-size: 0.75em 1em;
+    background-repeat: repeat-x;
+    background-position: left top;
+}
+
+.qb[data-look="dots"] .qb-namebox {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc((var(--qb-strip-tiles, 19) - var(--qb-digits, 1) - 1) * 0.75em);
+    height: 1em;
+    overflow: hidden;
+}
+
+.qb[data-look="dots"] .qb-row .qb-name {
+    width: max-content;
+    font-size: inherit;
+    line-height: 1;
+    overflow: visible;
+    background: none;
+}
+
+.qb[data-look="dots"] .qb-row .qb-bets {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: calc(var(--qb-digits, 1) * 0.75em);
+    height: 1em;
+    font-size: inherit;
+    line-height: 1;
+    background: none;
+}
+
+/* An empty cup: a 0, dim, as NO BETS was. */
+.qb[data-look="dots"] .qb-row.is-empty .qb-bets {
+    color: var(--qb-amber);
+    opacity: 0.5;
+}
+
+/* Rows in "numbers": the name in Impact (the rules above this section);
+   the bets three tiles at the right, the count lit from the right; NO BETS
+   at a 3 px pitch, dim. */
+.qb[data-look="numbers"] .qb-bets {
     justify-self: end;
     width: 2.25em;
     font-size: 56px;
     background-position: right center;
 }
 
-.qb:is([data-look="dots"], [data-look="numbers"]) .qb-row.is-empty .qb-bets {
+.qb[data-look="numbers"] .qb-row.is-empty .qb-bets {
     width: 5.25em;
     font-size: 24px;
     letter-spacing: 0;

@@ -964,8 +964,14 @@ class LookTests(RouteCase):
         self.assertEqual(tag.count("data-look="), 1)
         return tag.split('data-look="')[1].split('"')[0]
 
-    def test_the_repo_ships_the_board_as_it_was(self) -> None:
-        self.assertEqual(self._look, "impact", "the tote look is a switch: nothing changes on the TV until it is thrown")
+    def test_the_repo_ships_the_tote_look(self) -> None:
+        self.assertEqual(self._look, "dots", "the TV's board is the tote look; ?look=impact and ?look=numbers stay")
+        self.assertEqual(server.DEFAULT_LOOK, "dots", "and so is the code's default")
+        with server.app.test_request_context("/"):
+            html = server.render_template("splash/quiniela_live.html")
+        self.assertIn('data-look="dots"', html, "the template's default too")
+        js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        self.assertIn("LOOKS.includes(board.dataset.look) ? board.dataset.look : 'dots'", js, "and the script's")
 
     def test_the_url_names_the_look(self) -> None:
         self.assertEqual(self.look_of("/display"), "impact")
@@ -984,18 +990,18 @@ class LookTests(RouteCase):
         config.QUINIELA_LOOK = " Numbers "
         self.assertEqual(self.look_of("/display"), "numbers")
 
-    def test_a_config_value_that_names_no_look_is_impact_and_logged_once(self) -> None:
+    def test_a_config_value_that_names_no_look_is_the_default_and_logged_once(self) -> None:
         config.QUINIELA_LOOK = "dot"
         with self.assertLogs("splash_display", level="WARNING") as cm:
-            self.assertEqual(self.look_of("/display"), "impact")
-            self.assertEqual(self.look_of("/display"), "impact")
-            self.assertEqual(self.look_of("/display?look=dots"), "dots")
+            self.assertEqual(self.look_of("/display"), "dots")
+            self.assertEqual(self.look_of("/display"), "dots")
+            self.assertEqual(self.look_of("/display?look=impact"), "impact")
         self.assertEqual(len(cm.output), 1, cm.output)
         self.assertIn("QUINIELA_LOOK", cm.output[0])
         del config.QUINIELA_LOOK
-        self.assertEqual(self.look_of("/display"), "impact", "a config without the key is the board as it was")
-        self.assertEqual(server.board_look(None), "impact")
-        self.assertEqual(server.board_look(7), "impact")
+        self.assertEqual(self.look_of("/display"), "dots", "a config without the key is the tote look")
+        self.assertEqual(server.board_look(None), "dots")
+        self.assertEqual(server.board_look(7), "dots")
 
     def test_the_root_redirect_keeps_the_look(self) -> None:
         resp = self.client.get("/?look=dots")
@@ -1036,8 +1042,12 @@ class LookTests(RouteCase):
             for one in selector.split(","):
                 self.assertIn("data-look", one, f"a tote-look rule must name its look: {one.strip()!r}")
         js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
-        for needle in ("board.dataset.look", "'impact', 'dots', 'numbers'", "function fitTiles", "qb-crawl-text", "DDM Tote"):
+        for needle in ("board.dataset.look", "'impact', 'dots', 'numbers'", "function fitTiles", "qb-crawl-text", "DDM Tote",
+                       "function layoutStrips", "function updateScroll"):
             self.assertIn(needle, js)
+        self.assertNotRegex(js, r"\bNAME_PITCH\b", "the rows' pitch-shrinking fit is gone (the results screen keeps its own)")
+        # impact and numbers: the strip's wrappers are no boxes, outside the tote section
+        self.assertIn(".qb-strip-cell,\n.qb-strip,\n.qb-namebox { display: contents; }", css.replace("\r\n", "\n"))
 
 
 def find_chrome() -> Optional[str]:
@@ -1065,17 +1075,51 @@ CHROME = find_chrome()
 # listens to /api/quiniela/stream): every model arrives as a stream message,
 # one after another, and after each the board's figures are read off the
 # DOM, past the 500 ms count tween. The readings end up in #probe as JSON.
+# strips: each row's strip, measured in tiles (served with the stylesheet,
+# the tote look's rows); pulses: the rows that pulsed since the last reading.
 BOARD_PROBE_JS = r"""
 (() => {
     const MODELS = __MODELS__;
     const WAIT_MS = 700;
     const out = [];
+    // Headless Chrome under a virtual time budget runs timers but next to no
+    // frames, so requestAnimationFrame is driven by a timer here and the
+    // count's tween runs as it does on a screen. CSS animations still do not
+    // run, so a row's pulse shows as its is-pulse class, which the probe
+    // takes off after each reading as the pulse's end would.
+    window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+    window.cancelAnimationFrame = (id) => clearTimeout(id);
     const text = (sel) => { const el = document.querySelector(sel); return el ? el.textContent.trim() : null; };
+    const r2 = (v) => Math.round(v * 100) / 100;
+    function strip(row) {
+        const q = (s) => row.querySelector(s);
+        const st = q('.qb-strip'), box = q('.qb-namebox'), name = q('.qb-name'), bets = q('.qb-bets');
+        const tile = parseFloat(getComputedStyle(st).fontSize) * 0.75;
+        const rr = row.getBoundingClientRect(), sr = st.getBoundingClientRect();
+        const a = name.getAnimations()[0];
+        const shift = (k) => { const m = /translateX\((-?[\d.]+)px\)/.exec(k.transform || ''); return m ? -Number(m[1]) / tile : 0; };
+        const frames = a ? a.effect.getKeyframes() : [];
+        const duration = a ? a.effect.getTiming().duration : null;
+        return {
+            display: getComputedStyle(st).display, columns: getComputedStyle(row).gridTemplateColumns.split(' ').length,
+            font: parseFloat(getComputedStyle(st).fontSize), tiles: r2(sr.width / tile),
+            area: r2(box.getBoundingClientRect().width / tile), bets: r2(bets.getBoundingClientRect().width / tile),
+            need: r2(name.getBoundingClientRect().width / tile), clip: getComputedStyle(box).overflow,
+            gap: r2(sr.left - q('.qb-saddle').getBoundingClientRect().right),
+            leftover: r2(rr.right - 2 - parseFloat(getComputedStyle(row).paddingRight) - sr.right),
+            betsRight: r2(sr.right - bets.getBoundingClientRect().right),
+            opacity: getComputedStyle(bets).opacity, scrolls: name.getAnimations().length, playState: a ? a.playState : null,
+            over: frames.length ? r2(shift(frames[frames.length - 1])) : 0, duration: duration,
+            steps: frames.slice(1, -1).map((k) => [Math.round(k.offset * duration), r2(shift(k))]),
+        };
+    }
     function read() {
         const board = document.getElementById('quiniela-board');
         const rows = {};
+        const strips = {};
         for (const el of document.querySelectorAll('.qb-rows [data-horse]')) {
             rows[el.dataset.horse] = el.querySelector('.qb-bets').textContent.trim();
+            strips[el.dataset.horse] = strip(el);
         }
         const results = {};
         for (const p of ['win', 'place', 'show']) {
@@ -1083,10 +1127,17 @@ BOARD_PROBE_JS = r"""
                            bets: text('#qb-result-' + p + ' .qb-result-count'),
                            prize: text('#qb-result-' + p + ' .qb-result-prize') };
         }
-        return { state: board.dataset.state, view: board.dataset.view || 'rows',
+        const toast = document.getElementById('qb-toast');
+        const pulses = [];
+        for (const el of document.querySelectorAll('.qb-rows .qb-row.is-pulse')) {
+            pulses.push(Number(el.dataset.horse));
+            el.classList.remove('is-pulse');
+        }
+        return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
-                 rows: rows, results: results };
+                 rows: rows, strips: strips, results: results, pulses: pulses,
+                 toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
     let stream = null;
     window.fetch = () => new Promise(() => {});
@@ -1108,31 +1159,56 @@ BOARD_PROBE_JS = r"""
 """
 
 
-def run_board(models: List[dict]) -> List[dict]:
+def run_board(models: List[dict], look: str = "impact", styled: bool = False) -> List[dict]:
     """The board's real template and script in a page of their own, fed
-    `models` in turn; what the board showed after each."""
+    `models` in turn; what the board showed after each. Styled, the page is
+    served over loopback with the board's stylesheet and fonts, at
+    1920x1080, which is what the tote look's rows need to be measured;
+    otherwise it is a file with the template and the script alone."""
     with server.app.test_request_context("/"):
-        board_html = server.render_template("splash/quiniela_live.html", quiniela_look="impact")
-    script = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
     probe = BOARD_PROBE_JS.replace("__MODELS__", json.dumps(models))
-    page = ('<!doctype html><html><head><meta charset="utf-8"></head><body>\n' + board_html
-            + '\n<pre id="probe"></pre>\n<script>' + probe + '</script>\n<script>' + script
-            + '</script>\n</body></html>\n')
     tmp = Path(tempfile.mkdtemp(prefix="qb_page_"))
+    srv = thread = None
     try:
-        path = tmp / "board.html"
-        path.write_text(page, encoding="utf-8")
+        if styled:
+            # The board fills a 1920x1080 stage, as it fills #slideshow-stage on
+            # the TV: a headless window's viewport is its size less a frame.
+            page = ('<!doctype html><html><head><meta charset="utf-8">'
+                    '<link rel="stylesheet" href="/static/css/quiniela_board.css"></head><body style="margin: 0">\n'
+                    '<div style="position: relative; width: 1920px; height: 1080px; overflow: hidden">' + board_html
+                    + '</div>\n<pre id="probe" style="display: none"></pre>\n<script>' + probe
+                    + '</script>\n<script src="/static/js/quiniela_board.js"></script>\n</body></html>\n')
+            app = Flask("board_page", static_folder=str(HERE / "static"), static_url_path="/static")
+            app.add_url_rule("/", "page", lambda: page)
+            logging.getLogger("werkzeug").setLevel(logging.ERROR)      # no line per request
+            srv = make_server("127.0.0.1", 0, app, threaded=True)
+            thread = threading.Thread(target=srv.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://127.0.0.1:{srv.server_port}/"
+        else:
+            script = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+            page = ('<!doctype html><html><head><meta charset="utf-8"></head><body>\n' + board_html
+                    + '\n<pre id="probe"></pre>\n<script>' + probe + '</script>\n<script>' + script
+                    + '</script>\n</body></html>\n')
+            path = tmp / "board.html"
+            path.write_text(page, encoding="utf-8")
+            url = path.resolve().as_uri()
         cmd = [CHROME, "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-               "--user-data-dir=" + str((tmp / "profile").resolve()),
-               "--virtual-time-budget=" + str(1000 + 900 * len(models)), "--dump-dom", path.resolve().as_uri()]
+               "--hide-scrollbars", "--window-size=1920,1080", "--user-data-dir=" + str((tmp / "profile").resolve()),
+               "--virtual-time-budget=" + str(1000 + 900 * len(models)), "--dump-dom", url]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             cmd.insert(1, "--no-sandbox")
         done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        found = re.search(r'<pre id="probe">(.*?)</pre>', done.stdout, re.S)
+        found = re.search(r'<pre id="probe"[^>]*>(.*?)</pre>', done.stdout, re.S)
         if not found or not found.group(1).strip():
             raise AssertionError(f"no reading from the page (exit {done.returncode}): {done.stderr[-2000:]}")
         return json.loads(html.unescape(found.group(1)))
     finally:
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+            thread.join(2.0)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1218,6 +1294,127 @@ class BoardPageTests(unittest.TestCase):
         [seen] = run_board([old[-1]])
         self.assertEqual(seen["results"]["win"], {"horse": "19", "bets": "0", "prize": "$80"})
         self.assertEqual(seen["pot"], "$133")
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class DotsRowTests(unittest.TestCase):
+    """The tote look's rows in headless Chrome, with the stylesheet and the
+    face, at 1920x1080: one strip of tiles per row from the cloth to the
+    row's right edge, every row the same; the bets in the strip's last tiles
+    (a dim 0 for an empty cup), one dark tile, the name in the rest; a name
+    longer than that scrolls a tile at a time inside its area. The feed is
+    tools/fake_pi5.py's --phase strip."""
+
+    TILES = 19          # 813 px of room from the cloth to the row's padding, 42 px tiles (pitch 7)
+
+    def strip_fake(self, **tokens) -> "fake_pi5.FakePi5":
+        counts = dict(fake_pi5.STRIP_TOKENS)
+        counts.update({int(k[1:]): v for k, v in tokens.items()})
+        return fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=counts, scratched=(), offline=(), events=[],
+                                names=fake_pi5.STRIP_NAMES, names_rev=1)
+
+    @staticmethod
+    def model(fake) -> dict:
+        return json.loads(fake.model_json())
+
+    def expect_scroll(self, s: Dict[str, Any], over: int, why: str) -> None:
+        """A strip's scroll: `over` tiles, the start held 2 s, a tile every
+        350 ms (42 px at the crawl's 120 px/s), the end held 1 s."""
+        if over <= 0:
+            self.assertEqual((s["scrolls"], s["over"]), (0, 0), why + ": a name that fits stands still")
+            return
+        self.assertEqual(s["scrolls"], 1, why)
+        self.assertEqual(s["over"], over, why + ": until its last character is in the area's last tile")
+        self.assertEqual(s["duration"], 2000 + (over - 1) * 350 + 1000, why)
+        self.assertEqual(s["steps"], [[2000 + (k - 1) * 350, k] for k in range(1, over + 1)], why)
+
+    def test_every_row_is_one_strip_of_the_same_tiles(self) -> None:
+        [seen] = run_board([self.model(self.strip_fake())], look="dots", styled=True)
+        self.assertEqual((seen["look"], seen["visible"]), ("dots", True))
+        strips = seen["strips"]
+        self.assertEqual(len(strips), 20, "both columns")
+        for horse, s in strips.items():
+            count = fake_pi5.STRIP_TOKENS[int(horse)]
+            digits = len(str(count))
+            why = f"row {horse} ({count} bets)"
+            self.assertEqual((s["display"], s["columns"], s["font"]), ("block", 2, 56.0), why + ": pitch 7, the names' largest")
+            self.assertEqual(s["tiles"], self.TILES, why + ": every row the same number of whole tiles")
+            self.assertEqual(s["gap"], 22.0, why + ": from just right of the cloth")
+            self.assertTrue(0 <= s["leftover"] < 42, why + ": the pixels left over go to the padding, never a partial tile")
+            self.assertEqual((s["bets"], s["betsRight"]), (digits, 0), why + ": the bets in the strip's last tiles, one a digit")
+            self.assertEqual(s["area"], self.TILES - digits - 1, why + ": the name's area, one dark tile before the bets")
+            self.assertEqual(s["clip"], "hidden", why + ": the area clips the name at its edges")
+            self.assertEqual(seen["rows"][horse], str(count), why + ": a 0, not NO BETS")
+            self.assertEqual(s["opacity"], "0.5" if count == 0 else "1", why + ": the 0 dim, any count full amber")
+        self.assertEqual(strips["3"]["bets"], 1, "a dim 0 takes one tile")
+        self.assertEqual(strips["4"]["area"], 15, "104: three tiles of bets, fifteen of name")
+
+    def test_a_name_longer_than_its_area_scrolls_a_tile_at_a_time(self) -> None:
+        [seen] = run_board([self.model(self.strip_fake())], look="dots", styled=True)
+        strips = seen["strips"]
+        scrolling = []
+        for horse, s in strips.items():
+            name = fake_pi5.STRIP_NAMES[int(horse)]
+            self.assertEqual(s["need"], len(name), f"{name}: one tile a character")
+            over = len(name) - s["area"]
+            self.expect_scroll(s, over, f"{name} in {s['area']} tiles")
+            if over > 0:
+                scrolling.append(int(horse))
+        self.assertEqual(sorted(scrolling), [2, 4, 6, 8, 10, 11, 13, 15, 17, 20], "ten rows scroll at once, ten stand still")
+        self.assertEqual((strips["2"]["over"], strips["6"]["over"], strips["5"]["scrolls"]), (1, 2, 0),
+                         "GRAND MO THE FIRST: 18 in 17; WHISKEY IN THE JAR: 18 in 16; EMERGING MARKET: 15 fits in 16")
+
+    def test_nine_to_ten_takes_a_tile_from_the_name(self) -> None:
+        # GRAND MO THE FIRST (18) scrolls either way: 1 tile at 9, 2 at 10.
+        # BLUEGRASS THUNDER (17) fits at 9 and overflows at 10; back at 9 it
+        # stands still again.
+        fake = self.strip_fake(h2=9, h8=9)
+        at9 = self.model(fake)
+        fake.bump(2)
+        fake.bump(8)
+        at10 = self.model(fake)
+        fake.bump(2, -1)
+        fake.bump(8, -1)
+        back = self.model(fake)
+        seen9, seen10, seen_back = run_board([at9, at10, back], look="dots", styled=True)
+        self.assertEqual((seen9["rows"]["2"], seen10["rows"]["2"], seen_back["rows"]["2"]), ("9", "10", "9"))
+        self.assertEqual((seen9["strips"]["2"]["area"], seen10["strips"]["2"]["area"]), (17, 16), "10 takes a tile from the name")
+        self.assertEqual(seen10["strips"]["2"]["bets"], 2)
+        self.expect_scroll(seen9["strips"]["2"], 1, "GRAND MO THE FIRST at 9")
+        self.expect_scroll(seen10["strips"]["2"], 2, "GRAND MO THE FIRST at 10: measured again, two tiles now")
+        self.expect_scroll(seen9["strips"]["8"], 0, "BLUEGRASS THUNDER at 9")
+        self.expect_scroll(seen10["strips"]["8"], 1, "BLUEGRASS THUNDER at 10: newly too long, it starts")
+        self.expect_scroll(seen_back["strips"]["8"], 0, "BLUEGRASS THUNDER back at 9: it fits again and stops")
+        self.expect_scroll(seen_back["strips"]["2"], 1, "GRAND MO THE FIRST back at 9")
+        self.assertEqual(set(seen10["pulses"]), {2, 8}, "the count ticks and the row pulses, in dots")
+        self.assertIn(seen10["toast"], ("2 GRAND MO THE FIRST +1", "8 BLUEGRASS THUNDER +1"), "a toast still fires")
+
+    def test_the_scrolls_run_only_while_the_rows_are_on_screen(self) -> None:
+        fake = self.strip_fake()
+        models = [self.model(fake)]
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        fake.set_results(4, 2, 1)
+        models.append(self.model(fake))                        # the results screen stands in the rows' place
+        fake.set_phase(fake_pi5.PHASES["open"])
+        models.append(self.model(fake))                        # betting open again: the rows are back
+        fake.set_phase(fake_pi5.PHASES["idle"])
+        models.append(self.model(fake))                        # PRE_RACE: the board hands the TV back
+        seen = run_board(models, look="dots", styled=True)
+        self.assertEqual([s["view"] for s in seen], ["rows", "results", "rows", "rows"])
+        self.assertEqual([s["visible"] for s in seen], [True, True, True, False])
+        self.assertEqual([s["strips"]["6"]["playState"] for s in seen], ["running", "paused", "running", "paused"],
+                         "WHISKEY IN THE JAR scrolls on the rows only")
+        self.assertEqual(seen[0]["strips"]["5"]["playState"], None, "a name that fits has no scroll to run")
+
+    def test_impact_and_numbers_keep_their_rows(self) -> None:
+        model = self.model(self.strip_fake())
+        for look in ("impact", "numbers"):
+            [seen] = run_board([model], look=look, styled=True)
+            for horse, s in seen["strips"].items():
+                why = f"{look}, row {horse}"
+                self.assertEqual((s["display"], s["columns"], s["scrolls"]), ("contents", 3, 0), why)
+                self.assertEqual(seen["rows"][horse], "No bets" if fake_pi5.STRIP_TOKENS[int(horse)] == 0
+                                 else str(fake_pi5.STRIP_TOKENS[int(horse)]), why)
 
 
 def _sfnt(data: bytes) -> Dict[str, Any]:
@@ -1496,6 +1693,31 @@ class HarnessTests(unittest.TestCase):
         self.post(fake, "results 19 1 22")
         self.assertEqual(self.post(fake, "reset").status_code, 200)
         self.assertEqual((fake.phase, fake.results), (0, None))
+
+    def test_the_strip_feed(self) -> None:
+        """--phase strip: names that fit and names that do not (at 1920 px a
+        row has 19 tiles, the name 19 - digits - 1), counts of every width
+        and a dim 0, nothing ticking, and a bet cycle through 9 -> 10."""
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.STRIP_TOKENS, scratched=(), offline=(),
+                                events=[], names=fake_pi5.STRIP_NAMES, names_rev=1)
+        m = json.loads(fake.model_json())
+        field = {int(n): h for n, h in m["horses"].items() if h["in_field"]}
+        self.assertEqual(sorted(field), list(range(1, 21)))
+        counts = {n: h["tokens"] for n, h in field.items()}
+        for count in (0, 7, 23, 104):
+            self.assertIn(count, counts.values())
+        self.assertEqual({len(str(c)) for c in counts.values()}, {1, 2, 3}, "every bet width")
+        names = {n: h["name"] for n, h in field.items()}
+        for name in ("GRAND MO THE FIRST", "EMERGING MARKET", "CATCHING FREEDOM"):
+            self.assertIn(name, names.values())
+        too_long = sorted(n for n, name in names.items() if len(name) > 19 - len(str(counts[n])) - 1)
+        self.assertEqual(too_long, [2, 4, 6, 8, 10, 11, 13, 15, 17, 20], "ten rows scroll at 1920 px")
+        self.assertIsNone(m["closes_at"], "no countdown: nothing on the board ticks by itself")
+        self.assertEqual(counts[fake_pi5.STRIP_BUMP_HORSE], 7)
+        seen = [fake_pi5.strip_bet(fake) for _ in range(7)]
+        self.assertEqual(seen, [8, 9, 10, 11, 12, 7, 8], "7 -> 12, crossing 9 -> 10, then back to 7")
+        events = json.loads(fake.model_json())["events"]
+        self.assertEqual([e["delta"] for e in events[:3]], [1, -5, 1], "the way back is one removal")
 
     def test_the_cycle_has_somebody_to_win(self) -> None:
         fake = fake_pi5.FakePi5(fake_pi5.PHASES["running"])
