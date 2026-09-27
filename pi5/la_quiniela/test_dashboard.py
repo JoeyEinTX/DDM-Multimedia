@@ -346,8 +346,10 @@ def test_results_and_reset_are_modes():
            and body["race"]["state_name"] == "AFTER_PARTY" and body["race"]["mode"] == "RESET", str(body))
     _check("one state line: AFTER_PARTY, the results cleared, the pair kept",
            rig.lines() == [state_line(rev + 2, 6, [], [(9, 22)])], str(rig.lines()))
-    _check("the file is gone, the model has no results", not rig.results_file.exists()
-           and rig.model()["results"] in (None, {"win": None, "place": None, "show": None}))
+    _check("the file is gone, the model's results are null", not rig.results_file.exists()
+           and rig.model()["results"] is None)
+    _check("the board keeps the TV in WINNER and hands it back in AFTER_PARTY",
+           rig.model()["board_states"] == [1, 2, 3, 4, 5] and rig.model()["race_state"] == 6)
     _check("the LEDs went off as they always did on a reset", "LED:ALL_OFF" in rig.led)
     # The next race: WELCOME is PRE_RACE again
     rig.post("/api/quiniela/mode", {"mode": "WELCOME"})

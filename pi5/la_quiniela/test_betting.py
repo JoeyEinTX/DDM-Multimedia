@@ -66,7 +66,7 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
               "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False}
-NO_RESULTS = {"win": None, "place": None, "show": None}
+NO_RESULTS = None   # the model's results until the dashboard has them
 
 
 def unassigned(n):
@@ -251,6 +251,8 @@ def test_empty_snapshot_model_shape():
            and m["results"] == NO_RESULTS)
     _check("updated is the wall time of the change", m["updated"] == wall.t)
     _check("board_states from settings", m["board_states"] == list(DEFAULTS["QUINIELA_BOARD_STATES"]))
+    _check("the board keeps the TV through WINNER: 1..5, released in 0 and 6",
+           DEFAULTS["QUINIELA_BOARD_STATES"] == [1, 2, 3, 4, 5])
     _check("model() is a fresh copy", b.model() is not b.model() and b.model() == m)
     _check("model_json() is the compact JSON", b.model_json() == json.dumps(m, separators=(",", ":")))
 
@@ -1103,7 +1105,7 @@ def test_stream_generator():
     first = next(gen)
     _check("first chunk is data: <model>", first.startswith("data: ") and first.endswith("\n\n"))
     model = json.loads(first[len("data: "):])
-    _check("the first chunk is the current model", model["link_ok"] is False and model["board_states"] == [1, 2, 3, 4])
+    _check("the first chunk is the current model", model["link_ok"] is False and model["board_states"] == [1, 2, 3, 4, 5])
     _check("compact JSON", first == "data: " + b.model_json() + "\n\n")
     _check("subscribed", b.subscriber_count() == 1)
     ping = next(gen)
@@ -2170,7 +2172,8 @@ def test_results_from_the_dashboard_file():
     board, wall, _ = fresh_board(bridge=b)
     b.set_state(phase=5)
     board.refresh()
-    _check("no file: results 0 0 0 and null in the model", b.results == [0, 0, 0] and board.model()["results"] == NO_RESULTS)
+    _check("no file: results 0 0 0 and null in the model", b.results == [0, 0, 0] and board.model()["results"] is None)
+    _check("...null in the JSON too", json.loads(board.model_json())["results"] is None and '"results":null' in board.model_json())
     _check("read_results with no file", read_results(board._results_path) == [0, 0, 0])
     write_results(board, 19, 1, 22)
     port.written.clear()
@@ -2190,6 +2193,8 @@ def test_results_from_the_dashboard_file():
     write_results(board, "12", 25, None)
     board.refresh()
     _check("strings are coerced, out-of-range and missing entries read as 0", b.results == [12, 0, 0] and board.model()["results"]["win"] == 12)
+    _check("one place named: the dict, the other two null (the results screen waits for all three)",
+           board.model()["results"] == {"win": 12, "place": None, "show": None})
     write_results(board, 19, 1, 22)
     board.refresh()
     done = board.reset_betting()

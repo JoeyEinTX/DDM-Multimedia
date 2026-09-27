@@ -514,10 +514,43 @@ reads that file on every `refresh()` (`read_results()`: a missing or broken
 file, a number outside 1..24 or a horse named twice all read as no results)
 and puts the three numbers into the state line's `res`, so in WINNER and
 AFTER_PARTY the named cups show their WIN / PLACE / SHOW frame; the model
-carries them as `results` (`{"win": 19, "place": 1, "show": 22}`, `null`
-each when not set). **Reset betting** removes the file and clears them. No
-other integration with the dashboard has landed, so this file is the only
-channel.
+carries them as `results`: `{"win": 19, "place": 1, "show": 22}`, or `null`
+while none is named. (The dashboard names all three at once. A hand-made
+file naming only some gives the dict with `null` for the rest, and the
+state line's `res` a 0 there.) **Reset betting** removes the file and clears
+them, and so does the dashboard's RESET. The file is the single store: the
+dashboard writes it, La Quiniela reads it.
+
+#### The results board
+
+`QUINIELA_BOARD_STATES` is `[1, 2, 3, 4, 5]`: the TV board keeps the screen
+through WINNER, the moment the prizes are needed, and hands it back to the
+slideshow in 0 (PRE_RACE) and 6 (AFTER_PARTY). What it shows in WINNER
+depends on `results` alone:
+
+- `null` (HEARTBEAT, or the admin page's WINNER button, before SET WINNERS):
+  the betting board as it froze when betting closed, under the banner
+  `OFFICIAL RESULTS COMING`.
+- all three named: the results screen, `OFFICIAL RESULTS`. Three rows, WIN /
+  PLACE / SHOW, each with the horse's saddle cloth and name, the bets its
+  cup held and its prize, big, at the right; the pot above them; under them
+  `ONE TOKEN DRAWN FROM EACH CUP · DRAWN TOKEN TAKES THE PRIZE`. The crawl
+  stays. It flips the moment the model carries the results: `POST
+  /api/results` saves them and sets WINNER in one state line, and the model
+  that follows has both.
+
+The bets and the prizes on that screen are the ones the board froze when
+betting closed, held by the page (`splash_display/static/js/quiniela_board.js`),
+not by pi5: the model stays live, so once the cups are emptied for the draw
+its `pot`, `prizes` and counts fall while the screen keeps its figures. A TV
+page loaded after that has nothing frozen and shows the model as it is then;
+that is what the runbook's written-down amounts are for.
+
+Two things pi5 does not do: the dashboard saves the results only when its
+LED controller accepted them (`POST /api/results` answers `success: false`
+otherwise, and WINNER is not set), and pi5 deletes `results.json` when it
+starts (main.py), so a restart in WINNER comes back to `OFFICIAL RESULTS
+COMING` until SET WINNERS is confirmed again.
 
 ### Admin page
 
@@ -650,7 +683,7 @@ rewrites `Cache-Control`.
  "leader": 7,
  "events": [{"horse": 7, "delta": 1, "ts": 1777662847.2}],
  "updated": 1777662847.2,
- "board_states": [1, 2, 3, 4],
+ "board_states": [1, 2, 3, 4, 5],
  "now": 1777662850.4,
  "closes_at": 1777664400.0,
  "prizes": {"win": 20, "place": 8, "show": 5},
@@ -661,7 +694,7 @@ rewrites `Cache-Control`.
  "scratches": [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}},
                {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}],
  "cups_online": 20, "cups_no_horse": 0,
- "results": {"win": null, "place": null, "show": null}}
+ "results": null}
 ```
 
 The first eleven keys are the original contract and are unchanged; the rest
@@ -738,8 +771,9 @@ the store and the results file as follows:
 - `cups_online`: every online cup, whatever it says; `cups_no_horse`: the
   online cups reporting horse 0 (their screens say `NO HORSE`). The admin
   page's `N cups online · M with no horse` line.
-- `results`: the three numbers from the dashboard's file (above), `null`
-  each when not set.
+- `results`: `{"win": 19, "place": 1, "show": 22}` from the dashboard's
+  file (above), or `null` while none is named. In WINNER it is what turns
+  the TV's frozen board into the results screen.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -835,7 +869,7 @@ each overridable by `DDM_<KEY>` in the environment or `pi5/.env`:
 | --- | --- | --- |
 | `TOKEN_VALUE` | `1.00` | Dollars per token, for the board's POT (`DDM_TOKEN_VALUE`, a float) |
 | `QUINIELA_LOG` | `True` | Write the JSONL log below (`DDM_QUINIELA_LOG`: 1/true/yes/on or 0/false/no/off) |
-| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4]` | Race states in which the splash board owns the TV (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4`) |
+| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4, 5]` | Race states in which the splash board owns the TV: betting, the race and the results; it is released in 0 and 6 (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4,5`) |
 | `LQ_SPLIT_WIN` | `0.60` | The WIN prize's share of the pot; it takes the remainder after PLACE and SHOW (`DDM_LQ_SPLIT_WIN`) |
 | `LQ_SPLIT_PLACE` | `0.25` | The PLACE prize's share, rounded half up to whole dollars (`DDM_LQ_SPLIT_PLACE`) |
 | `LQ_SPLIT_SHOW` | `0.15` | The SHOW prize's share, likewise (`DDM_LQ_SPLIT_SHOW`) |

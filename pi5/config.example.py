@@ -77,10 +77,10 @@ SPLASH_BOARD_URL = _lq_env('SPLASH_BOARD_URL', 'http://{host}:5001/')
 # The betting board the splash display's TV page renders (GET /api/quiniela,
 # see "Betting board" in pi5/LQ_BRIDGE.md). Same names as the splash used;
 # DDM_TOKEN_VALUE (float), DDM_QUINIELA_LOG (1/true/yes/on) and
-# DDM_QUINIELA_BOARD_STATES (a comma list, "1,2,3,4") override them.
+# DDM_QUINIELA_BOARD_STATES (a comma list, "1,2,3,4,5") override them.
 TOKEN_VALUE = 1.00  # dollars per token, for the board's POT
 QUINIELA_LOG = True  # pi5/data/quiniela_YYYY-MM-DD.jsonl, one line per token/scratch/state change
-QUINIELA_BOARD_STATES = [1, 2, 3, 4]  # race states in which the splash board owns the TV
+QUINIELA_BOARD_STATES = [1, 2, 3, 4, 5]  # race states in which the splash board owns the TV (5: the results board)
 
 # How La Quiniela pays ("Betting board" in pi5/LQ_BRIDGE.md): after the race one
 # token is drawn from the WIN cup, one from PLACE and one from SHOW, and each

@@ -349,9 +349,14 @@ Or unlock all:
     "place": 12,
     "show": 8
   },
-  "response": "OK"
+  "response": "OK",
+  "race": {"rev": 42, "state": 5, "state_name": "WINNER", "mode": "RESULTS",
+           "source": "dashboard", "gateway_online": true}
 }
 ```
+
+`race` is the race state La Quiniela was given (below); `null` when the
+results were not saved or La Quiniela is not running.
 
 `win`, `place` and `show` are **horse numbers** (program numbers, 1-24): a
 horse standing in for a scratched one is sent under its own number (22, not
@@ -363,8 +368,13 @@ from the saved file for the cups and the TV board.
 - Returns 400 error if validation fails
 
 **Side Effects:**
+- Sends results to ESP32. Everything below happens only if the LED
+  controller accepted them (`success` true)
 - Saves results to `pi5/data/results.json`
-- Sends results to ESP32
+- Sets La Quiniela's race state to WINNER, mode `RESULTS`, in one state line
+  with the results: the three cups show WIN / PLACE / SHOW and the TV board
+  flips from `OFFICIAL RESULTS COMING` to its results screen (the model's
+  `results`, see "The results board" in `pi5/LQ_BRIDGE.md`)
 - Broadcasts to all connected SSE clients
 - Triggers results display animation
 
@@ -377,12 +387,17 @@ from the saved file for the cups and the TV board.
 ```json
 {
   "success": true,
-  "message": "Results cleared"
+  "message": "Results cleared",
+  "race": {"rev": 43, "state": 6, "state_name": "AFTER_PARTY", "mode": "RESET",
+           "source": "dashboard", "gateway_online": true}
 }
 ```
 
 **Side Effects:**
 - Deletes `pi5/data/results.json`
+- Sets La Quiniela's race state to AFTER_PARTY, mode `RESET`, with the
+  results cleared (the model's `results` is `null` again): the TV board
+  hands the screen back to the slideshow
 - Turns off all LEDs
 
 ---

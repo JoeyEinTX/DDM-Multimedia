@@ -24,8 +24,8 @@ There is **one race state**. A dashboard button sets it, the cups and the TV fol
 
 The seven buttons under `ADMIN` → Race set the same state, the current one lit; they are
 the same thing without the LEDs. Whichever you press, the other page shows it within five
-seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV in 1–4
-and hands it back in 0, 5, 6.
+seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV in 1–5
+(in WINNER it is the **results board**, prizes and all) and hands it back in 0 and 6.
 
 ---
 
@@ -149,9 +149,10 @@ While open:
 
 Two minutes out: `DASH` → **FINAL CALL**. `FINAL CALL` pulses on the TV.
 
-At the post: `DASH` → **AT THE GATE**. `BETTING CLOSED`, board frozen.
-**Write down POT / WIN / PLACE / SHOW now**, from the big figures on `ADMIN` → Race —
-the board leaves the TV at WINNER.
+At the post: `DASH` → **AT THE GATE**. `BETTING CLOSED`, board frozen. It stays on the
+TV, pot and prizes on it, until the race is over and paid (section 8).
+Fallback, in case the TV has to be restarted before the draw: write down POT / WIN /
+PLACE / SHOW now, from the big figures on `ADMIN` → Race.
 
 They're off: `DASH` → **THEY'RE OFF!** (then **CHAOS**, **FINISH** as the race runs: all
 three are RUNNING).
@@ -164,18 +165,24 @@ RUNNING.)
 `DASH` → **SET WINNERS** → pick WIN, PLACE, SHOW (each picker says the number and the
 name, `19 · GOLDEN TEMPO`; a horse that drew in shows under its own number) → **CONFIRM
 RESULTS**. That is WINNER: the LEDs light the three cups, the three cups' screens say WIN,
-PLACE, SHOW, and the TV goes back to the slideshow. Opening the pickers changes nothing;
-confirming does.
+PLACE, SHOW, and the TV flips to the **results board**, `OFFICIAL RESULTS`: three rows,
+WIN / PLACE / SHOW, each with the horse's cloth and name, the bets its cup held and its
+prize, big, at the right; the pot above. Opening the pickers changes nothing; confirming
+does. (WINNER without results, from **HEARTBEAT** or `ADMIN` → WINNER: the TV says
+`OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.)
 
 - [ ] WIN cup: shake it, pull **one** token. Read its number aloud. The guest with the
       other half takes the WIN prize.
 - [ ] PLACE cup: one token, PLACE prize.
 - [ ] SHOW cup: one token, SHOW prize.
-- [ ] Pay in whole dollars, the amounts you wrote down.
+- [ ] Pay in whole dollars, the amounts on the results board. Emptying the cups doesn't
+      change it: it shows what each cup held when betting closed. (If the TV was
+      restarted after the cups were emptied, the amounts you wrote down.)
 - [ ] Undrawn tokens are just tokens. Nobody else wins anything.
 
-Then: `DASH` → **RESET** → OK (clears the results, LEDs off): AFTER PARTY. Or `ADMIN` →
-Race → **AFTER PARTY**, which leaves the results and the LEDs as they are.
+Then: `DASH` → **RESET** → OK (clears the results, LEDs off): AFTER PARTY, and the TV
+goes back to the slideshow. Or `ADMIN` → Race → **AFTER PARTY**, which hands the TV back
+too and leaves the results and the LEDs as they are.
 
 ## 9. Another race on the same night
 
@@ -205,6 +212,8 @@ Race → **AFTER PARTY**, which leaves the results and the LEDs as they are.
 | Board shows old pot/bets on startup | pi5 persisted last session | Empty the cups, then `ADMIN` → Race → **Reset betting**. |
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: the lit button is the state pi5 holds (the ticker on `DASH` says the same). Press the right one, on either page, and read what it answers. |
+| TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: …` (the LED controller didn't take them, and then nothing is saved) | `DASH` → **SET WINNERS** → confirm again. Still an error: the prizes are in the board's header (WIN / PLACE / SHOW under the pot); draw and pay from those. |
+| Results board shows fewer bets or smaller prizes than at the close | the TV page was loaded after the cups were emptied (it shows what it froze when betting closed; a page loaded later starts from what the cups hold then) | Pay the amounts you wrote down at the close. |
 | `DASH` button says `Error: …` | the LED controller didn't answer | If the text goes on `· BETTING OPEN` (the state's name), the race state was set and only the LEDs are missing: check the LED controller (the device icon, top left of `DASH`). |
 | A button's line is red | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the phone's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
@@ -238,6 +247,11 @@ The state now, and the `DASH` button that set it (`mode` is null when `ADMIN` or
 curl -s localhost:5000/api/quiniela/mode
 ```
 
+The results, what `DASH` → SET WINNERS → CONFIRM RESULTS does (horse numbers; it sets WINNER, and the TV flips to the results board):
+```bash
+curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":19,"place":1,"show":22}'
+```
+
 Reset betting (cups, horses, names and scratches are kept; the reply names any cups with tokens still in them):
 ```bash
 curl -s -X POST localhost:5000/api/quiniela/reset
@@ -245,7 +259,7 @@ curl -s -X POST localhost:5000/api/quiniela/reset
 
 The figures (what the page shows):
 ```bash
-curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'],'prizes',d['prizes'])"
+curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'],'prizes',d['prizes'],'results',d['results'])"
 ```
 
 The cups pi5 hears (MAC, the horse each says it is, online, count):

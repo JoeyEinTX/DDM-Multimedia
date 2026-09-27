@@ -13,7 +13,13 @@
    order, the first ten left and the rest right; a short field leaves the
    trailing slots empty), cloning #qb-row-tpl for each horse. So a
    scratched horse never has a row and an also-eligible that draws in
-   (21-24) gets one where its number sorts. #}
+   (21-24) gets one where its number sorts.
+
+   The stage (.qb-stage) holds two views, and the board's data-view says
+   which one shows: the two columns ("rows"), or the results screen
+   ("results") once the race is over and the model carries its results:
+   three rows, WIN / PLACE / SHOW, each with the horse's cloth and name,
+   the bets its cup held and the prize. The JS writes all of it. #}
 <div id="quiniela-board" class="qb" aria-hidden="true" data-state="">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
@@ -43,13 +49,33 @@
         </div>
     </header>
 
-    <div class="qb-cols">
-        {% for side in ('left', 'right') %}
-        <div class="qb-col">
-            <div class="qb-hdr"><span></span><span>Horse</span><span class="qb-hdr-r">Bets</span></div>
-            <div class="qb-rows" id="qb-col-{{ side }}"></div>
+    <div class="qb-stage">
+        <div class="qb-cols">
+            {% for side in ('left', 'right') %}
+            <div class="qb-col">
+                <div class="qb-hdr"><span></span><span>Horse</span><span class="qb-hdr-r">Bets</span></div>
+                <div class="qb-rows" id="qb-col-{{ side }}"></div>
+            </div>
+            {% endfor %}
         </div>
-        {% endfor %}
+
+        {# The results screen (race state 5 with results). #}
+        <div class="qb-results" id="qb-results" aria-hidden="true">
+            <div class="qb-results-rows">
+                {% for place in ('win', 'place', 'show') %}
+                <div class="qb-result qb-result--{{ place }}" id="qb-result-{{ place }}" data-horse="">
+                    <div class="qb-result-place">{{ place }}</div>
+                    <div class="qb-result-saddle"></div>
+                    <div class="qb-result-name"></div>
+                    <div class="qb-result-bets"><span class="qb-result-count">0</span><span class="qb-result-unit">Bets</span></div>
+                    <div class="qb-result-prize">$0</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="qb-results-rule">
+                <span>One token drawn from each cup</span><span class="qb-results-dot">·</span><span>Drawn token takes the prize</span>
+            </div>
+        </div>
     </div>
 
     {# One row, cloned by the JS per horse in the field; the number, the

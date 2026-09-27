@@ -1,5 +1,6 @@
 """
-Unit tests for splash_display/quiniela.py (the pi5 relay).
+Unit tests for splash_display/quiniela.py (the pi5 relay), the page that
+carries the board, and the dev harness (tools/fake_pi5.py).
 
 Run from splash_display/ (stdlib unittest, no pytest needed):
 
@@ -8,15 +9,19 @@ Run from splash_display/ (stdlib unittest, no pytest needed):
 No network beyond loopback is used: pi5 is simulated by an injected opener
 (the link's HTTP seam), a fake sleeper and a fake clock drive the reconnect
 loop without real time, and the one in-process fake pi5 (the cmd relay test)
-listens on an ephemeral loopback port.
+listens on an ephemeral loopback port. The harness is exercised through
+Flask's test client; none of its servers is started.
 """
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import io
 import json
 import logging
 import os
+import queue
 import socket
 import sys
 import threading
@@ -34,6 +39,12 @@ if str(HERE) not in sys.path:
 import config  # noqa: E402
 import quiniela  # noqa: E402
 import race_poller  # noqa: E402
+
+# The dev harness, by path (tools/ is not a package). Importing it starts
+# nothing: its servers and the splash's own modules only come with main().
+_spec = importlib.util.spec_from_file_location("fake_pi5", HERE / "tools" / "fake_pi5.py")
+fake_pi5 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(fake_pi5)
 
 # Keep the background threads out of the test process: the dashboard poller
 # would hit joeydevpi.local every 30 s and the link thread would try pi5
@@ -56,7 +67,20 @@ CONTRACT_KEYS = {
     "link_ok", "race_state", "race_state_name", "token_value", "pot",
     "total_tokens", "horses", "leader", "events", "updated", "board_states",
 }
+# What pi5 serves (pi5/la_quiniela/test_betting.py MODEL_KEYS): the contract,
+# the keys added with the payout model, and those added with protocol v2.
+PI5_MODEL_KEYS = CONTRACT_KEYS | {
+    "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
+    "cups_online", "cups_no_horse", "results",
+}
+PI5_HORSE_KEYS = {"tokens", "share", "scratched", "online", "cup", "conflict", "cups",
+                  "name", "replaced", "in_field"}
 UNASSIGNED = {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None}
+
+
+def mac_of(n: int) -> str:
+    """A cup as pi5 names it since protocol v2: by its MAC, never a number."""
+    return "A0:B7:65:12:34:%02X" % n
 
 
 class FakeClock:
@@ -71,9 +95,10 @@ class FakeClock:
 
 
 def pi5_model(race_state: int = 1, tokens: Optional[Dict[int, int]] = None, link_ok: bool = True,
-              updated: float = 1_700_000_000.0, events=None, board_states=(1, 2, 3, 4), **extra):
-    """A model as pi5 serves it: cups 1-based (cup n on horse n), share 4 dp,
-    leader = strictly most tokens (lowest horse on a tie)."""
+              updated: float = 1_700_000_000.0, events=None, board_states=(1, 2, 3, 4, 5), **extra):
+    """A model as pi5 serves it: a horse's cup is the MAC of the cup claiming
+    it (null when none does), share 4 dp, leader = strictly most tokens
+    (lowest horse on a tie), the board states 1..5."""
     tokens = dict(tokens or {})
     total = sum(tokens.values())
     horses = {}
@@ -84,7 +109,7 @@ def pi5_model(race_state: int = 1, tokens: Optional[Dict[int, int]] = None, link
             "share": round(t / total, 4) if total else 0.0,
             "scratched": False,
             "online": n in tokens,
-            "cup": n if n in tokens else None,
+            "cup": mac_of(n) if n in tokens else None,
         }
     leader = max(tokens, key=lambda n: (tokens[n], -n)) if total else None
     model = {
@@ -249,7 +274,8 @@ class RelayTests(RelayCase):
         self.assertTrue(self.board.apply_model(m))
         served = self.board.model()
         self.assertEqual(served, m, "pi5's model is served untouched, extra keys included")
-        self.assertEqual(served["horses"]["7"]["cup"], 7, "cup numbers are pi5's 1-based ones")
+        self.assertEqual(served["horses"]["7"]["cup"], mac_of(7), "the cup is pi5's: a MAC string, never a number")
+        self.assertIsNone(served["horses"]["1"]["cup"], "null when no cup claims the horse")
         self.assertEqual(served["updated"], 1_600_000_000.0, "updated is kept as received")
         self.assertIs(served["link_ok"], True)
         self.assertTrue(self.board.pi5_ok())
@@ -259,6 +285,21 @@ class RelayTests(RelayCase):
         # ...and a truthy non-bool becomes a bool.
         self.assertTrue(self.board.apply_model(pi5_model(link_ok="yes")))
         self.assertIs(self.board.model()["link_ok"], True)
+
+    def test_results_pass_through_as_received(self) -> None:
+        results = {"win": 19, "place": 1, "show": 22}
+        self.assertTrue(self.board.apply_model(pi5_model(race_state=5, results=None)))
+        served = self.board.model()
+        self.assertIn("results", served)
+        self.assertIsNone(served["results"], "null until the dashboard has them")
+        self.assertIn('"results":null', self.board.model_json())
+        self.assertTrue(self.board.apply_model(pi5_model(race_state=5, results=results)),
+                        "the results arriving is a change: it is published")
+        self.assertEqual(self.board.model()["results"], results)
+        self.assertEqual(self.board.model()["board_states"], [1, 2, 3, 4, 5])
+        self.assertFalse(self.board.apply_model(pi5_model(race_state=5, results=dict(results))))
+        self.assertTrue(self.board.apply_model(pi5_model(race_state=6, results=None)), "pi5's reset clears them")
+        self.assertIsNone(self.board.model()["results"])
 
     def test_apply_model_ignores_junk(self) -> None:
         before = self.board.model_json()
@@ -739,8 +780,8 @@ class ApiTests(RouteCase):
         self.assertTrue(self.board.apply_model(pi5))
         m = self.client.get("/api/quiniela").get_json()
         self.assertEqual(m, pi5)
-        self.assertEqual(m["horses"]["7"]["cup"], 7)
-        self.assertEqual(m["board_states"], [1, 2, 3, 4])
+        self.assertEqual(m["horses"]["7"]["cup"], mac_of(7))
+        self.assertEqual(m["board_states"], [1, 2, 3, 4, 5])
         self.assertEqual(m["leader"], 7)
 
     def test_cmd_is_relayed_to_pi5_and_503_when_it_is_gone(self) -> None:
@@ -770,6 +811,19 @@ class ApiTests(RouteCase):
     def test_existing_routes_still_there(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 302)
         self.assertEqual(self.client.get("/display").status_code, 200)
+
+    def test_the_page_carries_the_board_and_its_results_screen(self) -> None:
+        html = self.client.get("/display").get_data(as_text=True)
+        for needle in ('id="quiniela-board"', 'class="qb-stage"', 'id="qb-col-left"', 'id="qb-col-right"',
+                       'id="qb-results"', 'id="qb-result-win"', 'id="qb-result-place"', 'id="qb-result-show"',
+                       "One token drawn from each cup", "Drawn token takes the prize",
+                       "js/quiniela_board.js", "css/quiniela_board.css"):
+            self.assertIn(needle, html)
+        self.assertEqual(html.count('class="qb-result-prize"'), 3)
+        js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        for needle in ("'Official results coming'", "'Official results'", "m.results", "board_states"):
+            self.assertIn(needle, js)
+        self.assertNotIn("[1, 2, 3, 4", js, "the page never hard-codes pi5's board states")
 
 
 class StreamTests(RouteCase):
@@ -862,6 +916,121 @@ class RosterTests(unittest.TestCase):
         css = (HERE / "static" / "css" / "ddm_style.css").read_text(encoding="utf-8")
         for n in (21, 22, 23, 24):
             self.assertIn(f".splash-saddle--pos-{n} ", css)
+
+
+class HarnessTests(unittest.TestCase):
+    """tools/fake_pi5.py serves what pi5 serves: the same keys, a horse's
+    cup as a MAC string or null, board states 1..5, and the results."""
+
+    def derby(self, phase: str = "winner", results=None) -> "fake_pi5.FakePi5":
+        return fake_pi5.FakePi5(fake_pi5.PHASES[phase], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS,
+                                names_rev=2, results=results)
+
+    def post(self, fake, cmd: str):
+        with contextlib.redirect_stdout(io.StringIO()):      # the fake prints every command it takes
+            return fake.app.test_client().post("/api/quiniela/cmd", json={"cmd": cmd})
+
+    def test_the_model_is_pi5s_contract(self) -> None:
+        m = json.loads(fake_pi5.FakePi5(fake_pi5.PHASES["open"]).model_json())
+        self.assertEqual(set(m), PI5_MODEL_KEYS)
+        self.assertEqual(m["board_states"], [1, 2, 3, 4, 5])
+        self.assertIsNone(m["results"])
+        self.assertEqual(sorted(m["horses"], key=int), [str(n) for n in range(1, 25)])
+        for n, h in m["horses"].items():
+            self.assertEqual(set(h), PI5_HORSE_KEYS, n)
+            self.assertIs(h["conflict"], False)
+            if int(n) <= 20:
+                self.assertEqual(h["cup"], fake_pi5.mac_of(int(n)), "a MAC string, never a cup number")
+                self.assertRegex(h["cup"], r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
+                self.assertEqual(h["cups"], [h["cup"]])
+            else:
+                self.assertIsNone(h["cup"])
+                self.assertEqual(h["cups"], [])
+        self.assertEqual(m["cups_online"], 19, "twenty cups, one of them gone quiet")
+        self.assertEqual(m["cups_no_horse"], 0)
+        self.assertIs(m["horses"]["11"]["online"], False)
+
+    def test_a_renumbered_cup_keeps_its_mac(self) -> None:
+        m = json.loads(self.derby().model_json())
+        self.assertEqual(m["horses"]["22"]["cup"], fake_pi5.mac_of(9), "the cup that was 9 carries 22")
+        self.assertIsNone(m["horses"]["9"]["cup"])
+        self.assertEqual((m["horses"]["22"]["tokens"], m["horses"]["22"]["replaced"]), (7, "THE PUMA"))
+
+    def test_results_static_is_the_example_picture(self) -> None:
+        m = json.loads(self.derby(results=fake_pi5.RESULTS_WPS).model_json())
+        self.assertEqual((m["race_state"], m["race_state_name"]), (5, "WINNER"))
+        self.assertEqual(m["results"], {"win": 19, "place": 1, "show": 22})
+        self.assertEqual((m["pot"], m["total_tokens"]), (154.0, 158))
+        self.assertEqual(m["prizes"], {"win": 92, "place": 39, "show": 23})
+        self.assertEqual([m["horses"][n]["tokens"] for n in ("19", "1", "22")], [4, 11, 7])
+        self.assertEqual([m["horses"][n]["name"] for n in ("19", "1", "22")], ["GOLDEN TEMPO", "RENEGADE", "OCELLI"])
+
+    def test_results_are_three_different_horses_or_nothing(self) -> None:
+        fake = self.derby()
+        self.assertIsNone(json.loads(fake.model_json())["results"])
+        for bad in ((19, 19, 22), (0, 1, 2), (1, 2, 25), (1, 2), (1, 2, 3, 4), ("a", 1, 2)):
+            self.assertFalse(fake.set_results(*bad) if len(bad) == 3 else fake._set_results_locked(bad), bad)
+            self.assertIsNone(fake.results, bad)
+        self.assertTrue(fake.set_results(19, 1, 22))
+        self.assertEqual(json.loads(fake.model_json())["results"], {"win": 19, "place": 1, "show": 22})
+        with self.assertRaises(ValueError):
+            self.derby(results=(7, 7, 3))
+
+    def test_the_results_are_published_and_a_reset_clears_them(self) -> None:
+        fake = self.derby()
+        q: "queue.Queue[str]" = queue.Queue(maxsize=32)
+        fake._subs.append(q)
+        self.assertTrue(fake.set_results(19, 1, 22))
+        self.assertEqual(json.loads(q.get_nowait())["results"], {"win": 19, "place": 1, "show": 22})
+        self.assertTrue(fake.set_results(19, 1, 22))
+        self.assertTrue(q.empty(), "the same results again publish nothing")
+        fake.empty(19)
+        m = json.loads(q.get_nowait())
+        self.assertEqual((m["horses"]["19"]["tokens"], m["events"][0]), (0, {"horse": 19, "delta": -4, "ts": m["events"][0]["ts"]}))
+        self.assertEqual(m["results"], {"win": 19, "place": 1, "show": 22}, "emptying a cup for the draw leaves the results")
+        fake.empty(19)
+        self.assertTrue(q.empty(), "an empty cup has nothing to empty")
+        fake.reset({}, fake_pi5.PHASES["idle"])
+        m = json.loads(q.get_nowait())
+        self.assertEqual((m["race_state"], m["results"], m["total_tokens"], m["events"]), (0, None, 0, []))
+        fake.set_results(1, 2, 3)
+        q.get_nowait()
+        fake.clear_results()
+        self.assertIsNone(json.loads(q.get_nowait())["results"])
+
+    def test_the_fakes_own_commands(self) -> None:
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)
+        fake = self.derby("running")
+        resp = self.post(fake, "state 5")
+        self.assertEqual((resp.status_code, resp.get_json()), (200, {"ok": True, "echo": "state 5"}))
+        self.assertEqual(fake.phase, 5)
+        self.assertEqual(self.post(fake, "results 19 1 22").status_code, 200)
+        self.assertEqual(fake.results, (19, 1, 22))
+        for bad in ("results 19 19 22", "results 1 2", "results 1 2 25", "results a b c", "results 1 2 3 4"):
+            resp = self.post(fake, bad)
+            self.assertEqual(resp.status_code, 400, bad)
+            self.assertIs(resp.get_json()["ok"], False)
+            self.assertEqual(fake.results, (19, 1, 22), bad)
+        self.assertEqual(self.post(fake, "results").status_code, 200)
+        self.assertIsNone(fake.results)
+        # a scratch names the horse, as everything does since protocol v2
+        self.assertEqual(self.post(fake, "scratch 22 1").status_code, 200)
+        m = json.loads(fake.model_json())
+        self.assertEqual((m["horses"]["22"]["scratched"], m["horses"]["22"]["in_field"], m["pot"]), (True, False, 147.0))
+        self.assertEqual(self.post(fake, "scratch 22 0").status_code, 200)
+        self.assertEqual(json.loads(fake.model_json())["pot"], 154.0)
+        self.assertEqual(self.post(fake, "scratch 9 1").status_code, 200)
+        self.assertNotIn(9, fake.scratched, "a horse with no cup cannot be scratched at the gateway")
+        self.post(fake, "results 19 1 22")
+        self.assertEqual(self.post(fake, "reset").status_code, 200)
+        self.assertEqual((fake.phase, fake.results), (0, None))
+
+    def test_the_cycle_has_somebody_to_win(self) -> None:
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["running"])
+        self.assertEqual(fake_pi5.top_three(fake), (7, 3, 10), "most tokens first; 13 is scratched")
+        self.assertTrue(fake.set_results(*fake_pi5.top_three(fake)))
 
 
 class ServerStartupTests(unittest.TestCase):

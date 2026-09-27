@@ -20,7 +20,10 @@
 # horses[n].cup holds: since protocol v2 it is the MAC of the cup claiming
 # that horse (null when none does), never a cup number. The board only tests
 # it for null. Additive keys: conflict and cups per horse, cups_online,
-# cups_no_horse and results on the model.
+# cups_no_horse and results on the model. results is {"win", "place",
+# "show"} (horse numbers) once the dashboard has them, null until then: in
+# WINNER the TV board shows its results screen from them, and the frozen
+# betting board under OFFICIAL RESULTS COMING while it is null.
 #
 # How La Quiniela pays, which is what the additive keys carry: a token is one
 # dollar and one raffle ticket. After the race one token is drawn from the WIN
@@ -104,7 +107,7 @@ CMD_MAX_LEN = 200
 DEFAULTS: Dict[str, Any] = {
     "TOKEN_VALUE": 1.0,                       # dollars per token, for the POT
     "QUINIELA_LOG": True,                     # write pi5/data/quiniela_YYYY-MM-DD.jsonl
-    "QUINIELA_BOARD_STATES": [1, 2, 3, 4],    # race states in which the board owns the TV
+    "QUINIELA_BOARD_STATES": [1, 2, 3, 4, 5], # race states in which the board owns the TV (5: the results)
     "LQ_SPLIT_WIN": 0.60,                     # the WIN prize's share of the pot (it takes the remainder)
     "LQ_SPLIT_PLACE": 0.25,                   # the PLACE prize's share, rounded half up to whole dollars
     "LQ_SPLIT_SHOW": 0.15,                    # the SHOW prize's share, likewise
@@ -232,7 +235,7 @@ def _coerce_setting(key: str, value: Any, source: str) -> Tuple[bool, Any]:
 def load_board_settings(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """DEFAULTS, then the same-named attributes of pi5/config.py, then the
     DDM_<KEY> environment variables (DDM_TOKEN_VALUE a float, DDM_QUINIELA_LOG
-    a bool, DDM_QUINIELA_BOARD_STATES a comma list such as "1,2,3,4", the
+    a bool, DDM_QUINIELA_BOARD_STATES a comma list such as "1,2,3,4,5", the
     DDM_LQ_SPLIT_* fractions, DDM_LQ_CHYRON_LINES a "|"-separated list), then
     explicit overrides. A value that does not parse is logged and skipped;
     nothing here raises, so importing the app cannot fail on a typo. Three
@@ -363,12 +366,18 @@ def _with_now(text: str, now: float) -> str:
     return text[:-1] + ',"now":' + _dumps(now) + "}"
 
 
-def _results_dict(results: Any) -> Dict[str, Optional[int]]:
+def _results_dict(results: Any) -> Optional[Dict[str, Optional[int]]]:
+    """The model's results: {"win", "place", "show"} as horse numbers, or
+    None while no place is named. A place not named yet is None in the dict
+    (the dashboard names all three at once, so that takes a hand-made file);
+    the TV's results screen waits for all three."""
     out: Dict[str, Optional[int]] = {"win": None, "place": None, "show": None}
     if isinstance(results, (list, tuple)):
         for key, value in zip(("win", "place", "show"), results):
             h = _as_int(value, 0) or 0
             out[key] = h if 1 <= h <= HORSE_COUNT else None
+    if all(v is None for v in out.values()):
+        return None
     return out
 
 

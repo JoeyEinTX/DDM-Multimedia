@@ -27,27 +27,40 @@
    hard-coded here) the board crossfades in over the playlist and calls
    window.ddmSlideshow.hold(); when the state leaves that set it fades out
    and calls release(), which restarts the same slide's timer from zero.
+   pi5's set is 1-5: the board keeps the TV through WINNER, when the prizes
+   are needed, and hands it back in 0 (PRE_RACE) and 6 (AFTER_PARTY).
 
    A lost link never hides the board: it stays up with its last data and
    a small NO LINK mark appears after 10 s without any SSE message (data
    or ping), or as soon as the model itself reports link_ok false.
 
-   Freeze rule: in the states whose banner says BETTING CLOSED (3
-   AT_THE_POST, 4 RUNNING) the rows (the set and the counts), pot and
-   prizes keep the values shown when the state was entered and the CLOSES
-   IN line is hidden; the banner stays live, and so do the names and the
-   chyron (a late name correction still shows). Back in 1 or 2 the live
-   model renders again. The freeze only holds while the board is up: a
-   hidden board always takes the live model, so a page that loads
-   mid-race, or a board coming back after the server restarted, shows the
-   field rather than an earlier hidden paint of an empty model.
+   Freeze rule: once betting is closed (3 AT_THE_POST, 4 RUNNING, 5
+   WINNER) the rows (the set and the counts), pot and prizes keep the
+   values shown when betting closed and the CLOSES IN line is hidden; the
+   banner stays live, and so do the names and the chyron (a late name
+   correction still shows). Back in 1 or 2 the live model renders again.
+   The freeze only holds while the board is up: a hidden board always
+   takes the live model, so a page that loads mid-race, or a board coming
+   back after the server restarted, shows the field rather than an earlier
+   hidden paint of an empty model.
+
+   Results: in WINNER the banner reads OFFICIAL RESULTS COMING over the
+   frozen betting board until the model carries its results (results:
+   {win, place, show}, three different horses; null until the dashboard
+   has them). The moment it does, the stage crossfades to the results
+   screen, the banner reads OFFICIAL RESULTS, and the three rows show the
+   horse's cloth and name, the bets its cup held and its prize. The bets
+   and the prizes are the frozen ones: by then the cups are being emptied
+   for the draw, and what counts is what they held when betting closed.
 
    The model (GET /api/quiniela, relayed from pi5 untouched). The board
    reads: race_state, board_states, link_ok, token_value, pot, horses[n]
    {tokens, in_field, scratched, online, cup, name}, events[{horse, delta,
    ts}], and the additive keys now, closes_at, prizes{win,place,show},
    chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
-   names_rev. Every new key is optional: before pi5 has been heard the
+   names_rev, results{win,place,show}|null. cup is only tested for null
+   (it is the MAC of the cup claiming the horse, never a number). Every
+   new key is optional: before pi5 has been heard the
    model carries none of them and the board renders without errors
    (hidden, since board_states is empty). Without in_field (that empty
    model, or an older pi5) the field is horses 1-20 that are not
@@ -73,6 +86,12 @@
     const SLOTS_PER_COL  = 10;      // the first ten rows go left, the rest right
     const NAME_MAX_PX    = 38;      // the name shrinks from here ...
     const NAME_MIN_PX    = 20;      // ... down to here, never wraps
+    const RESULT_NAME_MAX_PX  = 100;   // the results screen's names, likewise
+    const RESULT_NAME_MIN_PX  = 44;
+    const RESULT_PRIZE_MAX_PX = 150;   // ... and its prizes, should one ever need four figures
+    const RESULT_PRIZE_MIN_PX = 80;
+    const BANNER_MAX_PX  = 42;      // the banner's text shrinks from here ...
+    const BANNER_MIN_PX  = 26;      // ... down to here until the sign fits its cell
     const TOAST_IN_MS    = 150;     // the pop, matches .qb-toast.is-shown's transition
     const TOAST_HOLD_MS  = 2500;    // fully up for this long, then ...
     const TOAST_OUT_MS   = 200;     // ... the drop, matches .qb-toast.is-leaving
@@ -98,7 +117,7 @@
     const SADDLE_FALLBACK = { bg: '#808080', fg: '#FFFFFF' };
 
     // Banner per race state. `frozen` states keep the rows, pot and prizes
-    // at their last values. States not listed here (0, 5, 6) normally hide
+    // at their last values. States not listed here (0, 6) normally hide
     // the board; if config ever puts one in board_states the banner falls
     // back to the state's name.
     const BANNERS = {
@@ -106,8 +125,15 @@
         2: { text: 'Final call',     cls: 'qb-banner--final',  frozen: false },
         3: { text: 'Betting closed', cls: 'qb-banner--closed', frozen: true  },
         4: { text: 'Betting closed', cls: 'qb-banner--closed', frozen: true  },
+        5: { text: 'Official results coming', cls: 'qb-banner--closed', frozen: true },
     };
-    const BANNER_CLASSES = ['qb-banner--open', 'qb-banner--final', 'qb-banner--closed'];
+    // The race is over and the results are in: the results screen. WINNER,
+    // and AFTER_PARTY too should config ever keep the board up in it (the
+    // results outlive the state; pi5's reset clears them).
+    const RESULTS_BANNER = { text: 'Official results', cls: 'qb-banner--official', frozen: true };
+    const RESULT_STATES  = [5, 6];
+    const PLACES         = ['win', 'place', 'show'];
+    const BANNER_CLASSES = ['qb-banner--open', 'qb-banner--final', 'qb-banner--closed', 'qb-banner--official'];
 
     // ---- DOM ---------------------------------------------------------
     const board = document.getElementById('quiniela-board');
@@ -132,6 +158,24 @@
     const toastUnitEl   = $('qb-toast-unit');
     const toastPlusEl   = toastEl.querySelector('.qb-toast-plus');
     const noLinkEl      = $('qb-nolink');
+    const headerEl      = board.querySelector('.qb-header');
+    const resultsEl     = $('qb-results');
+
+    // The results screen's three rows: place -> { el, saddle, name, count,
+    // unit, prize } and what each last showed (horse, nameText, prizeText).
+    const resultRows = {};
+    for (const place of PLACES) {
+        const el = $('qb-result-' + place);
+        resultRows[place] = {
+            el,
+            saddle: el.querySelector('.qb-result-saddle'),
+            name:   el.querySelector('.qb-result-name'),
+            count:  el.querySelector('.qb-result-count'),
+            unit:   el.querySelector('.qb-result-unit'),
+            prize:  el.querySelector('.qb-result-prize'),
+            horse: null, nameText: null, prizeText: null,
+        };
+    }
 
     // The rows on screen: horse -> { el, name, bets, displayed, target, raf,
     // nameText }, built from the model's field (renderField). A horse out
@@ -173,6 +217,7 @@
 
     // ---- State -------------------------------------------------------
     let model = null;          // latest model from the server
+    let shown = null;          // the model the rows, pot and prizes show (the frozen one while frozen)
     let visible = false;       // board layer shown
     let frozen = false;        // rows/pot/prizes held at last values
     let renderedOnce = false;  // rows have been painted at least once
@@ -214,11 +259,12 @@
         model = m;
 
         const state = Number(m.race_state);
-        const spec = BANNERS[state] || {
+        const results = RESULT_STATES.includes(state) ? resultsOf(m) : null;
+        const spec = results ? RESULTS_BANNER : (BANNERS[state] || {
             text: String(m.race_state_name || ('state ' + state)).replace(/_/g, ' '),
             cls: 'qb-banner--closed',
             frozen: false,
-        };
+        });
         const inBoard = Array.isArray(m.board_states) && m.board_states.includes(state);
 
         // Banner always follows the state.
@@ -236,9 +282,11 @@
             renderPot(m);
             renderPrizes(m);
             renderRows(m, animate);
+            shown = m;
             renderedOnce = true;
         }
         renderNames(m);            // live in every state
+        renderResults(m, results); // the results screen, or back to the rows
         renderCloses(m, state);
 
         if (inBoard) show(); else hide();
@@ -251,7 +299,23 @@
     function renderBanner(spec) {
         for (const c of BANNER_CLASSES) bannerEl.classList.remove(c);
         bannerEl.classList.add(spec.cls);
-        setText(bannerTextEl, spec.text);
+        if (bannerTextEl.textContent === spec.text) return;
+        bannerTextEl.textContent = spec.text;
+        fitBanner();
+    }
+
+    // The banner is a sign in the header's right-hand cell. A text too long
+    // for the cell at 42 px (OFFICIAL RESULTS COMING) shrinks step by step
+    // until the sign fits; never wraps.
+    function fitBanner() {
+        const cols = getComputedStyle(headerEl).gridTemplateColumns.split(' ');
+        const room = parseFloat(cols[cols.length - 1]) || 480;
+        let fs = BANNER_MAX_PX;
+        bannerEl.style.fontSize = fs + 'px';
+        while (bannerEl.offsetWidth > room && fs > BANNER_MIN_PX) {
+            fs--;
+            bannerEl.style.fontSize = fs + 'px';
+        }
     }
 
     function setText(el, text) {
@@ -302,9 +366,13 @@
     // The reference's fit: start at 38 px and step down until the text
     // fits its cell, but never below 20 px. No wrap, no ellipsis.
     function fitName(el) {
-        let fs = NAME_MAX_PX;
+        fitText(el, NAME_MAX_PX, NAME_MIN_PX);
+    }
+
+    function fitText(el, maxPx, minPx) {
+        let fs = maxPx;
         el.style.fontSize = fs + 'px';
-        while (el.scrollWidth > el.clientWidth && fs > NAME_MIN_PX) {
+        while (el.scrollWidth > el.clientWidth && fs > minPx) {
             fs--;
             el.style.fontSize = fs + 'px';
         }
@@ -312,6 +380,76 @@
 
     function refitNames() {
         for (const n of field) if (rows[n]) fitName(rows[n].name);
+        for (const place of PLACES) {
+            const r = resultRows[place];
+            if (r.nameText != null) fitText(r.name, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
+            if (r.prizeText != null) fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX);
+        }
+    }
+
+    // ---- Results ----------------------------------------------------
+    // The model's results, {win, place, show}, when all three are in: three
+    // different horses 1-24. Anything else (null until the dashboard has
+    // them, a place still missing) is no results yet.
+    function resultsOf(m) {
+        const r = m.results;
+        if (!r || typeof r !== 'object') return null;
+        const out = {};
+        const seen = new Set();
+        for (const place of PLACES) {
+            const n = Number(r[place]);
+            if (!Number.isInteger(n) || n < 1 || n > HORSES || seen.has(n)) return null;
+            seen.add(n);
+            out[place] = n;
+        }
+        return out;
+    }
+
+    // The results screen. Who won and the names come from the live model;
+    // the bets each cup held and the prizes from the picture on the board
+    // (`shown`, frozen since betting closed): the cups are emptied for the
+    // draw while this screen is up, and the count that matters is the one
+    // they held. A horse that was never in the field still gets its row
+    // (cloth, name, 0 bets): the results say what they say.
+    function renderResults(m, results) {
+        const on = !!results;
+        const view = on ? 'results' : 'rows';
+        if (board.dataset.view !== view) {
+            board.dataset.view = view;
+            resultsEl.setAttribute('aria-hidden', on ? 'false' : 'true');
+        }
+        if (!on) return;
+        const from = shown || m;
+        const prizes = (from.prizes && typeof from.prizes === 'object') ? from.prizes : {};
+        for (const place of PLACES) {
+            const n = results[place];
+            const r = resultRows[place];
+            if (r.horse !== n) {
+                r.horse = n;
+                r.el.dataset.horse = String(n);
+                const c = SADDLE[n] || SADDLE_FALLBACK;
+                r.saddle.style.background = c.bg;
+                r.saddle.style.color = c.fg;
+                r.saddle.textContent = String(n);
+            }
+            const name = horseName(m.horses[String(n)], n);
+            if (name !== r.nameText) {
+                r.nameText = name;
+                r.name.textContent = name;
+                fitText(r.name, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
+            }
+            const h = from.horses && from.horses[String(n)];
+            const tokens = Math.max(0, parseInt(h && h.tokens, 10) || 0);
+            setText(r.count, String(tokens));
+            setText(r.unit, tokens === 1 ? 'Bet' : 'Bets');
+            const v = Number(prizes[place]);
+            const prize = '$' + (Number.isFinite(v) ? Math.round(v) : 0);
+            if (prize !== r.prizeText) {
+                r.prizeText = prize;
+                r.prize.textContent = prize;
+                fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX);
+            }
+        }
     }
 
     // The field: every horse with in_field true, in numeric order. A horse
@@ -429,7 +567,8 @@
     // relay's link_ok flip). A clock only moves forward: the server-time
     // estimate is the newest stamp seen plus the time since, and an older
     // stamp never re-anchors it. With no stamp at all the TV's clock
-    // stands in. Hidden without a closes_at, and in states 3+.
+    // stands in. Hidden without a closes_at, and in states 3+ (betting is
+    // closed, the race is on or over).
     const NOW_SLACK_S = 2;        // a stamp this little behind the estimate is fresh (latency)
     let closesAtS = null;         // the model's closes_at, pi5 time
     let serverNowS = null;        // the newest "now" seen ...

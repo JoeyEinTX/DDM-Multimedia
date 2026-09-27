@@ -243,20 +243,23 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "pot": 150.0, "total_tokens": 154,
   "horses": {
     "1": {"tokens": 0, "share": 0, "in_field": true, "scratched": false, "online": false, "cup": null,
-          "name": "", "replaced": null},
-    "7": {"tokens": 23, "share": 0.1494, "in_field": true, "scratched": false, "online": true, "cup": 7,
+          "conflict": false, "cups": [], "name": "", "replaced": null},
+    "7": {"tokens": 23, "share": 0.1494, "in_field": true, "scratched": false, "online": true,
+          "cup": "A0:B7:65:12:34:56", "conflict": false, "cups": ["A0:B7:65:12:34:56"],
           "name": "DANON BOURBON", "replaced": null},
     "9": {"tokens": 0, "share": 0, "in_field": false, "scratched": false, "online": false, "cup": null,
-          "name": "THE PUMA", "replaced": null},
-    "20": {"tokens": 4, "share": 0.026, "in_field": false, "scratched": true, "online": true, "cup": 20,
+          "conflict": false, "cups": [], "name": "THE PUMA", "replaced": null},
+    "20": {"tokens": 4, "share": 0.026, "in_field": false, "scratched": true, "online": true,
+           "cup": "A0:B7:65:12:34:69", "conflict": false, "cups": ["A0:B7:65:12:34:69"],
            "name": "FULLEFFORT", "replaced": null},
-    "22": {"tokens": 7, "share": 0.0455, "in_field": true, "scratched": false, "online": true, "cup": 9,
+    "22": {"tokens": 7, "share": 0.0455, "in_field": true, "scratched": false, "online": true,
+           "cup": "A0:B7:65:12:34:5E", "conflict": false, "cups": ["A0:B7:65:12:34:5E"],
            "name": "OCELLI", "replaced": "THE PUMA"}
   },
   "leader": 7,
   "events": [ {"horse": 7, "delta": 1, "ts": 1695400000.0} ],
   "updated": 1695400000.0,
-  "board_states": [1, 2, 3, 4],
+  "board_states": [1, 2, 3, 4, 5],
   "now": 1695400003.2,
   "closes_at": 1695400900.0,
   "prizes": {"win": 89, "place": 38, "show": 23},
@@ -265,7 +268,9 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
              "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
   "names_rev": 3,
   "scratches": [ {"was": {"number": 9,  "name": "THE PUMA"},   "now": {"number": 22, "name": "OCELLI"}},
-                 {"was": {"number": 20, "name": "FULLEFFORT"}, "now": null} ]
+                 {"was": {"number": 20, "name": "FULLEFFORT"}, "now": null} ],
+  "cups_online": 20, "cups_no_horse": 0,
+  "results": null
 }
 ```
 
@@ -273,13 +278,16 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   also-eligibles, whose names can be entered ahead of time but who are not
   in the field until one replaces a scratched horse. `in_field` says who
   is: 1-20 unless scratched (either kind), 21-24 only while standing in
-  for a scratched horse. A horse with no cup assigned looks like the
-  `"1"` entry above. `cup` is pi5's **1-based** cup number (the old splash
-  exposed the gateway's 0-based wire slot); the board only tests it for
-  `null`. `name` is served upper-cased (`""` when unset; the board then
-  shows `HORSE n`); `replaced` is the upper-cased name of the horse this
-  one stands in for, `""` when that horse had no name yet (the chyron
-  prints `HORSE n`), or `null`.
+  for a scratched horse. A horse no cup claims looks like the `"1"` entry
+  above. `cup` is the **MAC** of the cup claiming that horse, a string, or
+  `null` when none does; since protocol v2 (`59e3b14`) it is never a
+  number, because a cup owns its horse number and pi5 knows cups by MAC
+  only. The board only tests it for `null`. `cups` lists every cup
+  claiming the horse and `conflict` is true when there are two (the admin
+  page's `⚠ 2 CUPS`; the board ignores both). `name` is served upper-cased
+  (`""` when unset; the board then shows `HORSE n`); `replaced` is the
+  upper-cased name of the horse this one stands in for, `""` when that
+  horse had no name yet (the chyron prints `HORSE n`), or `null`.
 - Two kinds of scratch. A replacement is a **renumber**: as at Churchill
   the also-eligible keeps its own program number (in the 2026 Derby The
   Puma #9 scratched and Ocelli ran as #22, not as #9), so the cup that was
@@ -315,13 +323,20 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   `online` = pi5 heard the cup within the last 6 s.
 - `events` are the last 8 bets, newest first, each `{"horse", "delta",
   "ts"}`.
+- `results` is `{"win": 19, "place": 1, "show": 22}` (horse numbers) once
+  the dashboard's SET WINNERS has been confirmed, `null` until then and
+  again after a reset. In WINNER it is what turns the frozen board into
+  the results screen (below). `cups_online` and `cups_no_horse` are the
+  admin page's; the board does not read them.
 - `board_states` are the race states in which the board owns the TV; pi5
-  decides them. Until pi5 has been heard the splash serves an empty model:
-  `link_ok` false, race state 0, `token_value` 1.0, every horse unassigned,
-  `board_states` `[]` (so the board stays hidden), and none of the
-  additive keys (`now`, `closes_at`, `prizes`, `split`, `chyron`,
-  `names_rev`, `scratches`, `name`, `replaced`, `in_field`); the board
-  tolerates their absence.
+  decides them (`[1, 2, 3, 4, 5]`: betting, the race and the results; the
+  TV goes back to the playlist in 0 and 6). Until pi5 has been heard the
+  splash serves an empty model: `link_ok` false, race state 0,
+  `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
+  board stays hidden), and none of the additive keys (`now`, `closes_at`,
+  `prizes`, `split`, `chyron`, `names_rev`, `scratches`, `results`,
+  `cups_online`, `cups_no_horse`, `name`, `replaced`, `in_field`,
+  `conflict`, `cups`); the board tolerates their absence.
 
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -m json.tool
@@ -346,19 +361,20 @@ curl -s -X POST localhost:5001/api/quiniela/cmd \
 #  with that same JSON shape; pi5's own route always answers JSON)
 ```
 
-Commands (pi5 validates; cup numbers are 1-based, as everywhere on DevPi):
+Commands (pi5 validates). Since protocol v2 only one does anything:
 
 | `cmd` | Meaning |
 | --- | --- |
-| `state N` | Race state 0..6 (0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING, 5 WINNER, 6 AFTER_PARTY) |
-| `horse C H` | Cup C (1..20) carries horse H (1..24; 0 = no horse). An H that is the `was` of a replacement record is substituted with its `now` (9 scratched, 22 in: `horse 1 9` puts 22 on cup 1 and the reply says so in `note`); an H of 21..24 that is the `now` of no record is a 400 (a cup carries an also-eligible only through a record) |
-| `scratch C 1` / `scratch C 0` | Scratch / unscratch the horse on cup C |
-| `roster` | Answer with pi5's roster (20 MACs or null, `roster_rev`, `has_roster`); nothing is written |
+| `state N` | Race state 0..6 (0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING, 5 WINNER, 6 AFTER_PARTY): what a dashboard mode button or the admin page's state buttons set |
 | `demo`, `json ...` | Rejected by pi5 (400): its bridge never forwards them to the gateway |
 
-The first word must be one of `state horse scratch demo roster json`, one
-line, at most 200 characters, case-sensitive; anything else is a 400 from
-pi5 (`"command not allowed: ..."`, `"empty command"`, ...).
+The first word must be one of `state demo json`, one line, at most 200
+characters, case-sensitive; anything else is a 400 from pi5 (`"command not
+allowed: ..."`, `"empty command"`, ...). The v1 `horse`, `scratch` and
+`roster` commands are gone: a cup's horse number is set on the cup itself,
+scratches go through pi5's admin page (`POST /api/quiniela/scratch`), and
+there is no roster. The results come from the dashboard (`POST
+/api/results` on pi5), not from here.
 
 Stream headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`,
 `X-Accel-Buffering: no`, `Connection: keep-alive` (Flask's dev server, which
@@ -391,7 +407,8 @@ stays hidden and the slideshow is indistinguishable from before.
 subscribes to `/api/quiniela/stream` (reconnecting on error with a 1 s
 backoff doubling to 30 s, reset by the next message). Whenever
 `board_states` (the model's copy of pi5's `config.QUINIELA_BOARD_STATES`,
-in `pi5/config.py`; the page never hard-codes it) contains `race_state`:
+in `pi5/config.py`, `[1, 2, 3, 4, 5]`; the page never hard-codes it)
+contains `race_state`:
 
 - the playlist pauses in place (`window.ddmSlideshow.hold()` clears the
   slide timers, the current slide stays where it is) and the board
@@ -409,11 +426,38 @@ in `pi5/config.py`; the page never hard-codes it) contains `race_state`:
 | 1 `BETTING_OPEN` | BETTING OPEN (green), CLOSES IN under it | live |
 | 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing), CLOSES IN under it | live |
 | 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen** at the values shown when the state was entered (names and the chyron stay live); back in 1 or 2 they go live again |
+| 5 `WINNER`, `results` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board as it was when betting closed |
+| 5 `WINNER`, `results` in | OFFICIAL RESULTS (gold) | the **results screen** (below), from the same frozen figures |
+
+In 0 `PRE_RACE` and 6 `AFTER_PARTY` the board is down and the playlist
+runs. (Should pi5's config ever add one of them to `board_states`, the
+banner reads the state's name; in 6 with the results still in, the results
+screen stays up.)
 
 The freeze only holds while the board is up. A board coming up already in
-3 or 4 — a page loaded mid-race, or the server restarted during the race —
-paints the live model first, so it never shows an earlier hidden paint of
-an empty model (POT $0, every count 0).
+3, 4 or 5 — a page loaded mid-race, or the server restarted during the race
+— paints the live model first, so it never shows an earlier hidden paint of
+an empty model (POT $0, every count 0). That has one consequence worth
+knowing on race night: the figures are frozen by the page, not by pi5, so a
+page loaded after the winners' cups have been emptied for the draw shows
+what the cups hold then. The runbook has the prizes written down at the
+close for that case.
+
+**Results screen** (state 5 once `results` names all three; the stage
+between the header and the chyron crossfades from the two columns to it,
+500 ms, opacity only, the moment the model carries the results): three
+rows, `WIN` / `PLACE` / `SHOW`, each with the place (WIN gold), the
+horse's saddle cloth (150 px) and name (100 px, shrunk step by step down
+to 44 px until it fits; never wraps), the bets that cup held (`4 BETS`)
+and its prize at the right, 150 px (`$92`, WIN's in gold; it shrinks too
+should a prize ever need four figures). The WIN row has the leader's gold
+outline. The pot stays in the header above (its three prize tiles step
+aside, each prize being in its row); one line under the rows reads `ONE
+TOKEN DRAWN FROM EACH CUP · DRAWN TOKEN TAKES THE PRIZE`; the chyron keeps
+crawling. Who won and the names are live (a late name correction shows);
+the bets and the prizes are the frozen ones. A winner that was never in
+the field still gets its row (cloth, name, 0 bets): the board shows what
+the results say. No toast while it is up.
 
 **How La Quiniela pays, and so what the board shows.** A token is $1.
 After the race one token is drawn from the WIN cup, one from the PLACE
@@ -503,7 +547,7 @@ is hidden).
 **What the board reads.** Of the model: `race_state`, `board_states`,
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
 online / cup / name`, `events`, and the additive keys `now`, `closes_at`,
-`prizes`, `chyron`, `scratches`, `names_rev`. Every one of
+`prizes`, `chyron`, `scratches`, `names_rev`, `results`. Every one of
 the additive keys is optional: before pi5 has been heard the splash's
 empty model carries none of them and the board renders without errors
 (hidden, since `board_states` is empty; prizes read `$0`, no countdown,
@@ -542,9 +586,17 @@ python tools/fake_pi5.py --phase open              # BETTING OPEN, 20 cups, lead
 python tools/fake_pi5.py --phase final             # FINAL CALL
 python tools/fake_pi5.py --phase closed            # AT_THE_POST: BETTING CLOSED, board frozen
 python tools/fake_pi5.py --phase running           # RUNNING: BETTING CLOSED, still frozen
-python tools/fake_pi5.py --phase winner            # state 5: the playlist is back
+python tools/fake_pi5.py --phase winner            # WINNER, no results yet: OFFICIAL RESULTS COMING over the board
+python tools/fake_pi5.py --phase after             # state 6 (AFTER_PARTY): the playlist is back
 python tools/fake_pi5.py --phase idle              # state 0, link up: plain slideshow
-python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> closed -> running -> winner, ~15 s each, forever
+python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> closed -> running -> winner -> the results arrive
+                                                   # (the results screen) -> after party, ~15 s each, forever
+python tools/fake_pi5.py --phase results           # how the 2026 Derby field's race ends: RUNNING -> WINNER with no results
+                                                   # (OFFICIAL RESULTS COMING) -> the results arrive (19 Golden Tempo, 1 Renegade,
+                                                   # 22 Ocelli: WIN $92 / PLACE $39 / SHOW $23 of POT $154) and 3 s later the three
+                                                   # cups are emptied for the draw (the screen keeps 4 / 11 / 7 bets and the prizes)
+                                                   # -> AFTER_PARTY (the playlist) -> again; --period seconds per step
+python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving, for screenshots
 python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark (0 would stop it before the splash's first request)
 python tools/fake_pi5.py --phase bench                     # the 2026-09-25 bench picture: 50/42/8/3 tokens
 python tools/fake_pi5.py --phase bench-reset               # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
@@ -553,14 +605,17 @@ python tools/fake_pi5.py --phase redesign                  # the 2026 Derby fiel
                                                            # at the gateway: 19 rows, POT $150 = WIN $89 / PLACE $38 / SHOW $23, closes in 15 min,
                                                            # a bet on horse 7 every 4 s (the toast fires)
 python tools/fake_pi5.py --phase redesign-static           # the same picture with nothing moving, for side-by-side screenshots
-# --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset step),
+# --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset or results step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 ```
 
 The older phases carry no horse names, so the board shows `HORSE n`;
 every phase carries the full contract (horses 1-24 with `in_field`,
-`name` and `replaced`, `now`, `closes_at`, `prizes`, `split`, `chyron`,
-`names_rev`, `scratches` in the record shape). In `redesign` the cups
+`name`, `replaced`, `conflict` and `cups`, `now`, `closes_at`, `prizes`,
+`split`, `chyron`, `names_rev`, `scratches` in the record shape,
+`cups_online`, `cups_no_horse`, `results`). A horse's `cup` is a MAC
+string (`A0:B7:65:00:00:07` for the fake's cup 7) or `null`, as pi5 has
+served it since protocol v2; a renumbered cup keeps its MAC. In `redesign` the cups
 that were 5, 9 and 13 carry 21, 22 and 23 with their tokens (the count
 that was on 9 is on 22), so the field reads 1-4, 6-8, 10-12 down the left
 and 14-19, 21-23 down the right with the last slot blank; the chyron
@@ -569,9 +624,12 @@ carries the three replacements and `[20] FULLEFFORT · TOKENS REFUNDED`.
 Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. The
 fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}`;
 `state N` switches its phase, `reset` plays pi5's reset (counts 0, events
-cleared, state 0), `scratch C 1` / `scratch C 0` flips the kind-2
-scratch on cup C (the horse on that cup leaves the field, its tokens
-leave the pot), `renumber A B` is the replacement scratch (the cup on
+and results cleared, state 0), `results W P S` names the winners as the
+dashboard's SET WINNERS does (three different horses 1-24, else a 400;
+in state 5 the board flips to the results screen; `results` alone clears
+them and the board goes back to OFFICIAL RESULTS COMING), `scratch H 1` /
+`scratch H 0` flips the no-replacement scratch on horse H (it leaves the
+field, its tokens leave the pot), `renumber A B` is the replacement scratch (the cup on
 horse A becomes horse B, tokens and all: A's row is gone and B appears
 where its number sorts, no event, no toast, and the `redesign` feed's bet
 on 7 then lands under B, since the token is the cup's; `renumber B A`
@@ -579,13 +637,15 @@ undoes it) and
 `name N Some Long Name` renames horse N, 1-24 (`names_rev` bumps, no
 event; `name N` alone clears it), which is how to watch a long name shrink
 to fit its row (38 px down to 20 px). Post the fake-only commands
-(`reset`, `renumber`, `name`) to the fake itself on 5078: the real relay
-forwards everything to pi5 unchecked, but pi5 would reject them. Through
-the relay, `state N` drives the takeover:
+(`reset`, `results`, `scratch`, `renumber`, `name`) to the fake itself on
+5078: the real relay forwards everything to pi5 unchecked, but pi5 would
+reject them. Through the relay, `state N` drives the takeover:
 
 ```bash
 curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'   # board up
-curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'   # board down
+curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'   # WINNER: OFFICIAL RESULTS COMING
+curl -s -X POST localhost:5078/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"results 7 3 10"}'   # the results screen
+curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'   # board down
 ```
 
 For automated 1080p frames drive headless Chrome over the DevTools protocol
@@ -607,12 +667,15 @@ curl -s localhost:5000/api/lq/snapshot | python3 -c "import json,sys; s=json.loa
 curl -s localhost:5000/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
 # the splash relays it: same two values
 curl -s localhost:5001/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
-# cup 1 carries horse 7, then betting opens: the TV shows the board
-curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"horse 1 7"}'
+# a cup set to horse 7 on its own screen (hold -> HORSE -> 7 -> SET), then betting opens: the TV shows the board
 curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
-# drop a token into cup 1: horse 7 ticks to 1 on the TV
-# WINNER: the board yields to the playlist
+# drop a token into that cup: horse 7 ticks to 1 on the TV
+# WINNER: the board stays, OFFICIAL RESULTS COMING
 curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
+# the results, as the dashboard's SET WINNERS saves them (pi5's route, not relayed): the results screen
+curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":7,"place":1,"show":2}'
+# AFTER_PARTY: the board yields to the playlist
+curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'
 ```
 
 Unit tests, no port and no network beyond loopback needed:

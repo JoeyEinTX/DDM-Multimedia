@@ -14,9 +14,17 @@ Nothing leaves loopback: no serial port, no dashboard poller.
     python tools/fake_pi5.py --phase final         # FINAL CALL (banner pulses)
     python tools/fake_pi5.py --phase closed        # AT_THE_POST: BETTING CLOSED, frozen
     python tools/fake_pi5.py --phase running       # RUNNING: BETTING CLOSED, still frozen
-    python tools/fake_pi5.py --phase winner        # state 5: the board yields to the playlist
+    python tools/fake_pi5.py --phase winner        # WINNER, no results yet: OFFICIAL RESULTS COMING over the board
+    python tools/fake_pi5.py --phase after         # state 6 (AFTER_PARTY): playlist, the board has handed the TV back
     python tools/fake_pi5.py --phase idle          # state 0: playlist, link up
-    python tools/fake_pi5.py --phase cycle         # idle -> open -> final -> closed -> running -> winner, forever
+    python tools/fake_pi5.py --phase cycle         # idle -> open -> final -> closed -> running -> winner -> the results
+                                                   # arrive (the results screen) -> after party, forever
+    python tools/fake_pi5.py --phase results       # the end of the 2026 Derby field's race: RUNNING -> WINNER with no
+                                                   # results (OFFICIAL RESULTS COMING) -> the results arrive (19 Golden
+                                                   # Tempo, 1 Renegade, 22 Ocelli: the results screen, WIN $92 / PLACE $39 /
+                                                   # SHOW $23), the three cups are emptied for the draw 3 s later (the
+                                                   # screen keeps 4 / 11 / 7 bets) -> AFTER_PARTY (the playlist); repeats
+    python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving (screenshots)
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
     python tools/fake_pi5.py --phase bench-reset   # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
@@ -26,9 +34,10 @@ Nothing leaves loopback: no serial port, no dashboard poller.
     python tools/fake_pi5.py --phase redesign-static   # the same picture, nothing moving (screenshots)
 
 Flags:
-    --phase {idle,open,final,closed,running,winner,cycle,bench,bench-reset,redesign,redesign-static}   (default: open)
+    --phase {idle,open,final,closed,running,winner,after,cycle,bench,bench-reset,redesign,redesign-static,
+             results,results-static}   (default: open)
     --period SECONDS       seconds per state in --phase cycle, and per step in
-                           --phase bench-reset (default: 15)
+                           --phase bench-reset and --phase results (default: 15)
     --stop-feed-after N    after N s the fake pi5 stops answering: its stream
                            closes and GET /api/quiniela (and POST .../cmd)
                            return 503, so the splash's link_ok drops within
@@ -50,16 +59,22 @@ Both URLs are printed; open http://127.0.0.1:5077/display. The fake's
 
     curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 
-puts the board up on the TV and ``state 5`` takes it down again; ``scratch C 1``
-/ ``scratch C 0`` flips the kind-2 scratch on cup C (the horse on that cup
-leaves the field, its tokens leave the pot); ``renumber A B`` is the
-replacement scratch: the cup that carries horse A now carries horse B, which
-keeps its own number (the 2026 Derby: The Puma #9 scratched and Ocelli ran
-as #22), so B appears on the board with A's tokens where 22 sorts and A is
-gone (the redesign feed's bet on 7 then lands under B: the token is the
-cup's); ``renumber B A`` undoes it; ``name N Some Long Name`` renames horse N
-(1-24; names_rev bumps, no event; ``name N`` alone clears it), which is how
-to watch a long name shrink to fit its row.
+puts the board up on the TV, ``state 5`` is WINNER (the board stays, OFFICIAL
+RESULTS COMING) and ``state 6`` takes it down again. The rest are the fake's
+own (pi5 has no such commands: there the dashboard and the admin page do
+these things), so post them to the fake itself on 5078: ``results W P S``
+names the winners, as the dashboard's SET WINNERS does (three different
+horses 1-24; in state 5 the board flips to the results screen), and
+``results`` alone clears them; ``scratch H 1`` / ``scratch H 0`` flips the
+no-replacement scratch on horse H (it leaves the field, its tokens leave
+the pot); ``renumber A B`` is the replacement scratch: the cup that carries
+horse A now carries horse B, which keeps its own number (the 2026 Derby:
+The Puma #9 scratched and Ocelli ran as #22), so B appears on the board
+with A's tokens where 22 sorts and A is gone (the redesign feed's bet on 7
+then lands under B: the token is the cup's); ``renumber B A`` undoes it;
+``name N Some Long Name`` renames horse N (1-24; names_rev bumps, no event;
+``name N`` alone clears it), which is how to watch a long name shrink to
+fit its row.
 
 Static phases carry 20 cups (cup n on horse n), tokens spread with a clear
 leader (horse 7), one scratched horse (13, at the gateway: out of the field,
@@ -71,14 +86,19 @@ AT_THE_POST so the freeze rule is visible.
 
 The model carries every key of pi5's contract: horses ``"1"``..``"24"``
 (1-20 the field, 21-24 the also-eligibles, in the field only while standing
-in for a scratched horse), each with ``in_field``, ``name`` and ``replaced``;
-``now`` (stamped when the JSON is built), ``closes_at``, ``prizes`` (whole
-dollars, place and show rounded half up, win the remainder), ``split``,
-``chyron``, ``names_rev`` and ``scratches`` (one record per scratch:
-``{"was": {"number", "name"}, "now": {"number", "name"}}`` for a replacement,
-``"now": null`` for a gateway scratch, ordered by was.number). A gateway
-scratch keeps its tokens in ``total_tokens`` but out of ``pot`` and the
-prizes; a renumber moves the cup's tokens with it and never changes the pot.
+in for a scratched horse), each with ``in_field``, ``name``, ``replaced``,
+``conflict`` and ``cups``; ``now`` (stamped when the JSON is built),
+``closes_at``, ``prizes`` (whole dollars, place and show rounded half up,
+win the remainder), ``split``, ``chyron``, ``names_rev``, ``scratches`` (one
+record per scratch: ``{"was": {"number", "name"}, "now": {"number",
+"name"}}`` for a replacement, ``"now": null`` for a gateway scratch, ordered
+by was.number), ``cups_online``, ``cups_no_horse`` and ``results`` (``{"win",
+"place", "show"}`` horse numbers, or ``null`` until they are named). A
+horse's ``cup`` is what pi5 has served since protocol v2: the MAC of the cup
+claiming that horse (``"A0:B7:65:00:00:07"`` for the fake's cup 7), ``null``
+when none does; never a cup number. A gateway scratch keeps its tokens in
+``total_tokens`` but out of ``pot`` and the prizes; a renumber moves the
+cup's tokens with it and never changes the pot.
 """
 
 from __future__ import annotations
@@ -111,13 +131,14 @@ PHASES = {
     "closed":  3,   # AT_THE_POST
     "running": 4,   # RUNNING
     "winner":  5,   # WINNER
+    "after":   6,   # AFTER_PARTY
 }
 
 RACE_STATE_NAMES = {
     0: "PRE_RACE", 1: "BETTING_OPEN", 2: "FINAL_CALL", 3: "AT_THE_POST",
     4: "RUNNING", 5: "WINNER", 6: "AFTER_PARTY",
 }
-BOARD_STATES = [1, 2, 3, 4]
+BOARD_STATES = [1, 2, 3, 4, 5]    # pi5's QUINIELA_BOARD_STATES: the board hands the TV back in 0 and 6
 TOKEN_VALUE = 1.0
 HEARTBEAT_S = 5.0        # pi5's SSE ping cadence
 MAX_EVENTS = 8
@@ -180,6 +201,19 @@ REDESIGN_CLOSES_IN_S = 15 * 60
 REDESIGN_BUMP_EVERY_S = 4.0
 REDESIGN_BUMP_HORSE = 7
 
+# --phase results: how that race ends. The redesign field, and Golden Tempo
+# (19) wins from Renegade (1) and Ocelli (22, on the cup that was The
+# Puma's). Golden Tempo had 4 bets here, so 158 tokens in all and 154 in
+# the pot (20's 4 are out): WIN $92, PLACE $39, SHOW $23.
+RESULTS_TOKENS = {**REDESIGN_TOKENS, 19: 4}
+RESULTS_WPS = (19, 1, 22)
+RESULTS_EMPTY_AFTER_S = 3.0       # the winners' cups are emptied for the draw this long after the results
+
+
+def mac_of(cup: int) -> str:
+    """The fake's cup n as pi5 names a cup: by its MAC."""
+    return "A0:B7:65:00:00:%02X" % int(cup)
+
 
 def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"))
@@ -219,12 +253,17 @@ def build_model(
     closes_at: Optional[float] = None,
     names_rev: int = 0,
     chyron: Optional[List[str]] = None,
+    results: Optional[Iterable[int]] = None,
 ) -> Dict[str, Any]:
     """The contract's model: horses "1".."24"; share 4 dp, pot 2 dp, leader =
     strictly most tokens (lowest horse on a tie, None when nothing is bet;
-    as on pi5 a scratched horse is not excluded); cup numbers 1-based
-    (`cup_of` is horse -> cup, cup n on horse n by default; a horse with no
-    cup has cup None and is offline); events newest first, at most 8.
+    as on pi5 a scratched horse is not excluded); a horse's `cup` is the MAC
+    of the cup claiming it (`cup_of` is horse -> the fake's cup number, cup
+    n on horse n by default, served as mac_of(n); a horse with no cup has
+    cup None, cups [] and is offline; the fake never has two cups on one
+    horse, so conflict is always False); events newest first, at most 8.
+    `results` is (win, place, show), served as {"win", "place", "show"}, or
+    None: no results, served as null.
 
     `replacements` is now -> was, one entry per replacement scratch (9 -> 22
     is {22: 9}). `in_field`: 1-20 unless scratched either way, 21-24 only
@@ -267,7 +306,9 @@ def build_model(
             "in_field": in_field,
             "scratched": gateway_scratched,
             "online": cup is not None and n not in offline,
-            "cup": cup,
+            "cup": mac_of(cup) if cup is not None else None,
+            "conflict": False,
+            "cups": [mac_of(cup)] if cup is not None else [],
             "name": name_of(n),
             "replaced": name_of(was) if was is not None else None,
         }
@@ -279,6 +320,7 @@ def build_model(
         if t > best:
             leader, best = n, t
     scratches.sort(key=lambda s: s["was"]["number"])
+    wps = [int(h) for h in results] if results is not None else []
     return {
         "link_ok": bool(link_ok),
         "race_state": int(phase),
@@ -298,6 +340,9 @@ def build_model(
         "chyron": list(CHYRON_LINES if chyron is None else chyron),
         "names_rev": int(names_rev),
         "scratches": scratches,
+        "cups_online": sum(1 for h in horses.values() if h["online"]),
+        "cups_no_horse": 0,
+        "results": dict(zip(("win", "place", "show"), wps)) if len(wps) == 3 else None,
     }
 
 
@@ -313,17 +358,18 @@ def seed_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
 
 class FakePi5:
     """The scenario (phase, tokens, scratched, offline cups, events, names,
-    which cup carries which horse, the replacement records) and the three
-    routes on a Flask app of its own. Tokens, the gateway scratched flag and
-    the offline state are keyed by horse here and travel with the cup on a
-    renumber, which is what makes them the cup's."""
+    which cup carries which horse, the replacement records, the results) and
+    the three routes on a Flask app of its own. Tokens, the gateway
+    scratched flag and the offline state are keyed by horse here and travel
+    with the cup on a renumber, which is what makes them the cup's."""
 
     def __init__(self, phase: int, tokens: Optional[Dict[int, int]] = None,
                  scratched: Optional[Iterable[int]] = None, offline: Optional[Iterable[int]] = None,
                  events: Optional[List[Dict[str, Any]]] = None,
                  names: Optional[Dict[int, str]] = None,
                  renumbers: Iterable[Tuple[int, int]] = (),
-                 closes_at: Optional[float] = None, names_rev: int = 0) -> None:
+                 closes_at: Optional[float] = None, names_rev: int = 0,
+                 results: Optional[Iterable[int]] = None) -> None:
         self._lock = threading.Lock()
         self._subs: List["queue.Queue[Optional[str]]"] = []
         self.phase = phase
@@ -336,6 +382,9 @@ class FakePi5:
         self.replacements: Dict[int, int] = {}       # now -> was
         self.closes_at: Optional[float] = closes_at
         self.names_rev = int(names_rev)
+        self.results: Optional[Tuple[int, int, int]] = None      # (win, place, show)
+        if results is not None and not self._set_results_locked(results):
+            raise ValueError(f"results must be three different horses 1-{MAX_HORSE}: {results!r}")
         self.stopped = False
         for was, now in renumbers:
             self._renumber_locked(was, now)
@@ -346,7 +395,7 @@ class FakePi5:
     def _build(self) -> Dict[str, Any]:
         return build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
                            names=self.names, cup_of=self.cup_of, replacements=self.replacements,
-                           closes_at=self.closes_at, names_rev=self.names_rev)
+                           closes_at=self.closes_at, names_rev=self.names_rev, results=self.results)
 
     def _publish_locked(self) -> None:
         self._json = _dumps(self._build())
@@ -371,14 +420,57 @@ class FakePi5:
 
     def reset(self, tokens: Dict[int, int], phase: Optional[int] = None,
               events: Optional[List[Dict[str, Any]]] = None) -> None:
-        """A fresh token table and, unless given, no events: what pi5's
-        model serves after reset_link() (a reset is a baseline, never a
-        list of removals) or at the start of a cycle."""
+        """A fresh token table, no results and, unless given, no events:
+        what pi5's model serves after its reset (a reset is a baseline,
+        never a list of removals, and it clears the results) or at the
+        start of a cycle."""
         with self._lock:
             self.tokens = dict(tokens)
             self.events = [] if events is None else list(events)
+            self.results = None
             if phase is not None:
                 self.phase = int(phase)
+            self._publish_locked()
+
+    def _set_results_locked(self, results: Iterable[int]) -> bool:
+        try:
+            wps = tuple(int(h) for h in results)
+        except (TypeError, ValueError):
+            return False
+        if len(wps) != 3 or len(set(wps)) != 3 or not all(1 <= h <= MAX_HORSE for h in wps):
+            return False
+        self.results = wps
+        return True
+
+    def set_results(self, win: int, place: int, show: int) -> bool:
+        """The dashboard's SET WINNERS: three different horses 1-24. The
+        state is whatever it is (on pi5 the dashboard sets WINNER in the
+        same breath; here `state 5` is a command of its own). Refused
+        (False), nothing changed, for anything else."""
+        with self._lock:
+            before = self.results
+            if not self._set_results_locked((win, place, show)):
+                return False
+            if self.results != before:
+                self._publish_locked()
+            return True
+
+    def clear_results(self) -> None:
+        with self._lock:
+            if self.results is not None:
+                self.results = None
+                self._publish_locked()
+
+    def empty(self, horse: int) -> None:
+        """The cup on `horse` is emptied (the draw): its count goes to 0,
+        as one negative event."""
+        with self._lock:
+            held = self.tokens.get(horse, 0)
+            if not held:
+                return
+            self.tokens[horse] = 0
+            self.events = ([{"horse": horse, "delta": -held, "ts": round(time.time(), 3)}]
+                           + self.events)[:MAX_EVENTS]
             self._publish_locked()
 
     def bump(self, horse: int, delta: int = 1) -> None:
@@ -403,22 +495,16 @@ class FakePi5:
             horse = was_to_now[horse]
         return horse
 
-    def horse_on(self, cup: int) -> Optional[int]:
-        for horse, c in self.cup_of.items():
-            if c == cup:
-                return horse
-        return None
-
-    def set_scratched(self, cup: int, on: bool) -> None:
-        """A kind-2 scratch (pi5's `scratch C 1` / `scratch C 0`) on cup C:
-        the flag flips on the horse that cup carries, no event, the horse
-        leaves (or rejoins) the field and its tokens leave (or rejoin) the
-        pot. names_rev is the names store's revision on pi5 and a gateway
-        scratch does not touch it (the bridge's state rev is what moves),
-        so it stays put here too."""
+    def set_scratched(self, horse: int, on: bool) -> None:
+        """A scratch with no replacement (pi5's POST /api/quiniela/scratch
+        and .../unscratch, keyed by horse as everything is since protocol
+        v2): the flag flips on the horse, no event, the horse leaves (or
+        rejoins) the field and its tokens leave (or rejoin) the pot. Only a
+        horse with a cup can be scratched here. names_rev is the names
+        store's revision on pi5 and a gateway scratch does not touch it
+        (the bridge's state rev is what moves), so it stays put here too."""
         with self._lock:
-            horse = self.horse_on(cup)
-            if horse is None or on == (horse in self.scratched):
+            if horse not in self.cup_of or on == (horse in self.scratched):
                 return
             if on:
                 self.scratched.add(horse)
@@ -554,10 +640,22 @@ class FakePi5:
             if words[0] == "state" and len(words) == 2 and words[1].isdigit():
                 fake.set_phase(int(words[1]))
             elif words[0] == "reset":
-                # Not in pi5's whitelist (there it is POST /api/lq/dev/reset);
-                # here it plays that reset: counts 0, events cleared, PRE_RACE.
+                # Not in pi5's whitelist (there it is POST /api/quiniela/reset);
+                # here it plays that reset: counts 0, events and results
+                # cleared, PRE_RACE.
                 fake.reset({}, PHASES["idle"])
+            elif words[0] == "results" and len(words) == 1:
+                fake.clear_results()
+            elif words[0] == "results":
+                # Not a pi5 command (there the dashboard's SET WINNERS does
+                # it): `results W P S` names the winners.
+                if len(words) != 4 or not all(w.isdigit() for w in words[1:]) \
+                        or not fake.set_results(int(words[1]), int(words[2]), int(words[3])):
+                    return jsonify({"ok": False, "error": f"usage: results W P S (three different horses 1-{MAX_HORSE}), "
+                                                          "or results alone to clear them"}), 400
             elif words[0] == "scratch" and len(words) == 3 and words[1].isdigit() and words[2] in ("0", "1"):
+                # Not a pi5 command since protocol v2 (there it is POST
+                # /api/quiniela/scratch): the horse, not a cup.
                 fake.set_scratched(int(words[1]), words[2] == "1")
             elif words[0] == "renumber" and len(words) == 3 and words[1].isdigit() and words[2].isdigit():
                 # Not a pi5 command (there the admin page does it); here the
@@ -593,18 +691,34 @@ def run_cycle(fake: FakePi5, period: float) -> None:
             ("final",   2),
             ("closed",  4),   # a trickle in AT_THE_POST exercises the freeze rule
             ("running", 0),
-            ("winner",  0),
+            ("winner",  0),   # OFFICIAL RESULTS COMING over the frozen board
+            ("results", 0),   # still WINNER: the results arrive, the results screen
+            ("after",   0),   # AFTER_PARTY: the board hands the TV back
         ]
         for name, every in plan:
-            st = PHASES[name]
-            print(f"-> {name} (state {st})", flush=True)
-            fake.set_phase(st)
+            if name == "results":
+                wps = top_three(fake)
+                print(f"-> results {wps} (state {PHASES['winner']})", flush=True)
+                fake.set_results(*wps)
+            else:
+                st = PHASES[name]
+                print(f"-> {name} (state {st})", flush=True)
+                fake.set_phase(st)
             for i in range(int(period)):
                 if fake.stopped:
                     return
                 if every and i % every == 0:
                     fake.bump(rng.choice(bettable))
                 time.sleep(1.0)
+
+
+def top_three(fake: FakePi5) -> Tuple[int, int, int]:
+    """The three horses in the field with the most tokens (the lowest number
+    on a tie): somebody to win the cycle's race."""
+    with fake._lock:
+        field = [n for n in fake.cup_of if n not in fake.scratched]
+        ranked = sorted(field, key=lambda n: (-fake.tokens.get(n, 0), n))
+    return ranked[0], ranked[1], ranked[2]
 
 
 def bench_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -658,6 +772,49 @@ def run_redesign(fake: FakePi5) -> None:
         fake.bump(REDESIGN_BUMP_HORSE)
 
 
+def run_results(fake: FakePi5, period: float) -> None:
+    """How the race ends, forever: RUNNING for `period` s (BETTING CLOSED,
+    the board frozen); WINNER with no results for `period` s (OFFICIAL
+    RESULTS COMING over the same frozen board); then the results arrive
+    (the results screen) and, RESULTS_EMPTY_AFTER_S later, the three
+    winners' cups are emptied for the draw, which the screen must not show
+    (it keeps the bets each cup held); `period` s after the results
+    AFTER_PARTY (the board hands the TV back) for `period` s; then the
+    tokens are back and the race runs again."""
+    def wait(seconds: float) -> bool:
+        end = time.time() + seconds
+        while time.time() < end:
+            if fake.stopped:
+                return False
+            time.sleep(min(0.25, max(0.0, end - time.time())))
+        return True
+
+    with fake._lock:
+        held = dict(fake.tokens)          # by the numbers the cups carry now (22 has what was bet on 9)
+    while True:
+        print("-> running (state 4): BETTING CLOSED, frozen", flush=True)
+        fake.reset(held, PHASES["running"])
+        if not wait(period):
+            return
+        print("-> winner (state 5), no results: OFFICIAL RESULTS COMING", flush=True)
+        fake.set_phase(PHASES["winner"])
+        if not wait(period):
+            return
+        print(f"-> results {RESULTS_WPS}: the results screen", flush=True)
+        fake.set_results(*RESULTS_WPS)
+        if not wait(min(RESULTS_EMPTY_AFTER_S, period)):
+            return
+        print("-> the winners' cups are emptied for the draw (the screen keeps what they held)", flush=True)
+        for horse in RESULTS_WPS:
+            fake.empty(horse)
+        if not wait(max(0.0, period - RESULTS_EMPTY_AFTER_S)):
+            return
+        print("-> after party (state 6): the board hands the TV back", flush=True)
+        fake.set_phase(PHASES["after"])
+        if not wait(period):
+            return
+
+
 def stop_feed_later(fake: FakePi5, after: float) -> None:
     time.sleep(max(0.0, after))
     fake.stop_feed()
@@ -670,10 +827,11 @@ def _client_host(host: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle", "bench", "bench-reset", "redesign", "redesign-static"],
+    ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle", "bench", "bench-reset", "redesign", "redesign-static",
+                                                         "results", "results-static"],
                     default="open")
     ap.add_argument("--period", type=float, default=15.0,
-                    help="seconds per state in --phase cycle, per step in --phase bench-reset")
+                    help="seconds per state in --phase cycle, per step in --phase bench-reset and --phase results")
     ap.add_argument("--stop-feed-after", type=float, default=None, metavar="SECONDS",
                     help="stop answering after this long (the splash's link_ok then drops); "
                          "use a few seconds, e.g. 3: with 0 the splash never receives a model")
@@ -692,6 +850,11 @@ def main() -> None:
         fake = FakePi5(PHASES["open"], tokens=REDESIGN_TOKENS, scratched=REDESIGN_SCRATCHED, offline=(),
                        events=redesign_events(), names=REDESIGN_NAMES, renumbers=REDESIGN_RENUMBERS,
                        closes_at=time.time() + REDESIGN_CLOSES_IN_S, names_rev=2)
+    elif args.phase in ("results", "results-static"):
+        fake = FakePi5(PHASES["running" if args.phase == "results" else "winner"], tokens=RESULTS_TOKENS,
+                       scratched=REDESIGN_SCRATCHED, offline=(), events=[], names=REDESIGN_NAMES,
+                       renumbers=REDESIGN_RENUMBERS, names_rev=2,
+                       results=RESULTS_WPS if args.phase == "results-static" else None)
     else:
         fake = FakePi5(PHASES[args.phase])
     pi5_httpd = make_server(args.host, args.pi5_port, fake.app, threaded=True)
@@ -707,6 +870,8 @@ def main() -> None:
         threading.Thread(target=run_bench_reset, args=(fake, args.period), daemon=True).start()
     elif args.phase == "redesign":
         threading.Thread(target=run_redesign, args=(fake,), daemon=True).start()
+    elif args.phase == "results":
+        threading.Thread(target=run_results, args=(fake, args.period), daemon=True).start()
 
     if args.no_splash:
         try:

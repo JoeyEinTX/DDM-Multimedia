@@ -22,7 +22,8 @@
 
    Designed for 1920x1080 seen from across a room: header 196 px, two
    columns of ten row slots (the field, in numeric order), a 50 px chyron
-   along the bottom.
+   along the bottom. Once the race is over and the results are in, the
+   results screen takes the columns' place: three rows, WIN / PLACE / SHOW.
    ===================================================================== */
 
 @font-face {
@@ -216,6 +217,13 @@
     color: var(--qb-text);
 }
 
+/* OFFICIAL RESULTS, over the results screen. */
+.qb-banner--official {
+    background: #1a1a1a;
+    border-color: var(--qb-gold);
+    color: var(--qb-gold);
+}
+
 @keyframes qbBannerPulse {
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.45; }
@@ -242,6 +250,22 @@
 }
 
 /* ---------------------------------------------------------------------
+   The stage: everything between the header and the chyron. Two views
+   share it, the betting board's two columns and the results screen, and
+   the board's data-view ("rows" / "results", set by the JS) says which one
+   shows. The change is a crossfade, opacity only.
+   --------------------------------------------------------------------- */
+.qb-stage {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 14px;
+    padding-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------------
    Two columns of ten row slots. The JS fills them with the field (every
    horse with in_field true, in numeric order): the first ten left, the
    rest right. A field short of twenty leaves the trailing slots empty,
@@ -255,8 +279,17 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 22px;
-    margin-top: 14px;
-    padding-bottom: 8px;
+    transition:
+        opacity    500ms ease-in-out,
+        visibility 0s;
+}
+
+.qb[data-view="results"] .qb-cols {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+        opacity    500ms ease-in-out,
+        visibility 0s linear 500ms;
 }
 
 .qb-col {
@@ -391,6 +424,142 @@
     25%  { opacity: 0.18; }
     100% { opacity: 0; }
 }
+
+/* ---------------------------------------------------------------------
+   The results screen: race state 5 (WINNER) once the model carries its
+   results. Three rows, WIN / PLACE / SHOW: the place, the horse's saddle
+   cloth and name, the bets its cup held when betting closed, and that
+   cup's prize, big, at the right; one line under them says how the prize
+   is won. The pot stays in the header above (its three prize tiles step
+   aside: each prize is in its row), the chyron keeps crawling below.
+   Laid out while hidden (visibility, not display), so the JS can fit the
+   names before the screen shows.
+   --------------------------------------------------------------------- */
+.qb-results {
+    position: absolute;
+    inset: 0 0 8px 0;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    visibility: hidden;
+    transition:
+        opacity    500ms ease-in-out,
+        visibility 0s linear 500ms;
+}
+
+.qb[data-view="results"] .qb-results {
+    opacity: 1;
+    visibility: visible;
+    transition:
+        opacity    500ms ease-in-out,
+        visibility 0s;
+}
+
+.qb[data-view="results"] .qb-prizes { display: none; }
+
+.qb-results-rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: repeat(3, 1fr);
+    gap: 16px;
+}
+
+.qb-result {
+    display: grid;
+    grid-template-columns: 250px 150px 1fr 230px 340px;
+    column-gap: 28px;
+    align-items: center;
+    min-height: 0;
+    padding: 0 36px 0 30px;
+    border: 2px solid var(--qb-edge);
+    border-radius: 18px;
+    background: var(--qb-tile);
+    overflow: hidden;
+}
+
+.qb-result--win {
+    border-color: var(--qb-gold);
+    box-shadow: 0 0 0 2px var(--qb-gold) inset, 0 0 22px #e8c53a55;
+}
+
+.qb-result-place {
+    font-size: 84px;
+    line-height: 1;
+    letter-spacing: 4px;
+    white-space: nowrap;
+    color: var(--qb-muted);
+}
+.qb-result--win .qb-result-place { color: var(--qb-gold); }
+
+/* The cloth, as in the rows but results-sized; colours inline from the JS. */
+.qb-result-saddle {
+    width: 150px;
+    height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 22px;
+    font-size: 108px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 5px 0 #0007;
+}
+
+/* The name: 100 px, shrunk by the JS down to 44 px until it fits its
+   cell; never wraps, never an ellipsis. */
+.qb-result-name {
+    min-width: 0;
+    font-size: 100px;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.qb-result-bets {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 12px;
+    white-space: nowrap;
+}
+
+.qb-result-count {
+    font-size: 88px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.qb-result-unit {
+    font-size: 28px;
+    letter-spacing: 3px;
+    color: var(--qb-muted);
+}
+
+/* The prize: 150 px, shrunk by the JS if a four-figure prize ever needs it. */
+.qb-result-prize {
+    min-width: 0;
+    font-size: 150px;
+    line-height: 1;
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 6px 0 #062119, 0 10px 30px #000c;
+}
+.qb-result--win .qb-result-prize { color: var(--qb-gold); }
+
+.qb-results-rule {
+    flex: 0 0 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    font-size: 32px;
+    letter-spacing: 4px;
+    white-space: nowrap;
+    color: var(--qb-gold);
+}
+.qb-results-dot { color: var(--qb-muted); }
 
 /* ---------------------------------------------------------------------
    Toast: one new bet, centre screen, in the horse's saddle-cloth colours
