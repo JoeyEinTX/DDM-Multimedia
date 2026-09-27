@@ -2166,20 +2166,37 @@ def test_admin_page():
     r = client.get("/quiniela/admin")
     _check("GET /quiniela/admin 200 text/html", r.status_code == 200 and r.mimetype == "text/html")
     html = r.get_data(as_text=True)
-    for section in ("names", "scratches", "closes", "status"):
+    for section in ("race", "names", "scratches", "closes"):
         _check(f"section id={section!r} present", f'id="{section}"' in html)
+    _check("the Race section comes first", html.index('id="race"') < html.index('id="names"'))
     _check("viewport meta for phones", 'name="viewport"' in html)
     _check("talks to the routes", all(path in html for path in ("/api/quiniela/horses", "/api/quiniela/scratch",
-                                                                "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela")))
+                                                                "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela",
+                                                                "/api/quiniela/cmd", "/api/quiniela/reset", "/api/lq/snapshot")))
     _check("no CDN, no external script", "<script src=" not in html and "https://" not in html and "http://" not in html)
-    _check("no race-state buttons", "/api/quiniela/cmd" not in html)
+    _check("the seven state buttons, sending the state command",
+           all(s in html for s in ("PRE-RACE", "BETTING OPEN", "FINAL CALL", "AT THE POST", "RUNNING", "WINNER", "AFTER PARTY"))
+           and 'cmd: "state " + n' in html and "data-state" in html)
+    _check("the figures and Reset betting behind a confirm()",
+           all(s in html for s in ("fig-pot", "fig-win", "fig-place", "fig-show", "fig-bets", "reset-betting"))
+           and 'confirm("Reset betting?' in html)
+    _check("the cups: a table, a horse picker per cup sending the horse command, scratched shown but not offered",
+           all(s in html for s in ('id="cups"', "data-cup-horse", 'cmd: "horse " + cup + " " + n', "(scratched)", "(replaced by #", "(not in the field)")))
+    _check("dev flag off: the Adopt and Forget cups buttons are not rendered (the script that would drive them is static)",
+           'id="cups-adopt"' not in html and 'id="cups-forget"' not in html and 'if ($("cups-adopt"))' in html)
+    b.settings["LQ_DEV_ENDPOINTS"] = True
+    html_dev = client.get("/quiniela/admin").get_data(as_text=True)
+    _check("dev flag on: Adopt and Forget cups rendered, on the dev routes, Forget behind a confirm()",
+           all(s in html_dev for s in ('id="cups-adopt"', 'id="cups-forget"', "/api/lq/dev/roster/adopt", "/api/lq/dev/roster/clear"))
+           and 'confirm("Forget cups?' in html_dev)
+    b.settings["LQ_DEV_ENDPOINTS"] = False
     _check("24 name lines and the also-eligibles caption", 'rows="24"' in html and "also-eligibles" in html)
     _check("a replacement number picker, a name box, No replacement and Undo",
            all(s in html for s in ("<select", "data-repl-num", "data-repl-name", "data-norepl", "data-undo", "No replacement")))
     _check("sends the replacement as {number, name}", "replacement = { number:" in html)
     _check("Undo is withheld on a chained record, with the reason", '" \u00b7 undo #"' in html and "disabled" in html)
     _check("reads in_field and scratches from the model", "in_field" in html and "scratches" in html)
-    _check("well under 400 lines", html.count("\n") < 400, str(html.count("\n")))
+    _check("well under 600 lines", html.count("\n") < 600, str(html.count("\n")))
 
 
 def _race_night_setup(dev=False):

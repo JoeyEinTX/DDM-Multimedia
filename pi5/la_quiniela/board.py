@@ -596,6 +596,16 @@ def api_quiniela_closes_at():
     return jsonify({"ok": True, "closes_at": board.store.closes_at})
 
 
+def _dev_endpoints_on() -> bool:
+    """Whether the dev routes answer (LQ_DEV_ENDPOINTS on the bridge's
+    settings): the admin page renders Adopt and Forget cups only then."""
+    settings = getattr(getattr(_board, "bridge", None), "settings", None)
+    return bool(settings.get("LQ_DEV_ENDPOINTS")) if isinstance(settings, dict) else False
+
+
 @quiniela_board_bp.route("/quiniela/admin", methods=["GET"])
 def quiniela_admin_page():
-    return render_template("quiniela_admin.html")
+    """The phone page: the Race section (state buttons, the figures, Reset
+    betting, the cups with a horse picker each, Adopt / Forget cups when the
+    dev flag is on), then names, scratches and the closing time."""
+    return render_template("quiniela_admin.html", dev_endpoints=_dev_endpoints_on())

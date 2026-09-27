@@ -6,7 +6,9 @@ A wireless LED display system for horse racing betting entertainment at an annua
 
 Race night: see `RACE_NIGHT.md` (the La Quiniela checklist, one action per line).
 
-**Event Context:** Guests buy $1 tickets, write their name, and place them in cups numbered 1-20 (one per horse). After the race, winners are drawn from the Win/Place/Show cups. Winnings split 70/20/10.
+**Event Context:** La Quiniela is a drawing, not a betting pool. A token is $1: drop it in the cup of the horse you like and keep the other half.
+After the race one token is drawn from the WIN cup, one from PLACE, one from SHOW, and the drawn token's owner takes that prize: 60 / 25 / 15 percent of the pot, whole dollars, WIN takes the rounding.
+Twenty cups on the mantle, one per post position, count their tokens; a horse scratched before the day is replaced by an also-eligible under its own number, a same-day scratch has its tokens refunded.
 
 ## System Architecture
 
