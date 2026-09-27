@@ -71,6 +71,17 @@
    is a 150 ms pop / 200 ms drop on transform and opacity; the chyron crawl
    is one CSS transform animation. Everything is transform/opacity only
    (see quiniela_board.css).
+
+   Looks. The board's data-look (the server writes it: ?look= on the URL,
+   else config.QUINIELA_LOOK) is "impact", "dots" or "numbers". The layout
+   and everything in this file are the same for all three; in the tote
+   look the stylesheet sets the tote's fields (data-tote, and the crawl's
+   text) in the dot-matrix face, one element a field as before, and the
+   only thing that differs here is how a text that is too wide is made to
+   fit: the Impact look steps the font size down a pixel at a time, the
+   tote look steps the dot pitch down (font-size = 8 x pitch, whole
+   pitches only, so the dots stay on the pixel grid), and sizes the strip
+   of tiles behind the text to a whole number of tiles.
    ===================================================================== */
 (() => {
     'use strict';
@@ -92,6 +103,15 @@
     const RESULT_PRIZE_MIN_PX = 80;
     const BANNER_MAX_PX  = 42;      // the banner's text shrinks from here ...
     const BANNER_MIN_PX  = 26;      // ... down to here until the sign fits its cell
+    // The tote look: dot pitches in px (the face's em is 8 pitches, its
+    // cell 6 wide). A name starts at the first and steps down to the second.
+    const DOT_EM  = 8;
+    const DOT_CELL = 6;
+    const NAME_PITCH         = [7, 3];     // 15 tiles in a row's name cell at 7, 18 at 6
+    const RESULT_NAME_PITCH  = [12, 4];
+    const RESULT_COUNT_PITCH = [10, 5];
+    const RESULT_PRIZE_PITCH = [18, 8];
+    const TOTE_FACE = '56px "DDM Tote"';
     const TOAST_IN_MS    = 150;     // the pop, matches .qb-toast.is-shown's transition
     const TOAST_HOLD_MS  = 2500;    // fully up for this long, then ...
     const TOAST_OUT_MS   = 200;     // ... the drop, matches .qb-toast.is-leaving
@@ -140,6 +160,13 @@
     if (!board) return;                       // not the slideshow page
     const $ = (id) => document.getElementById(id);
 
+    // ---- Look --------------------------------------------------------
+    const LOOKS = ['impact', 'dots', 'numbers'];
+    const look = LOOKS.includes(board.dataset.look) ? board.dataset.look : 'impact';
+    board.dataset.look = look;
+    const dottedNames   = look === 'dots';      // names in the dot-matrix face
+    const dottedFigures = look !== 'impact';    // figures and the crawl
+
     const potEl         = $('qb-pot');
     const tokenValueEl  = $('qb-token-value');
     const prizeEls      = { win: $('qb-prize-win'), place: $('qb-prize-place'), show: $('qb-prize-show') };
@@ -170,10 +197,11 @@
             el,
             saddle: el.querySelector('.qb-result-saddle'),
             name:   el.querySelector('.qb-result-name'),
+            bets:   el.querySelector('.qb-result-bets'),
             count:  el.querySelector('.qb-result-count'),
             unit:   el.querySelector('.qb-result-unit'),
             prize:  el.querySelector('.qb-result-prize'),
-            horse: null, nameText: null, prizeText: null,
+            horse: null, nameText: null, prizeText: null, countText: null,
         };
     }
 
@@ -364,9 +392,11 @@
     }
 
     // The reference's fit: start at 38 px and step down until the text
-    // fits its cell, but never below 20 px. No wrap, no ellipsis.
+    // fits its cell, but never below 20 px. No wrap, no ellipsis. In the
+    // tote look it is the dot pitch that steps down.
     function fitName(el) {
-        fitText(el, NAME_MAX_PX, NAME_MIN_PX);
+        if (dottedNames) fitTiles(el, NAME_PITCH);
+        else fitText(el, NAME_MAX_PX, NAME_MIN_PX);
     }
 
     function fitText(el, maxPx, minPx) {
@@ -378,13 +408,72 @@
         }
     }
 
+    // The tote look's fit. The pitch steps down a whole pixel at a time
+    // until the text fits `box` (the element itself unless given). Half a
+    // pitch of grace: the last half pitch of a character's cell is its
+    // margin, not dots, so a name may run that far past its cell.
+    function fitDots(el, pitches, box) {
+        const within = box || el;
+        let p = pitches[0];
+        el.style.fontSize = (DOT_EM * p) + 'px';
+        while (within.scrollWidth > within.clientWidth + p / 2 && p > pitches[1]) {
+            p--;
+            el.style.fontSize = (DOT_EM * p) + 'px';
+        }
+        return p;
+    }
+
+    // ... and for a field that is a strip of tiles (a name, a prize): the
+    // strip is as many whole tiles as its cell holds at that pitch, the
+    // ones the text does not reach unlit. The cell is measured with the
+    // strip's own width taken off, so a refit starts from the cell again.
+    function fitTiles(el, pitches) {
+        el.style.width = '';
+        const cell = el.clientWidth;
+        const p = fitDots(el, pitches);
+        const tile = DOT_CELL * p;
+        const tiles = Math.max(1, Math.floor((cell + p / 2) / tile));
+        el.style.width = Math.min(cell, tiles * tile) + 'px';
+        return p;
+    }
+
+    function fitResultName(el) {
+        if (dottedNames) fitTiles(el, RESULT_NAME_PITCH);
+        else fitText(el, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
+    }
+
+    // The prize's strip hangs from the right of its cell: the cell is what
+    // the strip may fill, so it is measured on the row, not on the strip.
+    function fitResultPrize(r) {
+        if (!dottedFigures) { fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX); return; }
+        r.prize.style.width = '100%';
+        const cell = r.prize.clientWidth;
+        let p = RESULT_PRIZE_PITCH[0];
+        const chars = r.prize.textContent.length;
+        while (chars * DOT_CELL * p > cell + p / 2 && p > RESULT_PRIZE_PITCH[1]) p--;
+        const tile = DOT_CELL * p;
+        r.prize.style.fontSize = (DOT_EM * p) + 'px';
+        r.prize.style.width = Math.min(cell, Math.max(chars, Math.floor((cell + p / 2) / tile)) * tile) + 'px';
+    }
+
+    function fitResultCount(r) {
+        if (dottedFigures) fitDots(r.count, RESULT_COUNT_PITCH, r.bets);
+    }
+
     function refitNames() {
         for (const n of field) if (rows[n]) fitName(rows[n].name);
         for (const place of PLACES) {
             const r = resultRows[place];
-            if (r.nameText != null) fitText(r.name, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
-            if (r.prizeText != null) fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX);
+            if (r.nameText != null) fitResultName(r.name);
+            if (r.prizeText != null) { fitResultPrize(r); fitResultCount(r); }
         }
+    }
+
+    // A face that arrives late changes every width: the names are fitted
+    // again and the crawl is measured again (it restarts from its start).
+    function refitAll() {
+        refitNames();
+        if (crawlHtml != null) applyCrawl(crawlHtml);
     }
 
     // ---- Results ----------------------------------------------------
@@ -436,18 +525,23 @@
             if (name !== r.nameText) {
                 r.nameText = name;
                 r.name.textContent = name;
-                fitText(r.name, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
+                fitResultName(r.name);
             }
             const h = from.horses && from.horses[String(n)];
             const tokens = Math.max(0, parseInt(h && h.tokens, 10) || 0);
-            setText(r.count, String(tokens));
+            const count = String(tokens);
             setText(r.unit, tokens === 1 ? 'Bet' : 'Bets');
+            if (count !== r.countText) {
+                r.countText = count;
+                r.count.textContent = count;
+                fitResultCount(r);
+            }
             const v = Number(prizes[place]);
             const prize = '$' + (Number.isFinite(v) ? Math.round(v) : 0);
             if (prize !== r.prizeText) {
                 r.prizeText = prize;
                 r.prize.textContent = prize;
-                fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX);
+                fitResultPrize(r);
             }
         }
     }
@@ -715,8 +809,13 @@
     // so the loop is seamless; the duration comes from the track's width
     // at CRAWL_PX_S. A rebuild while the crawl runs waits for the loop
     // boundary (animationiteration) so the text never jumps.
-    const SEP = '<span class="qb-crawl-sep">◆</span>';
+    // Every piece of text in the crawl is a .qb-crawl-text span, so the
+    // tote look can set it in dots (and lay its tiles under it); the badges
+    // are cloths and stay as they are.
+    const crawlText = (s, cls) => '<span class="qb-crawl-text' + (cls ? ' ' + cls : '') + '">' + esc(s) + '</span>';
+    const SEP = crawlText('◆', 'qb-crawl-sep');
     let crawlKey = null;
+    let crawlHtml = null;      // what the track shows, or is about to
     let crawlPending = null;
     let crawlRunning = false;
 
@@ -733,6 +832,7 @@
         if (key === crawlKey) return;
         crawlKey = key;
         const html = buildCrawl(lines, scratches);
+        crawlHtml = html;
         if (crawlRunning && visible) crawlPending = html;   // swap at the loop boundary
         else applyCrawl(html);
     }
@@ -754,29 +854,29 @@
     function buildCrawl(lines, scratches) {
         const item = (inner) => '<span class="qb-crawl-item">' + inner + '</span>';
         const items = [];
-        if (lines.length) items.push(item(esc(lines[0])));
+        if (lines.length) items.push(item(crawlText(lines[0])));
         const parts = [];
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
                 parts.push(crawlBadge(was.n)
-                    + '<span>' + esc(was.name) + '</span>'
-                    + '<span class="qb-crawl-note">· Tokens refunded</span>');
+                    + crawlText(was.name)
+                    + crawlText('· Tokens refunded', 'qb-crawl-note'));
                 continue;
             }
             const now = scratchSide(x.now);
             if (!now) continue;
             parts.push(crawlBadge(was.n)
-                + '<span class="qb-crawl-was">' + esc(was.name) + '</span>'
-                + '<span class="qb-crawl-arrow">▶</span>'
+                + crawlText(was.name, 'qb-crawl-was')
+                + crawlText('▶', 'qb-crawl-arrow')
                 + crawlBadge(now.n)
-                + '<span>' + esc(now.name) + '</span>');
+                + crawlText(now.name));
         }
         if (parts.length) {
-            items.push(item('<span class="qb-crawl-lbl">Scratched</span>' + parts.join('<span class="qb-crawl-gap"></span>')));
+            items.push(item(crawlText('Scratched', 'qb-crawl-lbl') + parts.join('<span class="qb-crawl-gap"></span>')));
         }
-        for (const l of lines.slice(1)) items.push(item(esc(l)));
+        for (const l of lines.slice(1)) items.push(item(crawlText(l)));
         return items.join(SEP);
     }
 
@@ -877,5 +977,9 @@
     setInterval(updateNoLink, 1000);
     setInterval(tickCloses, CLOSES_TICK_MS);
     // Anton arrives late where Impact is missing: the names' widths change.
+    // So does every dotted width when the tote face arrives.
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(refitNames);
+    if (dottedFigures && document.fonts && document.fonts.load) {
+        document.fonts.load(TOTE_FACE, '$0A').then(refitAll, () => {});
+    }
 })();

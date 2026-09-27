@@ -138,10 +138,17 @@ The dashboard has 4 main control panels arranged horizontally:
 
 **Format:** 5×7 grid (5 columns × 7 rows = 35 dots per character)
 
-**Supported Characters:**
+**Supported Characters** (`dotPatterns` in `static/js/ddm_control.js`):
 - **Numbers:** 0-9 (zero uses slashed style for authenticity)
-- **Letters:** A, C, E, H, I, L, M, N, O, P, R, S, W
-- **Special:** Space
+- **Letters:** A-Z
+- **Special:** Space, `:` `|`, and what a horse's name can carry: `' . , - & ! /`
+- **For La Quiniela's TV board:** `$ + # % ( ) ? " * = ; < > @ _`, the middle
+  dot, the crawl's diamond and arrow. The dashboard prints none of these; the
+  TV board's tote look does, and its dot-matrix face
+  (`splash_display/static/fonts/DDMTote.ttf`) is built from this table by
+  `splash_display/tools/make_tote_font.py`, so the TV's dots are the
+  dashboard's. After adding or changing a pattern, run that script and commit
+  the face; the splash's tests fail until the two agree.
 
 **Classes:**
 - `.dot-digit` - Container for a single character (35 dots)

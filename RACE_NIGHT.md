@@ -38,6 +38,17 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       `splash_display/deploy/autostart_setup.md`. pi5 has no service file yet.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
+- [ ] Pick the board's look, on the TV itself. Three to compare: `impact` (the board as
+      it has been), `dots` (the tote look: amber dots on black tiles), `numbers` (the tote
+      look with the names left in Impact). From a laptop or a phone, to see them:
+      `http://joeydevpi.local:5001/?look=dots` (a `?look=` on the URL wins, for that page
+      only). On the TV: `pkill -f chromium`, then
+      `SPLASH_URL='http://localhost:5001/display?look=dots' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`.
+      With betting open (`ADMIN` → Race → **BETTING OPEN**) drop a token while you watch
+      each: the count must tick and the crawl keep moving without a hitch (`d` on the
+      kiosk's keyboard shows the FPS; the looks should read the same). Keep the one you
+      like: `QUINIELA_LOOK` in `splash_display/config.py`, restart the splash and the
+      kiosk.
 - [ ] Every cup and the gateway: flashed from the current firmware (`45510f8` or later,
       protocol v2, both of them), sleeve installed, orientation right, touch working (`p`
       in serial shows touches), `CAL 10` done with the sleeve on, and a 10-token drop/dump

@@ -389,6 +389,7 @@ pinging the TV while pi5 is unreachable; only `link_ok` changes.
 | --- | --- | --- |
 | `FLASK_PORT` | `5001` | This app's port (pi5's dashboard owns 5000 on DevPi) |
 | `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`) and the race roster (`/api/race`) both come from it |
+| `QUINIELA_LOOK` | `"impact"` | The board's look: `"impact"`, `"dots"` (the tote look) or `"numbers"` (the tote look, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
 
 Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
 4 RUNNING, 5 WINNER, 6 AFTER_PARTY.
@@ -555,6 +556,117 @@ an empty chyron). `share`, `leader` and `replaced` stay in the model;
 nothing on the board depends on them (the leader is computed from the
 counts of the horses in the field).
 
+**The tote look.** The board has two looks and one layout. `impact` is
+the board described above. `dots` is the tote look: the dashboard's amber
+dots on black tiles, on the tote's fields and nothing else.
+
+```
+http://joeydevpi.local:5001/?look=dots      the tote look
+http://joeydevpi.local:5001/?look=impact    Impact, the board as it has been
+http://joeydevpi.local:5001/?look=numbers   the tote look, the names left in Impact
+```
+
+`config.QUINIELA_LOOK` is the default (`"impact"` as shipped, so nothing
+changes on the TV until it is changed); `?look=` on the URL wins, for that
+page, on `/` and on `/display` alike (the redirect keeps the query). A
+value that names no look is the default, and a `QUINIELA_LOOK` that names
+none is `impact`, logged once. The page carries the look in the board's
+`data-look`.
+
+- **Dotted** in `dots`: the pot, the three prizes, every row's name and
+  bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
+  dots, a struck name and `TOKENS REFUNDED` dimmed), and the results
+  screen's names, bets and prizes. In `numbers` the same without the names.
+- **Not dotted**, in any look: the saddle cloths, solid blocks with their
+  number, as on the dashboard's results tote (cloth, then the dotted
+  name), the crawl's badges included; the state banner and the toast,
+  which are signs, not tote fields; every label (`POT`, `WIN`, `HORSE`,
+  `BETS`, the results' `WIN / PLACE / SHOW`, the line under them) and the
+  `CLOSES IN` clock.
+- **One layout.** Every box of the Impact look is where it was: header,
+  columns, rows, cloths, chyron, the results rows. Measured on both
+  screens, 79 boxes each: all within half a pixel of their Impact place
+  but the header's three prize tiles and their labels, which hug their
+  text and so are wider by the width of the dotted figures. Only the text
+  inside the fields differs.
+
+*How it is drawn.* One element per field, exactly as in the Impact look:
+the text is set in a face whose glyphs are the dots. **DDM Tote**
+(`static/fonts/DDMTote.ttf`, 37 KB) is built by `tools/make_tote_font.py`
+from the dashboard's own 5x7 table (`dotPatterns` in
+`pi5/static/js/ddm_control.js`), which is read, never copied: no glyph
+bitmap lives in the splash, and the TV's dots are the dashboard's dots. No
+element per dot and nothing for the JS to draw. Behind the text the
+stylesheet lays one tile a character, the black tile and its 35 unlit
+bulbs (an SVG background, 0.75em x 1em), and the glow is a text shadow.
+
+```bash
+cd splash_display
+python tools/make_tote_font.py            # after a pattern changes in the dashboard's table: rebuild, commit the face
+python tools/make_tote_font.py --check    # is the face on disk what the table says? (the tests ask the same)
+python tools/make_tote_font.py --list     # the characters it covers
+```
+
+The face covers A-Z, 0-9 and the punctuation in the table; lower case and
+accented letters are drawn with the plain capital (a 5x7 matrix has no
+room for an accent: `SEÑOR` prints `SENOR`), curly quotes and dashes with
+the straight ones. A character it lacks falls back to Impact. The file is
+written by hand, table by table (no font library is needed to build it),
+and is the same bytes on every run. The root `.gitignore` ignores `*.ttf`
+and excepts this one.
+
+*Pitch, not font size.* The face's cell is 6 dot pitches wide and 8 tall
+and its em is 8 pitches, so `font-size = 8 x pitch`. Sizes are whole
+pitches, which keeps every dot on the pixel grid:
+
+| Field | Impact | Tote look |
+| --- | --- | --- |
+| Pot | 104 px | pitch 12 (96 px) |
+| Header prizes | 40 px | pitch 5 |
+| Row name | 38 px, down to 20 | pitch 7, down to 3: fifteen tiles in the cell at 7, eighteen at 6 |
+| Row bets | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
+| Crawl | 26 px | pitch 4 |
+| Results name | 100 px, down to 44 | pitch 12, down to 4 |
+| Results bets | 88 px | pitch 10, down to 5 |
+| Results prize | 150 px, down to 80 | pitch 18, down to 8 |
+
+A name that does not fit steps its row's pitch down a pixel at a time, the
+way the Impact look steps the font size; it never wraps and never gets an
+ellipsis. `GRAND MO THE FIRST`, eighteen characters, fits its row at pitch
+6 (eighteen tiles of 36 px in the 647 px cell; the last half pitch of a
+tile is margin, which is the half pitch of grace the fit allows). The
+strip behind a name is always a whole number of tiles, the ones past the
+name unlit.
+
+*Why not DOM dots.* The dashboard, the countdown slide and the roster
+slide each draw their dots as elements, 35 to a character, from three
+separate copies of the glyph table. At the board's size that is 813 tiles,
+29,268 elements more (255 elements become 29,641). Measured in headless
+Chrome at 1920x1080 over 12 s of the `redesign` feed (a bet every 4 s: the
+count ticks, pot and prizes follow, the row pulses, the toast pops; the
+crawl running), main thread throttled, worst frame and frames over 34 ms:
+
+| | Impact | Tote look (the face) | DOM dots |
+| --- | --- | --- | --- |
+| elements in the board | 255 | 255 | 29,641 |
+| GPU raster, no throttle | 27.7 ms, 0 | 5.7 ms, 0 | 83.4 ms, 6 |
+| GPU raster, CPU 4x slower | 5.7 ms, 0 | 11.1 ms, 0 | 83.3 ms, 7 |
+| GPU raster, CPU 6x slower | 11.2 ms, 0 | 11.2 ms, 0 | 77.7 ms, 9 |
+| software raster, CPU 6x slower (60 Hz) | 16.8 ms, 0 | 16.8 ms, 0 | 33.4 ms, 0 |
+| raster work in those 12 s, software | 33 ms | 48 ms | 320 ms |
+| crawl, px in one second | 119.6 | 120.6 | 120.2 |
+
+The face costs what Impact costs; DOM dots stall the compositor for some
+80 ms at every bet on a desktop GPU, and need ten times the raster work.
+So the face draws every tote field, the header included: DOM dots in the
+header alone would have been cheap enough, but two renderers on one board
+make two kinds of dot. Two frames of the tote look's crawl taken 1.146 s
+apart are the same picture moved 138 px, 120.4 px/s. (Chrome's
+dropped-frame marker is no use here: it flags most frames of the untouched
+Impact board, because the slideshow's FPS counter asks for a frame on
+every refresh and gets none.) None of this is a Pi: the check that counts
+is RACE_NIGHT.md section 0, on the TV, `d` for the FPS overlay.
+
 **Type.** Impact everywhere (`font-family: Impact, "Anton", sans-serif`,
 everything upper-cased by `text-transform`). Impact is licensed with
 Windows and not in the repo; **Anton** (SIL Open Font License 1.1) is
@@ -563,7 +675,9 @@ licence beside it (`OFL-Anton.txt`; the root `.gitignore` ignores `*.ttf`
 except this one). To get the real Impact on the Pi: copy
 `C:\Windows\Fonts\impact.ttf` to `~/.fonts/` on DevPi and run
 `fc-cache -f`; Chromium picks it up on the next launch. Names are
-re-fitted when the web font arrives.
+re-fitted when the web font arrives. The tote look's face is the
+splash's own and is served with the page; when it arrives every dotted
+field is fitted again and the crawl is measured again.
 
 **NO LINK mark.** A small dim `NO LINK` mark sits in the top-right corner
 of the board (above the banner, never over a row) when no SSE message of
@@ -621,7 +735,8 @@ that was on 9 is on 22), so the field reads 1-4, 6-8, 10-12 down the left
 and 14-19, 21-23 down the right with the last slot blank; the chyron
 carries the three replacements and `[20] FULLEFFORT · TOKENS REFUNDED`.
 
-Open the printed URL (`http://127.0.0.1:5077/display`) in a browser. The
+Open the printed URL (`http://127.0.0.1:5077/display`) in a browser; add
+`?look=dots` (or `impact`, `numbers`) to see a look. The
 fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}`;
 `state N` switches its phase, `reset` plays pi5's reset (counts 0, events
 and results cleared, state 0), `results W P S` names the winners as the

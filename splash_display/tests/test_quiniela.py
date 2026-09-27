@@ -1,6 +1,7 @@
 """
 Unit tests for splash_display/quiniela.py (the pi5 relay), the page that
-carries the board, and the dev harness (tools/fake_pi5.py).
+carries the board and its looks, the tote look's face (tools/make_tote_font.py)
+and the dev harness (tools/fake_pi5.py).
 
 Run from splash_display/ (stdlib unittest, no pytest needed):
 
@@ -22,7 +23,9 @@ import json
 import logging
 import os
 import queue
+import re
 import socket
+import struct
 import sys
 import threading
 import time
@@ -45,6 +48,11 @@ import race_poller  # noqa: E402
 _spec = importlib.util.spec_from_file_location("fake_pi5", HERE / "tools" / "fake_pi5.py")
 fake_pi5 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fake_pi5)
+
+# ... and the tool that builds the tote look's face.
+_spec = importlib.util.spec_from_file_location("make_tote_font", HERE / "tools" / "make_tote_font.py")
+make_tote_font = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(make_tote_font)
 
 # Keep the background threads out of the test process: the dashboard poller
 # would hit joeydevpi.local every 30 s and the link thread would try pi5
@@ -916,6 +924,234 @@ class RosterTests(unittest.TestCase):
         css = (HERE / "static" / "css" / "ddm_style.css").read_text(encoding="utf-8")
         for n in (21, 22, 23, 24):
             self.assertIn(f".splash-saddle--pos-{n} ", css)
+
+
+class LookTests(RouteCase):
+    """?look= on the board's URL, config.QUINIELA_LOOK for the default."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._look = getattr(config, "QUINIELA_LOOK", None)
+        config.QUINIELA_LOOK = "impact"
+        server._bad_looks.clear()
+
+    def tearDown(self) -> None:
+        config.QUINIELA_LOOK = self._look
+        super().tearDown()
+
+    def look_of(self, path: str) -> str:
+        resp = self.client.get(path)
+        self.assertEqual(resp.status_code, 200, path)
+        html = resp.get_data(as_text=True)
+        start = html.index('id="quiniela-board"')
+        tag = html[start:html.index(">", start)]
+        self.assertEqual(tag.count("data-look="), 1)
+        return tag.split('data-look="')[1].split('"')[0]
+
+    def test_the_repo_ships_the_board_as_it_was(self) -> None:
+        self.assertEqual(self._look, "impact", "the tote look is a switch: nothing changes on the TV until it is thrown")
+
+    def test_the_url_names_the_look(self) -> None:
+        self.assertEqual(self.look_of("/display"), "impact")
+        self.assertEqual(self.look_of("/display?look=dots"), "dots")
+        self.assertEqual(self.look_of("/display?look=impact"), "impact")
+        self.assertEqual(self.look_of("/display?look=numbers"), "numbers")
+        self.assertEqual(self.look_of("/display?look=DOTS"), "dots", "case does not matter")
+        self.assertEqual(self.look_of("/display?look=neon"), "impact", "a look nobody knows is the default")
+        self.assertEqual(self.look_of("/display?look="), "impact")
+
+    def test_config_is_the_default_and_the_url_wins(self) -> None:
+        config.QUINIELA_LOOK = "dots"
+        self.assertEqual(self.look_of("/display"), "dots")
+        self.assertEqual(self.look_of("/display?look=impact"), "impact")
+        self.assertEqual(self.look_of("/display?look=neon"), "dots")
+        config.QUINIELA_LOOK = " Numbers "
+        self.assertEqual(self.look_of("/display"), "numbers")
+
+    def test_a_config_value_that_names_no_look_is_impact_and_logged_once(self) -> None:
+        config.QUINIELA_LOOK = "dot"
+        with self.assertLogs("splash_display", level="WARNING") as cm:
+            self.assertEqual(self.look_of("/display"), "impact")
+            self.assertEqual(self.look_of("/display"), "impact")
+            self.assertEqual(self.look_of("/display?look=dots"), "dots")
+        self.assertEqual(len(cm.output), 1, cm.output)
+        self.assertIn("QUINIELA_LOOK", cm.output[0])
+        del config.QUINIELA_LOOK
+        self.assertEqual(self.look_of("/display"), "impact", "a config without the key is the board as it was")
+        self.assertEqual(server.board_look(None), "impact")
+        self.assertEqual(server.board_look(7), "impact")
+
+    def test_the_root_redirect_keeps_the_look(self) -> None:
+        resp = self.client.get("/?look=dots")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp.headers["Location"].endswith("/display?look=dots"), resp.headers["Location"])
+        self.assertTrue(self.client.get("/").headers["Location"].endswith("/display"))
+
+    def test_the_page_marks_the_totes_fields(self) -> None:
+        html = self.client.get("/display?look=dots").get_data(as_text=True)
+        # figures: the pot, three prizes, a row's bets (the template), the results' three counts and three prizes
+        self.assertEqual(html.count('data-tote="num"'), 1 + 3 + 1 + 3 + 3)
+        # names: a row's (the template) and the results' three
+        self.assertEqual(html.count('data-tote="name"'), 1 + 3)
+        for sign in ('class="qb-saddle"', 'class="qb-result-saddle"', 'id="qb-banner-text"', 'id="qb-toast-name"',
+                     'class="qb-result-place"', 'class="qb-prize-k"'):
+            tag = html[html.index(sign) - 40:html.index(">", html.index(sign))]
+            self.assertNotIn("data-tote", tag, f"{sign} is a cloth or a sign, not a tote field")
+
+    def test_the_stylesheet_and_the_script_know_the_looks(self) -> None:
+        css = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
+        self.assertIn('font-family: "DDM Tote";', css)
+        self.assertIn('url("../fonts/DDMTote.ttf")', css)
+        self.assertIn('.qb[data-look="dots"] [data-tote="name"]', css)
+        self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"]', css)
+        self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text', css)
+        # Both looks are one stylesheet: above the tote look's section nothing
+        # asks which look it is; inside it every rule does, so the Impact look
+        # cannot be touched by it (the face and the custom properties aside).
+        before, marker, tote = css.partition("The tote look: data-look")
+        self.assertTrue(marker)
+        self.assertNotIn("data-look", before)
+        tote = re.sub(r"/\*.*?\*/", "", tote.split("*/", 1)[1], flags=re.S)
+        selectors = [rule.split("{")[0].strip() for rule in tote.split("}") if "{" in rule]
+        self.assertGreater(len(selectors), 10)
+        for selector in selectors:
+            if selector in ("@font-face", ".qb"):
+                continue
+            for one in selector.split(","):
+                self.assertIn("data-look", one, f"a tote-look rule must name its look: {one.strip()!r}")
+        js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        for needle in ("board.dataset.look", "'impact', 'dots', 'numbers'", "function fitTiles", "qb-crawl-text", "DDM Tote"):
+            self.assertIn(needle, js)
+
+
+def _sfnt(data: bytes) -> Dict[str, Any]:
+    """The table directory of a TrueType file: tag -> (checksum, offset, length)."""
+    version, count = struct.unpack(">IH", data[:6])
+    tables = {}
+    for i in range(count):
+        tag, checksum, offset, length = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
+        tables[tag.decode("latin-1")] = (checksum, offset, length)
+    return {"version": version, "tables": tables}
+
+
+def _checksum(data: bytes) -> int:
+    data += b"\0" * (-len(data) % 4)
+    return sum(struct.unpack(">%dI" % (len(data) // 4), data)) & 0xFFFFFFFF
+
+
+def _cmap(data: bytes, tables: Dict[str, Any]) -> Dict[int, int]:
+    """Code point -> glyph id from the font's format 4 subtable."""
+    base = tables["cmap"][1]
+    platform, encoding, offset = struct.unpack(">HHI", data[base + 4:base + 12])
+    assert (platform, encoding) == (3, 1)
+    s = base + offset
+    fmt, _length, _lang, segx2 = struct.unpack(">HHHH", data[s:s + 8])
+    assert fmt == 4
+    n = segx2 // 2
+    ends = struct.unpack(">%dH" % n, data[s + 14:s + 14 + 2 * n])
+    starts = struct.unpack(">%dH" % n, data[s + 16 + 2 * n:s + 16 + 4 * n])
+    deltas = struct.unpack(">%dH" % n, data[s + 16 + 4 * n:s + 16 + 6 * n])
+    offsets = struct.unpack(">%dH" % n, data[s + 16 + 6 * n:s + 16 + 8 * n])
+    assert not any(offsets), "every segment maps by delta"
+    assert list(ends) == sorted(ends) and ends[-1] == 0xFFFF
+    out = {}
+    for a, b, d in zip(starts, ends, deltas):
+        if a == 0xFFFF:
+            continue
+        for code in range(a, b + 1):
+            out[code] = (code + d) & 0xFFFF
+    return out
+
+
+class ToteFontTests(unittest.TestCase):
+    """static/fonts/DDMTote.ttf is the dashboard's 5x7 table as a face."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.path = HERE / "static" / "fonts" / "DDMTote.ttf"
+        cls.data = cls.path.read_bytes()
+        cls.font = _sfnt(cls.data)
+        cls.tables = cls.font["tables"]
+        cls.cmap = _cmap(cls.data, cls.tables)
+
+    def table(self, tag: str) -> bytes:
+        _, offset, length = self.tables[tag]
+        return self.data[offset:offset + length]
+
+    def contours(self, glyph: int) -> int:
+        loca = self.table("loca")
+        a, b = struct.unpack(">II", loca[4 * glyph:4 * glyph + 8])
+        if a == b:
+            return 0
+        start = self.tables["glyf"][1] + a
+        return struct.unpack(">h", self.data[start:start + 2])[0]
+
+    @unittest.skipUnless(make_tote_font.GLYPH_SOURCE.exists(), "the dashboard's table (pi5/) is not in this checkout")
+    def test_the_face_on_disk_is_what_the_dashboards_table_says(self) -> None:
+        self.assertEqual(make_tote_font.build(), self.data,
+                         "dotPatterns changed: run python tools/make_tote_font.py and commit the face")
+        self.assertEqual(make_tote_font.build(), make_tote_font.build(), "the same bytes on every run")
+
+    @unittest.skipUnless(make_tote_font.GLYPH_SOURCE.exists(), "the dashboard's table (pi5/) is not in this checkout")
+    def test_every_pattern_is_a_glyph_of_as_many_dots(self) -> None:
+        patterns = make_tote_font.read_patterns()
+        self.assertGreaterEqual(len(patterns), 64)
+        for ch, rows in patterns.items():
+            self.assertEqual(len(rows), 7, ch)
+            self.assertIn(ord(ch), self.cmap, ch)
+            self.assertEqual(self.contours(self.cmap[ord(ch)]), sum(bin(r).count("1") for r in rows), ch)
+        self.assertEqual(self.contours(self.cmap[ord(" ")]), 0)
+        self.assertEqual(self.contours(self.cmap[make_tote_font.SOCKET]), 35, "the socket glyph: every bulb")
+        self.assertEqual(self.contours(0), 0, ".notdef is blank")
+        # the slashed zero is the dashboard's, not the letter O
+        self.assertNotEqual(patterns["0"], patterns["O"])
+
+    def test_what_the_board_prints_is_covered(self) -> None:
+        text = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 $.,'-&!/:+#%()?"
+                "\u00b7\u25c6\u25b6"                       # the crawl's middle dot, diamond and arrow
+                "abcxyz\u00d1\u00e9\u00dc\u2019\u2013")       # lower case, accents, a curly apostrophe, a dash
+        for ch in text:
+            self.assertIn(ord(ch), self.cmap, repr(ch))
+        for low, up in (("a", "A"), ("z", "Z"), ("\u00f1", "N"), ("\u00c9", "E"), ("\u2019", "'"), ("\u2013", "-")):
+            self.assertEqual(self.cmap[ord(low)], self.cmap[ord(up)], f"{low!r} is drawn as {up!r}")
+        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234"]:
+            for ch in line:
+                self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
+
+    def test_the_file_is_a_sound_truetype(self) -> None:
+        self.assertEqual(self.font["version"], 0x00010000)
+        self.assertEqual(sorted(self.tables), sorted(["OS/2", "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp", "name", "post"]))
+        self.assertEqual(list(self.tables), sorted(self.tables), "the directory is sorted by tag")
+        head_at = self.tables["head"][1]
+        zeroed = self.data[:head_at + 8] + b"\0\0\0\0" + self.data[head_at + 12:]
+        for tag, (checksum, offset, length) in self.tables.items():
+            self.assertEqual(offset % 4, 0, tag)
+            self.assertEqual(_checksum(zeroed[offset:offset + length]), checksum, tag)
+        adjustment = struct.unpack(">I", self.data[head_at + 8:head_at + 12])[0]
+        self.assertEqual((_checksum(zeroed) + adjustment) & 0xFFFFFFFF, 0xB1B0AFBA)
+        magic, _flags, upem = struct.unpack(">IHH", self.data[head_at + 12:head_at + 20])
+        self.assertEqual((magic, upem), (0x5F0F3CF5, 800))
+        _v, ascent, descent, gap, advance_max = struct.unpack(">IhhhH", self.table("hhea")[:12])
+        self.assertEqual((ascent, descent, gap, advance_max), (750, -50, 0, 600),
+                         "the cell is the line box: 8 pitches tall, 6 wide")
+        glyphs = struct.unpack(">H", self.table("maxp")[4:6])[0]
+        self.assertEqual(len(self.table("hmtx")), 4 * glyphs)
+        for i in range(glyphs):
+            self.assertEqual(struct.unpack(">H", self.table("hmtx")[4 * i:4 * i + 2])[0], 600, f"glyph {i}")
+        self.assertEqual(len(self.table("loca")), 4 * (glyphs + 1))
+        self.assertTrue(all(g < glyphs for g in self.cmap.values()))
+        self.assertIn("DDM Tote".encode("utf-16-be"), self.table("name"))
+
+    def test_the_face_is_served_and_committed(self) -> None:
+        client = server.app.test_client()
+        resp = client.get("/static/fonts/DDMTote.ttf")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_data(), self.data)
+        resp.close()
+        ignore = HERE.parent / ".gitignore"
+        if ignore.exists():
+            self.assertIn("!splash_display/static/fonts/DDMTote.ttf", ignore.read_text(encoding="utf-8"),
+                          "*.ttf is ignored: the face needs its exception to be committed")
 
 
 class HarnessTests(unittest.TestCase):

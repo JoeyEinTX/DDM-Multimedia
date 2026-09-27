@@ -163,6 +163,9 @@ def test_menu_and_page():
            and "results-modal-named" in html)
     js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
     _check("the dashboard's JS reads the field from La Quiniela", "/api/quiniela/field" in js and "horseDisplayName" in js)
+    _check("the 5x7 table carries what the TV board prints besides names (its face is built from this table)",
+           all(("'%s': [0x" % ch) in js for ch in "$+#%()?*=;<>@_") and "'\"': [0x" in js
+           and all(("'\\u%s': [0x" % code) in js for code in ("00B7", "25C6", "25B6")))
     _check("...and has nothing of Race Setup left",
            not any(s in js for s in ("raceSetup", "race-setup", "toggleOddsPolling", "initPostTimeCountdown")))
     _check("the tote prints the name, HORSE n without one, never cut short",

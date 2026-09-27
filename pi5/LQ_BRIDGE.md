@@ -604,7 +604,12 @@ The names store is the only one: the dashboard's Race Setup page is gone
 (it kept a second list of twenty names) and the dashboard reads La
 Quiniela's. Its menu links to `/quiniela/admin` and to the board on the
 splash (`SPLASH_BOARD_URL`, default `http://{host}:5001/` with `{host}` the
-name the dashboard was opened with; `DDM_SPLASH_BOARD_URL` overrides it).
+name the dashboard was opened with; `DDM_SPLASH_BOARD_URL` overrides it; it
+may name the board's look, `http://{host}:5001/?look=dots`).
+The board's tote look draws its names and figures in the dashboard's own
+dots: its face is built from `dotPatterns` in `static/js/ddm_control.js`
+(`splash_display/tools/make_tote_font.py`), which is why that table carries
+`$` and the crawl's marks, none of which the dashboard prints itself.
 Its results tote prints the winners' names and its SET WINNERS pickers list
 the field by post (`GET /api/quiniela/field`), each as `19 · GOLDEN TEMPO`:
 post 9 offers `22 · OCELLI` after The Puma's scratch, a horse scratched with

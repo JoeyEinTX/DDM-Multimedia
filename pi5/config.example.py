@@ -71,7 +71,9 @@ LQ_REOPEN_MIN_GAP_S = _lq_env('LQ_REOPEN_MIN_GAP_S', 30)  # never reopen more of
 # Quiniela Board" link. {host} is replaced by the host name the dashboard was
 # opened with, so the link works from the touchscreen and from a phone alike;
 # give a full URL when the splash runs on another machine. main.py falls back
-# to this same value when config.py has no such key.
+# to this same value when config.py has no such key. The URL may name the
+# board's look ('http://{host}:5001/?look=dots'; impact, dots or numbers),
+# which otherwise is the splash's config.QUINIELA_LOOK.
 SPLASH_BOARD_URL = _lq_env('SPLASH_BOARD_URL', 'http://{host}:5001/')
 
 # The betting board the splash display's TV page renders (GET /api/quiniela,

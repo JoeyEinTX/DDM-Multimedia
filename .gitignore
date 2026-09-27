@@ -48,6 +48,8 @@ pi5/animation_params.json
 *.TTF
 # Anton is OFL (SIL Open Font License 1.1, splash_display/static/fonts/OFL-Anton.txt): ours to ship as the board's Impact fallback
 !splash_display/static/fonts/Anton-Regular.ttf
+# DDM Tote is ours: the board's dot-matrix face, built by splash_display/tools/make_tote_font.py from the dashboard's 5x7 table
+!splash_display/static/fonts/DDMTote.ttf
 
 # La Quiniela betting-model event log now lives on pi5 (pi5/data/quiniela_YYYY-MM-DD.jsonl,
 # covered by pi5/data/* above); splash_display/logs/ held the old splash-side log and stays

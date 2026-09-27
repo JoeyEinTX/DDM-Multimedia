@@ -19,8 +19,15 @@
    which one shows: the two columns ("rows"), or the results screen
    ("results") once the race is over and the model carries its results:
    three rows, WIN / PLACE / SHOW, each with the horse's cloth and name,
-   the bets its cup held and the prize. The JS writes all of it. #}
-<div id="quiniela-board" class="qb" aria-hidden="true" data-state="">
+   the bets its cup held and the prize. The JS writes all of it.
+
+   data-look is the look the page was asked for (server.board_look():
+   ?look=, else config.QUINIELA_LOOK): "impact", "dots" or "numbers". Both
+   looks are this one layout; data-tote marks the tote's fields, the ones
+   the tote look draws in its dot-matrix face ("num": a figure, "name": a
+   horse's name; the crawl's text is marked by the JS). Cloths, the banner,
+   the toast and every label stay as they are. #}
+<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('impact') }}">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
     <header class="qb-header">
@@ -31,11 +38,11 @@
 
         <div class="qb-pot">
             <div class="qb-pot-label">Pot<span class="qb-token-value" id="qb-token-value">$1 a token</span></div>
-            <div class="qb-pot-amount" id="qb-pot">$0</div>
+            <div class="qb-pot-amount" id="qb-pot" data-tote="num">$0</div>
             <div class="qb-prizes">
-                <div class="qb-prize qb-prize--win"><span class="qb-prize-k">Win</span><span class="qb-prize-v" id="qb-prize-win">$0</span></div>
-                <div class="qb-prize"><span class="qb-prize-k">Place</span><span class="qb-prize-v" id="qb-prize-place">$0</span></div>
-                <div class="qb-prize"><span class="qb-prize-k">Show</span><span class="qb-prize-v" id="qb-prize-show">$0</span></div>
+                <div class="qb-prize qb-prize--win"><span class="qb-prize-k">Win</span><span class="qb-prize-v" id="qb-prize-win" data-tote="num">$0</span></div>
+                <div class="qb-prize"><span class="qb-prize-k">Place</span><span class="qb-prize-v" id="qb-prize-place" data-tote="num">$0</span></div>
+                <div class="qb-prize"><span class="qb-prize-k">Show</span><span class="qb-prize-v" id="qb-prize-show" data-tote="num">$0</span></div>
             </div>
         </div>
 
@@ -66,9 +73,9 @@
                 <div class="qb-result qb-result--{{ place }}" id="qb-result-{{ place }}" data-horse="">
                     <div class="qb-result-place">{{ place }}</div>
                     <div class="qb-result-saddle"></div>
-                    <div class="qb-result-name"></div>
-                    <div class="qb-result-bets"><span class="qb-result-count">0</span><span class="qb-result-unit">Bets</span></div>
-                    <div class="qb-result-prize">$0</div>
+                    <div class="qb-result-name" data-tote="name"></div>
+                    <div class="qb-result-bets"><span class="qb-result-count" data-tote="num">0</span><span class="qb-result-unit">Bets</span></div>
+                    <div class="qb-result-prize" data-tote="num">$0</div>
                 </div>
                 {% endfor %}
             </div>
@@ -83,8 +90,8 @@
     <template id="qb-row-tpl">
         <div class="qb-row is-empty" data-horse="">
             <div class="qb-saddle"></div>
-            <div class="qb-name"></div>
-            <div class="qb-bets">No bets</div>
+            <div class="qb-name" data-tote="name"></div>
+            <div class="qb-bets" data-tote="num">No bets</div>
             <div class="qb-offline-dot"></div>
             <div class="qb-row-flash"></div>
         </div>

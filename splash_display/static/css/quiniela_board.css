@@ -14,7 +14,10 @@
    shows the pot, the three prizes and the bets per horse, nothing else.
 
    Type: Impact everywhere (Anton, OFL, shipped in static/fonts/ as the
-   fallback), everything upper-cased by text-transform.
+   fallback), everything upper-cased by text-transform. That is the look
+   "impact". The tote look ("dots", at the end of this file) keeps this
+   layout, every box of it, and draws the tote's fields in a dot-matrix
+   face instead.
 
    Motion budget (Pi 5, kiosk Chromium): every animation and transition
    here is transform or opacity only. Nothing loops except the chyron
@@ -778,4 +781,135 @@
     height: 8px;
     border-radius: 50%;
     background: rgba(222, 67, 67, 0.7);
+}
+
+/* =====================================================================
+   The tote look: data-look="dots" (and "numbers", which is the same with
+   the names left in Impact). The dashboard's amber dots on black tiles,
+   on the tote's fields: the pot, the three prizes, every row's name and
+   bets, the crawl, the results screen's names and figures. The saddle
+   cloths stay solid blocks with their number, as on the dashboard's
+   results tote (cloth, then the dotted name); the state banner, the toast
+   and every label stay Impact: they are signs, not tote fields.
+
+   One element per field, as in the Impact look: the text is simply set in
+   a face whose glyphs are the dots (DDM Tote, static/fonts/DDMTote.ttf,
+   built by tools/make_tote_font.py from the dashboard's own 5x7 table).
+   No element per dot, nothing for the JS to draw: a count ticking or the
+   crawl moving costs what text costs.
+
+   The face's cell is 6 dot pitches wide and 8 tall (the 5x7 matrix and
+   half a pitch of margin all round), and its em is 8 pitches, so
+   font-size = 8 x pitch: 56 px is a 7 px pitch, the dashboard's. Sizes
+   here are whole pitches, which keeps every dot on the pixel grid, and a
+   name that does not fit steps the PITCH down (the JS), never the dot
+   spacing. Behind the text, one tile a character (0.75em x 1em): the
+   black tile and its 35 unlit bulbs.
+   ===================================================================== */
+@font-face {
+    font-family: "DDM Tote";
+    src: url("../fonts/DDMTote.ttf") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+    font-display: block;
+}
+
+.qb {
+    --qb-amber: #d4a000;
+    --qb-amber-glow: 0 0 0.07em rgba(212, 160, 0, 0.8), 0 0 0.14em rgba(212, 160, 0, 0.4);
+    --qb-tote-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 8' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cpattern id='d' x='.5' y='.5' width='1' height='1' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='.5' cy='.5' r='.36' fill='%232a2a2a'/%3E%3C/pattern%3E%3C/defs%3E%3Crect x='.07' y='.07' width='5.86' height='7.86' rx='.3' fill='%231a1a1a' stroke='%23333' stroke-width='.08'/%3E%3Crect x='.5' y='.5' width='5' height='7' fill='url(%23d)'/%3E%3C/svg%3E");
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"],
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text,
+.qb[data-look="dots"] [data-tote="name"] {
+    font-family: "DDM Tote", Impact, "Anton", sans-serif;
+    font-variant-numeric: normal;
+    line-height: 1;
+    letter-spacing: 0;
+    color: var(--qb-amber);
+    text-shadow: var(--qb-amber-glow);
+    background-image: var(--qb-tote-tile);
+    background-size: 0.75em 1em;
+    background-repeat: repeat-x;
+    background-position: left center;
+}
+
+/* Header: the pot at a 12 px pitch, the prizes at 5. The header keeps its
+   196 px and the prize tiles their 55 whatever the face's metrics make of
+   the text inside them: the layout is the Impact look's, to the pixel. */
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-header { min-height: 0; }
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-pot-amount {
+    display: inline-block;
+    margin: 2px 0 1px;
+    font-size: 96px;
+    vertical-align: top;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-prize {
+    box-sizing: border-box;
+    height: 55px;
+    padding-top: 3px;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-prize-v {
+    display: inline-block;
+    font-size: 40px;
+}
+
+/* Rows. The name: a 7 px pitch (fifteen tiles in the cell), stepped down
+   by the JS to 6 (eighteen), 5, 4, 3 until the name fits; the strip is
+   whole tiles, the ones past the name unlit. The bets: three tiles at the
+   right, the count lit from the right; NO BETS at a 3 px pitch, dim. */
+.qb[data-look="dots"] .qb-name {
+    font-size: 56px;
+    line-height: 1;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-bets {
+    justify-self: end;
+    width: 2.25em;
+    font-size: 56px;
+    background-position: right center;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-row.is-empty .qb-bets {
+    width: 5.25em;
+    font-size: 24px;
+    letter-spacing: 0;
+    color: var(--qb-amber);
+    opacity: 0.5;
+}
+
+/* The crawl at a 4 px pitch. The badges are cloths: solid, Impact. */
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-track { letter-spacing: 0; }
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text {
+    font-size: 32px;
+    margin: 0;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-lbl {
+    margin-right: 6px;
+    color: var(--qb-red);
+    text-shadow: 0 0 0.07em rgba(227, 24, 55, 0.8), 0 0 0.14em rgba(227, 24, 55, 0.4);
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-was,
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-note { opacity: 0.5; }
+
+/* The results screen: names from a 12 px pitch down, the bets at 10, the
+   prize at 18 (the JS steps all three down until they fit). */
+.qb[data-look="dots"] .qb-result-name {
+    font-size: 96px;
+    line-height: 1;
+}
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-result-count { font-size: 80px; }
+
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-result-prize {
+    justify-self: end;
+    font-size: 144px;
+    background-position: right center;
 }

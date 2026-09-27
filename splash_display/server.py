@@ -439,9 +439,32 @@ def build_playlist() -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+# The looks of the La Quiniela board (config.QUINIELA_LOOK, ?look=).
+QUINIELA_LOOKS = ("impact", "dots", "numbers")
+_bad_looks: set = set()
+
+
+def board_look(requested: Any = None) -> str:
+    """The look the board page is served with: ?look= when it names one,
+    else config.QUINIELA_LOOK, else "impact". Case does not matter. A
+    config value that names no look is logged once."""
+    text = str(requested).strip().lower() if requested is not None else ""
+    if text in QUINIELA_LOOKS:
+        return text
+    configured = getattr(config, "QUINIELA_LOOK", "impact")
+    text = str(configured).strip().lower() if configured is not None else ""
+    if text in QUINIELA_LOOKS:
+        return text
+    if text not in _bad_looks:
+        _bad_looks.add(text)
+        log.warning("config.QUINIELA_LOOK %r is not one of %s: using impact", configured, ", ".join(QUINIELA_LOOKS))
+    return "impact"
+
+
 @app.route("/")
 def root():
-    return redirect(url_for("display"))
+    # The query goes along: /?look=dots is /display?look=dots
+    return redirect(url_for("display", **request.args.to_dict()))
 
 
 @app.route("/display")
@@ -458,6 +481,7 @@ def display():
         "slideshow.html",
         transition_fade_ms=config.TRANSITION_FADE_MS,
         transitions_json=json.dumps(transitions),
+        quiniela_look=board_look(request.args.get("look")),
     )
 
 
