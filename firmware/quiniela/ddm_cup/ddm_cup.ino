@@ -1,5 +1,5 @@
 /*
- * ddm_cup.ino — La Quiniela betting cup (ESP-NOW bench test)
+ * ddm_cup.ino — La Quiniela betting cup (ESP-NOW, protocol v2)
  *
  * ESP32-2432S028R ("Cheap Yellow Display") as the horse-number display for
  * the DDM Live Betting System betting cups (DDM 2027).
@@ -36,13 +36,16 @@
  *                      orientation to the next of its four settings and
  *                      save it in NVS for this cup
  *
- * TOUCH: press anywhere on the glass for 3 s to open the maintenance menu
- *        (TARE, CAL 10, DIAG, FLIP 180, BRIGHT, ANNOUNCE, CLOSE). A tap does
- *        nothing at all, on purpose. Opens in any race state; TARE and CAL
- *        confirm first. Closes after 5 s idle. Once the board is inside the
+ * TOUCH: press anywhere on the glass for 3 s to open the maintenance menu,
+ *        two pages: HORSE, TARE, CAL 10, DIAG, BRIGHT, MORE, CLOSE and then
+ *        FLIP 180, FLIP H, FLIP V, ANNOUNCE, BACK, CLOSE. A tap does nothing
+ *        at all, on purpose. Opens in any race state; TARE and CAL confirm
+ *        first; HORSE is locked while betting is open or the race is on
+ *        (states 1-4). Closes after 5 s idle. Once the board is inside the
  *        cup this replaces BOOT.
  *
- * SERIAL (115200):  o = next orientation,  h = mirror left-right,
+ * SERIAL (115200):  n<N> = this cup is horse N (1-24, 0 = none; saved),
+ *                   o = next orientation,  h = mirror left-right,
  *                   v = mirror top-bottom (all saved),  x = forget the saved
  *                   orientation (back to the panel-ID default),  t = tare,
  *                   p = print raw and mapped touch coordinates on/off,
@@ -50,9 +53,13 @@
  *                   for this cup and save it (c0 forgets it),  s = apply the
  *                   settled load to the count now,  ? = help
  *
- * Until the gateway assigns this cup an ID, the screen shows this board's
- * own MAC address in large text — that is how the four MACs get collected
- * for the gateway's KNOWN_CUPS[] table with no serial cable.
+ * THE CUP OWNS ITS HORSE NUMBER (protocol v2). It is set here, on the cup,
+ * saved in NVS and reported in every packet; the gateway hands out nothing.
+ * A cup with no horse shows NO HORSE / HOLD TO SET. The state packet is
+ * keyed by horse number: this cup reads its own scratched bit, follows a
+ * renum pair whose `from` is its horse (a replacement scratch: the cup that
+ * was 9 becomes 22, saved), and shows WIN / PLACE / SHOW when the results
+ * name it. There are no cup IDs, no MAC roster and no waiting screen.
  *
  * SCALE: an HX711 on CN1 (DT GPIO27, SCK GPIO22) weighs the tokens. Counting
  * is by steps against a slow-tracking baseline, never by absolute weight; the
@@ -89,8 +96,8 @@
 #define SUBROWS        4        // vertical anti-alias samples per pixel row
 
 // Link + render timing
-#define HELLO_MS          1000  // hello cadence until the gateway answers
-#define TELEMETRY_MS      2000  // telemetry cadence once assigned
+#define HELLO_MS          1000  // HELLO (broadcast) cadence until the gateway's MAC is known
+#define TELEMETRY_MS      2000  // telemetry (unicast) cadence once it is
 #define LINK_TIMEOUT_MS  10000  // no gateway packet this long -> NO LINK badge
 #define SCRATCH_FLASH_MS  1200  // scratched alternation period
 #define PODIUM_STEP_MS    2000  // podium metal cycle period (from prototype)
@@ -128,7 +135,7 @@
 // Verify per panel batch with serial "p". Every button is a full-width bar,
 // so only the y axis has to be right; 15% of error still lands in the band.
 // ---------------------------------------------------------------------------
-#define FW_VERSION      "0.5"
+#define FW_VERSION      "0.6"   // 0.6: protocol v2, the cup owns its horse number
 #define TOUCH_CLK          25
 #define TOUCH_CS           33
 #define TOUCH_MOSI         32
@@ -486,8 +493,8 @@ static const uint8_t BCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 uint8_t  myMac[6];
 uint8_t  gatewayMac[6];
-bool     gatewayKnown  = false;
-int      myCupId       = -1;      // -1 until the gateway's hello-ack assigns one
+bool     gatewayKnown  = false;   // learned from the source of the first state packet
+uint8_t  myHorse       = 0;       // THIS CUP'S HORSE, 1..DDM_MAX_HORSE, 0 = none; NVS "horse"
 
 DdmStatePacket lastState;
 bool     haveState     = false;
@@ -541,32 +548,26 @@ uint32_t   tCalDigit     = 0;        // last digit seen (the number ends 500 ms 
 // callback only copies bytes and sets a flag; all rendering and state
 // mutation happens in loop().
 volatile bool  rxStatePending = false;
-volatile bool  rxAckPending   = false;
 DdmStatePacket rxStateBuf;
-uint8_t        rxAckCupId     = 0;
 uint8_t        rxSrcMac[6];
-uint8_t        rxAckSrcMac[6];               // sender of the last ACCEPTED ack; a rejected frame never lands here
 int8_t         rxRssiVal      = 0;
-volatile uint32_t ackRejects  = 0;           // HELLO-layout frames that were not an ack for this cup
-
-// True only for an assigned, in-range ID. Every read of horseForCup[myCupId]
-// or scratched[myCupId] sits behind this: an unassigned or out-of-range ID
-// shows the MAC waiting screen and keeps sending HELLO, and never indexes.
-static bool cupIdValid() { return myCupId >= 0 && myCupId < DDM_MAX_CUPS; }
+uint32_t       renumCount     = 0;           // renum pairs this cup has followed since boot (overlay)
 
 // ---------------------------------------------------------------------------
 // Receive path. Core 3.x hands us esp_now_recv_info_t (with per-packet RSSI);
 // core 2.x hands us just the MAC. Same guard pattern as the LEDC handling.
+// Only the gateway's state packet is of interest: the HELLOs and telemetry
+// the other cups send are the same frame family on the same channel and are
+// dropped here without a word (protocol v1 mistook a neighbour's HELLO for
+// an ack; there are no acks now).
 // ---------------------------------------------------------------------------
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   const uint8_t* src = info->src_addr;
   int8_t rssi = info->rx_ctrl ? info->rx_ctrl->rssi : 0;
-  const bool toUs = (memcmp(info->des_addr, myMac, 6) == 0);   // unicast to this cup, not a broadcast
 #else
 void onDataRecv(const uint8_t* src, const uint8_t* data, int len) {
-  int8_t rssi = 0;         // core 2.x recv path exposes no RSSI...
-  const bool toUs = true;  // ...and no destination address, so a broadcast cannot be told apart there
+  int8_t rssi = 0;         // core 2.x recv path exposes no RSSI
 #endif
   if (len < 2) return;
   if (data[0] != DDM_PROTO_VERSION) { versionRejects++; return; }
@@ -576,25 +577,6 @@ void onDataRecv(const uint8_t* src, const uint8_t* data, int len) {
     memcpy((void*)rxSrcMac, src, 6);
     rxRssiVal = rssi;
     rxStatePending = true;
-
-  } else if (data[1] == DDM_MSG_HELLO && len == (int)sizeof(DdmTelemetryPacket)) {
-    // Gateway's hello-ack: the DdmTelemetryPacket layout coming back at us
-    // with cupId = the ID this cup was assigned (see gateway PROTOCOL NOTE).
-    // Only a frame unicast to this cup, with the right version and an ID in
-    // range, is an ack. A cup with no gateway yet BROADCASTS its own HELLO in
-    // this same layout with cupId 0xFF and every cup on the channel hears it;
-    // taken for an ack, that made a cup adopt ID 255 and register the
-    // neighbouring cup as its gateway. Anything else is counted and dropped:
-    // no ID change, no gateway registration, the HELLO retry loop goes on.
-    const DdmTelemetryPacket* p = (const DdmTelemetryPacket*)data;
-    if (!toUs || p->version != DDM_PROTO_VERSION || p->cupId >= DDM_MAX_CUPS) {
-      ackRejects = ackRejects + 1;
-      return;
-    }
-    rxAckCupId = p->cupId;
-    memcpy((void*)rxAckSrcMac, src, 6);
-    rxRssiVal = rssi;
-    rxAckPending = true;
   }
 }
 
@@ -614,26 +596,30 @@ static void ensureGatewayPeer(const uint8_t* mac) {
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
+// The one packet this cup sends: HELLO broadcast until the gateway's MAC is
+// known (learned from its state packets), TELEMETRY unicast after that. Same
+// payload either way, the horse first of all.
+static void fillPacket(DdmTelemetryPacket* p, uint8_t msgType) {
+  *p = {};
+  p->version    = DDM_PROTO_VERSION;
+  p->msgType    = msgType;
+  p->horse      = myHorse;
+  p->seq        = lastSeq;
+  p->dropped    = droppedCount;
+  p->rawWeight  = (int32_t)(lastReading - tare);   // net counts, uncalibrated
+  p->tokenCount = tokens;
+  p->rssi       = lastRssi;
+}
+
 static void sendHello() {
-  DdmTelemetryPacket p = {};
-  p.version = DDM_PROTO_VERSION;
-  p.msgType = DDM_MSG_HELLO;
-  p.cupId   = cupIdValid() ? (uint8_t)myCupId : 0xFF;   // 0xFF = unassigned;
-                                                        // gateway keys on MAC
-  p.rssi    = lastRssi;
+  DdmTelemetryPacket p;
+  fillPacket(&p, DDM_MSG_HELLO);
   esp_now_send(gatewayKnown ? gatewayMac : BCAST, (const uint8_t*)&p, sizeof(p));
 }
 
 static void sendTelemetry() {
-  DdmTelemetryPacket p = {};
-  p.version    = DDM_PROTO_VERSION;
-  p.msgType    = DDM_MSG_TELEMETRY;
-  p.cupId      = (uint8_t)myCupId;
-  p.seq        = lastSeq;
-  p.dropped    = droppedCount;
-  p.rawWeight  = (int32_t)(lastReading - tare);   // net counts, uncalibrated
-  p.tokenCount = tokens;
-  p.rssi       = lastRssi;
+  DdmTelemetryPacket p;
+  fillPacket(&p, DDM_MSG_TELEMETRY);
   esp_now_send(gatewayMac, (const uint8_t*)&p, sizeof(p));
 }
 
@@ -646,11 +632,10 @@ static void sendTelemetry() {
 // ===========================================================================
 enum Screen : uint8_t {
   SCR_BOOT,        // nothing drawn yet
-  SCR_WAITING,     // no cup ID yet: show own MAC big
-  SCR_NO_HORSE,    // assigned, but horseForCup[me] == 0
+  SCR_NO_HORSE,    // myHorse == 0: NO HORSE / HOLD TO SET
   SCR_NUMBER,      // giant number on saddle cloth
   SCR_SCRATCHED,   // alternating flash
-  SCR_PODIUM       // DDM_WINNER treatment
+  SCR_PODIUM       // the results name this horse: WIN / PLACE / SHOW frame
 };
 
 // NOTE: the Arduino .ino preprocessor hoists auto-generated prototypes above
@@ -660,14 +645,34 @@ struct Rendered {
   Screen  scr;
   uint8_t horse;
   bool    noLink;
+  uint8_t place;      // SCR_PODIUM: 0 WIN, 1 PLACE, 2 SHOW
 };
 
-Rendered cur         = { SCR_BOOT, 0, false };   // computed each render tick
-Rendered lastDrawn   = { SCR_BOOT, 0, false };
+Rendered cur         = { SCR_BOOT, 0, false, 0 };   // computed each render tick
+Rendered lastDrawn   = { SCR_BOOT, 0, false, 0 };
 bool     overlayOn   = false;
 uint32_t tAnim       = 0;    // scratched/podium frame timer
 uint8_t  animStep    = 0;
 uint32_t tOverlay    = 0;
+
+// The horse number: set from the menu, from serial n<N>, or by a renum pair
+// in the state packet. Saved to NVS, on the screen at once, and reported on
+// the next packet (which is sent straight away).
+static void setHorse(uint8_t h, const char* how) {
+  if (h > DDM_MAX_HORSE) h = 0;
+  bool changed = (h != myHorse);
+  myHorse = h;
+  prefs.putUChar("horse", myHorse);
+  lastDrawn.scr = SCR_BOOT;                              // full redraw on the next tick
+  tTelemetry = 0;                                        // tell the gateway now, not in 2 s
+  if (myHorse) Serial.printf("[horse] %u saved to NVS (%s)%s\n", myHorse, how, changed ? "" : ", unchanged");
+  else         Serial.printf("[horse] none (%s)\n", how);
+}
+
+// Betting open or the race on: the number is not to be changed from the cup.
+static bool horseLocked() {
+  return haveState && lastState.raceState >= DDM_BETTING_OPEN && lastState.raceState <= DDM_RUNNING;
+}
 
 // ---------------------------------------------------------------------------
 // Touch menu state (the code is under TOUCH MENU below). Declared up here
@@ -678,7 +683,9 @@ XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
 
 enum MenuScreen : uint8_t {
   MENU_NONE,            // closed: the cup looks exactly as it always did
-  MENU_MAIN,
+  MENU_MAIN,            // page 1: HORSE, TARE, CAL 10, DIAG, BRIGHT, MORE, CLOSE
+  MENU_MORE,            // page 2: FLIP 180, FLIP H, FLIP V, ANNOUNCE, BACK, CLOSE
+  MENU_HORSE_PICK,      // the number big, tap above it for up, below for down, SET / CANCEL bars
   MENU_TARE_CONFIRM,
   MENU_CAL_CONFIRM,
   MENU_CAL_SETTLING,    // waiting for the plate to settle, up to MENU_CAL_WAIT_MS
@@ -686,6 +693,7 @@ enum MenuScreen : uint8_t {
 };
 uint8_t  menu           = MENU_NONE;
 uint8_t  menuAfterToast = MENU_NONE;
+uint8_t  pickHorse      = 0;     // the number being picked on the HORSE screen
 uint32_t tMenuTouch     = 0;     // last touch while open: idle timeout
 uint32_t tToastEnd      = 0;
 uint32_t tCalStart      = 0;
@@ -706,37 +714,16 @@ uint32_t tTouchDebug = 0;
 
 // --- screens ---------------------------------------------------------------
 
-void drawWaiting() {
-  tft.fillScreen(C_BLACK);
-  textBg = C_BLACK;
-  centerTextCap("LA QUINIELA", SW / 2, 30, SW - 24, C_AMBER, 30);
-  centerTextCap("WAITING FOR", SW / 2, SH / 2 - 78, SW - 40, C_WHITE, 28);
-  centerTextCap("GATEWAY",     SW / 2, SH / 2 - 46, SW - 40, C_WHITE, 28);
-
-  // Own MAC, split across two lines and allowed a taller cap than the rest
-  // so it can be read and typed into KNOWN_CUPS[] without a serial cable.
-  char l1[12], l2[12];
-  snprintf(l1, sizeof(l1), "%02X:%02X:%02X", myMac[0], myMac[1], myMac[2]);
-  snprintf(l2, sizeof(l2), "%02X:%02X:%02X", myMac[3], myMac[4], myMac[5]);
-  centerTextCap(l1, SW / 2, SH / 2 + 16, SW - 16, C_GOLD, 40);
-  centerTextCap(l2, SW / 2, SH / 2 + 66, SW - 16, C_GOLD, 40);
-
-  centerTextCap("MAC ADDRESS", SW / 2, SH - 28, SW - 24, C_DIM, 16);
-
-  // Scale note, only while the HX711 is still warming up or taring, so it is
-  // obvious why nothing is being counted yet. Small Impact, in the free band
-  // between the MAC and its caption.
-  if (scaleOk && scalePhase != SCALE_RUNNING)
-    drawText("SCALE WARMING UP", SW / 2, SH - 66, 14, C_AMBER, C_BLACK);
-}
-
+// No horse set yet: say so, and say how (the touch menu). The cup shows
+// this from boot until a number is picked; nothing about the gateway or the
+// link is needed for it.
 void drawNoHorse() {
   tft.fillScreen(C_BLACK);
   textBg = C_BLACK;
-  char buf[16];
-  snprintf(buf, sizeof(buf), "CUP %d", myCupId);
-  centerText(buf, SW / 2, SH / 2 - 24, SW - 30, C_WHITE);
-  centerText("NO HORSE", SW / 2, SH / 2 + 24, SW - 30, C_DIM);
+  centerTextCap("NO HORSE", SW / 2, SH / 2 - 26, SW - 24, C_WHITE, 40);
+  centerTextCap("HOLD TO SET", SW / 2, SH / 2 + 30, SW - 40, C_DIM, 18);
+  if (scaleOk && scalePhase != SCALE_RUNNING)
+    drawText("SCALE WARMING UP", SW / 2, SH - 40, 14, C_AMBER, C_BLACK);
 }
 
 void drawGiant(uint8_t n) {
@@ -779,13 +766,14 @@ void drawScratchedX() {
   }
 }
 
-// Podium treatment from the prototype, applied to this cup's own horse.
-// PROTOCOL NOTE: DdmStatePacket carries no win/place/show results, so in
-// DDM_WINNER every cup cycles the metal treatment on its own number.
-void drawPodiumFrame(uint8_t step, uint8_t horse) {
+// Podium treatment from the prototype, on this cup's own horse, for the
+// place the results give it: 0 WIN (gold), 1 PLACE (silver), 2 SHOW
+// (bronze). Protocol v2 carries the results in the state packet, so the
+// frame is fixed, no longer a guess cycling through all three.
+void drawPodiumFrame(uint8_t place, uint8_t horse) {
   const char* labels[3] = { "WIN", "PLACE", "SHOW" };
   uint16_t    metals[3] = { C_GOLD, C_SILVER, C_BRONZE };
-  uint8_t     i = step % 3;
+  uint8_t     i = place % 3;
 
   tft.fillScreen(C_BLACK);
   textBg = C_BLACK;
@@ -813,11 +801,7 @@ void drawOverlay() {
   uint32_t now = millis();
   int h = 78;                       // four lines of 11 px Impact
   int y = SH - h;
-  uint8_t horse = 0, st = 0;
-  if (haveState && cupIdValid()) {
-    horse = lastState.horseForCup[myCupId];
-    st    = lastState.raceState;
-  }
+  uint8_t horse = myHorse, st = haveState ? lastState.raceState : 0;
 
   tft.fillRect(0, y, SW, h, C_BLACK);
   tft.drawRect(0, y, SW, h, C_AMBER);
@@ -825,11 +809,13 @@ void drawOverlay() {
   // Uppercase only: the glyph set has 0-9 A-Z space % : - . ! ? / + # , ( ) '
   const int cap = 11, pitch = 17, x0 = 6;
   char line[48];
-  snprintf(line, sizeof(line), "ID:%d  HORSE:%u  STATE:%u  VER!:%lu",
-           myCupId, horse, st, (unsigned long)versionRejects);
+  snprintf(line, sizeof(line), "HORSE:%u%s  STATE:%u  VER!:%lu",
+           horse, (haveState && ddmIsScratched(lastState.scratched, horse)) ? " SCR" : "",
+           st, (unsigned long)versionRejects);
   drawTextLeft(line, x0, y + 5, cap, C_WHITE, C_BLACK);
 
-  snprintf(line, sizeof(line), "RSSI:%d DBM  DROP:%lu  ACK!:%lu", lastRssi, (unsigned long)droppedCount, (unsigned long)ackRejects);
+  snprintf(line, sizeof(line), "RSSI:%d DBM  DROP:%lu  GW:%s  RENUM:%lu", lastRssi, (unsigned long)droppedCount,
+           gatewayKnown ? "OK" : "NONE", (unsigned long)renumCount);
   drawTextLeft(line, x0, y + 5 + pitch, cap, C_WHITE, C_BLACK);
 
   if (lastPacketAt == 0)
@@ -851,37 +837,40 @@ void drawOverlay() {
 
 // --- render decision --------------------------------------------------------
 
+// The place the results give this horse: 0 WIN, 1 PLACE, 2 SHOW, or -1.
+static int myPlace() {
+  if (!haveState || myHorse == 0) return -1;
+  for (int i = 0; i < DDM_RESULT_SLOTS; i++)
+    if (lastState.results[i] == myHorse) return i;
+  return -1;
+}
+
 static void computeRendered() {   // fills `cur`
   cur.noLink = (lastPacketAt != 0) && (millis() - lastPacketAt > LINK_TIMEOUT_MS);
+  cur.place  = 0;
 
-  if (!cupIdValid()) {
-    cur.scr = SCR_WAITING; cur.horse = 0;
-    return;
-  }
-
-  uint8_t horse     = haveState ? lastState.horseForCup[myCupId] : 0;
-  uint8_t scratched = haveState ? lastState.scratched[myCupId]   : 0;
-  uint8_t state     = haveState ? lastState.raceState            : (uint8_t)DDM_PRE_RACE;
+  uint8_t horse     = myHorse;
+  bool    scratched = haveState && ddmIsScratched(lastState.scratched, horse);
+  uint8_t state     = haveState ? lastState.raceState : (uint8_t)DDM_PRE_RACE;
+  int     place     = (state == DDM_WINNER || state == DDM_AFTER_PARTY) ? myPlace() : -1;
 
   if (horse == 0)                { cur.scr = SCR_NO_HORSE;  cur.horse = 0;     }
   else if (scratched)            { cur.scr = SCR_SCRATCHED; cur.horse = horse; }
-  else if (state == DDM_WINNER)  { cur.scr = SCR_PODIUM;    cur.horse = horse; }
+  else if (place >= 0)           { cur.scr = SCR_PODIUM;    cur.horse = horse; cur.place = (uint8_t)place; }
   else                           { cur.scr = SCR_NUMBER;    cur.horse = horse; }
 }
 
 static void drawBase() {          // draws `cur`
   const Rendered& r = cur;
   switch (r.scr) {
-    case SCR_WAITING:   drawWaiting();                    break;
     case SCR_NO_HORSE:  drawNoHorse();                    break;
     case SCR_NUMBER:    drawGiant(r.horse);               break;
     case SCR_SCRATCHED: animStep = 0; tAnim = millis();
                         drawScratchedNumber(r.horse);     break;
-    case SCR_PODIUM:    animStep = 0; tAnim = millis();
-                        drawPodiumFrame(0, r.horse);      break;
+    case SCR_PODIUM:    drawPodiumFrame(r.place, r.horse); break;
     default: break;
   }
-  if (r.noLink && r.scr != SCR_WAITING) drawNoLinkBadge();
+  if (r.noLink) drawNoLinkBadge();
   if (overlayOn) drawOverlay();
 }
 
@@ -893,7 +882,7 @@ static void renderTick() {
 
   // Full redraw only when something actually changed
   if (r.scr != lastDrawn.scr || r.horse != lastDrawn.horse ||
-      r.noLink != lastDrawn.noLink) {
+      r.noLink != lastDrawn.noLink || r.place != lastDrawn.place) {
     drawBase();
     lastDrawn = r;
     return;
@@ -905,11 +894,6 @@ static void renderTick() {
     animStep++;
     if (animStep & 1) drawScratchedX();
     else              drawScratchedNumber(r.horse);
-    if (r.noLink) drawNoLinkBadge();
-    if (overlayOn) drawOverlay();
-  } else if (r.scr == SCR_PODIUM && now - tAnim >= PODIUM_STEP_MS) {
-    tAnim = now;
-    drawPodiumFrame(++animStep, r.horse);
     if (r.noLink) drawNoLinkBadge();
     if (overlayOn) drawOverlay();
   }
@@ -1285,7 +1269,7 @@ static void scaleTick(uint32_t now) {
         scalePhase = SCALE_RUNNING;
         tLastEvent = now;
         Serial.printf("[tare] offset=%ld tokens=%u\n", tare, tokens);
-        if (cur.scr == SCR_WAITING) lastDrawn.scr = SCR_BOOT;   // drop the WARMING UP note
+        if (cur.scr == SCR_NO_HORSE) lastDrawn.scr = SCR_BOOT;  // drop the WARMING UP note
       }
       return;
 
@@ -1359,9 +1343,18 @@ static void scaleTick(uint32_t now) {
 // to be right. While the menu owns the glass renderTick() draws nothing;
 // closing marks the base screen dirty, so it comes back exactly as it was.
 // Everything is millis() driven; nothing here blocks.
+//
+// Two pages of seven bars at most, since ten bars would not fit a finger:
+// page 1 HORSE, TARE, CAL 10, DIAG, BRIGHT, MORE, CLOSE; page 2 FLIP 180,
+// FLIP H, FLIP V, ANNOUNCE, BACK, CLOSE. HORSE opens the picker: the number
+// big, tap above it for up and below it for down (NONE, 1..24, wrapping),
+// SET saves it to NVS and CANCEL keeps the old one. While betting is open or
+// the race is on (states 1-4) the bar reads HORSE (LOCKED) and does nothing.
 // ===========================================================================
-enum { MB_TARE, MB_CAL, MB_DIAG, MB_FLIP, MB_BRIGHT, MB_ANNOUNCE, MB_CLOSE, MB_COUNT };
-static const char* const MENU_LABELS[MB_COUNT] = { "TARE", "CAL 10", "DIAG", "FLIP 180", "BRIGHT", "ANNOUNCE", "CLOSE" };
+enum { MB_HORSE, MB_TARE, MB_CAL, MB_DIAG, MB_BRIGHT, MB_MORE, MB_CLOSE, MB_COUNT };
+static const char* const MENU_LABELS[MB_COUNT] = { "HORSE", "TARE", "CAL 10", "DIAG", "BRIGHT", "MORE...", "CLOSE" };
+enum { MM_FLIP, MM_FLIP_H, MM_FLIP_V, MM_ANNOUNCE, MM_BACK, MM_CLOSE, MM_COUNT };
+static const char* const MORE_LABELS[MM_COUNT] = { "FLIP 180", "FLIP H", "FLIP V", "ANNOUNCE", "BACK", "CLOSE" };
 #define MENU_HDR1_CY    15
 #define MENU_HDR2_CY    33
 #define MENU_BAR_Y0     46
@@ -1371,6 +1364,7 @@ static const char* const MENU_LABELS[MB_COUNT] = { "TARE", "CAL 10", "DIAG", "FL
 #define MENU_YES_H      70
 #define MENU_NO_Y      250
 #define MENU_NO_H       66
+#define PICK_SPLIT_Y    95      // HORSE picker: a tap above this is up, from here to the SET bar is down
 
 static void serialTare() {
   if (scaleOk) scaleStartTare("serial", true);
@@ -1426,25 +1420,24 @@ static void touchPoll(uint32_t now) {
   }
 }
 
+// A bar on the current page (menu == MENU_MAIN or MENU_MORE).
 static void menuDrawBar(int i, bool hl) {
   int y = MENU_BAR_Y0 + i * MENU_BAR_PITCH;
   uint16_t bg = hl ? C_AMBER : C_DIM, fg = hl ? C_BLACK : C_WHITE;
   tft.fillRect(0, y, SW, MENU_BAR_H, bg);
-  char buf[16];
-  if (i == MB_BRIGHT) snprintf(buf, sizeof(buf), "BRIGHT %u%%", brightPct);
-  else                snprintf(buf, sizeof(buf), "%s", MENU_LABELS[i]);
+  char buf[20];
+  if (menu == MENU_MORE)   snprintf(buf, sizeof(buf), "%s", MORE_LABELS[i]);
+  else if (i == MB_BRIGHT) snprintf(buf, sizeof(buf), "BRIGHT %u%%", brightPct);
+  else if (i == MB_HORSE)  snprintf(buf, sizeof(buf), horseLocked() ? "HORSE (LOCKED)" : "HORSE");
+  else                     snprintf(buf, sizeof(buf), "%s", MENU_LABELS[i]);
   textBg = bg;
   centerTextCap(buf, SW / 2, y + MENU_BAR_H / 2, SW - 24, fg, 22);
 }
 
-static void menuDrawMain() {
-  tft.fillScreen(C_BLACK);
-  textBg = C_BLACK;
+static void menuDrawHeader() {
   char l1[32], l2[64], date[16];
-  if (cupIdValid())
-    snprintf(l1, sizeof(l1), "CUP %d   HORSE %u", myCupId, haveState ? lastState.horseForCup[myCupId] : 0);
-  else
-    snprintf(l1, sizeof(l1), "CUP -   HORSE -");
+  if (myHorse) snprintf(l1, sizeof(l1), "HORSE %u   STATE %u", myHorse, haveState ? lastState.raceState : 0);
+  else         snprintf(l1, sizeof(l1), "NO HORSE   STATE %u", haveState ? lastState.raceState : 0);
   strncpy(date, __DATE__, sizeof(date) - 1);             // "Sep 17 2026": the glyph set has no lowercase
   date[sizeof(date) - 1] = 0;
   for (char* p = date; *p; p++) *p = (char)toupper((unsigned char)*p);
@@ -1452,7 +1445,43 @@ static void menuDrawMain() {
            myMac[0], myMac[1], myMac[2], myMac[3], myMac[4], myMac[5]);
   centerTextCap(l1, SW / 2, MENU_HDR1_CY, SW - 16, C_AMBER, 14);
   centerTextCap(l2, SW / 2, MENU_HDR2_CY, SW - 12, C_DIM, 10);
-  for (int i = 0; i < MB_COUNT; i++) menuDrawBar(i, false);
+}
+
+static void menuDrawMain() {
+  tft.fillScreen(C_BLACK);
+  textBg = C_BLACK;
+  menuDrawHeader();
+  int n = (menu == MENU_MORE) ? MM_COUNT : MB_COUNT;
+  for (int i = 0; i < n; i++) menuDrawBar(i, false);
+}
+
+// The HORSE picker: the number (or NONE) big in the upper part, SET and
+// CANCEL bars below, in the confirm screens' places.
+static void menuDrawPickNumber() {
+  tft.fillRect(0, 0, SW, MENU_YES_Y - 6, C_BLACK);
+  textBg = C_BLACK;
+  centerTextCap("HORSE", SW / 2, 14, SW - 16, C_AMBER, 14);
+  if (pickHorse == 0) centerTextCap("NONE", SW / 2, 92, SW - 40, C_DIM, 56);
+  else {
+    Cloth c = cloth(pickHorse);
+    tft.fillRect(SW / 2 - 70, 32, 140, 120, c.bg);
+    drawNumber(pickHorse, SW / 2, 92, 124, 104, c.fg, c.bg);
+  }
+  centerTextCap("TAP ABOVE: UP   BELOW: DOWN", SW / 2, MENU_YES_Y - 14, SW - 8, C_DIM, 9);
+  char buf[16];
+  if (pickHorse) snprintf(buf, sizeof(buf), "SET %u", pickHorse);
+  else           snprintf(buf, sizeof(buf), "SET NONE");
+  tft.fillRect(0, MENU_YES_Y, SW, MENU_YES_H, C_AMBER);
+  textBg = C_AMBER;
+  centerTextCap(buf, SW / 2, MENU_YES_Y + MENU_YES_H / 2, SW - 24, C_BLACK, 28);
+}
+
+static void menuDrawPick() {
+  tft.fillScreen(C_BLACK);
+  menuDrawPickNumber();
+  tft.fillRect(0, MENU_NO_Y, SW, MENU_NO_H, C_DIM);
+  textBg = C_DIM;
+  centerTextCap("CANCEL", SW / 2, MENU_NO_Y + MENU_NO_H / 2, SW - 24, C_WHITE, 28);
 }
 
 // Title (and a second line) on top, YES-style bar then NO-style bar below.
@@ -1479,8 +1508,10 @@ static void menuToast(const char* s, uint32_t ms, uint8_t next) {
   menuAfterToast = next;
 }
 
+// Draw the page `menu` names (MENU_MAIN or MENU_MORE; anything else means
+// page 1) and start its idle timer.
 static void menuShowMain(uint32_t now) {
-  menu = MENU_MAIN;
+  if (menu != MENU_MORE) menu = MENU_MAIN;
   menuHl = -1;
   tMenuTouch = now;
   menuDrawMain();
@@ -1498,8 +1529,52 @@ static void menuOpen(uint32_t now) {
   menuShowMain(now);
 }
 
-static void menuAction(int i, uint32_t now) {
+static void menuActionMore(int i, uint32_t now) {
   switch (i) {
+    case MM_FLIP:
+      panelSetOrientation(orientFlips ^ 0xC0, "menu FLIP 180");
+      Serial.printf("[menu] flip madctl=0x%02X\n", 0x08 | orientFlips);
+      menuClose("flip");
+      break;
+    case MM_FLIP_H:
+      panelSetOrientation(orientFlips ^ 0x40, "menu FLIP H: mirror left-right");
+      Serial.printf("[menu] flip h madctl=0x%02X\n", 0x08 | orientFlips);
+      menuClose("flip h");
+      break;
+    case MM_FLIP_V:
+      panelSetOrientation(orientFlips ^ 0x80, "menu FLIP V: mirror top-bottom");
+      Serial.printf("[menu] flip v madctl=0x%02X\n", 0x08 | orientFlips);
+      menuClose("flip v");
+      break;
+    case MM_ANNOUNCE:
+      sendHello();
+      Serial.println("[menu] announce");
+      menuToast("SENT", 800, MENU_MORE);
+      break;
+    case MM_BACK:
+      menu = MENU_MAIN;
+      menuShowMain(now);
+      break;
+    case MM_CLOSE:
+      menuClose("button");
+      break;
+  }
+}
+
+static void menuAction(int i, uint32_t now) {
+  if (menu == MENU_MORE) { menuActionMore(i, now); return; }
+  switch (i) {
+    case MB_HORSE:
+      if (horseLocked()) {                                 // the bar says so; a tap does nothing
+        Serial.println("[menu] horse locked (betting open or race running)");
+        menuDrawBar(MB_HORSE, false);
+        tMenuTouch = now;
+        break;
+      }
+      pickHorse = myHorse;
+      menu = MENU_HORSE_PICK;
+      menuDrawPick();
+      break;
     case MB_TARE: {
       char sub[32];
       snprintf(sub, sizeof(sub), "PLATE HAS %u TOKENS", tokens);
@@ -1516,10 +1591,9 @@ static void menuAction(int i, uint32_t now) {
       Serial.printf("[menu] diag %s\n", overlayOn ? "on" : "off");
       menuClose("diag");
       break;
-    case MB_FLIP:
-      panelSetOrientation(orientFlips ^ 0xC0, "menu FLIP 180");
-      Serial.printf("[menu] flip madctl=0x%02X\n", 0x08 | orientFlips);
-      menuClose("flip");
+    case MB_MORE:
+      menu = MENU_MORE;
+      menuShowMain(now);
       break;
     case MB_BRIGHT:
       brightPct = (brightPct == 100) ? 60 : (brightPct == 60) ? 30 : 100;
@@ -1528,11 +1602,6 @@ static void menuAction(int i, uint32_t now) {
       Serial.printf("[menu] bright %u%%\n", brightPct);
       menuDrawBar(MB_BRIGHT, false);
       tMenuTouch = now;
-      break;
-    case MB_ANNOUNCE:
-      sendHello();
-      Serial.println("[menu] announce");
-      menuToast("SENT", 800, MENU_MAIN);
       break;
     case MB_CLOSE:
       menuClose("button");
@@ -1554,8 +1623,8 @@ static void menuTick(uint32_t now) {
 
     case MENU_TOAST:
       if ((int32_t)(now - tToastEnd) >= 0) {
-        if (menuAfterToast == MENU_MAIN) menuShowMain(now);
-        else                             menuClose("toast");
+        if (menuAfterToast == MENU_MAIN || menuAfterToast == MENU_MORE) { menu = menuAfterToast; menuShowMain(now); }
+        else                                                              menuClose("toast");
       }
       return;
 
@@ -1577,7 +1646,7 @@ static void menuTick(uint32_t now) {
       break;
   }
 
-  // MENU_MAIN and the two confirm screens
+  // The two pages, the picker and the two confirm screens
   if (now - tMenuTouch > MENU_IDLE_MS) { menuClose("timeout"); return; }
   if (menuHl >= 0) {                                     // highlight shown: run the action after MENU_HL_MS
     if ((int32_t)(now - tMenuHl) >= 0) { int i = menuHl; menuHl = -1; menuAction(i, now); }
@@ -1585,13 +1654,30 @@ static void menuTick(uint32_t now) {
   }
   if (!touchEdge) return;                                // taps only, on the press edge
 
-  if (menu == MENU_MAIN) {
+  if (menu == MENU_MAIN || menu == MENU_MORE) {
     if (touchY < MENU_BAR_Y0) return;
     int i = (touchY - MENU_BAR_Y0) / MENU_BAR_PITCH;
-    if (i >= MB_COUNT) return;
+    if (i >= ((menu == MENU_MORE) ? MM_COUNT : MB_COUNT)) return;
     menuHl = (int8_t)i;
     tMenuHl = now + MENU_HL_MS;
     menuDrawBar(i, true);
+  } else if (menu == MENU_HORSE_PICK) {
+    if (touchY >= MENU_NO_Y - 5) {                       // CANCEL
+      menu = MENU_MAIN;
+      menuShowMain(now);
+    } else if (touchY >= MENU_YES_Y - 5) {               // SET
+      setHorse(pickHorse, "menu HORSE");
+      char buf[16];
+      if (pickHorse) snprintf(buf, sizeof(buf), "HORSE %u", pickHorse);
+      else           snprintf(buf, sizeof(buf), "NO HORSE");
+      menuToast(buf, 1000, MENU_NONE);
+    } else if (touchY < PICK_SPLIT_Y) {                  // up, wrapping NONE -> 1 .. 24 -> NONE
+      pickHorse = (pickHorse >= DDM_MAX_HORSE) ? 0 : (uint8_t)(pickHorse + 1);
+      menuDrawPickNumber();
+    } else {                                             // down
+      pickHorse = (pickHorse == 0) ? DDM_MAX_HORSE : (uint8_t)(pickHorse - 1);
+      menuDrawPickNumber();
+    }
   } else if (menu == MENU_TARE_CONFIRM) {
     if (touchY >= MENU_YES_Y - 5 && touchY < MENU_NO_Y - 5) {
       serialTare();                                      // the same routine the 3 s BOOT hold uses
@@ -1622,7 +1708,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println("DDM La Quiniela cup — ESP-NOW bench test");
+  Serial.println("DDM La Quiniela cup — ESP-NOW, protocol v2 (the cup owns its horse number)");
 
   pinMode(LED_R, OUTPUT); digitalWrite(LED_R, HIGH);
   pinMode(LED_G, OUTPUT); digitalWrite(LED_G, HIGH);
@@ -1652,6 +1738,11 @@ void setup() {
   SW = tft.width();
   SH = tft.height();
   Serial.printf("screen %dx%d\n", SW, SH);
+
+  myHorse = prefs.getUChar("horse", 0);                 // THIS CUP'S HORSE; 0 = never set
+  if (myHorse > DDM_MAX_HORSE) myHorse = 0;
+  if (myHorse) Serial.printf("horse: %u (NVS); touch menu HORSE or serial n<N> changes it\n", myHorse);
+  else         Serial.println("horse: none set; hold the glass 3 s -> HORSE, or serial n<N>");
 
   backlightInit();
   brightPct = prefs.getUChar("bright", 100);            // touch menu BRIGHT: 100, 60 or 30
@@ -1710,7 +1801,7 @@ void setup() {
   Serial.printf("touch: XPT2046 on HSPI (CLK %d MISO %d MOSI %d CS %d IRQ %d); hold 3 s for the menu, serial p prints coordinates\n",
                 TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS, TOUCH_IRQ);
 
-  renderTick();   // puts up the waiting screen
+  renderTick();   // the number from NVS, or NO HORSE / HOLD TO SET
 }
 
 void loop() {
@@ -1743,20 +1834,24 @@ void loop() {
     }
   }
 
-  // --- serial commands (bench): o/h/v/x orientation, t = tare, c<N> = calibrate
+  // --- serial commands (bench): n<N> = horse, o/h/v/x orientation, t = tare, c<N> = calibrate
+  static char numCmd = 0;                                 // 'c' or 'n': which command the digits belong to
   while (Serial.available()) {
     char c = (char)Serial.read();
-    if (calDigits >= 0 && c >= '0' && c <= '9') {         // digits after a 'c'
+    if (calDigits >= 0 && c >= '0' && c <= '9') {         // digits after a 'c' or an 'n'
       calNum = calNum * 10 + (c - '0');
       calDigits++;
       tCalDigit = now;
       continue;
     }
+    if (calDigits >= 0 && c == ' ') continue;             // "n 7" is "n7"
     if (calDigits > 0) {                                  // anything else ends the number
-      scaleCalibrate(calNum);
+      if (numCmd == 'n') setHorse((uint8_t)(calNum > 255 ? 255 : calNum), "serial n");
+      else               scaleCalibrate(calNum);
       calDigits = -1;
     }
-    if      (c == 'c') { calNum = 0; calDigits = 0; tCalDigit = now; }
+    if      (c == 'c') { calNum = 0; calDigits = 0; tCalDigit = now; numCmd = 'c'; }
+    else if (c == 'n') { calNum = 0; calDigits = 0; tCalDigit = now; numCmd = 'n'; }
     else if (c == 'o') panelNextOrientation("serial o");
     else if (c == 'h') panelSetOrientation(orientFlips ^ 0x40, "serial h: mirror left-right");
     else if (c == 'v') panelSetOrientation(orientFlips ^ 0x80, "serial v: mirror top-bottom");
@@ -1764,30 +1859,20 @@ void loop() {
     else if (c == 't') serialTare();
     else if (c == 'p') { touchDebug = !touchDebug; Serial.printf("[touch] coordinate print %s\n", touchDebug ? "ON" : "off"); }
     else if (c == 's') scaleApplySettled();
-    else if (c == '?') Serial.println("commands: o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved to NVS), "
+    else if (c == '?') Serial.println("commands: n<N> = this cup is horse N (1-24, n0 = none; saved to NVS), o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved), "
                                       "x = forget the saved orientation and use the panel-ID default, t = tare, p = toggle the touch coordinate print, s = apply the settled load to the count, "
                                       "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
   }
   if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed
-    scaleCalibrate(calNum);
+    if (numCmd == 'n') setHorse((uint8_t)(calNum > 255 ? 255 : calNum), "serial n");
+    else               scaleCalibrate(calNum);
     calDigits = -1;
   }
 
-  // --- drain packets handed over by the receive callback --------------------
-  if (rxAckPending) {
-    rxAckPending = false;
-    ensureGatewayPeer((const uint8_t*)rxAckSrcMac);   // only ever the sender of an accepted ack
-    lastRssi     = rxRssiVal;
-    lastPacketAt = now;
-    if ((int)rxAckCupId != myCupId) {
-      myCupId = rxAckCupId;
-      Serial.printf("[link] assigned cup ID %d\n", myCupId);
-    }
-  }
-
+  // --- the state packet handed over by the receive callback ----------------
   if (rxStatePending) {
     rxStatePending = false;
-    ensureGatewayPeer((const uint8_t*)rxSrcMac);
+    ensureGatewayPeer((const uint8_t*)rxSrcMac);      // the gateway is whoever broadcasts state
     memcpy(&lastState, &rxStateBuf, sizeof(lastState));
 
     // Drop detection: any gap in seq is packets we missed. A seq lower than
@@ -1799,18 +1884,33 @@ void loop() {
     haveState = true;
     lastRssi     = rxRssiVal;
     lastPacketAt = now;
+
+    // A renumber: a pair whose `from` is this cup's horse makes it `to`, for
+    // good (NVS). Pairs are walked in order so a chain (9 -> 22, 22 -> 23)
+    // ends at its last link in one packet; a pair already followed no
+    // longer matches, so the same packet twice is harmless.
+    for (int i = 0; i < DDM_RENUM_SLOTS; i++) {
+      uint8_t from = lastState.renum[i][0], to = lastState.renum[i][1];
+      if (from != 0 && from == myHorse && to != 0 && to <= DDM_MAX_HORSE && to != from) {
+        renumCount++;
+        Serial.printf("[renum] %u -> %u from the gateway\n", from, to);
+        setHorse(to, "renum");
+      }
+    }
   }
 
   scaleTick(now);
   menuTick(now);
 
-  // --- uplink cadence --------------------------------------------------------
-  if (!cupIdValid()) {
+  // --- uplink cadence: HELLO broadcasts until the gateway's MAC is known
+  //     (from its first state packet), telemetry unicast after that. Both
+  //     carry the horse, so the gateway knows this cup either way.
+  if (!gatewayKnown) {
     if (now - tHello >= HELLO_MS) {
       tHello = now;
       sendHello();
     }
-  } else if (gatewayKnown && now - tTelemetry >= TELEMETRY_MS) {
+  } else if (now - tTelemetry >= TELEMETRY_MS) {
     tTelemetry = now;
     sendTelemetry();
   }

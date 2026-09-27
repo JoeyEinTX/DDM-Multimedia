@@ -1,5 +1,5 @@
 /*
- * ddm_gateway.ino — La Quiniela ESP-NOW gateway
+ * ddm_gateway.ino — La Quiniela ESP-NOW gateway (protocol v2)
  *
  * Plain ESP32 WROOM-32 dev board. No display. USB serial to DevPi, or to a
  * laptop for bench work.
@@ -7,19 +7,25 @@
  * Role: the bridge between the cups (ESP-NOW) and DevPi (USB serial).
  *   - Broadcasts the shared DdmStatePacket to every cup twice a second, once
  *     something has told it what to broadcast (see "Boot behaviour" below).
- *   - Collects telemetry and HELLOs from the cups and reports every packet
- *     up the serial line as one JSON object per line.
- *   - Accepts full state snapshots, the MAC-to-ID roster and a debug toggle
- *     from DevPi as JSON lines.
+ *     The packet is keyed by horse number: race state, scratched bits,
+ *     renumber pairs and the three results. No cup IDs, no MAC table.
+ *   - Hears every cup that talks (HELLO or telemetry, same payload), keeps a
+ *     small table of them (MAC, the horse the cup says it is, tokens, signal,
+ *     age) and reports every packet up the serial line as one JSON object
+ *     per line. A cup is a cup: nothing is gated, nothing is assigned, and
+ *     the table's indexing never leaves this sketch.
+ *   - Accepts full state snapshots and a debug toggle from DevPi as JSON
+ *     lines.
  *
  * Serial line protocol: 115200 8N1, one compact JSON object per line, at
- * most DDM_LINE_MAX bytes per line in either direction, with one exception:
- * the up "state" snapshot (typed `json`) runs to about 2.1 KB with a full
- * fleet and has its own buffer, STATE_LINE_MAX. Documented in
- * ../README.md ("Serial line protocol"); the key names are a contract with
- * the DevPi bridge, implement them exactly.
- *   up:   hello, status, telem, cup_hello, err, state (only when asked: `json`)
- *   down: state, roster, debug
+ * most DDM_LINE_MAX bytes per line down and for most lines up, with one
+ * exception: the lines that carry the cup table (`status` every 5 s and the
+ * up `state` snapshot typed `json`) run to about 2.3 KB with a full table
+ * and have their own buffer, BIG_LINE_MAX. Documented in ../README.md
+ * ("Serial line protocol"); the key names are a contract with the DevPi
+ * bridge, implement them exactly.
+ *   up:   hello, status, telem, err, state (only when asked: `json`)
+ *   down: state, debug
  * The up and down "state" lines share a type name and nothing else: the
  * down line is DevPi's snapshot for the gateway to apply, the up line is
  * the gateway's report. This sketch never parses its own output.
@@ -27,9 +33,17 @@
  * can drop it. The hand-typed bench commands still work: type `help`.
  *
  * Boot behaviour: a default build (DDM_AUTO_DEMO 0) is silent. It sends
- * hello and status, receives and reports cup traffic and acks HELLOs, but
- * broadcasts no state at all until a JSON state line arrives or a person
- * types state/horse/scratch/demo. Cups hold their last number meanwhile.
+ * hello and status, receives and reports cup traffic, but broadcasts no
+ * state at all until a JSON state line arrives or a person types
+ * state/scratch/renum/results/demo. Cups show their own number meanwhile:
+ * the number lives on the cup, not here.
+ *
+ * ESP-NOW: the broadcast address is the only peer, ever. The state packet
+ * is one frame for all cups; receiving needs no peer entry. Nothing is
+ * unicast from here and no peer is added or removed at runtime, so the
+ * fleet size is bounded by DDM_MAX_CUPS (the table), not by ESP-NOW's peer
+ * limit. The receive callback only queues; every byte of serial output
+ * comes from loop().
  *
  * No WiFi association, no AP, no MQTT, no OTA. ESP-NOW only, pinned to
  * DDM_ESPNOW_CHANNEL from ddm_common.h (symlinked into this folder — see
@@ -56,8 +70,10 @@
 // ===========================================================================
 
 // Version of the serial line protocol, reported as "v" in the hello line.
-// Bump it when a line's keys or their meaning change.
-#define DDM_LINE_PROTO_VERSION 1
+// Bump it when a line's keys or their meaning change. 2 = protocol v2: telem
+// keyed by MAC and horse, status carrying the cup table, no roster line, the
+// down state line keyed by horse.
+#define DDM_LINE_PROTO_VERSION 2
 
 // Boot default of the human-readable output: the per-packet TELEM lines and
 // the 5-second summary table. 0 = JSON lines only. Flip it at runtime with
@@ -67,89 +83,70 @@
 #define DDM_DEBUG_TEXT 0
 
 // 0 = party build: the gateway broadcasts NOTHING over ESP-NOW until a valid
-//     JSON state line arrives or a person types state/horse/scratch/demo.
-//     There is no timeout and no fallback. A power blip reboots the gateway
-//     in a second and DevPi in a minute; for that minute the cups must hold
-//     their last number, not walk demo horses across real tokens.
-// 1 = bench build: boot straight into demo mode and broadcast at once, as
-//     the original bench sketch did. A JSON state line still takes over.
+//     JSON state line arrives or a person types state/scratch/renum/results/
+//     demo. There is no timeout and no fallback. A power blip reboots the
+//     gateway in a second and DevPi in a minute; for that minute the cups
+//     keep showing their own number and must not see a demo walk.
+// 1 = bench build: boot straight into demo mode and broadcast at once. A
+//     JSON state line still takes over.
 // The value is printed in the boot banner so a bench build left on the party
 // gateway is obvious in any serial log.
 #define DDM_AUTO_DEMO 0
-
-// ===========================================================================
-// KNOWN_CUPS — bench-mode identity table. Paste real cup MACs here.
-//
-// Index in this table == cup ID (0-based, the wire value). Collect the MACs
-// from each cup's waiting screen (big gold text) or from this gateway's
-// serial log: any cup not listed here gets the next free ID at runtime and
-// its MAC is printed as a NEWCUP line formatted for pasting into this table.
-//
-// This table and the runtime assignments only apply until DevPi sends its
-// first roster line; from then on DevPi owns identity (see jsonRoster()).
-// Runtime assignments are RAM-only — they reshuffle on gateway reboot. Once
-// a MAC is pasted here its ID is stable across reboots.
-// ===========================================================================
-struct KnownCup { uint8_t mac[6]; };
-
-const KnownCup KNOWN_CUPS[] = {
-  // { { 0xA4, 0xCF, 0x12, 0x00, 0x00, 0x00 } },  // cup 0 — example, replace
-  // { { 0xA4, 0xCF, 0x12, 0x00, 0x00, 0x01 } },  // cup 1
-};
-const int KNOWN_CUPS_N = sizeof(KNOWN_CUPS) / sizeof(KNOWN_CUPS[0]);
 
 // ---------------------------------------------------------------------------
 // Timing and sizes
 // ---------------------------------------------------------------------------
 #define BROADCAST_MS   500     // state broadcast cadence
-#define DEMO_STEP_MS  3000     // demo horse walk cadence
-#define STALE_MS      3000     // silent longer than this -> STALE, and not counted in status "cups"
+#define DEMO_STEP_MS  3000     // demo results walk cadence
+#define STALE_MS      3000     // silent longer than this -> STALE in the table
+#define FORGET_MS   600000     // silent longer than this -> dropped from the table (10 min)
 #define SUMMARY_MS    5000     // debug summary table cadence
 #define STATUS_MS     5000     // JSON status heartbeat cadence
 #define HELLO_MS      2000     // JSON hello repeat cadence until the first state line
-#define DDM_LINE_MAX      1024     // longest serial line, both directions, excluding the newline (one exception: STATE_LINE_MAX)
+#define DDM_LINE_MAX      1024     // longest serial line down, and up for every line but the two below
 #define STATE_LINE_MS   1000     // `json 1` state snapshot cadence
-#define STATE_LINE_MAX  2560     // the up "state" line, the one line allowed past DDM_LINE_MAX: 80-byte head
-                                 // + 20 comma-separated cup entries of at most 101 bytes + "]}" = 2121 worst case (+ NUL), see emitState()
+#define BIG_LINE_MAX    2560     // the status and up state lines: ~110-byte head + DDM_MAX_CUPS entries
+                                 // of at most 90 bytes + "]}" = 2272 worst case (+ NUL), see cupsJson()
 #define RX_QUEUE_LEN    32     // ESP-NOW packets that can wait for loop()
 #define ERR_EXCERPT     40     // characters of a rejected line echoed in the err line
-#define ACK_QUEUE_LEN   (DDM_MAX_CUPS + 4)   // hello-acks waiting to go out, one entry per MAC
-#define ACK_SEND_TIMEOUT_MS 100              // give up waiting for an ack's send callback after this
+#define FULL_TABLE_LOG_MS 5000 // "table full" complaint at most this often
 
 static const uint8_t BCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // ---------------------------------------------------------------------------
-// Cup roster — fixed array, index == cup ID (0-based, the wire value)
+// The cup table — every MAC heard from, in the order it was first heard.
+// Internal only: the index is never printed or sent.
 // ---------------------------------------------------------------------------
-struct CupSlot {
+struct CupTrack {
   bool     used;
   uint8_t  mac[6];
-  uint32_t lastSeenMs;   // millis() of last packet; 0 = never heard from
+  uint8_t  horse;        // the horse the cup last claimed, 0 = none set
+  uint32_t lastSeenMs;   // millis() of last packet
   uint32_t lastSeq;      // last state seq the cup reported seeing
   uint32_t dropped;      // cup-reported drop count
   int8_t   rssi;         // cup-reported RSSI of gateway->cup packets (downlink)
   int8_t   upRssi;       // gateway-measured RSSI of cup->gateway packets (uplink)
   uint16_t tokenCount;
+  bool     hello;        // the last packet was a HELLO (the cup has no gateway MAC yet)
 };
 
-CupSlot roster[DDM_MAX_CUPS];
-CupSlot rosterOld[DDM_MAX_CUPS];   // the previous table while a roster line is applied
+CupTrack cups[DDM_MAX_CUPS];
 
 // The packet we broadcast. Mutated by state lines, serial commands and demo mode.
 DdmStatePacket statePkt;
 
 uint32_t versionRejects = 0;                     // packets with the wrong DDM_PROTO_VERSION
+uint32_t tableFull      = 0;                     // packets from a 25th cup while every slot was fresh
 bool     demoMode       = (DDM_AUTO_DEMO != 0);
 bool     broadcasting   = (DDM_AUTO_DEMO != 0);  // once true, stays true until reboot
 bool     debugText      = (DDM_DEBUG_TEXT != 0);
 bool     jsonAuto       = false;                 // `json 1`: a state line every STATE_LINE_MS and no summary table; boot default off
 bool     helloActive    = true;                  // hello repeats until the first valid state line
 uint32_t stateRev       = 0;                     // rev of the last applied state line, 0 = none yet
-uint32_t rosterRev      = 0;                     // rev of the last applied roster line, 0 = DevPi has not spoken
 uint32_t demoStep       = 0;
 char     gwMac[18];                              // this board's MAC, formatted once at boot
 
-uint32_t tBroadcast = 0, tDemo = 0, tSummary = 0, tStatus = 0, tHello = 0, tState = 0;
+uint32_t tBroadcast = 0, tDemo = 0, tSummary = 0, tStatus = 0, tHello = 0, tState = 0, tFullLog = 0;
 
 // ---------------------------------------------------------------------------
 // ESP-NOW -> loop() handoff. The receive callback runs in the WiFi task; it
@@ -167,8 +164,8 @@ struct RxItem {
 static QueueHandle_t     rxQueue      = nullptr;
 static volatile uint32_t rxQueueDrops = 0;       // packets lost because loop() fell behind
 
-static char outBuf[DDM_LINE_MAX + 1];                // JSON lines are built here, from loop() only
-static char stateBuf[STATE_LINE_MAX + 1];            // except the up "state" line, which outgrows DDM_LINE_MAX
+static char outBuf[DDM_LINE_MAX + 1];            // JSON lines are built here, from loop() only
+static char bigBuf[BIG_LINE_MAX + 1];            // except status and the up state line, which carry the table
 
 // ===========================================================================
 // Serial output. Everything leaves through these two, from loop() (or from
@@ -198,195 +195,66 @@ static void textf(const char* fmt, ...) {
 }
 
 // ---------------------------------------------------------------------------
-// MAC helpers
+// MAC helper
 // ---------------------------------------------------------------------------
 static void macFmt(const uint8_t* m, char* out /* >= 18 bytes */) {
   snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
            m[0], m[1], m[2], m[3], m[4], m[5]);
 }
 
-static int hexVal(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return -1;
-}
-
-// "A0:B7:65:12:34:56", either case, exactly 17 characters.
-static bool parseMac(const char* s, uint8_t* out) {
-  if (strlen(s) != 17) return false;
-  for (int i = 0; i < 6; i++) {
-    int hi = hexVal(s[i * 3]), lo = hexVal(s[i * 3 + 1]);
-    if (hi < 0 || lo < 0) return false;
-    if (i < 5 && s[i * 3 + 2] != ':') return false;
-    out[i] = (uint8_t)(hi * 16 + lo);
-  }
-  return true;
-}
-
 // ---------------------------------------------------------------------------
-// Roster helpers
+// Cup table helpers. Indices are internal; -1 = not tracked.
 // ---------------------------------------------------------------------------
 static int findCup(const uint8_t* mac) {
   for (int i = 0; i < DDM_MAX_CUPS; i++)
-    if (roster[i].used && memcmp(roster[i].mac, mac, 6) == 0) return i;
+    if (cups[i].used && memcmp(cups[i].mac, mac, 6) == 0) return i;
   return -1;
 }
 
-static int findCupOld(const uint8_t* mac) {
-  for (int i = 0; i < DDM_MAX_CUPS; i++)
-    if (rosterOld[i].used && memcmp(rosterOld[i].mac, mac, 6) == 0) return i;
-  return -1;
-}
-
-// ---------------------------------------------------------------------------
-// ESP-NOW peers. The broadcast address is the only permanent peer: ESP-NOW
-// holds ESP_NOW_MAX_TOTAL_PEER_NUM (20) peers in all, broadcast included, so
-// registering every roster cup would cap the fleet at 19. Receiving needs no
-// peer entry at all; only the unicast hello-ack does, and it gets one for the
-// few milliseconds the frame is in flight (see the ack queue below).
-// ---------------------------------------------------------------------------
-static bool addPeer(const uint8_t* mac) {
-  if (esp_now_is_peer_exist(mac)) return true;
-  esp_now_peer_info_t p = {};
-  memcpy(p.peer_addr, mac, 6);
-  p.channel = DDM_ESPNOW_CHANNEL;
-  p.ifidx   = WIFI_IF_STA;
-  p.encrypt = false;
-  esp_err_t e = esp_now_add_peer(&p);
-  if (e != ESP_OK) {
-    char m[18]; macFmt(mac, m);
-    textf("ERR esp_now_add_peer %s failed (%d)", m, (int)e);
-    return false;
+// The entry for a MAC, made if needed: a free slot first, else the slot of
+// the cup that has been silent longest, provided it is STALE (a fleet of 24
+// fresh cups plus a 25th is the one case that is refused, and counted).
+static int trackCup(const uint8_t* mac, uint32_t now) {
+  int i = findCup(mac);
+  if (i >= 0) return i;
+  int stalest = -1;
+  uint32_t stalestAge = 0;
+  for (i = 0; i < DDM_MAX_CUPS; i++) {
+    if (!cups[i].used) { stalest = i; stalestAge = 0xFFFFFFFFu; break; }
+    uint32_t age = now - cups[i].lastSeenMs;
+    if (age > stalestAge) { stalestAge = age; stalest = i; }
   }
-  return true;
-}
-
-static void delPeer(const uint8_t* mac) {
-  if (memcmp(mac, BCAST, 6) == 0) return;      // the broadcast peer carries the state packets: never
-  if (esp_now_is_peer_exist(mac)) esp_now_del_peer(mac);
-}
-
-// Bench mode only (rosterRev == 0): assign the next free ID to a new MAC.
-// Returns -1 if the roster is full.
-static int addCup(const uint8_t* mac) {
-  for (int i = 0; i < DDM_MAX_CUPS; i++) {
-    if (!roster[i].used) {
-      roster[i] = {};
-      roster[i].used = true;
-      memcpy(roster[i].mac, mac, 6);
-
+  if (stalest < 0 || (cups[stalest].used && stalestAge <= STALE_MS)) {
+    tableFull++;
+    if (now - tFullLog >= FULL_TABLE_LOG_MS) {
+      tFullLog = now;
       char m[18]; macFmt(mac, m);
-      textf("NEWCUP id=%d mac=%s", i, m);
-      textf("  paste into KNOWN_CUPS[]:  { { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X } },  // cup %d",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], i);
-      return i;
+      textf("ERR cup table full (%d fresh cups), %s ignored", DDM_MAX_CUPS, m);
     }
+    return -1;
   }
-  textf("ERR roster full, cup ignored");
-  return -1;
+  cups[stalest] = {};
+  cups[stalest].used = true;
+  memcpy(cups[stalest].mac, mac, 6);
+  return stalest;
 }
 
-// ---------------------------------------------------------------------------
-// Hello ack — gateway -> cup, unicast.
-//
-// PROTOCOL NOTE: ddm_common.h defines no packet that tells a cup its own ID,
-// so the ack reuses the DdmTelemetryPacket layout in the reverse direction
-// with msgType = DDM_MSG_HELLO and cupId = the assigned ID. All other fields
-// are zero. Byte-compatible with the shared header; candidate for a proper
-// assignment packet in protocol v2. The cup adopts whatever ID a fresh ack
-// carries, at any time, so this is also how a cup is moved to a new slot.
-// The cup only accepts an ack unicast to its own MAC, never a broadcast.
-//
-// Acks are queued and sent one at a time from loop() (ackTick): the cup's
-// MAC becomes an ESP-NOW peer, the frame goes out, and the peer is deleted
-// once the send callback has reported on it or ACK_SEND_TIMEOUT_MS has
-// passed. Never straight after esp_now_send(): the send is asynchronous and
-// pulling the peer from under it loses the frame. Queued acks are deduped by
-// MAC, newest ID wins. A full queue drops the new ack, and the cup's next
-// HELLO or its claim-mismatch telemetry brings it back. No retries here.
-// ---------------------------------------------------------------------------
-struct AckEntry { uint8_t mac[6]; uint8_t cupId; };
-
-static AckEntry ackQueue[ACK_QUEUE_LEN];         // ring buffer, no heap
-static int      ackHead = 0, ackCount = 0;       // head = oldest entry
-
-static volatile bool ackInFlight = false;
-static uint8_t       ackMac[6];                  // the transient peer while an ack is in flight
-static uint8_t       ackId       = 0;
-static uint32_t      ackSentAt   = 0;
-static volatile bool ackDone     = false;        // set by the send callback for ackMac
-static volatile bool ackOk       = false;
-
-static void queueAckTo(const uint8_t* mac, uint8_t cupId) {
-  for (int i = 0; i < ackCount; i++) {
-    AckEntry& e = ackQueue[(ackHead + i) % ACK_QUEUE_LEN];
-    if (memcmp(e.mac, mac, 6) == 0) { e.cupId = cupId; return; }   // already queued: newest ID wins
-  }
-  if (ackCount >= ACK_QUEUE_LEN) {
-    char m[18]; macFmt(mac, m);
-    textf("ERR ack queue full, ack to cup %u %s dropped", (unsigned)cupId, m);
-    return;
-  }
-  AckEntry& e = ackQueue[(ackHead + ackCount) % ACK_QUEUE_LEN];
-  memcpy(e.mac, mac, 6);
-  e.cupId = cupId;
-  ackCount++;
-}
-
-static void queueAck(int id) { queueAckTo(roster[id].mac, (uint8_t)id); }
-
-// Send callback, WiFi task: flags the ack in flight and nothing else. Core
-// 3.3 (IDF 5.5) hands over a tx-info struct, older cores the bare MAC.
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-static void onDataSent(const esp_now_send_info_t* info, esp_now_send_status_t status) {
-  const uint8_t* mac = info->des_addr;
-#else
-static void onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
-#endif
-  if (ackInFlight && memcmp(mac, ackMac, 6) == 0) {
-    ackOk   = (status == ESP_NOW_SEND_SUCCESS);
-    ackDone = true;
-  }
-}
-
-// One ack in flight at a time. Called every loop() pass; never blocks.
-static void ackTick(uint32_t now) {
-  if (ackInFlight) {
-    if (!ackDone && now - ackSentAt < ACK_SEND_TIMEOUT_MS) return;   // still waiting for the callback
-    if (debugText) {
-      char m[18]; macFmt(ackMac, m);
-      textf("ack to cup %u %s %s", (unsigned)ackId, m,
-            ackDone ? (ackOk ? "delivered" : "not delivered") : "timed out, no send callback");
+// Drop entries that have been silent for FORGET_MS, so a cup that went home
+// does not sit in every status line with a growing age.
+static void forgetStale(uint32_t now) {
+  for (int i = 0; i < DDM_MAX_CUPS; i++)
+    if (cups[i].used && now - cups[i].lastSeenMs > FORGET_MS) {
+      if (debugText) { char m[18]; macFmt(cups[i].mac, m); textf("cup %s silent %lu s, forgotten", m, (unsigned long)(FORGET_MS / 1000)); }
+      cups[i] = {};
     }
-    delPeer(ackMac);
-    ackInFlight = false;
-  }
-  if (ackCount == 0) return;
+}
 
-  AckEntry e = ackQueue[ackHead];
-  ackHead = (ackHead + 1) % ACK_QUEUE_LEN;
-  ackCount--;
-  memcpy(ackMac, e.mac, 6);
-  ackId = e.cupId;
-
-  if (!addPeer(ackMac)) { delPeer(ackMac); return; }   // reported by addPeer; next entry next pass
-
-  DdmTelemetryPacket ack = {};
-  ack.version = DDM_PROTO_VERSION;
-  ack.msgType = DDM_MSG_HELLO;
-  ack.cupId   = ackId;
-  ackDone     = false;
-  ackOk       = false;
-  ackSentAt   = now;
-  ackInFlight = true;                     // before the send: the callback can run before it returns
-  esp_err_t err = esp_now_send(ackMac, (const uint8_t*)&ack, sizeof(ack));
-  if (err != ESP_OK) {
-    char m[18]; macFmt(ackMac, m);
-    textf("ERR esp_now_send ack to cup %u %s failed (%d)", (unsigned)ackId, m, (int)err);
-    ackInFlight = false;
-    delPeer(ackMac);
-  }
+// Cups heard from within STALE_MS: the summary table's OK count.
+static int cupsHeard(uint32_t now) {
+  int n = 0;
+  for (int i = 0; i < DDM_MAX_CUPS; i++)
+    if (cups[i].used && now - cups[i].lastSeenMs <= STALE_MS) n++;
+  return n;
 }
 
 // ===========================================================================
@@ -398,46 +266,92 @@ static void emitHello() {
   outLine(outBuf);
 }
 
-// Roster cups heard from within STALE_MS: the same threshold as the summary
-// table's STALE flag.
-static int cupsHeard(uint32_t now) {
-  int n = 0;
-  for (int i = 0; i < DDM_MAX_CUPS; i++)
-    if (roster[i].used && roster[i].lastSeenMs != 0 && now - roster[i].lastSeenMs <= STALE_MS) n++;
-  return n;
+// The cup table as a JSON array, appended at buf + n. Returns the new n, or
+// -1 if it would not fit (the caller then prints nothing: never a cut line).
+// One entry: {"mac":"A0:B7:65:12:34:56","horse":7,"tok":23,"rssi":-63,"up":-61,"age":180}
+static int cupsJson(char* buf, int size, int n, uint32_t now) {
+  int k = snprintf(buf + n, size - n, "[");
+  if (k < 0 || n + k >= size) return -1;
+  n += k;
+  bool first = true;
+  for (int i = 0; i < DDM_MAX_CUPS; i++) {
+    const CupTrack& c = cups[i];
+    if (!c.used) continue;
+    char m[18]; macFmt(c.mac, m);
+    k = snprintf(buf + n, size - n,
+                 "%s{\"mac\":\"%s\",\"horse\":%u,\"tok\":%u,\"rssi\":%d,\"up\":%d,\"age\":%lu}",
+                 first ? "" : ",", m, (unsigned)c.horse, (unsigned)c.tokenCount,
+                 (int)c.rssi, (int)c.upRssi, (unsigned long)(now - c.lastSeenMs));
+    if (k < 0 || n + k >= size - 3) return -1;
+    n += k;
+    first = false;
+  }
+  k = snprintf(buf + n, size - n, "]");
+  if (k < 0 || n + k >= size) return -1;
+  return n + k;
+}
+
+// The scratched bits as a JSON array of horse numbers, the renum pairs as an
+// array of [from,to], the results as [w,p,s]. Appended at buf + n; -1 if it
+// would not fit.
+static int packetJson(char* buf, int size, int n) {
+  int k = snprintf(buf + n, size - n, "\"st\":%u,\"scr\":[", (unsigned)statePkt.raceState);
+  if (k < 0 || n + k >= size) return -1;
+  n += k;
+  bool first = true;
+  for (int h = 1; h <= DDM_MAX_HORSE; h++) {
+    if (!ddmIsScratched(statePkt.scratched, (uint8_t)h)) continue;
+    k = snprintf(buf + n, size - n, "%s%d", first ? "" : ",", h);
+    if (k < 0 || n + k >= size) return -1;
+    n += k;
+    first = false;
+  }
+  k = snprintf(buf + n, size - n, "],\"renum\":[");
+  if (k < 0 || n + k >= size) return -1;
+  n += k;
+  first = true;
+  for (int i = 0; i < DDM_RENUM_SLOTS; i++) {
+    if (statePkt.renum[i][0] == 0) continue;
+    k = snprintf(buf + n, size - n, "%s[%u,%u]", first ? "" : ",",
+                 (unsigned)statePkt.renum[i][0], (unsigned)statePkt.renum[i][1]);
+    if (k < 0 || n + k >= size) return -1;
+    n += k;
+    first = false;
+  }
+  k = snprintf(buf + n, size - n, "],\"res\":[%u,%u,%u]",
+               (unsigned)statePkt.results[0], (unsigned)statePkt.results[1], (unsigned)statePkt.results[2]);
+  if (k < 0 || n + k >= size) return -1;
+  return n + k;
 }
 
 // Heartbeat every STATUS_MS, and the acknowledgement of every applied
-// state/roster/debug line. There is no separate ack line.
+// state/debug line. There is no separate ack line. Carries the cup table.
 static void emitStatus() {
   uint32_t now = millis();
-  snprintf(outBuf, sizeof(outBuf),
-           "{\"t\":\"status\",\"gseq\":%lu,\"phase\":%u,\"state_rev\":%lu,\"roster_rev\":%lu,"
-           "\"cups\":%d,\"rejects\":%lu,\"up_s\":%lu}",
-           (unsigned long)statePkt.seq, (unsigned)statePkt.raceState,
-           (unsigned long)stateRev, (unsigned long)rosterRev,
-           cupsHeard(now), (unsigned long)versionRejects, (unsigned long)(now / 1000));
-  outLine(outBuf);
+  int n = snprintf(bigBuf, sizeof(bigBuf),
+                   "{\"t\":\"status\",\"gseq\":%lu,\"phase\":%u,\"state_rev\":%lu,\"cups\":",
+                   (unsigned long)statePkt.seq, (unsigned)statePkt.raceState, (unsigned long)stateRev);
+  if (n < 0 || n >= (int)sizeof(bigBuf)) return;
+  n = cupsJson(bigBuf, sizeof(bigBuf), n, now);
+  if (n < 0) { textf("ERR status line over %d bytes, not sent", BIG_LINE_MAX); return; }
+  int k = snprintf(bigBuf + n, sizeof(bigBuf) - n, ",\"rejects\":%lu,\"up_s\":%lu}",
+                   (unsigned long)versionRejects, (unsigned long)(now / 1000));
+  if (k < 0 || n + k >= (int)sizeof(bigBuf)) { textf("ERR status line over %d bytes, not sent", BIG_LINE_MAX); return; }
+  outLine(bigBuf);
   tStatus = now;
 }
 
-static void emitCupHello(int id, const char* mac) {
-  snprintf(outBuf, sizeof(outBuf), "{\"t\":\"cup_hello\",\"cup\":%d,\"mac\":\"%s\"}", id, mac);
-  outLine(outBuf);
-}
-
-// One per telemetry packet. "cup" is the roster slot of the sender MAC (-1 if
-// unknown); "claim" is added only when the ID the cup believes it has differs
-// from that, so DevPi can spot a cup running on a stale ID.
-static void emitTelem(int id, const char* mac, const DdmTelemetryPacket* p, int8_t upRssi) {
+// One per packet from a cup, HELLO or telemetry alike. "horse" is what the
+// cup says it is (0 = none set yet); "hello":1 marks a HELLO (the cup is
+// still broadcasting, it has no gateway MAC yet).
+static void emitTelem(const char* mac, const DdmTelemetryPacket* p, int8_t upRssi, bool hello) {
   int n = snprintf(outBuf, sizeof(outBuf),
-                   "{\"t\":\"telem\",\"cup\":%d,\"mac\":\"%s\",\"raw\":%ld,\"count\":%u,"
+                   "{\"t\":\"telem\",\"mac\":\"%s\",\"horse\":%u,\"raw\":%ld,\"count\":%u,"
                    "\"seq\":%lu,\"drop\":%lu,\"rssi\":%d,\"up\":%d",
-                   id, mac, (long)p->rawWeight, (unsigned)p->tokenCount,
+                   mac, (unsigned)p->horse, (long)p->rawWeight, (unsigned)p->tokenCount,
                    (unsigned long)p->seq, (unsigned long)p->dropped, (int)p->rssi, (int)upRssi);
-  if (n < 0 || n >= (int)sizeof(outBuf) - 24) return;
-  if ((int)p->cupId != id)
-    n += snprintf(outBuf + n, sizeof(outBuf) - n, ",\"claim\":%u", (unsigned)p->cupId);
+  if (n < 0 || n >= (int)sizeof(outBuf) - 16) return;
+  if (hello) n += snprintf(outBuf + n, sizeof(outBuf) - n, ",\"hello\":1");
   snprintf(outBuf + n, sizeof(outBuf) - n, "}");
   outLine(outBuf);
 }
@@ -479,44 +393,22 @@ static void emitErr(const char* msg, const char* line) {
 // The whole gateway in one line, for a machine reader: typed `json` prints
 // one, `json 1` one every STATE_LINE_MS. Not the down-link {"t":"state"}
 // (jsonState below): same type name, opposite direction, different keys.
-//
-// cups[] holds every slot that is in the roster OR has a horse assigned, so a
-// horse given to a cup that has not said hello yet still shows, with mac ""
-// and age -1. An unused slot's stats are all zero (every path that frees a
-// slot clears it), so tok/rssi/up read 0 there without a special case.
-//
-// This is the one line that may run past DDM_LINE_MAX (about 2.1 KB with 20
-// cups), hence its own buffer. The TX buffer in setup() is sized so that it
-// and a burst of telem lines drain in the background.
+// The broadcast packet's contents (st, scr, renum, res) and the cup table.
 static void emitState() {
   uint32_t now = millis();
-  int n = snprintf(stateBuf, sizeof(stateBuf),
-                   "{\"t\":\"state\",\"seq\":%lu,\"st\":%u,\"demo\":%d,\"mac\":\"%s\",\"cups\":[",
-                   (unsigned long)statePkt.seq, (unsigned)statePkt.raceState, demoMode ? 1 : 0, gwMac);
-  if (n < 0 || n >= (int)sizeof(stateBuf)) return;
-  bool first = true;
-  for (int i = 0; i < DDM_MAX_CUPS; i++) {
-    const CupSlot& c = roster[i];
-    if (!c.used && statePkt.horseForCup[i] == 0) continue;
-    char m[18] = "";
-    if (c.used) macFmt(c.mac, m);
-    char age[12];                                  // ms since last heard, -1 = never (as the summary table)
-    if (c.used && c.lastSeenMs != 0) snprintf(age, sizeof(age), "%lu", (unsigned long)(now - c.lastSeenMs));
-    else                             strcpy(age, "-1");
-    int k = snprintf(stateBuf + n, sizeof(stateBuf) - n,
-                     "%s{\"id\":%d,\"mac\":\"%s\",\"h\":%u,\"scr\":%u,\"tok\":%u,\"rssi\":%d,\"up\":%d,\"age\":%s}",
-                     first ? "" : ",", i, m,
-                     (unsigned)statePkt.horseForCup[i], (unsigned)statePkt.scratched[i],
-                     (unsigned)c.tokenCount, (int)c.rssi, (int)c.upRssi, age);
-    if (k < 0 || n + k >= (int)sizeof(stateBuf) - 2) {   // cannot happen at STATE_LINE_MAX; never print a cut line
-      textf("ERR state line over %d bytes, not sent", STATE_LINE_MAX);
-      return;
-    }
-    n += k;
-    first = false;
+  int n = snprintf(bigBuf, sizeof(bigBuf),
+                   "{\"t\":\"state\",\"seq\":%lu,\"demo\":%d,\"mac\":\"%s\",",
+                   (unsigned long)statePkt.seq, demoMode ? 1 : 0, gwMac);
+  if (n < 0 || n >= (int)sizeof(bigBuf)) return;
+  n = packetJson(bigBuf, sizeof(bigBuf), n);
+  if (n >= 0) {
+    int k = snprintf(bigBuf + n, sizeof(bigBuf) - n, ",\"cups\":");
+    n = (k < 0 || n + k >= (int)sizeof(bigBuf)) ? -1 : n + k;
   }
-  snprintf(stateBuf + n, sizeof(stateBuf) - n, "]}");
-  outLine(stateBuf);
+  if (n >= 0) n = cupsJson(bigBuf, sizeof(bigBuf), n, now);
+  if (n < 0 || n + 2 >= (int)sizeof(bigBuf)) { textf("ERR state line over %d bytes, not sent", BIG_LINE_MAX); return; }
+  snprintf(bigBuf + n, sizeof(bigBuf) - n, "}");
+  outLine(bigBuf);
   tState = now;
 }
 
@@ -548,59 +440,38 @@ static void onDataRecv(const uint8_t* mac, const uint8_t* data, int len) {
 }
 #endif
 
-// Runs in loop() for every queued packet.
+// Runs in loop() for every queued packet. HELLO and telemetry carry the same
+// payload and are handled the same way; the only difference reported is the
+// "hello" flag, which says the cup is still broadcasting.
 static void handlePacket(const uint8_t* mac, int8_t upRssi, const uint8_t* data, int len) {
   if (len < 2) return;
   if (data[0] != DDM_PROTO_VERSION) { versionRejects++; return; }
   if (len != (int)sizeof(DdmTelemetryPacket)) return;
+  if (data[1] != DDM_MSG_HELLO && data[1] != DDM_MSG_TELEMETRY) return;
 
   const DdmTelemetryPacket* p = (const DdmTelemetryPacket*)data;
   uint32_t now = millis();
-  int id = findCup(mac);
   char m[18]; macFmt(mac, m);
+  bool hello = (p->msgType == DDM_MSG_HELLO);
 
-  if (p->msgType == DDM_MSG_HELLO) {
-    // Roster ownership: before DevPi has sent a roster (rosterRev == 0) an
-    // unknown MAC gets the next free slot, as on the bench. After that DevPi
-    // owns identity: no slot, no ack, and the cup stays on its MAC screen
-    // until a roster line includes it.
-    if (id < 0 && rosterRev == 0) id = addCup(mac);
-    if (id >= 0) {
-      roster[id].lastSeenMs = now;
-      roster[id].upRssi     = upRssi;
-      queueAck(id);
-    }
-    emitCupHello(id, m);
-    if (debugText) textf("HELLO cup=%d mac=%s up_rssi=%d", id, m, upRssi);
-
-  } else if (p->msgType == DDM_MSG_TELEMETRY) {
-    bool reack = false;
-    if (id < 0 && rosterRev == 0) {   // gateway rebooted, cup still has its old ID:
-      id = addCup(mac);               // re-adopt it and re-ack so it re-syncs (bench)
-      reack = (id >= 0);
-    }
-    if (id >= 0) {
-      CupSlot& c = roster[id];
-      c.lastSeenMs = now;
-      c.lastSeq    = p->seq;
-      c.dropped    = p->dropped;
-      c.rssi       = p->rssi;
-      c.upRssi     = upRssi;
-      c.tokenCount = p->tokenCount;
-      // The cup reports the ID it believes it has. If that is not its roster
-      // slot (a roster line moved it and the re-ack was lost, a stale ID from
-      // before a gateway reboot, or the cup took a stray HELLO for an ack),
-      // send the ack again: the cup adopts a fresh ack at any time. This is
-      // the same ack path as HELLO; steady state costs nothing.
-      if (reack || (int)p->cupId != id) queueAck(id);
-    }
-    emitTelem(id, m, p, upRssi);
-    if (debugText)
-      textf("TELEM cup=%d horse=%u seq=%lu dropped=%lu rssi=%d up_rssi=%d tokens=%u",
-            id, (unsigned)(id >= 0 ? statePkt.horseForCup[id] : 0),
-            (unsigned long)p->seq, (unsigned long)p->dropped,
-            (int)p->rssi, (int)upRssi, (unsigned)p->tokenCount);
+  int i = trackCup(mac, now);
+  if (i >= 0) {
+    CupTrack& c = cups[i];
+    c.lastSeenMs = now;
+    c.horse      = (p->horse <= DDM_MAX_HORSE) ? p->horse : 0;
+    c.lastSeq    = p->seq;
+    c.dropped    = p->dropped;
+    c.rssi       = p->rssi;
+    c.upRssi     = upRssi;
+    c.tokenCount = p->tokenCount;
+    c.hello      = hello;
   }
+  emitTelem(m, p, upRssi, hello);
+  if (debugText)
+    textf("%s mac=%s horse=%u seq=%lu dropped=%lu rssi=%d up_rssi=%d tokens=%u",
+          hello ? "HELLO" : "TELEM", m, (unsigned)p->horse,
+          (unsigned long)p->seq, (unsigned long)p->dropped,
+          (int)p->rssi, (int)upRssi, (unsigned)p->tokenCount);
 }
 
 static void drainRx() {
@@ -621,7 +492,7 @@ static void demoOff(const char* why) {
 }
 
 // Silent-boot rule: the state broadcast starts on the first JSON state line
-// or typed state/horse/scratch/demo command, and never stops again.
+// or typed state/scratch/renum/results/demo command, and never stops again.
 static void startBroadcast(const char* why) {
   if (!broadcasting) {
     broadcasting = true;
@@ -645,6 +516,25 @@ static void setJsonAuto(bool on) {
   if (on) tState = millis() - STATE_LINE_MS;   // the first line on the next loop() pass, not a second from now
 }
 
+// Set, replace or remove the renum pair for `from`. Returns false when there
+// is no free slot for a new pair.
+static bool setRenum(uint8_t from, uint8_t to) {
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < DDM_RENUM_SLOTS; i++) {
+    if (statePkt.renum[i][0] == from) slot = i;
+    else if (statePkt.renum[i][0] == 0 && freeSlot < 0) freeSlot = i;
+  }
+  if (to == 0) {                                           // remove
+    if (slot >= 0) { statePkt.renum[slot][0] = 0; statePkt.renum[slot][1] = 0; }
+    return true;
+  }
+  if (slot < 0) slot = freeSlot;
+  if (slot < 0) return false;
+  statePkt.renum[slot][0] = from;
+  statePkt.renum[slot][1] = to;
+  return true;
+}
+
 // ===========================================================================
 // Hand-typed serial commands (replies always print, prefixed "# ")
 // ===========================================================================
@@ -652,38 +542,45 @@ static void printHelp() {
   textf("Commands (newline-terminated; every reply starts with '# '):");
   textf("  state <0-6>              set raceState  (0 PRE_RACE 1 BETTING_OPEN 2 FINAL_CALL");
   textf("                           3 AT_THE_POST 4 RUNNING 5 WINNER 6 AFTER_PARTY)");
-  textf("  horse <cupId> <0-%d>     assign horse to cup (0 = unassigned; 21-24 also-eligibles); cupId is 0-based", DDM_MAX_HORSE);
-  textf("  scratch <cupId> <0|1>    set/clear scratched flag");
-  textf("  roster                   dump MAC-to-ID table");
-  textf("  demo                     toggle demo mode (horse walk every 3s)");
+  textf("  scratch <horse> <0|1>    set/clear horse 1-%d scratched (no replacement)", DDM_MAX_HORSE);
+  textf("  renum <from> <to>        cups at horse <from> become <to> (1-%d); <to> 0 removes the pair; %d pairs at most",
+        DDM_MAX_HORSE, DDM_RENUM_SLOTS);
+  textf("  results <w> <p> <s>      the WIN, PLACE and SHOW horses (0 = not yet); results 0 0 0 clears");
+  textf("  cups                     dump the cup table (MAC, horse, tokens, signal, age)");
+  textf("  demo                     toggle demo mode (WINNER with the results walking 1-%d every 3s)", DDM_MAX_HORSE);
   textf("  debug on|off             human-readable TELEM lines and 5s summary table");
   textf("  json                     full gateway state as one JSON line, now");
   textf("  json 1|0                 that line every 1s (summary table off) / back to normal");
   textf("  help                     this text");
-  textf("Any state/horse/scratch command turns demo mode OFF. Any state/horse/scratch/demo");
-  textf("command starts the state broadcast if the gateway is still silent from boot.");
-  textf("JSON lines ({\"t\":\"state\"...}, {\"t\":\"roster\"...}, {\"t\":\"debug\"...}) are DevPi's: see README.");
+  textf("Any state/scratch/renum/results command turns demo mode OFF. Any of those, or demo,");
+  textf("starts the state broadcast if the gateway is still silent from boot.");
+  textf("JSON lines ({\"t\":\"state\"...}, {\"t\":\"debug\"...}) are DevPi's: see README.");
+  textf("A cup's horse number is set ON THE CUP (touch menu HORSE, or serial n<N> there).");
 }
 
-static void printRoster() {
-  textf("ROSTER rev=%lu owner=%s bcast=%s demo=%s",
-        (unsigned long)rosterRev,
-        rosterRev ? "DevPi (roster line)" : "KNOWN_CUPS[] + runtime HELLO",
-        broadcasting ? "on" : "off", demoMode ? "on" : "off");
-  textf("ROSTER id mac               source");
+static void printCups() {
+  uint32_t now = millis();
+  textf("CUPS bcast=%s demo=%s rev=%lu", broadcasting ? "on" : "off", demoMode ? "on" : "off",
+        (unsigned long)stateRev);
+  textf("CUPS mac               horse  tok  rssi  up_rssi  age_ms  status");
+  bool any = false;
   for (int i = 0; i < DDM_MAX_CUPS; i++) {
-    if (!roster[i].used) continue;
-    char m[18]; macFmt(roster[i].mac, m);
-    textf("ROSTER %2d %s %s", i, m,
-          rosterRev ? "roster line" : (i < KNOWN_CUPS_N) ? "KNOWN_CUPS[]" : "runtime");
+    if (!cups[i].used) continue;
+    any = true;
+    char m[18]; macFmt(cups[i].mac, m);
+    uint32_t age = now - cups[i].lastSeenMs;
+    textf("CUPS %s %5u %4u  %4d     %4d %7lu  %s%s", m, (unsigned)cups[i].horse, (unsigned)cups[i].tokenCount,
+          cups[i].rssi, cups[i].upRssi, (unsigned long)age,
+          (age > STALE_MS) ? "STALE" : "OK", cups[i].hello ? " (hello: no gateway MAC yet)" : "");
   }
+  if (!any) textf("CUPS (none heard yet)");
 }
 
 static void handleCommand(char* line) {
   while (*line == ' ') line++;
   if (*line == 0) return;
 
-  int a = -1, b = -1;
+  int a = -1, b = -1, c = -1;
 
   if (strncmp(line, "state ", 6) == 0 && sscanf(line + 6, "%d", &a) == 1) {
     if (a < DDM_PRE_RACE || a > DDM_AFTER_PARTY) { textf("ERR state 0-6"); return; }
@@ -692,24 +589,37 @@ static void handleCommand(char* line) {
     startBroadcast("state command");
     textf("OK state=%d", a);
 
-  } else if (strncmp(line, "horse ", 6) == 0 && sscanf(line + 6, "%d %d", &a, &b) == 2) {
-    if (a < 0 || a >= DDM_MAX_CUPS) { textf("ERR cupId 0-%d", DDM_MAX_CUPS - 1); return; }
-    if (b < 0 || b > DDM_MAX_HORSE) { textf("ERR horse 0-%d", DDM_MAX_HORSE); return; }
-    demoOff("horse command");
-    statePkt.horseForCup[a] = (uint8_t)b;
-    startBroadcast("horse command");
-    textf("OK horse cup=%d -> %d", a, b);
-
   } else if (strncmp(line, "scratch ", 8) == 0 && sscanf(line + 8, "%d %d", &a, &b) == 2) {
-    if (a < 0 || a >= DDM_MAX_CUPS) { textf("ERR cupId 0-%d", DDM_MAX_CUPS - 1); return; }
+    if (a < 1 || a > DDM_MAX_HORSE) { textf("ERR horse 1-%d", DDM_MAX_HORSE); return; }
     if (b != 0 && b != 1)           { textf("ERR scratch 0|1"); return; }
     demoOff("scratch command");
-    statePkt.scratched[a] = (uint8_t)b;
+    if (b) statePkt.scratched |=  (1u << a);
+    else   statePkt.scratched &= ~(1u << a);
     startBroadcast("scratch command");
-    textf("OK scratch cup=%d -> %d", a, b);
+    textf("OK scratch horse=%d -> %d", a, b);
 
-  } else if (strcmp(line, "roster") == 0) {
-    printRoster();
+  } else if (strncmp(line, "renum ", 6) == 0 && sscanf(line + 6, "%d %d", &a, &b) == 2) {
+    if (a < 1 || a > DDM_MAX_HORSE)              { textf("ERR from 1-%d", DDM_MAX_HORSE); return; }
+    if (b < 0 || b > DDM_MAX_HORSE || b == a)    { textf("ERR to 0-%d, not %d", DDM_MAX_HORSE, a); return; }
+    demoOff("renum command");
+    if (!setRenum((uint8_t)a, (uint8_t)b)) { textf("ERR no free renum slot (%d in use)", DDM_RENUM_SLOTS); return; }
+    startBroadcast("renum command");
+    if (b) textf("OK renum %d -> %d", a, b);
+    else   textf("OK renum %d removed", a);
+
+  } else if (strncmp(line, "results ", 8) == 0 && sscanf(line + 8, "%d %d %d", &a, &b, &c) == 3) {
+    if (a < 0 || a > DDM_MAX_HORSE || b < 0 || b > DDM_MAX_HORSE || c < 0 || c > DDM_MAX_HORSE) {
+      textf("ERR results 0-%d each", DDM_MAX_HORSE); return;
+    }
+    demoOff("results command");
+    statePkt.results[0] = (uint8_t)a;
+    statePkt.results[1] = (uint8_t)b;
+    statePkt.results[2] = (uint8_t)c;
+    startBroadcast("results command");
+    textf("OK results win=%d place=%d show=%d", a, b, c);
+
+  } else if (strcmp(line, "cups") == 0) {
+    printCups();
 
   } else if (strcmp(line, "demo") == 0) {
     demoMode = !demoMode;
@@ -755,38 +665,78 @@ static bool jsonIntIn(JsonVariantConst v, long lo, long hi, long* out) {
   return true;
 }
 
-// v is an array of exactly DDM_MAX_CUPS integers, each within [lo, hi].
-static bool jsonU8Array(JsonVariantConst v, long lo, long hi, uint8_t* out) {
+// "scr": an array of horse numbers 1..DDM_MAX_HORSE (any length, repeats
+// allowed) -> a bitmask.
+static bool jsonScratched(JsonVariantConst v, uint32_t* out) {
   JsonArrayConst a = v.as<JsonArrayConst>();
-  if (a.isNull() || a.size() != DDM_MAX_CUPS) return false;
+  if (a.isNull()) return false;
+  uint32_t bits = 0;
+  for (JsonVariantConst e : a) {
+    long h;
+    if (!jsonIntIn(e, 1, DDM_MAX_HORSE, &h)) return false;
+    bits |= (1u << h);
+  }
+  *out = bits;
+  return true;
+}
+
+// "renum": an array of at most DDM_RENUM_SLOTS [from, to] pairs, both
+// 1..DDM_MAX_HORSE, from != to, no from twice.
+static bool jsonRenum(JsonVariantConst v, uint8_t out[][2]) {
+  JsonArrayConst a = v.as<JsonArrayConst>();
+  if (a.isNull() || a.size() > DDM_RENUM_SLOTS) return false;
+  for (int i = 0; i < DDM_RENUM_SLOTS; i++) { out[i][0] = 0; out[i][1] = 0; }
   int i = 0;
   for (JsonVariantConst e : a) {
-    long x;
-    if (!jsonIntIn(e, lo, hi, &x)) return false;
-    out[i++] = (uint8_t)x;
+    JsonArrayConst pair = e.as<JsonArrayConst>();
+    if (pair.isNull() || pair.size() != 2) return false;
+    long from, to;
+    if (!jsonIntIn(pair[0], 1, DDM_MAX_HORSE, &from) || !jsonIntIn(pair[1], 1, DDM_MAX_HORSE, &to)) return false;
+    if (from == to) return false;
+    for (int j = 0; j < i; j++) if (out[j][0] == from) return false;
+    out[i][0] = (uint8_t)from;
+    out[i][1] = (uint8_t)to;
+    i++;
   }
   return true;
 }
 
-// {"t":"state","rev":42,"phase":1,"horse":[20 x 0..DDM_MAX_HORSE],"scr":[20 x 0|1]}
+// "res": exactly DDM_RESULT_SLOTS integers 0..DDM_MAX_HORSE.
+static bool jsonResults(JsonVariantConst v, uint8_t* out) {
+  JsonArrayConst a = v.as<JsonArrayConst>();
+  if (a.isNull() || a.size() != DDM_RESULT_SLOTS) return false;
+  int i = 0;
+  for (JsonVariantConst e : a) {
+    long h;
+    if (!jsonIntIn(e, 0, DDM_MAX_HORSE, &h)) return false;
+    out[i++] = (uint8_t)h;
+  }
+  return true;
+}
+
+// {"t":"state","rev":42,"st":1,"scr":[9,15],"renum":[[9,22]],"res":[19,1,22]}
 // A full snapshot, never a delta. Idempotent: the same line twice is normal.
 static void jsonState(JsonObjectConst root, const char* line) {
-  long    rev, phase;
-  uint8_t horse[DDM_MAX_CUPS], scr[DDM_MAX_CUPS];
+  long     rev, st;
+  uint32_t scr;
+  uint8_t  renum[DDM_RENUM_SLOTS][2];
+  uint8_t  res[DDM_RESULT_SLOTS];
 
   if (!jsonIntIn(root["rev"], 1, LONG_MAX, &rev) ||
-      !jsonIntIn(root["phase"], DDM_PRE_RACE, DDM_AFTER_PARTY, &phase) ||
-      !jsonU8Array(root["horse"], 0, DDM_MAX_HORSE, horse) ||
-      !jsonU8Array(root["scr"], 0, 1, scr)) {
+      !jsonIntIn(root["st"], DDM_PRE_RACE, DDM_AFTER_PARTY, &st) ||
+      !jsonScratched(root["scr"], &scr) ||
+      !jsonRenum(root["renum"], renum) ||
+      !jsonResults(root["res"], res)) {
     emitErr("invalid", line);
     return;
   }
 
   // 1. Everything into the broadcast packet in one step. The broadcast also
   //    runs from loop(), so no packet can go out half-applied.
-  statePkt.raceState = (uint8_t)phase;
-  memcpy(statePkt.horseForCup, horse, DDM_MAX_CUPS);
-  memcpy(statePkt.scratched,   scr,   DDM_MAX_CUPS);
+  statePkt.raceState = (uint8_t)st;
+  statePkt.scratched = scr;
+  memcpy(statePkt.renum,   renum, sizeof(statePkt.renum));
+  memcpy(statePkt.results, res,   sizeof(statePkt.results));
   // 2.
   stateRev = (uint32_t)rev;
   // 3.
@@ -795,71 +745,7 @@ static void jsonState(JsonObjectConst root, const char* line) {
   // 4.
   helloActive = false;
   // 5.
-  if (debugText) textf("[state] rev %lu applied: phase %ld", (unsigned long)stateRev, phase);
-  emitStatus();
-}
-
-// {"t":"roster","rev":7,"macs":[20 x "" or "A0:B7:65:12:34:56"]}
-// Index = cup ID. Replaces the RAM roster entirely; DevPi owns identity from
-// the first roster line on.
-static void jsonRoster(JsonObjectConst root, const char* line) {
-  long    rev;
-  bool    nUsed[DDM_MAX_CUPS];
-  uint8_t nMac[DDM_MAX_CUPS][6];
-
-  if (!jsonIntIn(root["rev"], 1, LONG_MAX, &rev)) { emitErr("invalid", line); return; }
-  JsonArrayConst a = root["macs"].as<JsonArrayConst>();
-  if (a.isNull() || a.size() != DDM_MAX_CUPS)     { emitErr("invalid", line); return; }
-
-  int i = 0;
-  for (JsonVariantConst e : a) {
-    const char* s = e.as<const char*>();
-    if (s == nullptr) { emitErr("invalid", line); return; }         // not a string
-    if (s[0] == 0) {
-      nUsed[i] = false;
-      memset(nMac[i], 0, 6);
-    } else {
-      if (!parseMac(s, nMac[i]))        { emitErr("invalid", line); return; }
-      if (memcmp(nMac[i], BCAST, 6) == 0) { emitErr("invalid", line); return; }  // never a cup
-      for (int j = 0; j < i; j++)                                              // no MAC twice
-        if (nUsed[j] && memcmp(nMac[j], nMac[i], 6) == 0) { emitErr("invalid", line); return; }
-      nUsed[i] = true;
-    }
-    i++;
-  }
-
-  // 1. Replace the table. A slot keeps its stats only if the same MAC stays
-  //    in the same slot; every other slot starts from zero.
-  memcpy(rosterOld, roster, sizeof(roster));
-  bool reack[DDM_MAX_CUPS];
-  int  kept = 0, moved = 0, added = 0, left = 0;
-  for (i = 0; i < DDM_MAX_CUPS; i++) {
-    reack[i] = false;
-    if (!nUsed[i]) { roster[i] = {}; continue; }
-    int was = findCupOld(nMac[i]);
-    if (was == i) { kept++; continue; }
-    roster[i] = {};
-    roster[i].used = true;
-    memcpy(roster[i].mac, nMac[i], 6);
-    if (was >= 0) { moved++; reack[i] = true; }   // a newly added MAC is still sending HELLO
-    else          { added++; }                    // and gets acked on the next one
-  }
-  for (i = 0; i < DDM_MAX_CUPS; i++)              // MACs that left the roster, for the report line
-    if (rosterOld[i].used && findCup(rosterOld[i].mac) < 0) left++;
-
-  // 2.
-  rosterRev = (uint32_t)rev;
-
-  // 3. Every MAC whose slot changed gets a fresh ack with its new ID queued
-  //    now, through the ordinary ack path (the cup adopts it at once). If
-  //    the ack is lost, the cup's next telemetry carries the old ID and
-  //    handlePacket() re-acks it.
-  for (i = 0; i < DDM_MAX_CUPS; i++)
-    if (reack[i]) queueAck(i);
-
-  // 4.
-  textf("[roster] rev %lu applied: %d kept, %d moved (re-acked), %d added, %d left",
-        (unsigned long)rosterRev, kept, moved, added, left);
+  if (debugText) textf("[state] rev %lu applied: st %ld", (unsigned long)stateRev, st);
   emitStatus();
 }
 
@@ -880,10 +766,9 @@ static void handleJsonLine(const char* line) {
   const char* t = root.isNull() ? nullptr : root["t"].as<const char*>();
   if (t == nullptr) { emitErr("invalid", line); return; }
 
-  if      (strcmp(t, "state")  == 0) jsonState(root, line);
-  else if (strcmp(t, "roster") == 0) jsonRoster(root, line);
-  else if (strcmp(t, "debug")  == 0) jsonDebug(root, line);
-  // any other "t": not ours, ignored without a word
+  if      (strcmp(t, "state") == 0) jsonState(root, line);
+  else if (strcmp(t, "debug") == 0) jsonDebug(root, line);
+  // any other "t" (a v1 "roster", say): not ours, ignored without a word
 }
 
 // ===========================================================================
@@ -924,48 +809,46 @@ static void pollSerial() {
 // ===========================================================================
 static void printSummary() {
   uint32_t now = millis();
-  textf("---- CUPS seq=%lu state=%u demo=%s rejects=%lu ----",
+  textf("---- CUPS seq=%lu state=%u demo=%s rejects=%lu heard=%d ----",
         (unsigned long)statePkt.seq, statePkt.raceState,
-        demoMode ? "on" : "off", (unsigned long)versionRejects);
+        demoMode ? "on" : "off", (unsigned long)versionRejects, cupsHeard(now));
   if (!broadcasting)
     textf("  (state broadcast OFF: waiting for a JSON state line or a typed command)");
   if (rxQueueDrops)
     textf("  (rx queue dropped %lu packet(s))", (unsigned long)rxQueueDrops);
-  textf(" id mac                age_ms   drop  rssi  up_rssi  status");
+  if (tableFull)
+    textf("  (cup table full: %lu packet(s) from untracked cups ignored)", (unsigned long)tableFull);
+  textf(" mac               horse  age_ms   drop  rssi  up_rssi  tok  status");
   bool any = false;
   for (int i = 0; i < DDM_MAX_CUPS; i++) {
-    if (!roster[i].used) continue;
+    if (!cups[i].used) continue;
     any = true;
-    char m[18]; macFmt(roster[i].mac, m);
-    if (roster[i].lastSeenMs == 0) {
-      textf(" %2d %s       -      -     -        -  NEVER", i, m);
-    } else {
-      uint32_t age = now - roster[i].lastSeenMs;
-      textf(" %2d %s %7lu %6lu  %4d     %4d  %s",
-            i, m, (unsigned long)age,
-            (unsigned long)roster[i].dropped,
-            roster[i].rssi, roster[i].upRssi,
-            (age > STALE_MS) ? "STALE" : "OK");
-    }
+    char m[18]; macFmt(cups[i].mac, m);
+    uint32_t age = now - cups[i].lastSeenMs;
+    textf(" %s %5u %7lu %6lu  %4d     %4d %4u  %s",
+          m, (unsigned)cups[i].horse, (unsigned long)age,
+          (unsigned long)cups[i].dropped,
+          cups[i].rssi, cups[i].upRssi, (unsigned)cups[i].tokenCount,
+          (age > STALE_MS) ? "STALE" : "OK");
   }
-  if (!any) textf("  (no cups yet - waiting for HELLO)");
+  if (!any) textf("  (no cups yet - waiting for a HELLO)");
 }
 
 // ---------------------------------------------------------------------------
 void setup() {
-  // Both buffer sizes must be set before begin(). The default 256-byte RX
-  // buffer is smaller than a roster line (over 400 bytes); the TX buffer
-  // lets a burst of telem lines drain in the background instead of stalling
-  // loop() at 115200 baud (about 11.5 KB/s, so 2 KB takes ~175 ms). 8 KB
-  // holds a full-fleet `json 1` state line (~2.1 KB) plus 20 telem lines
-  // and their TELEM text (~5 KB) at once.
+  // Both buffer sizes must be set before begin(). The RX side takes one
+  // downlink line (state lines are under 200 bytes now, the cap is kept);
+  // the TX buffer lets a burst of telem lines drain in the background
+  // instead of stalling loop() at 115200 baud (about 11.5 KB/s, so 2 KB
+  // takes ~175 ms). 8 KB holds a full-table status line (~2.3 KB) plus 24
+  // telem lines and their TELEM text (~5 KB) at once.
   Serial.setRxBufferSize(DDM_LINE_MAX);
   Serial.setTxBufferSize(8192);
   Serial.begin(115200);
   delay(300);
 
   textf("DDM La Quiniela gateway - ESP-NOW <-> serial JSON bridge");
-  textf("proto v%d, line proto v%d, channel %d, max cups %d",
+  textf("proto v%d, line proto v%d, channel %d, cup table %d",
         DDM_PROTO_VERSION, DDM_LINE_PROTO_VERSION, DDM_ESPNOW_CHANNEL, DDM_MAX_CUPS);
   textf("build: DDM_AUTO_DEMO=%d DDM_DEBUG_TEXT=%d", DDM_AUTO_DEMO, DDM_DEBUG_TEXT);
 
@@ -986,28 +869,28 @@ void setup() {
     while (true) delay(1000);
   }
   esp_now_register_recv_cb(onDataRecv);
-  esp_now_register_send_cb(onDataSent);
-  addPeer(BCAST);                          // the one permanent peer
 
-  // Seed the roster from the compile-time table (bench mode, until DevPi's
-  // first roster line replaces it)
-  for (int i = 0; i < KNOWN_CUPS_N && i < DDM_MAX_CUPS; i++) {
-    roster[i] = {};
-    roster[i].used = true;
-    memcpy(roster[i].mac, KNOWN_CUPS[i].mac, 6);
-  }
-  textf("roster seeded with %d known cup(s)", KNOWN_CUPS_N);
+  // The broadcast address: the one and only peer, for the state packets.
+  esp_now_peer_info_t p = {};
+  memcpy(p.peer_addr, BCAST, 6);
+  p.channel = DDM_ESPNOW_CHANNEL;
+  p.ifidx   = WIFI_IF_STA;
+  p.encrypt = false;
+  if (esp_now_add_peer(&p) != ESP_OK) textf("ERR esp_now_add_peer broadcast failed");
 
-  // Initial broadcast state. Nothing is sent until broadcasting starts.
+  for (int i = 0; i < DDM_MAX_CUPS; i++) cups[i] = {};
+
+  // Initial broadcast state: PRE_RACE, nobody scratched, no renumbers, no
+  // results. Nothing is sent until broadcasting starts.
   statePkt = {};
   statePkt.version   = DDM_PROTO_VERSION;
   statePkt.msgType   = DDM_MSG_STATE;
-  statePkt.raceState = DDM_BETTING_OPEN;
+  statePkt.raceState = DDM_PRE_RACE;
 
 #if DDM_AUTO_DEMO
   textf("[demo] on (DDM_AUTO_DEMO build): broadcasting from boot; a JSON state line takes over");
 #else
-  textf("silent: no state broadcast until a JSON state line or a typed state/horse/scratch/demo command");
+  textf("silent: no state broadcast until a JSON state line or a typed state/scratch/renum/results/demo command");
 #endif
 
   emitHello();
@@ -1019,15 +902,17 @@ void loop() {
 
   pollSerial();
   drainRx();
-  ackTick(now);
 
   if (demoMode && now - tDemo >= DEMO_STEP_MS) {
     tDemo = now;
     demoStep++;
-    // Walk every slot through a different horse so any cup that hears us
-    // visibly reacts, roster or not.
-    for (int i = 0; i < DDM_MAX_CUPS; i++)
-      statePkt.horseForCup[i] = (uint8_t)(((demoStep + i * 5) % 20) + 1);
+    // WINNER with the results walking through the horses, so every cup that
+    // hears us shows a WIN, PLACE or SHOW banner in turn (its own number
+    // stays its own; the gateway cannot and does not renumber a cup here).
+    statePkt.raceState  = DDM_WINNER;
+    statePkt.results[0] = (uint8_t)((demoStep     % DDM_MAX_HORSE) + 1);
+    statePkt.results[1] = (uint8_t)(((demoStep + 1) % DDM_MAX_HORSE) + 1);
+    statePkt.results[2] = (uint8_t)(((demoStep + 2) % DDM_MAX_HORSE) + 1);
   }
 
   if (broadcasting && now - tBroadcast >= BROADCAST_MS) {
@@ -1043,6 +928,7 @@ void loop() {
   }
 
   if (now - tStatus >= STATUS_MS) {
+    forgetStale(now);
     emitStatus();                       // sets tStatus
   }
 
