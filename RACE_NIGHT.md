@@ -19,27 +19,24 @@ one lit. The board owns the TV in 1–4 and hands it back in 0, 5, 6.
       `splash_display/deploy/autostart_setup.md`. pi5 has no service file yet.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
-- [ ] Every cup and the gateway: flashed from the current firmware (`fc87f17` or later,
-      both of them), sleeve installed, orientation right, touch working (`p` in serial
-      shows touches), `CAL 10` done with the sleeve on, and a 10-token drop/dump test passes.
-- [ ] Every cup has a cup ID (`CUP n / NO HORSE` on its screen before a horse is
-      assigned; n counts from 0). Write the ID and the MAC on tape under the cup. The ID
-      is not stored in the cup: the gateway hands it out from its roster by the cup's MAC
-      (its built-in list until DevPi adopts, DevPi's saved roster after that), so it
-      survives power as long as the roster does.
+- [ ] Every cup and the gateway: flashed from the current firmware (`45510f8` or later,
+      protocol v2, both of them), sleeve installed, orientation right, touch working (`p`
+      in serial shows touches), `CAL 10` done with the sleeve on, and a 10-token drop/dump
+      test passes.
+- [ ] Every cup: hold the screen → `HORSE` → tap the top half of the number to go up, the
+      bottom half to go down, to its post (the cup for post 1 → 1, … post 20 → 20) →
+      `SET`. The number is the cup's own: it keeps it across power and across **Reset
+      betting**, so this is done once. A cup showing `NO HORSE` hasn't been set. Nothing
+      is written on tape; pi5 has no list of cups to keep.
 - [ ] Power: one supply for all cups, fed from the middle of the bus, bulk cap per cup.
       No cup on a USB port. Boot all twenty at once and watch for any that blink or
       reboot — that's a sag, not a bug.
-- [ ] Gateway on DevPi's USB; `pi5/.env` has `DDM_LQ_SERIAL_PORT` set to it.
-      `DDM_LQ_DEV_ENDPOINTS=1` is needed only for the next line (`Adopt` and `Forget cups`
-      on the page, the dev curls in the appendix): set it for the bench, restart pi5, take
-      it out again once the roster is adopted. The night itself doesn't need it.
-- [ ] Adopt the roster once, on the bench, with every cup powered: `ADMIN` → Race → Cups
-      shows every cup `online` → **Adopt**. Then pick each cup's horse in its row (cup 1 →
-      `#1`, … cup 20 → `#20`; the cup number is the screen's `CUP n` **plus one**). pi5
-      keeps the roster and the assignments across restarts and across **Reset betting**,
-      so this is done once. A cup that reports later is not added by a second Adopt: see
-      the table at the end.
+- [ ] Gateway on DevPi's USB; `pi5/.env` has `DDM_LQ_SERIAL_PORT` set to it. No other
+      flag: the night needs none and there are no dev routes.
+- [ ] On the bench with every cup powered: `ADMIN` → Race → Horses shows every horse 1–20
+      `● online` and the line above the list says `20 cups online · 0 with no horse`. A
+      `○ no cup` row: no cup says that number (walk the mantle for the `NO HORSE` screen
+      and set it). A `⚠ 2 CUPS` row: two cups say the same number; set one of them right.
 - [ ] Spare cup, spare gateway, spare CYD, flashed and in the drawer.
 
 ## 1. Derby week — the field
@@ -49,16 +46,18 @@ one lit. The board owns the TV in 1–4 and hands it back in 0, 5, 6.
 - [ ] Each scratch before Friday 9 a.m. ET: `ADMIN` → Scratches → In the field → that
       horse's row → pick the replacement number (the list offers the unused
       also-eligibles, 21 first) and its name → Scratch. The board lists the new number at
-      the bottom and the cup for that post shows it at once (nothing moves on the mantle;
-      a cup with no horse yet shows it when one is picked).
+      the bottom and the cup that was that horse becomes the new number on its own, tokens
+      and all (nothing moves on the mantle; a cup set to the old number later becomes the
+      new one the moment it hears the gateway).
 - [ ] Wrong? `ADMIN` → Scratches → Scratched → `Undo` on that line. Undo the most recent
       scratch first if there were several (the page greys out the others).
 
 ## 2. Party day — setup, before guests arrive
 
-- [ ] Cups on the mantle, sleeves in, powered. Every screen shows a number, or
-      `CUP n / NO HORSE`. A screen stuck on `WAITING FOR GATEWAY` has no cup ID yet: the
-      gateway isn't up, or that cup isn't in the roster.
+- [ ] Cups on the mantle, sleeves in, powered. Walk the mantle: every screen shows its
+      number. A screen showing `NO HORSE` hasn't been set: hold it → `HORSE` → its number
+      → `SET`. A `NO LINK` badge in a corner means that cup can't hear the gateway (not up
+      yet, or too far).
 - [ ] Gateway plugged into DevPi.
 
 ### 3. Start the apps (skip if they're services)
@@ -84,12 +83,13 @@ Check: open `ADMIN` on the phone. Race says `LINK OK` and `20 cups online`.
 
 Cups must be **empty** for this.
 
-- [ ] `ADMIN` → Race → Cups: every cup `online`, its horse in the picker (`#7 NAME`).
-      A cup showing `—`: pick its horse. A cup `offline` or `no cup`: table at the end.
+- [ ] `ADMIN` → Race → Horses: every horse 1–20 `● online`, no `○ no cup`, no `⚠`.
+      `○ no cup`: the cup for that post isn't set or isn't powered (walk the mantle).
+      `● offline` or `⚠ 2 CUPS`: table at the end.
 - [ ] `ADMIN` → Race → **Reset betting** → OK. The line under the button says
-      `Reset. Pot $0 · 20 cups keep their horses`. If it names cups with tokens still in
-      them, empty those cups and press it again. Nothing else changes: the cups keep their
-      numbers and their horses, names and scratches (both kinds) stay.
+      `Reset. Pot $0 · 20 cups online`. If it names horses with tokens still in their
+      cups, empty those cups and press it again. Nothing else changes: the cups keep their
+      numbers (they're the cups' own), names and scratches (both kinds) stay.
 - [ ] Walk the mantle: every cup shows its number, no `NO HORSE`, no `NO LINK` badge on
       any cup.
 - [ ] Drop one token in one cup: `ADMIN` → Race shows Pot $1 (the TV board and its toast
@@ -145,10 +145,9 @@ Then: `ADMIN` → Race → **AFTER PARTY**.
 
 ## 9. Another race on the same night
 
-- [ ] `ADMIN` → Race → **Reset betting** → OK. The cups keep their numbers and their
-      horses; names and scratches stay. The line says `Reset. Pot $0`; if it names cups
-      with tokens still in them, empty those (each count drops to 0 by itself) and press
-      it again.
+- [ ] `ADMIN` → Race → **Reset betting** → OK. The cups keep their numbers; names and
+      scratches stay. The line says `Reset. Pot $0`; if it names horses with tokens still
+      in their cups, empty those (each count drops to 0 by itself) and press it again.
 - [ ] Section 5 (close time), then section 6 (**BETTING OPEN**).
 - [ ] A different field next race: `ADMIN` → Horse names → paste the new names → Save
       names, and undo / redo the scratches, before opening.
@@ -160,9 +159,11 @@ Then: `ADMIN` → Race → **AFTER PARTY**.
 | You see | It means | Do |
 |---|---|---|
 | `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (Terminal 2 alive? its `PI5_URL`); restart the splash. |
-| Gateway `hello` lines forever, never answered | pi5 has no state yet, or wrong port | `ADMIN` → Race → **PRE-RACE** (any state button answers it); check `DDM_LQ_SERIAL_PORT` in `pi5/.env`. |
-| Cup shows `NO HORSE` | no horse on that cup | `ADMIN` → Race → Cups → that cup's row → pick the horse. |
-| Cup shows `WAITING FOR GATEWAY`; on the page it's `no cup` or `offline` | the gateway has no number for it (not in the roster: a swapped-in spare), or the gateway is down, or the cup is | Gateway up and the other cups online? Then it's that cup's power, or the roster: "spare cup" below. |
+| Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that Terminal 1 said `bridge started`. |
+| Cup shows `NO HORSE` | that cup hasn't been set | Hold the screen → `HORSE` → tap to its number → `SET`. |
+| A horse is `○ no cup` on the page | no cup says that number | Walk the mantle: the cup for that post shows `NO HORSE` (set it) or another number (set it right), or it has no power. |
+| A horse is `● offline` on the page; the cup's screen has a `NO LINK` badge | the cup can't hear the gateway, or the gateway is down, or the cup is | Gateway up and the other horses online? Then it's that cup's power. Dead for good: "cup died" below. |
+| A horse is `⚠ 2 CUPS` on the page | two cups say the same number | Find both (the page can't say which); set one of them to its right number. |
 | Cup count stuck, `HANDLED` | it was moved/bumped | Leave it alone five seconds. |
 | Count wrong after a bump | baseline drifted | Pull all tokens, wait for 0, put them back in one pour. |
 | Cup screen upside down / mirrored | orientation stepped (BOOT held 15 s) | Serial: `x`. Or touch menu (hold 3 s) → FLIP 180. |
@@ -171,8 +172,8 @@ Then: `ADMIN` → Race → **AFTER PARTY**.
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | Board on the TV, wrong state | state didn't take | `ADMIN` → Race: the lit button is the state pi5 holds. Press the right one and read the line under the buttons. |
 | A button's line is red | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the phone's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
-| Wrong number on a cup after a scratch | old firmware (pre-`fc87f17`) | Flash the gateway and the cup. |
-| A spare cup swapped in never gets a number | its MAC isn't in the roster; once DevPi has sent a roster the gateway gives numbers only to MACs in it | `DDM_LQ_DEV_ENDPOINTS=1`, restart pi5, then the roster curl in the appendix with the spare's MAC (tape under the cup) in the dead cup's slot; every other cup keeps its number. Blunt way: `ADMIN` → Race → Cups → **Forget cups**, power-cycle the gateway, wait for every cup to show `online`, **Adopt**, pick the horses again. |
+| Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
+| A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
 | `ADMIN` doesn't load | pi5 down, or the phone isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: restart pi5 (Terminal 1). Yes: the phone. Meanwhile, the appendix. |
 
 ## The rules, for anyone who asks
@@ -202,41 +203,17 @@ Reset betting (cups, horses, names and scratches are kept; the reply names any c
 curl -s -X POST localhost:5000/api/quiniela/reset
 ```
 
-A horse on a cup (cup 1 → horse 7; the cup number is the screen's `CUP n` plus one, the horse the number the board lists):
-```bash
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"horse 1 7"}'
-```
-
 The figures (what the page shows):
 ```bash
 curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'],'prizes',d['prizes'])"
 ```
 
-The cups (number, MAC, horse, online, count):
+The cups pi5 hears (MAC, the horse each says it is, online, count):
 ```bash
-curl -s localhost:5000/api/lq/snapshot | python3 -c "import sys,json;[print(c['cup'],c['mac'],c['horse'],c['online'],c['count']) for c in json.load(sys.stdin)['cups']]"
+curl -s localhost:5000/api/lq/snapshot | python3 -c "import sys,json;[print(c['mac'],c['horse'],c['online'],c['count']) for c in json.load(sys.stdin)['cups']]"
 ```
 
 The splash's view of the board (must say `link True`):
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'])"
 ```
-
-Dev routes (need `DDM_LQ_DEV_ENDPOINTS=1` in `pi5/.env` and a pi5 restart; 404 without it):
-
-Adopt (the cups heard so far become the roster; do it once every cup is online):
-```bash
-curl -s -X POST localhost:5000/api/lq/dev/roster/adopt
-```
-
-Forget cups (roster and assignments dropped, pi5 mirrors the gateway again; names and scratches stay; nothing is sent to the gateway):
-```bash
-curl -s -X POST localhost:5000/api/lq/dev/roster/clear
-```
-
-Name the roster yourself (twenty MACs, position = cup number, `""` for an empty slot; the spare cup's MAC goes in the dead cup's slot):
-```bash
-curl -s -X POST localhost:5000/api/lq/dev/roster -H 'Content-Type: application/json' -d '{"macs":["A0:B7:65:00:00:01","A0:B7:65:00:00:02","","","","","","","","","","","","","","","","","",""]}'
-```
-
-`POST /api/lq/dev/reset` still works and does both, Reset betting and then Forget cups. It is deprecated; use the two above.
