@@ -561,9 +561,14 @@ class BettingBoard:
                 h["share"] = round(h["tokens"] / total, 4)
         return horses, st, total, link_ok
 
-    def apply_snapshot(self, snap: Any) -> bool:
+    def apply_snapshot(self, snap: Any, baseline: bool = False) -> bool:
         """Digest one bridge snapshot. Returns True if the model changed (and
         was published to subscribers). Pure: no bridge, no port.
+
+        baseline=True applies the snapshot as a fresh baseline whatever the
+        revs say: the events are cleared and no count is diffed. That is the
+        between-races reset (reset_betting()), which keeps the roster, so no
+        rev moves to say so; its log record carries "reset": "betting".
 
         Events are the per-horse token deltas between this snapshot and the
         last one, except across a reset-shaped transition: when devpi.roster_rev
@@ -612,7 +617,7 @@ class BettingBoard:
 
             # A fresh baseline: the first snapshot ever, or the first after a
             # reset-shaped transition (roster_rev moved). Neither produces events.
-            fresh = (not self._seen_state
+            fresh = (baseline or not self._seen_state
                      or (roster_rev is not None and self._roster_rev is not None
                          and roster_rev != self._roster_rev))
             changes: List[Dict[str, Any]] = []
@@ -686,7 +691,7 @@ class BettingBoard:
             if changed:
                 model["updated"] = now_w
                 self._set_locked(model)
-            if changes or reset:     # a reset leaves a trace even when nothing else moved
+            if changes or reset or baseline:     # a reset leaves a trace even when nothing else moved
                 record = {
                     "ts": round(now_w, 3),
                     "race_state": race_state,
@@ -695,6 +700,8 @@ class BettingBoard:
                 }
                 if reset:
                     record["baseline"] = True       # counts moved by a reset, not by bets
+                if baseline:
+                    record["reset"] = "betting"     # the between-races reset: roster kept
         if record is not None:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed
@@ -725,6 +732,59 @@ class BettingBoard:
             changed = self.apply_snapshot(snap)
             self._push_recorded_scratches(bridge, snap)
             return changed
+
+    def reset_betting(self) -> Dict[str, Any]:
+        """The between-races reset: betting starts over, the roster stays.
+
+        The race goes back to PRE_RACE with the same horses on the same cups
+        and the same scratched flags (one set_state(), so the gateway hears
+        it and every cup keeps its number and its horse); the closing time
+        is cleared; and the bridge's picture is applied as a fresh baseline,
+        so the events are cleared and no count is diffed: what sits in a cup
+        right now is the starting point, not a bet. Tokens still in a cup
+        are not an error, the pot simply reads them, and the reply names
+        those cups so the admin page can say so. Names, both kinds of scratch
+        and the also-eligibles are not touched, nor is the roster.
+
+        Nothing here forgets a cup: that is the bridge's reset_link(), the
+        bench-side "forget cups" behind the dev routes.
+
+        Serialised with refresh() under the same lock, so the board thread
+        (woken by set_state()) applies its snapshot after this one and finds
+        nothing to do. Returns what POST /api/quiniela/reset reports."""
+        bridge = self.bridge
+        rev: Optional[int] = None
+        with self._refresh_lock:
+            if bridge is not None:
+                phase, horses, scratched = state_lists(bridge.get_snapshot())
+                rev = bridge.set_state(int(P.Phase.PRE_RACE), horses, scratched)
+                snap: Any = bridge.get_snapshot()
+            else:
+                snap = {}
+            self.store.clear_closes_at()
+            self.apply_snapshot(snap, baseline=True)
+        model = self.model()
+        if not isinstance(snap, dict):
+            snap = {}
+        cups = [c for c in (snap.get("cups") or []) if isinstance(c, dict)]
+        link = snap.get("link") if isinstance(snap.get("link"), dict) else {}
+        devpi = snap.get("devpi") if isinstance(snap.get("devpi"), dict) else {}
+        assigned = sum(1 for c in cups if c.get("horse"))
+        log.info("La Quiniela board: betting reset (roster kept); pot %s on %d token(s), %d cup(s) assigned",
+                 model["pot"], model["total_tokens"], assigned)
+        return {
+            "race_state": model["race_state"],
+            "pot": model["pot"],
+            "total_tokens": model["total_tokens"],
+            "cups_with_tokens": [c["cup"] for c in cups if c.get("count")],
+            "cups_assigned": assigned,
+            "roster_kept": bool(devpi.get("has_roster", False)),
+            "events": len(model["events"]),
+            "closes_at": model["closes_at"],
+            "rev": rev,
+            "gateway_online": bool(link.get("gateway_online", False)),
+            "names_rev": model["names_rev"],
+        }
 
     def _push_recorded_scratches(self, bridge: Any, snap: Any) -> bool:
         """A no-replacement scratch is a record in the store; the cup that

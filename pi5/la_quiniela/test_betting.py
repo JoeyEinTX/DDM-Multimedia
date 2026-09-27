@@ -2182,6 +2182,223 @@ def test_admin_page():
     _check("well under 400 lines", html.count("\n") < 400, str(html.count("\n")))
 
 
+def _race_night_setup(dev=False):
+    """A real bridge with two cups heard and adopted (cup 9 = MAC_A with 10
+    tokens, cup 3 = MAC_B with 5), the field on cups 1..20 in BETTING_OPEN,
+    the 24 names, a replacement scratch 3 -> 21 (cup 3 renumbered) and a
+    no-replacement scratch of 15 (cup 15 flagged), a closing time. Returns
+    (bridge, port, client, board, horses_on_cups, flags_on_cups)."""
+    b, port, sio, clk = _fresh_bridge(LQ_DEV_ENDPOINTS=dev)
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    board = get_board()
+    b.handle_raw_line(telem(8, MAC_A, count=10))            # wire 8 = cup 9, mirrored from the gateway
+    b.handle_raw_line(telem(2, MAC_B, count=5))             # wire 2 = cup 3
+    b.handle_raw_line(status(cups=2))
+    b.adopt_roster()                                        # roster {3: MAC_B, 9: MAC_A}
+    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    r = client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    _check("setup: names saved", r.status_code == 200, r.get_data(as_text=True))
+    r = client.post("/api/quiniela/scratch", json={"horse": 3, "replacement": {"number": 21, "name": FIELD_24[20]}})
+    _check("setup: replacement scratch 3 -> 21 renumbers cup 3", r.status_code == 200 and r.get_json()["cup"] == 3,
+           r.get_data(as_text=True))
+    r = client.post("/api/quiniela/scratch", json={"horse": 15})
+    _check("setup: no-replacement scratch of 15 flags cup 15", r.status_code == 200 and r.get_json()["cup"] == 15,
+           r.get_data(as_text=True))
+    r = client.put("/api/quiniela/closes_at", json={"in_minutes": 30})
+    _check("setup: closes_at set", r.status_code == 200 and r.get_json()["closes_at"] is not None)
+    board.refresh()
+    horses_now = [21 if h == 3 else h for h in HORSES_1_TO_20]
+    flags_now = [h == 15 for h in HORSES_1_TO_20]
+    return b, port, client, board, horses_now, flags_now
+
+
+def _scratch_pairs(model):
+    return [(s["was"]["number"], s["now"]["number"] if s["now"] else None) for s in model["scratches"]]
+
+
+def _last_reset_reason(b):
+    row = b.db.query("SELECT detail FROM events WHERE type = 'lq_reset' ORDER BY id DESC LIMIT 1")[0]
+    return json.loads(row["detail"])["reason"]
+
+
+def test_reset_betting_keeps_the_roster():
+    """The brief of 2026-09-26: a clean slate that makes you re-adopt and
+    re-assign twenty cups is not a clean slate. POST /api/quiniela/reset
+    (no dev flag) takes the race back to PRE_RACE with the same horses on
+    the same cups and the same flags, clears the closing time and the ticker
+    and makes the cups' current counts the baseline; the roster, every
+    assignment, the names, both kinds of scratch and the also-eligible stay.
+    Tokens still in a cup are not an error: the pot reads them."""
+    b, port, client, board, horses_now, flags_now = _race_night_setup()
+    r = client.post("/api/quiniela/cmd", json={"cmd": "state 2"})
+    _check("state 2 before the reset", r.status_code == 200)
+    board.refresh()
+    before = b.get_snapshot()
+    m = board.model()
+    _check("before: FINAL_CALL, pot 15 (10 on 9, 5 on 21), a closing time, a record of each kind",
+           m["race_state"] == 2 and m["pot"] == 15.0 and m["horses"]["9"]["tokens"] == 10
+           and m["horses"]["21"]["tokens"] == 5 and m["closes_at"] is not None
+           and _scratch_pairs(m) == [(3, 21), (15, None)] and m["horses"]["15"]["scratched"] is True, str(m["pot"]))
+    _check("before: the bridge holds the roster and the assignments",
+           before["devpi"]["has_roster"] and before["devpi"]["has_state"]
+           and [c["horse"] for c in before["cups"]] == horses_now
+           and [c["scratched"] for c in before["cups"]] == flags_now)
+    names_rev = m["names_rev"]
+    n_lines = len(port.lines())
+
+    r = client.post("/api/quiniela/reset")
+    body = r.get_json()
+    _check("POST /api/quiniela/reset 200 ok (no dev flag)", r.status_code == 200 and body["ok"] is True,
+           r.get_data(as_text=True))
+    _check("...PRE_RACE; the pot reads the tokens still in the cups and names those cups",
+           body["race_state"] == 0 and body["pot"] == 15.0 and body["total_tokens"] == 15
+           and body["cups_with_tokens"] == [3, 9], str(body))
+    _check("...events 0, closes_at null, roster kept, 20 cups assigned, the new rev, gateway_online a bool",
+           body["events"] == 0 and body["closes_at"] is None and body["roster_kept"] is True
+           and body["cups_assigned"] == 20 and body["rev"] == b.state_rev
+           and isinstance(body["gateway_online"], bool) and body["names_rev"] == names_rev, str(body))
+    after = b.get_snapshot()
+    _check("the bridge: same roster (rev unchanged), same MACs, same horses, same flags, PRE_RACE",
+           after["devpi"]["has_roster"] and after["devpi"]["roster_rev"] == before["devpi"]["roster_rev"]
+           and [c["mac"] for c in after["cups"]] == [c["mac"] for c in before["cups"]]
+           and [c["horse"] for c in after["cups"]] == horses_now
+           and [c["scratched"] for c in after["cups"]] == flags_now and after["devpi"]["phase"] == 0)
+    lines = port.lines()
+    _check("exactly one line to the gateway: PRE_RACE with the same horses and flags, byte-exact",
+           len(lines) == n_lines + 1 and lines[-1] == state_line(b.state_rev, 0, horses_now, flags_now), str(lines[-1:]))
+    m = board.model()
+    _check("the model: PRE_RACE, pot 15, tokens still on 9 and 21, no events, no closes_at",
+           m["race_state"] == 0 and m["pot"] == 15.0 and m["horses"]["9"]["tokens"] == 10
+           and m["horses"]["21"]["tokens"] == 5 and m["events"] == [] and m["closes_at"] is None, str(m["events"]))
+    _check("...names, both scratch kinds and the also-eligible kept, names_rev untouched",
+           m["horses"]["9"]["name"] == FIELD_24[8].upper() and m["horses"]["21"]["in_field"] is True
+           and m["horses"]["21"]["replaced"] == FIELD_24[2].upper() and m["horses"]["21"]["cup"] == 3
+           and m["horses"]["15"]["scratched"] is True and m["horses"]["15"]["in_field"] is False
+           and _scratch_pairs(m) == [(3, 21), (15, None)] and m["names_rev"] == names_rev
+           and board.store.scratches() == {3: 21, 15: None})
+    _check("...persisted", HorseStore(b.db).closes_at is None and HorseStore(b.db).scratches() == {3: 21, 15: None})
+    _, log = log_lines(board._log_dir)
+    _check("the log: a baseline record marked as the betting reset, with the state change",
+           log[-1].get("baseline") is True and log[-1].get("reset") == "betting"
+           and {"race_state": [2, 0]} in log[-1]["changes"], str(log[-1]))
+
+    # The first token after the reset is a bet; the ones already there never were.
+    b.handle_raw_line(telem(8, MAC_A, count=11))
+    board.refresh()
+    m = board.model()
+    _check("a drop after the reset is the only event, and counts",
+           [(e["horse"], e["delta"]) for e in m["events"]] == [(9, 1)] and m["pot"] == 16.0, str(m["events"]))
+    # Between two races the cups are emptied (removals on the ticker) and reset: everything at zero.
+    b.handle_raw_line(telem(8, MAC_A, count=0))
+    b.handle_raw_line(telem(2, MAC_B, count=0))
+    board.refresh()
+    _check("emptying the cups shows as removals", sorted(e["delta"] for e in board.model()["events"]) == [-11, -5, 1],
+           str(board.model()["events"]))
+    r = client.post("/api/quiniela/reset")
+    body = r.get_json()
+    _check("reset with empty cups: pot 0, no tokens, no cups named, no events",
+           body["pot"] == 0.0 and body["total_tokens"] == 0 and body["cups_with_tokens"] == [] and body["events"] == 0, str(body))
+    m = board.model()
+    _check("...the model agrees and the cups still carry their horses",
+           m["pot"] == 0.0 and m["events"] == [] and m["horses"]["21"]["cup"] == 3 and m["horses"]["9"]["cup"] == 9)
+    n = len(log_lines(board._log_dir)[1])
+    client.post("/api/quiniela/reset")
+    _, log = log_lines(board._log_dir)
+    _check("a reset that changes nothing still leaves its trace",
+           len(log) == n + 1 and log[-1].get("reset") == "betting" and log[-1]["changes"] == [], str(log[-1]))
+    bd, wall, _ = fresh_board()
+    done = bd.reset_betting()
+    _check("reset_betting() without a bridge: rev None, pot 0, roster not kept",
+           done["rev"] is None and done["pot"] == 0.0 and done["roster_kept"] is False, str(done))
+
+
+def test_dev_roster_clear_keeps_names_and_scratches():
+    """POST /api/lq/dev/roster/clear is the bench-side "forget cups": the old
+    reset without the betting part. The roster and every assignment go and
+    DevPi mirrors the gateway again; names and both kinds of scratch record
+    stay (a scratch is about the horse). Nothing goes to the gateway: from
+    its first roster line on it hands out no number to a MAC not in its
+    table, so an empty roster line would leave every cup at -1 with nothing
+    to mirror or adopt."""
+    b, port, client, board, horses_now, flags_now = _race_night_setup(dev=True)
+    names_rev = board.model()["names_rev"]
+    n_lines = len(port.lines())
+    r = client.post("/api/lq/dev/roster/clear", json={"reason": "bench"})
+    body = r.get_json()
+    _check("POST /api/lq/dev/roster/clear 200 with the revs and the rows dropped",
+           r.status_code == 200 and body["success"] is True and body["state_rev"] == b.state_rev
+           and body["roster_rev"] == b.roster_rev and body["cups_dropped"] == 0 and "betting" not in body, str(body))
+    after = b.get_snapshot()
+    _check("the roster and every assignment and flag are gone; DevPi mirrors again",
+           after["devpi"]["has_roster"] is False and after["devpi"]["has_state"] is False
+           and all(c["horse"] is None and c["scratched"] is False for c in after["cups"]) and after["devpi"]["phase"] == 0)
+    _check("nothing went to the gateway", len(port.lines()) == n_lines, str(port.lines()[n_lines:]))
+    _check("the lq_reset event carries the reason", _last_reset_reason(b) == "bench")
+    board.refresh()
+    m = board.model()
+    _check("names and both scratch records stay, names_rev untouched",
+           board.store.scratches() == {3: 21, 15: None} and m["horses"]["9"]["name"] == FIELD_24[8].upper()
+           and m["names_rev"] == names_rev and m["horses"]["21"]["in_field"] is True
+           and m["horses"]["15"]["scratched"] is True and _scratch_pairs(m) == [(3, 21), (15, None)])
+    _check("the board: PRE_RACE, no cups, pot 0, no ghost events, closing time cleared",
+           m["race_state"] == 0 and m["pot"] == 0.0 and m["events"] == [] and m["closes_at"] is None
+           and m["horses"]["9"]["cup"] is None and m["horses"]["21"]["cup"] is None)
+    # The gateway kept its table, so the cups report again with their numbers: mirrored,
+    # adopted, re-assigned, and the records still apply to the horses.
+    b.handle_raw_line(telem(8, MAC_A, count=10))
+    b.handle_raw_line(telem(2, MAC_B, count=5))
+    b.adopt_roster()
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 3 3"})
+    _check("horse 3 3 after the clear: the record still puts 21 on cup 3",
+           r.status_code == 200 and r.get_json()["horse"] == 21, r.get_data(as_text=True))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 15 15"})
+    _check("horse 15 15 after the clear: the cup is flagged again",
+           r.status_code == 200 and r.get_json()["scratched"] is True, r.get_data(as_text=True))
+    board.refresh()
+    m = board.model()
+    _check("...and the pot reads the re-assigned cup: 5 on 21 (cup 3), cup 9 still unassigned, 15 out of the field",
+           m["pot"] == 5.0 and m["horses"]["21"]["tokens"] == 5 and m["horses"]["21"]["cup"] == 3
+           and m["horses"]["9"]["cup"] is None and m["horses"]["15"]["cup"] == 15 and m["horses"]["15"]["in_field"] is False, str(m["pot"]))
+    b.settings["LQ_DEV_ENDPOINTS"] = False
+    _check("404 with the flag off", client.post("/api/lq/dev/roster/clear").status_code == 404)
+
+
+def test_dev_reset_alias_does_both():
+    """POST /api/lq/dev/reset stays as a deprecated alias: the betting reset
+    (PRE_RACE with the assignments, one state line) and then the roster
+    clear (nothing sent), so nothing that calls it breaks."""
+    b, port, client, board, horses_now, flags_now = _race_night_setup(dev=True)
+    r = client.post("/api/quiniela/cmd", json={"cmd": "state 2"})
+    board.refresh()
+    m = board.model()
+    _check("before: FINAL_CALL, pot 15, a closing time, a roster",
+           m["race_state"] == 2 and m["pot"] == 15.0 and m["closes_at"] is not None and b.has_roster)
+    n_lines = len(port.lines())
+    r = client.post("/api/lq/dev/reset", json={"reason": "simulator_run_ended"})
+    body = r.get_json()
+    _check("the alias answers as before, plus the betting part",
+           r.status_code == 200 and body["success"] is True and body["state_rev"] == b.state_rev
+           and body["roster_rev"] == b.roster_rev and body["cups_dropped"] == 0
+           and body["betting"]["race_state"] == 0 and body["betting"]["pot"] == 15.0
+           and body["betting"]["cups_with_tokens"] == [3, 9] and body["betting"]["roster_kept"] is True, str(body))
+    lines = port.lines()
+    _check("one line to the gateway: PRE_RACE with the assignments, before they were forgotten; then nothing",
+           len(lines) == n_lines + 1 and lines[-1] == state_line(b.state_rev - 1, 0, horses_now, flags_now), str(lines[-1:]))
+    after = b.get_snapshot()
+    board.refresh()
+    m = board.model()
+    _check("after: no roster, no assignments, PRE_RACE, pot 0, no events, no closing time",
+           after["devpi"]["has_roster"] is False and all(c["horse"] is None for c in after["cups"])
+           and m["race_state"] == 0 and m["pot"] == 0.0 and m["events"] == [] and m["closes_at"] is None)
+    _check("names and both scratch records stay",
+           m["horses"]["9"]["name"] == FIELD_24[8].upper() and board.store.scratches() == {3: 21, 15: None}
+           and m["horses"]["15"]["scratched"] is True)
+    _check("the lq_reset event carries the caller's reason", _last_reset_reason(b) == "simulator_run_ended")
+    b.settings["LQ_DEV_ENDPOINTS"] = False
+    _check("404 with the flag off", client.post("/api/lq/dev/reset").status_code == 404)
+
+
 def test_settings_new_keys():
     saved_env = {k: os.environ.pop(k, None) for k in ENV_KEYS}
     try:
@@ -2281,6 +2498,9 @@ def main():
     _run("scratch — the lq_scratches migration (now nullable)", test_lq_scratches_migration)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
+    _run("reset — POST /api/quiniela/reset keeps the roster", test_reset_betting_keeps_the_roster)
+    _run("reset — POST /api/lq/dev/roster/clear keeps names and scratches", test_dev_roster_clear_keeps_names_and_scratches)
+    _run("reset — POST /api/lq/dev/reset is an alias doing both", test_dev_reset_alias_does_both)
     _run("settings — the payout keys", test_settings_new_keys)
 
     passed = sum(1 for r in _results if r[0] == "PASS")

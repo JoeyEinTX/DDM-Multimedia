@@ -8,9 +8,10 @@
 #
 # Then the operator's side: horse names (1..24; 21..24 the also-eligibles),
 # the two kinds of scratch, the closing time (GET/PUT /api/quiniela/horses,
-# POST /api/quiniela/scratch and /unscratch, PUT /api/quiniela/closes_at) and
-# the phone-sized admin page at GET /quiniela/admin that drives them. Race
-# state stays on /api/quiniela/cmd.
+# POST /api/quiniela/scratch and /unscratch, PUT /api/quiniela/closes_at),
+# the between-races reset (POST /api/quiniela/reset: betting starts over,
+# the roster and every assignment stay) and the phone-sized admin page at
+# GET /quiniela/admin that drives them. Race state stays on /api/quiniela/cmd.
 #
 # The renumber rule (Churchill's: an also-eligible that draws in keeps its
 # own program number): a replacement scratch of horse 9 by 22 makes the cup
@@ -270,6 +271,26 @@ def api_quiniela_cmd():
 # -----------------------------------------------------------------------------
 # Names, scratches, closing time, and the admin page
 # -----------------------------------------------------------------------------
+
+@quiniela_board_bp.route("/api/quiniela/reset", methods=["POST"])
+def api_quiniela_reset():
+    """The between-races reset. Not a dev route: it is the button on the
+    admin page. Betting starts over and the roster stays: PRE_RACE with the
+    same horses on the same cups and the same scratched flags (one state
+    line to the gateway), the closing time cleared, the ticker cleared, the
+    cups' current counts the new baseline so nothing shows as a bet. Names,
+    both kinds of scratch and the also-eligibles are untouched. Tokens still
+    in a cup are not an error: the pot reads them and "cups_with_tokens"
+    says which cups. Reply: {"ok": true, "race_state": 0, "pot", "total_tokens",
+    "cups_with_tokens", "cups_assigned", "roster_kept", "events": 0,
+    "closes_at": null, "rev", "gateway_online", "names_rev"}. Forgetting the
+    cups is the dev route POST /api/lq/dev/roster/clear."""
+    try:
+        done = get_board().reset_betting()
+    except ValueError as exc:
+        return _bad(str(exc))
+    return jsonify({"ok": True, **done})
+
 
 def _horses_as_typed() -> Dict[str, Dict[str, str]]:
     return {str(n): entry for n, entry in sorted(get_board().store.horses().items())}

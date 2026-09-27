@@ -1390,7 +1390,7 @@ def test_http_routes_and_dev_gating():
     r = client.get("/api/lq/snapshot")
     _check("GET /api/lq/snapshot 200", r.status_code == 200 and len(r.get_json()["cups"]) == 20)
     for path in ("/api/lq/dev/state", "/api/lq/dev/roster", "/api/lq/dev/roster/adopt",
-                 "/api/lq/dev/debug", "/api/lq/dev/reset"):
+                 "/api/lq/dev/debug", "/api/lq/dev/reset", "/api/lq/dev/roster/clear"):
         r = client.post(path, json={})
         _check(f"POST {path} is 404 with LQ_DEV_ENDPOINTS off", r.status_code == 404)
     b.settings["LQ_DEV_ENDPOINTS"] = True

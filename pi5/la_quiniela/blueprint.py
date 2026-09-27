@@ -120,14 +120,52 @@ def api_dev_roster_adopt():
     return _rev_or_400(lambda: get_bridge().adopt_roster())
 
 
+@la_quiniela_bp.route("/dev/roster/clear", methods=["POST"])
+def api_dev_roster_clear():
+    """Forget the cups (bench): DevPi drops its roster and every cup's horse
+    and flag and goes back to mirroring the gateway. Used to throw away what
+    a simulator session left behind, or to start the adopt over. Names, the
+    closing time and the scratch records belong to the board and stay (a
+    scratch is about the horse). The betting itself is reset separately by
+    POST /api/quiniela/reset, which keeps the roster.
+
+    Nothing is sent to the gateway, on purpose. The protocol has no "forget"
+    line, and an empty roster line would be worse than none: from its first
+    roster line on the gateway hands out no cup number to a MAC that is not
+    in its table (ddm_gateway.ino, handlePacket: "no slot, no ack, and the
+    cup stays on its MAC screen until a roster line includes it"), so every
+    cup would report -1, nothing would be left to mirror or adopt, and only a
+    power-cycle of the gateway would bring the numbers back. Left alone, the
+    gateway keeps its table, the cups keep their numbers, DevPi mirrors them
+    again as they report and adopt_roster() copies them back."""
+    _dev_only()
+    body = request.get_json(silent=True) or {}
+    reason = str(body.get("reason") or "roster_clear")[:64]
+    return jsonify({"success": True, **get_bridge().reset_link(reason)})
+
+
 @la_quiniela_bp.route("/dev/reset", methods=["POST"])
 def api_dev_reset():
-    """Forget DevPi's roster and state. Used to throw away what a simulator
-    session left behind, without waiting for a real gateway to say hello."""
+    """Deprecated alias: both resets, the betting one first (PRE_RACE with
+    the assignments, one state line, closing time and ticker cleared) and
+    then the roster clear above (nothing sent), so the gateway hears the
+    phase before DevPi forgets the cups. Kept so nothing that calls it
+    breaks; new callers use POST /api/quiniela/reset and /dev/roster/clear.
+    The reply is the roster clear's, plus "betting": the betting reset's
+    reply (null when no board is bound to this bridge)."""
     _dev_only()
     body = request.get_json(silent=True) or {}
     reason = str(body.get("reason") or "dev_reset")[:64]
-    return jsonify({"success": True, **get_bridge().reset_link(reason)})
+    bridge = get_bridge()
+    betting = None
+    try:
+        from la_quiniela.board import get_board
+        board = get_board()
+    except RuntimeError:
+        board = None
+    if board is not None and board.bridge is bridge:
+        betting = board.reset_betting()
+    return jsonify({"success": True, **bridge.reset_link(reason), "betting": betting})
 
 
 @la_quiniela_bp.route("/dev/debug", methods=["POST"])
