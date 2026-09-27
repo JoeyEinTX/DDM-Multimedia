@@ -66,7 +66,6 @@ LQ_CUP_OFFLINE_S = _lq_env('LQ_CUP_OFFLINE_S', 6)         # no telemetry for thi
 LQ_GATEWAY_OFFLINE_S = _lq_env('LQ_GATEWAY_OFFLINE_S', 12) # no line at all for this long = gateway offline
 LQ_DEAF_REOPEN_S = _lq_env('LQ_DEAF_REOPEN_S', 20)        # port open but no valid line for this long = close it and open it again
 LQ_REOPEN_MIN_GAP_S = _lq_env('LQ_REOPEN_MIN_GAP_S', 30)  # never reopen more often than this
-LQ_DEV_ENDPOINTS = _lq_env('LQ_DEV_ENDPOINTS', False)     # enables POST /api/lq/dev/* (testing only)
 
 # The betting board the splash display's TV page renders (GET /api/quiniela,
 # see "Betting board" in pi5/LQ_BRIDGE.md). Same names as the splash used;

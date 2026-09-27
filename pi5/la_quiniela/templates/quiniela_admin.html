@@ -57,17 +57,21 @@
   .figure .val { font-size: 40px; font-weight: 800; line-height: 1.15; color: var(--gold); }
   .figure.pot { grid-column: 1 / -1; } .figure.pot .val { font-size: 56px; }
   .figure.bets .val { color: var(--fg); }
-  table.cups { width: 100%; border-collapse: collapse; font-size: 15px; }
-  table.cups th, table.cups td { padding: 6px 4px; text-align: left; vertical-align: middle; }
-  table.cups th { color: var(--dim); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
-  table.cups tbody tr:first-child td { border-top: 1px solid var(--line); }
-  table.cups td.n { font-size: 22px; font-weight: 800; color: var(--gold); width: 36px; }
-  table.cups td.mono { font-family: ui-monospace, Consolas, monospace; }
-  table.cups tbody.off td { color: var(--dim); } table.cups tbody.off td.n { color: var(--dim); }
-  table.cups select { min-height: 46px; padding: 6px 8px; }
-  table.cups .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--rose); vertical-align: middle; margin-right: 4px; }
-  table.cups .dot.on { background: var(--ok); }
-  table.cups .rowstatus { margin-top: 4px; }
+  /* The Horses list: one row per horse, the number on its cloth, name, status, tokens. */
+  .hrow { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 0 10px; align-items: center;
+          padding: 6px 0; border-top: 1px solid var(--line); }
+  .hrow:first-child { border-top: 0; }
+  .hrow .cloth { width: 40px; height: 34px; border-radius: 8px; display: flex; align-items: center;
+                 justify-content: center; font-size: 20px; font-weight: 800; }
+  .hrow .hname { font-weight: 600; min-height: 1.3em; }
+  .hrow .hstat { font-size: 14px; color: var(--dim); white-space: nowrap; }
+  .hrow .hstat.on { color: var(--ok); } .hrow .hstat.warn { color: var(--gold); font-weight: 700; }
+  .hrow .htok { font-size: 20px; font-weight: 800; color: var(--fg); min-width: 2ch; text-align: right; }
+  .hrow.dimmed .hname, .hrow.dimmed .htok { color: var(--dim); }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 700;
+         margin-left: 6px; vertical-align: middle; }
+  .tag.win { background: var(--gold); color: #14140f; } .tag.place { background: #c0c0c8; color: #14140f; }
+  .tag.show { background: #cd7f32; color: #14140f; } .tag.scr { background: var(--rose); color: #fff; }
 </style>
 </head>
 <body>
@@ -89,18 +93,11 @@
     <button id="reset-betting" class="danger">Reset betting</button>
   </div>
   <div id="reset-status" class="status"></div>
-  <h3>Cups</h3>
-  <p class="note">The cup number is the one the <code>horse</code> command takes (the screen’s <code>CUP n</code>
-     plus one). Pick a horse to assign it. A horse scratched with no replacement, one replaced, or an
-     also-eligible not yet in the field is listed but not offered.</p>
-  {% if dev_endpoints %}
-  <div class="row">
-    <button id="cups-adopt">Adopt</button>
-    <button id="cups-forget" class="danger">Forget cups</button>
-  </div>
-  {% endif %}
-  <div id="cups-status" class="status"></div>
-  <table class="cups" id="cups"></table>
+  <h3>Horses</h3>
+  <p class="note">Every cup knows its own horse (hold its screen → HORSE). This list is what pi5 hears:
+     a cup online, a cup that has gone quiet, no cup at all, or two cups claiming one number.</p>
+  <div id="horses-line" class="note">loading…</div>
+  <div id="horses"></div>
 </section>
 
 <section id="names">
@@ -119,9 +116,9 @@
 <section id="scratches">
   <h2>Scratches</h2>
   <p class="note">A scratched horse is replaced <b>by number</b>, as at Churchill: pick the number
-     that draws in (one of 21–24 not yet used) and its cup becomes that number, tokens and all. Nothing moves on
-     the mantle. Tick <b>No replacement</b> to scratch the cup at the gateway instead; its tokens
-     leave the pot.</p>
+     that draws in (one of 21–24 not yet used) and the cup that was the scratched horse becomes that number
+     on its own, tokens and all. Nothing moves on the mantle. Tick <b>No replacement</b> to scratch the
+     horse outright: its cup shows the X and its tokens leave the pot.</p>
   <h3>In the field</h3>
   <div id="scratch-list"></div>
   <h3>Scratched</h3>
@@ -151,7 +148,12 @@
   var HORSES = 24, FIELD = 20;
   var $ = function (id) { return document.getElementById(id); };
   var model = null, horses = {};
-  var snap = null;             // GET /api/lq/snapshot: the cups (MAC, count, online, last heard)
+  // The saddle cloths, as ddm_cup.ino draws them (and the TV board): [background, number].
+  var CLOTH = [null, ["#E31837", "#fff"], ["#fff", "#000"], ["#0033A0", "#fff"], ["#FFCD00", "#000"],
+    ["#00843D", "#fff"], ["#000", "#FFD700"], ["#FF6600", "#000"], ["#FF69B4", "#000"], ["#40E0D0", "#000"],
+    ["#663399", "#fff"], ["#808080", "#E31837"], ["#32CD32", "#000"], ["#8B4513", "#fff"], ["#800000", "#FFCD00"],
+    ["#C4B7A6", "#000"], ["#87CEEB", "#E31837"], ["#000080", "#fff"], ["#228B22", "#FFCD00"], ["#00008B", "#E31837"],
+    ["#FF00FF", "#FFCD00"], ["#FFDAB9", "#000"], ["#008080", "#fff"], ["#808000", "#fff"], ["#2F4F4F", "#fff"]];
   var STATES = ["PRE-RACE", "BETTING OPEN", "FINAL CALL", "AT THE POST", "RUNNING", "WINNER", "AFTER PARTY"];
 
   function say(id, text, cls) {
@@ -189,11 +191,11 @@
   }).join("");
   function renderStatus() {
     if (!model) { $("pills").textContent = "no model"; return; }
-    var online = 0, bets = 0, n, m;
-    for (n in model.horses) { m = model.horses[n]; if (m.online) { online++; } if (!m.scratched) { bets += m.tokens || 0; } }
+    var bets = 0, n, m;
+    for (n in model.horses) { m = model.horses[n]; if (!m.scratched) { bets += m.tokens || 0; } }
     $("pills").innerHTML =
       '<span class="pill ' + (model.link_ok ? "up" : "down") + '">' + (model.link_ok ? "LINK OK" : "NO LINK") + "</span>" +
-      '<span class="pill">' + online + " cups online</span>" +
+      '<span class="pill">' + (model.cups_online || 0) + " cups online</span>" +
       (model.closes_at != null ? '<span class="pill">closes set</span>' : "");
     Array.prototype.forEach.call($("states").querySelectorAll("button"), function (b) {
       b.classList.toggle("lit", Number(b.getAttribute("data-state")) === model.race_state);
@@ -204,6 +206,7 @@
     $("fig-bets").textContent = String(bets);
     $("fig-bets-lbl").textContent = "Bets" + (refunded > 0 ? " (+" + refunded + " in scratched cups)" : "");
     renderCloses();
+    renderHorses();
   }
   $("states").addEventListener("click", function (ev) {
     var btn = ev.target.closest("button[data-state]"); if (!btn) { return; }
@@ -215,129 +218,61 @@
       loadModel();
     }).catch(fail("state-status"));
   });
-  // Reset betting: Commit bc478de's route. Back to PRE-RACE with every cup, horse,
-  // name and scratch kept; the counts now in the cups are the baseline, and the
-  // reply says what the pot reads after it.
+  // Reset betting: back to PRE-RACE with the names and scratches kept (the cups
+  // keep their numbers, which are theirs); the results are cleared, the counts
+  // now in the cups are the baseline, and the reply says what the pot reads.
   $("reset-betting").onclick = function () {
     if (!confirm("Reset betting?\n\nBack to PRE-RACE; the ticker and the closing time are cleared and the " +
                  "tokens now in the cups become the starting point. Cups, horses, names and scratches are kept.")) { return; }
     say("reset-status", "resetting…");
     api("POST", "/api/quiniela/reset").then(function (r) {
       if (!r.ok) { say("reset-status", r.body.error || ("error " + r.status), "err"); return; }
-      var b = r.body, cups = b.cups_with_tokens || [];
+      var b = r.body, left = b.horses_with_tokens || [];
       say("reset-status", "Reset. Pot " + money(b.pot) +
-          (cups.length ? " (" + b.total_tokens + " token" + (b.total_tokens === 1 ? "" : "s") + " still in cup" +
-                         (cups.length === 1 ? " " : "s ") + cups.join(", ") + ")" : "") +
-          " · " + b.cups_assigned + " cups keep their horses", "ok");
-      loadModel(); loadSnap();
+          (left.length ? " (" + b.total_tokens + " token" + (b.total_tokens === 1 ? "" : "s") + " still in the cup" +
+                         (left.length === 1 ? " of horse " : "s of horses ") + left.join(", ") + ")" : "") +
+          " · " + (b.cups_online || 0) + " cups online", "ok");
+      loadModel();
     }).catch(fail("reset-status"));
   };
 
-  // ---- cups --------------------------------------------------------------------
-  // Two table rows per cup from the bridge's snapshot (cup, MAC, online,
-  // tokens, last heard) and a picker of the 24 horses named from the model;
-  // picking one sends "horse <cup> <n>", the command the runbook used to
-  // type, and the reply lands in that cup's own line. Rebuilt on every
-  // refresh (last heard moves), never while a picker has focus; the notes
-  // live in a map and are re-applied. Adopt and Forget cups are the dev
-  // routes and are rendered only when the dev flag is on.
-  function heard(ts, now) {          // the bridge stamps last_seen as ISO 8601 UTC ("...Z")
-    if (ts == null) { return "never"; }
-    var t = typeof ts === "number" ? ts : Date.parse(ts) / 1000;
-    if (isNaN(t)) { return String(ts); }
-    var s = Math.max(0, now - t);
-    return s < 60 ? Math.round(s) + " s ago" : Math.round(s / 60) + " min ago";
-  }
-  function loadSnap() {
-    return api("GET", "/api/lq/snapshot").then(function (r) { snap = r.ok ? r.body : null; renderCups(false); })
-      .catch(function () { snap = null; renderCups(false); });
-  }
-  function scratchOf(n) {
-    var found = null;
-    ((model && model.scratches) || []).forEach(function (s) { if (s.was && s.was.number === n) { found = s; } });
-    return found;
-  }
-  function horseOptions(current) {
-    var html = '<option value="0"' + (current ? "" : " selected") + ">—</option>", n, why, s;
-    for (n = 1; n <= HORSES; n++) {
-      s = scratchOf(n); why = "";
-      if (s && !s.now) { why = " (scratched)"; }
-      else if (s && s.now) { why = " (replaced by #" + s.now.number + ")"; }
-      else if (n > FIELD && !horseState(n).in_field) { why = " (not in the field)"; }
-      html += '<option value="' + n + '"' + (n === current ? " selected" : "") + (why && n !== current ? " disabled" : "") +
-              ">" + esc(label(n) + why) + "</option>";
-    }
-    return html;
-  }
-  function renderCups(force) {
-    var table = $("cups");
-    if (!force && table.contains(document.activeElement)) { return; }     // mid-pick: next tick
-    if (!snap || !snap.cups) { table.innerHTML = '<tbody><tr><td class="empty">cannot reach /api/lq/snapshot</td></tr></tbody>'; return; }
-    var now = (model && model.now) || (Date.now() / 1000);
-    var html = "<thead><tr><th>Cup</th><th>MAC</th><th>Online</th><th>Tokens</th><th>Heard</th></tr></thead>";
-    snap.cups.forEach(function (c) {
-      var mac = c.mac ? String(c.mac).replace(/:/g, "").slice(-4) : "—";
-      html += '<tbody data-cup="' + c.cup + '"' + (c.online ? "" : ' class="off"') + ">" +
-        '<tr><td class="n" rowspan="2">' + c.cup + "</td>" +
-        '<td class="mono">' + esc(mac) + "</td>" +
-        '<td><span class="dot' + (c.online ? " on" : "") + '"></span>' + (c.online ? "online" : (c.mac ? "offline" : "no cup")) + "</td>" +
-        "<td>" + (c.count == null ? "—" : c.count) + "</td>" +
-        "<td>" + esc(heard(c.last_seen, now)) + "</td></tr>" +
-        '<tr><td colspan="4"><select data-cup-horse>' + horseOptions(c.horse || 0) + "</select>" +
-        (c.scratched ? '<div class="note scr">scratched at the gateway</div>' : "") +
-        '<div class="status rowstatus" data-rowstatus></div></td></tr></tbody>';
-    });
-    table.innerHTML = html;
-    applyCupNotes();
-  }
-  var cupNotes = {};
-  function applyCupNotes() {
-    Array.prototype.forEach.call(document.querySelectorAll("#cups tbody"), function (tb) {
-      var el = tb.querySelector("[data-rowstatus]"), note = cupNotes[tb.getAttribute("data-cup")];
-      if (!el) { return; }
-      el.textContent = note ? note.text : "";
-      el.className = "status rowstatus" + (note && note.cls ? " " + note.cls : "");
-    });
-  }
-  function noteCup(cup, text, cls) { cupNotes = {}; cupNotes[cup] = { text: text, cls: cls }; applyCupNotes(); say("cups-status", text, cls); }
-  $("cups").addEventListener("change", function (ev) {
-    var sel = ev.target.closest("[data-cup-horse]"); if (!sel) { return; }
-    var cup = Number(sel.closest("tbody").getAttribute("data-cup")), n = Number(sel.value);
-    noteCup(cup, "working…");
-    api("POST", "/api/quiniela/cmd", { cmd: "horse " + cup + " " + n }).then(function (r) {
-      sel.blur();
-      if (!r.ok) { noteCup(cup, r.body.error || ("error " + r.status), "err"); renderCups(true); return; }
-      var h = r.body.horse;
-      noteCup(cup, "Cup " + cup + (h ? " → #" + h + (storedName(h) ? " " + storedName(h).toUpperCase() : "") : " cleared") +
-                   (r.body.note ? " (" + r.body.note + ")" : ""), "ok");
-      return loadModel().then(loadSnap);
-    }).catch(function () { sel.blur(); noteCup(cup, "cannot reach pi5 (network error)", "err"); });
-  });
-  if ($("cups-adopt")) {
-    $("cups-adopt").onclick = function () {
-      say("cups-status", "adopting…");
-      api("POST", "/api/lq/dev/roster/adopt").then(function (r) {
-        if (!r.ok) { say("cups-status", r.body.error || ("error " + r.status), "err"); return; }
-        say("cups-status", "Adopted (roster rev " + r.body.rev + "): the cups heard so far are the roster", "ok");
-        loadModel(); loadSnap();
-      }).catch(fail("cups-status"));
-    };
-    $("cups-forget").onclick = function () {
-      if (!confirm("Forget cups?\n\nThe roster and every cup's horse are dropped and pi5 mirrors the gateway again. " +
-                   "Names and scratches stay. Adopt again once every cup has reported.")) { return; }
-      say("cups-status", "forgetting…");
-      api("POST", "/api/lq/dev/roster/clear", { reason: "admin_page" }).then(function (r) {
-        if (!r.ok) { say("cups-status", r.body.error || ("error " + r.status), "err"); return; }
-        say("cups-status", "Cups forgotten: pi5 mirrors the gateway again. Adopt when every cup has reported.", "ok");
-        loadModel(); loadSnap();
-      }).catch(fail("cups-status"));
-    };
-  }
-  // force: rebuild the scratch rows even while the operator is in one (the
-  // explicit reloads after a save or a scratch). The 5 s timer never forces.
+  // ---- the model ---------------------------------------------------------------
+  // GET /api/quiniela is the one thing this page reads (at load, every 5 s and
+  // after every action); every section renders from it. force rebuilds the
+  // scratch rows even while the operator is in them (after their own action).
   function loadModel(force) {
-    return api("GET", "/api/quiniela").then(function (r) { model = r.body; renderStatus(); renderScratches(force === true); })
-      .catch(function () { $("statusline").textContent = "cannot reach /api/quiniela"; });
+    return api("GET", "/api/quiniela").then(function (r) {
+      if (!r.ok) { $("pills").textContent = "pi5: " + (r.body.error || ("error " + r.status)); return; }
+      model = r.body; renderStatus(); renderScratches(force === true);
+    }).catch(function () { $("pills").textContent = "cannot reach pi5 (/api/quiniela)"; });
+  }
+
+  // ---- horses ----------------------------------------------------------------
+  // One row per horse 1..24 from the model: the number on its cloth, the name,
+  // what pi5 hears for it (a cup online, a cup gone quiet, no cup, or two cups
+  // claiming the number), the tokens, and WIN / PLACE / SHOW once the results
+  // are in. Nothing to click: a cup's number is set on the cup.
+  function renderHorses() {
+    if (!model) { return; }
+    var res = model.results || {}, html = "", n, m, stat, cls, tag, c;
+    for (n = 1; n <= HORSES; n++) {
+      m = horseState(n);
+      if (m.conflict) { stat = "\u26a0 " + (m.cups || []).length + " CUPS"; cls = "warn"; }
+      else if (m.cup == null) { stat = "\u25cb no cup"; cls = ""; }
+      else if (m.online) { stat = "\u25cf online"; cls = "on"; }
+      else { stat = "\u25cf offline"; cls = ""; }
+      tag = res.win === n ? '<span class="tag win">WIN</span>' : res.place === n ? '<span class="tag place">PLACE</span>' :
+            res.show === n ? '<span class="tag show">SHOW</span>' : "";
+      if (m.scratched) { tag += '<span class="tag scr">SCR</span>'; }
+      c = CLOTH[n] || ["#808080", "#fff"];
+      html += '<div class="hrow' + (m.cup == null || !m.online || !m.in_field ? " dimmed" : "") + '" data-horse="' + n + '">' +
+        '<div class="cloth" style="background:' + c[0] + ';color:' + c[1] + '">' + n + "</div>" +
+        '<div class="hname">' + esc(storedName(n) || (n > FIELD ? "(also-eligible)" : "(no name)")) + tag + "</div>" +
+        '<div class="hstat ' + cls + '">' + stat + "</div>" +
+        '<div class="htok">' + (m.tokens || 0) + "</div></div>";
+    }
+    $("horses").innerHTML = html;
+    $("horses-line").textContent = (model.cups_online || 0) + " cups online \u00b7 " + (model.cups_no_horse || 0) + " with no horse";
   }
 
   // ---- names -----------------------------------------------------------------
@@ -433,13 +368,13 @@
       html += '<div class="horse" data-horse="' + n + '">' +
         '<div class="num' + (n > FIELD ? " ae" : "") + '">' + n + "</div>" +
         '<div><div class="name">' + esc(storedName(n) || "(no name)") + "</div>" +
-          '<div class="note">' + (m.cup == null ? "no cup yet" : "cup " + m.cup) +
+          '<div class="note">' + (m.cup == null ? "no cup yet" : (m.conflict ? "\u26a0 " + m.cups.length + " cups" : (m.online ? "cup online" : "cup offline"))) +
           (m.replaced != null ? " · replaces " + esc(m.replaced || "(unnamed)") : "") + "</div></div>" +
         '<div class="controls">' +
           '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
           '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">' +
           '<button class="danger" data-scratch>Scratch</button>' +
-          '<label><input type="checkbox" data-norepl> No replacement (scratch the cup at the gateway)</label>' +
+          '<label><input type="checkbox" data-norepl> No replacement (the horse is out, its tokens refunded)</label>' +
           '<div class="status rowstatus" data-rowstatus></div>' +
         "</div></div>";
     }
@@ -456,7 +391,7 @@
         '<div><div class="name">' + esc(was.name || "(no name)") + "</div>" +
           '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") +
                                             (chained ? " · undo #" + now.number + " first" : "")
-                                          : "no replacement: cup scratched at the gateway, tokens out of the pot") + "</div></div>" +
+                                          : "no replacement: out of the race, tokens out of the pot") + "</div></div>" +
         '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
         '<div class="status rowstatus" data-rowstatus></div>' +
         "</div>";
@@ -507,7 +442,7 @@
       if (path.indexOf("unscratch") >= 0) {
         what = "Undone " + horse;
       } else if (r.body.kind === "gateway") {
-        what = "Scratched " + horse + (r.body.cup == null ? " (no cup yet; the flag follows when one is assigned)" : "");
+        what = "Scratched " + horse + (r.body.cup == null ? " (no cup is on that number yet)" : "");
       } else {
         what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
       }
@@ -547,11 +482,10 @@
     b.onclick = function () { putCloses({ in_minutes: Number(b.getAttribute("data-min")) }); };
   });
 
-  loadHorses().then(function () { return loadModel(true); }).then(loadSnap).catch(fail("scratch-status"));
-  // The state buttons, Reset betting, the pickers, Adopt / Forget, the names,
-  // Set/Clear and Scratch/Undo each report into their own status line;
-  // nothing on this page fails silently.
-  setInterval(function () { loadModel(false); loadSnap(); }, 5000);
+  loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
+  // The state buttons, Reset betting, the names, Set/Clear and Scratch/Undo
+  // each report into their own status line; nothing on this page fails silently.
+  setInterval(function () { loadModel(false); }, 5000);
 })();
 </script>
 </body>

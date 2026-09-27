@@ -5,24 +5,36 @@ Race night: see `RACE_NIGHT.md` at the repo root.
 The DevPi end of the La Quiniela gateway link. A daemon thread inside the
 Flask app talks to the ESP32 gateway over USB serial:
 
-- **reads** the gateway's JSON lines, keeps a live picture of the 20 cups,
-  writes the `cups`, `telemetry` and `events` tables, and emits SocketIO
-  events for displays;
-- **writes** `roster` and `state` lines down, answers the gateway's `hello`,
-  and re-sends whenever a `status` line shows the gateway out of sync;
+- **reads** the gateway's JSON lines, keeps a live picture of every cup it
+  has heard (by MAC, with the horse number the cup says it is), writes the
+  `lq_cups`, `telemetry` and `events` tables, and emits SocketIO events for
+  displays;
+- **writes** the `state` line down (race state, scratched horses, renumber
+  pairs, results), answers the gateway's `hello` with it, and re-sends it
+  whenever a `status` line shows the gateway holding another revision;
 - **never takes Flask down**: every serial failure is caught, logged and
   retried.
 
 The line protocol is `firmware/quiniela/README.md`, section "Serial line
-protocol". That document wins on any difference.
+protocol" (line protocol v2, with ESP-NOW protocol v2). That document wins on
+any difference.
 
-## The one ID rule
+## The one identity rule
 
-Cup IDs are **0-based on the wire** and **1-based everywhere on DevPi**:
-database, Python API, SocketIO events, HTTP JSON. Wire `-1` (MAC not in the
-roster) is `None`. `la_quiniela/protocol.py` holds the only two conversions,
-`wire_to_cup()` and `cup_to_wire()`, used where a line is read or built and
-nowhere else; the test suite greps for any other `± 1` on a cup ID.
+Since protocol v2 (2026-09-27) **a cup is its MAC and a horse is the number
+the cup reports.** The cup owns its horse number: it is set on the cup (the
+touch menu's `HORSE`, or `n <1-24|0>` on its serial port), saved in the cup's
+NVS, and carried in every packet the cup sends. DevPi learns which horses
+have cups by listening. There are no cup IDs, slots, rosters or adoption
+anywhere on DevPi: everything the bridge stores, emits or serves is keyed by
+MAC (which cup) and horse (what it says it is), and everything DevPi sends
+down (a scratch, a renumber, the results) is keyed by horse number. The
+gateway keeps a table of the cups it hears, but only its contents (MAC,
+horse, tokens, signal, age) ever reach DevPi; its indexing never does.
+
+`la_quiniela/protocol.py` holds the two readers used everywhere a line is
+parsed: `normalize_mac()` (upper-case, colon-separated, or `None`) and
+`parse_horse()` (1..`MAX_HORSE`, anything else reads as 0, "none").
 
 ## Turning it on, on DevPi
 
@@ -40,16 +52,15 @@ nowhere else; the test suite greps for any other `± 1` on a cup ID.
 3. Set `LQ_SERIAL_PORT` in `pi5/config.py`, or export
    `DDM_LQ_SERIAL_PORT=/dev/serial/by-id/...` for the service.
 4. Restart the app. The log shows `La Quiniela bridge started on ...`, then
-   the gateway's `hello` is answered with whatever roster and state DevPi has.
+   the gateway's `hello` is answered with the state line DevPi holds.
 
 With no port configured the bridge idles and logs once how to set it. With
 `LQ_BRIDGE_ENABLED = False`, or without pyserial, it logs one line and the
 rest of the app, La Subasta included, runs exactly as before.
 
-The port is opened with DTR and RTS held low, so a DevPi service restart
-does not reset the gateway, and with `exclusive=True`, so a second copy of
-the app cannot open the same port. A missing or vanished port is retried
-every 5 s forever, logged at most once a minute.
+The port is opened with `exclusive=True`, so a second copy of the app cannot
+open the same port. A missing or vanished port is retried every 5 s forever,
+logged at most once a minute.
 
 ## Configuration (`pi5/config.py`)
 
@@ -64,28 +75,41 @@ editing files (`DDM_LQ_SERIAL_PORT=/dev/pts/3`).
 | `LQ_SERIAL_BAUD` | `115200` | |
 | `LQ_SERIAL_LINES` | `"leave"` | `"leave"` never touches the port's DTR and RTS control lines; `"low"` holds both low before opening. See below. |
 | `LQ_HEARTBEAT_LOG_S` | `10` | Per-cup heartbeat interval for logging and display refresh |
-| `LQ_CUP_OFFLINE_S` | `6` | No telemetry for this long = cup offline |
+| `LQ_CUP_OFFLINE_S` | `6` | No packet from a cup for this long = cup offline |
 | `LQ_GATEWAY_OFFLINE_S` | `12` | No line at all for this long = gateway offline |
 | `LQ_DEAF_REOPEN_S` | `20` | Port open but no valid line for this long = close it and open it again |
 | `LQ_REOPEN_MIN_GAP_S` | `30` | Never reopen more often than this |
-| `LQ_DEV_ENDPOINTS` | `False` | Enables the dev-only POST routes |
+
+`LQ_DEV_ENDPOINTS` is gone with the dev routes it gated (below); a value left
+in `pi5/config.py` or `pi5/.env` is ignored.
 
 ## Database
 
 The tables live in the app's one SQLite database, the file La Subasta uses
 (`pi5/data/la_subasta.db`), created idempotently at startup. A table of the
 same name with a different shape is reported and never altered; the bridge
-then refuses to start. Timestamps are UTC ISO 8601 with a `Z`.
+then refuses to start. The one exception is the protocol v1 shape, which
+`init_schema()` migrates (below). Timestamps are UTC ISO 8601 with a `Z`.
 
 | Table | Rows |
 | --- | --- |
-| `cups` | one per MAC ever seen: `mac` (PK), `cup_id` (1..20 or NULL, unique when set), `horse`, `last_seen`, `rssi`, `up_rssi`, `last_count`, `last_raw`, `online` |
-| `telemetry` | append only: `ts`, `cup_id`, `mac`, `raw_weight`, `token_count`, `seq`, `dropped`, `rssi`, `up_rssi`, `reason` (`change` or `heartbeat`) |
-| `events` | audit log: `ts`, `type`, `cup_id` (nullable), `detail` (JSON) |
-| `lq_link_state` | one row: `state_rev`, `state_json`, `roster_rev`, `roster_json`; how the bridge answers a `hello` after a restart |
+| `lq_cups` | the cup cache: one per MAC ever heard: `mac` (PK), `horse` (the number it last claimed, 0 = none), `last_seen`, `rssi`, `up_rssi`, `last_count`, `last_raw`, `online` |
+| `telemetry` | append only: `ts`, `mac`, `horse`, `raw_weight`, `token_count`, `seq`, `dropped`, `rssi`, `up_rssi`, `reason` (`change` or `heartbeat`) |
+| `events` | audit log: `ts`, `type`, `horse` (nullable), `detail` (JSON) |
+| `lq_link_state` | one row: `state_rev`, `state_json` (`{"phase","scratched","renum","results"}`); how the bridge answers a `hello` after a restart |
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
+
+**The v1 tables are migrated on start** (`_migrate_v2`, each step in its own
+transaction, only when the old shape is found, idempotent): the v1 `cups`
+table (slots: `mac` plus `cup_id`) is dropped, since its rows were per slot
+and `lq_cups` fills from the air within seconds; `telemetry` and `events` are
+rebuilt with a `horse` column in place of `cup_id`, rows kept with `horse`
+NULL (the old slot numbers were not horses); `lq_link_state` loses
+`roster_rev` and `roster_json`, keeping `state_rev` and `state_json`. A v1
+`state_json` (`horses` and `scratched` keyed by slot) is read for its phase
+and nothing else: scratched, renum and results start empty.
 
 `lq_horses` was first created with `CHECK (horse BETWEEN 1 AND 20)` and is
 live on DevPi that way. SQLite cannot alter a CHECK, so `init_schema()`
@@ -98,92 +122,74 @@ passes either way.
 
 Telemetry arrives about ten lines a second and DevPi runs on an SD card, so
 the database is written only when a token count changes, when the heartbeat
-interval passes, when a cup goes online or offline, when a cup number
+interval passes, when a cup comes online or goes offline, when a cup's horse
 changes, and for events.
 
-Event types: `cup_hello`, `cup_online`, `cup_offline`, `cup_claim_mismatch`,
-`roster_mismatch`, `gateway_hello`, `gateway_reboot`, `gateway_err`,
-`state_set`, `roster_set`.
+Event types: `cup_online`, `cup_offline`, `cup_horse` (`{"mac","from","to"}`,
+also for a cup first heard with a horse, `from` 0), `cups_forgotten`,
+`gateway_hello`, `gateway_reboot`, `gateway_err`, `state_set` (with what
+changed), `bridge_reopen`. The `horse` column of a cup event is the horse the
+cup reports (NULL for none).
 
-## Who owns cup numbers
+## Who owns horse numbers: the cup
 
-- **No roster yet** (`has_roster` false): DevPi mirrors the gateway. A MAC's
-  `cup_id` is whatever the gateway reports.
-- **With a roster**: DevPi is right. A cup the gateway reports differently
-  logs a `roster_mismatch` event and triggers a roster re-send; DevPi's
-  table is never overwritten. `adopt_roster()` turns the mirrored numbers
-  into the first roster without typing 20 MACs.
+- The cup: `HORSE` in its touch menu (hold the screen, `HORSE`, tap the top
+  half of the number to go up and the bottom half to go down, `NONE` or
+  1..24, `SET`), or `n <1-24|0>` on its serial port. Saved in NVS, shown big
+  on the screen, sent in every packet. The picker is locked while the race
+  is in BETTING_OPEN, FINAL_CALL, AT_THE_POST or RUNNING (`HORSE (LOCKED)`)
+  and free in PRE_RACE, WINNER and AFTER_PARTY. A cup with no horse shows
+  `NO HORSE` and, smaller, `HOLD TO SET`.
+- DevPi listens. Every `telem` line says which MAC claims which horse; the
+  bridge's cache follows, and the betting board's model puts each horse's
+  tokens under the cup that claims it.
+- **Two cups claiming one horse is a conflict**, reported, not resolved:
+  both MACs are listed, the one heard most recently (online first) supplies
+  the count, one WARNING is logged per pair, and the admin page shows
+  `⚠ 2 CUPS` on that row until one of them is set to something else or goes
+  quiet. A cup that has gone offline while another took its horse (a spare
+  swapped in) is not a conflict.
+- A scratch, a renumber and the results go down **keyed by horse number**,
+  in the one `state` line (below); the gateway broadcasts them and every cup
+  applies what concerns the number it holds. Nothing on DevPi ever addresses
+  a cup.
 
-Adopt only once every cup has reported. It copies the cups DevPi has heard
-from at that moment, so a cup that has not reported yet is left out, and
-adopting again will not add it: from the first roster on, DevPi owns the cup
-numbers, so the gateway reports that cup as `-1` and there is nothing left
-to mirror. A cup left out this way is put back by naming it in a roster,
-through the admin page or `set_roster()`. The roster is also persisted, so a
-short roster is inherited by the next run of the app. The simulator avoids
-all of this by naming all 20 MACs at the start of every scenario rather than
-adopting.
+### The state DevPi holds
 
-### Whether DevPi holds anything is not a rev
+`state_rev`, `phase`, `scratched` (horses scratched with no replacement),
+`renum` (`[from, to]` pairs: a cup whose horse is `from` becomes `to`, saves
+it and reports it from then on) and `results` (WIN, PLACE, SHOW horse
+numbers, 0 = not yet). A fresh bridge starts at rev 1 with PRE_RACE and
+nothing else, and persists that, so a `hello` always has a line to get. Any
+part changes through `set_state()` (the others stay), validated exactly as
+the gateway validates the line, and every change bumps the rev, persists,
+sends the line if the port is open, and logs a `state_set` event with what
+changed. A `hello` is answered with the current line; a `status` whose
+`state_rev` differs gets a re-send (at most one every 2 s). `in_sync` in the
+link means the gateway reports DevPi's rev.
 
-`state_rev` and `roster_rev` only ever increase, including across a reset, so
-a rev of 0 no longer means "nothing set". Two flags say that: `has_state` and
-`has_roster`, both in `get_snapshot()["devpi"]`. Everything that used to read
-a rev of 0 reads a flag instead, the answer to a `hello` included. They are
-persisted as the presence of `state_json` and `roster_json` in
-`lq_link_state`, so no schema change was needed.
+### The cup cache
 
-## Resetting the link
+`lq_cups` remembers every cup DevPi has heard, with the horse it last
+claimed and when it was last seen, across restarts. It is what lets the
+admin page tell `● offline` (seen before, silent now) from `○ no cup` (never
+heard) and it decides nothing: a cup that is still talking is back in the
+picture within one packet. `forget_cups(prefix)` / `POST /api/lq/cups/forget`
+drops entries (one MAC, a prefix, or all), in memory and in the table, with
+a `cups_forgotten` event; the only reason to do so is a cup that went home
+and would otherwise sit on the page as offline.
 
-`reset_link(reason)` makes DevPi forget its roster and its state and go back
-to mirroring the gateway. It exists because the cup simulator writes a roster
-of twenty invented MACs into this same database, and that roster must never
-reach a real gateway.
-
-Since bc478de it is only the bench-side "forget cups" (`POST
-/api/lq/dev/roster/clear`). The between-races reset on race night is the
-board's `reset_betting()` behind `POST /api/quiniela/reset`, no dev flag: it
-keeps the roster and every assignment and resets the betting alone (the
-board section below). The empty roster line the 2026-09-26 brief asked
-"forget cups" to push was deliberately not added: from its first roster line
-on, the gateway hands out no cup number to a MAC that is not in its table
-(`ddm_gateway.ino`, `handlePacket`: "no slot, no ack, and the cup stays on
-its MAC screen until a roster line includes it"), so every cup would report
-`-1`, nothing would be left to mirror or adopt, and only a power-cycle of
-the gateway would bring the numbers back. Sending nothing, the gateway keeps
-its table, the cups keep their numbers, DevPi mirrors them again as they
-report and `adopt_roster()` copies them back.
-
-- Both revs go up, so a gateway can never mistake the reset for an older
-  roster. What changes is that DevPi stops claiming to hold one, and answers
-  the next `hello` with nothing.
-- `cups.cup_id` and `cups.horse` are set to NULL on every row. Rows whose MAC
-  starts with `02:DD:4D:` are deleted outright: they are simulated cups and
-  there is no real cup behind them.
-- `telemetry` and `events` are left alone. One `lq_reset` event records the
-  reason and the new revs.
-- A fresh `lq_snapshot` and `lq_link` go to the room.
-- **Nothing is sent to the gateway.** There is no line in the protocol that
-  means "forget what I told you", so a gateway that already holds a roster
-  keeps it until it is power-cycled. Reset DevPi, then power-cycle the
-  gateway, and both start clean.
-
-### The automatic guard
-
-Nobody has to remember to do this. Every MAC the simulator invents starts
-`02:DD:4D:`, its gateway included (`02:DD:4D:FF:FF:FF`), and nothing real uses
-that prefix. So when a `hello` arrives, if the stored roster holds any
-`02:DD:4D:` MAC and the gateway saying hello does not, the bridge calls
-`reset_link("sim_roster_discarded")` before answering, and then answers with
-nothing.
-
-The reverse needs no guard: a simulator scenario names all twenty of its own
-MACs at the start, replacing whatever roster was there.
-
-Without this, the first `hello` after a simulator session hands the real
-gateway twenty MACs that do not exist. Every real cup is then reported as
-`-1`, never gets a number, and sits on its MAC waiting screen with nothing on
-it to explain why.
+**The simulator's cups drop out by themselves.** Every MAC the cup
+simulator invents starts `02:DD:4D:`, its gateway included
+(`02:DD:4D:FF:FF:FF`), and nothing real uses that prefix. When a `hello`
+arrives from a gateway whose MAC does not start that way, the bridge drops
+every `02:DD:4D:` cup from the cache before answering the hello with its
+state, as it answers every hello. There is no longer a "reset the link":
+DevPi holds nothing about cups that a real gateway could be misled by (its
+state line names horses, not cups), so after a simulator session the real
+gateway is simply plugged in; the gateway itself keeps whatever state it was
+last sent until it is power-cycled or DevPi sends the next line, which the
+hello answer is.
 
 ## If starting the app reboots the gateway
 
@@ -237,8 +243,10 @@ after `gateway online` is a good sign, not a bad one.
 | `bridge started on /dev/serial/by-id/... @ 115200, lines: leave` | The reader thread is running. This should be the first one. The last word is `LQ_SERIAL_LINES`. |
 | `cannot open ... ; retrying every 5 s` | The port is not there. Check the cable and the path. Printed once, then at most once a minute. |
 | `gateway hello from 24:6F:...` | The gateway introduced itself. It does this until DevPi answers. |
-| `answered the hello with roster rev N and state rev N` | DevPi told the gateway what it knows. |
+| `answered the hello with state rev N` | DevPi sent the gateway its state line. |
+| `dropped N simulated cup(s) from the cache: a real gateway said hello` | The cup simulator's cups left the cache (above). |
 | `gateway online` | Lines are arriving. |
+| `cup A0:B7:65:12:34:56 is horse 7 (was 3)` | A cup reported a horse it had not reported before (the first report of a cup with a horse says `is horse 7` alone). |
 | `re-sent state rev N to the gateway` | The gateway had drifted and was corrected. |
 | `gateway offline: nothing heard for 12 s` | The gateway stopped talking. |
 | `no data from the gateway for 20 s - reopening the port` | The watchdog, below. |
@@ -260,9 +268,10 @@ the baud rate was applied, on a line that never stops talking. The old reader
 used `readline()`, which has no size limit and no overall deadline, so a burst
 with no newline in it blocked the reader thread for as long as the bytes kept
 coming. That also starved the timer, so nothing noticed and nothing recovered
-until the app was restarted. The reader now takes bounded chunks and splits
-lines itself, a newline always returns it to a clean start of line, and the
-watchdog is the backstop for anything else.
+until the app was restarted. The reader now takes bounded chunks (lines up to
+4096 bytes, room for the cup table in a `status`) and splits lines itself, a
+newline always returns it to a clean start of line, and the watchdog is the
+backstop for anything else.
 
 ### What the snapshot says
 
@@ -293,72 +302,73 @@ Guest phones share this server for La Subasta, so La Quiniela events go to
 the room `lq` only. A display sends `lq_request_snapshot` on connect and on
 reconnect; that joins it to the room and answers with `lq_snapshot`.
 
-`lq_update`, one cup, on a count change, heartbeat, online/offline change,
-horse or scratched change, or cup number change:
+`lq_update`, one cup, on a count change, a heartbeat, a cup coming online or
+going offline, or a change of the horse it claims:
 
 ```json
-{"cup":8,"mac":"A0:B7:65:12:34:56","horse":8,"scratched":false,"count":14,"raw":812345,"rssi":-64,"up":-61,"drop":2,"online":true,"last_seen":"2027-05-01T21:14:07Z"}
+{"mac":"A0:B7:65:12:34:56","horse":7,"count":14,"raw":812345,"rssi":-64,"up":-61,"drop":2,"seq":9021,"online":true,"hello":false,"last_seen":"2027-05-01T21:14:07Z"}
 ```
+
+`hello` is true while the cup is still broadcasting because it has not heard
+a state packet yet (its `telem` lines carry `"hello":1`).
 
 `lq_link`, on every change of port-open, gateway-online or in-sync, plus a
 `hello` (`boot`) and a protocol mismatch:
 
 ```json
-{"port_open":true,"gateway_online":true,"in_sync":true,"reason":"status","gateway_mac":"24:6F:28:AA:BB:CC","phase":1,"state_rev":42,"roster_rev":7,"cups_heard":18,"rejects":0,"up_s":5230}
+{"port_open":true,"gateway_online":true,"in_sync":true,"reason":"status","gateway_mac":"24:6F:28:AA:BB:CC","phase":1,"state_rev":42,"cups_heard":18,"rejects":0,"up_s":5230,"thread_alive":true,"last_line_age_s":0.4,"lines_ok":9021,"lines_bad":12,"bytes_rx":1480233,"reopens":0}
 ```
 
-`reason` is one of `boot`, `reboot`, `online`, `offline`, `port_closed`,
-`status`, `protocol_mismatch`. `in_sync` is true when both gateway revs
-match DevPi's.
+`reason` is one of `boot`, `reboot`, `online`, `offline`, `port_open`,
+`port_closed`, `status`, `protocol_mismatch`. `in_sync` is true when the
+gateway's `state_rev` matches DevPi's. `cups_heard` is the gateway's count of
+cups it heard within its 3 s window, from its `status` table.
 
-`lq_snapshot`, to a requesting client or to the room when the unassigned
-list or the roster changes:
+`lq_snapshot`, to a requesting client, and to the room whenever the per-horse
+picture moved (a cup came online, went offline or changed its horse, cups
+were forgotten, the state was set, or a `status` table brought a cup up to
+date):
 
 ```json
 {"link":{"...same shape as lq_link..."},
- "devpi":{"state_rev":42,"roster_rev":7,"phase":1},
- "cups":["...exactly 20 entries, cup 1..20, same shape as lq_update; mac null and online false for an empty slot..."],
- "unassigned":[{"mac":"A0:B7:65:12:34:99","last_seen":"2027-05-01T21:14:07Z"}]}
+ "devpi":{"state_rev":42,"phase":1,"scratched":[20],"renum":[[9,22]],"results":[0,0,0]},
+ "cups":["...one entry per cup in the cache, the lq_update shape, sorted by MAC..."]}
 ```
 
-`horse` and `scratched` per cup come from the last state DevPi set, not from
-the gateway.
+`devpi` is the state DevPi holds, keyed by horse (above). Two cups claiming
+one horse are both in `cups`; the betting board decides what to show.
 
-## Python API (`la_quiniela.get_bridge()`, all cup IDs 1-based)
+## Python API (`la_quiniela.get_bridge()`)
 
 | Call | Does |
 | --- | --- |
-| `set_state(phase, horses, scratched) -> rev` | `horses` and `scratched` are 20-item lists, position 0 = cup 1. Validated exactly as the gateway does (`ValueError` on bad input). Bumps `state_rev`, persists, updates `cups.horse`, sends if the port is open, emits `lq_update` for every cup whose horse or flag changed. Identical values are a no-op returning the current rev. |
-| `set_roster(macs) -> rev` | 20-item list, `None` or `""` for an empty slot. Rejects bad MACs, duplicates and `FF:FF:FF:FF:FF:FF`. Bumps `roster_rev`, persists, rewrites `cups.cup_id`, sends roster then state, emits a fresh `lq_snapshot`. |
-| `adopt_roster() -> rev` | Builds a roster from the cup numbers mirrored from the gateway and calls `set_roster`. |
-| `reset_link(reason) -> dict` | Forgets the roster and the state, clears `cups.cup_id` and `cups.horse`, deletes simulated cup rows, keeps the history, sends the gateway nothing. Returns the new revs and how many rows were deleted. Also bumps `reset_count` (in-memory, `get_snapshot()["devpi"]["reset_count"]`), which the betting board watches to clear the closing time. Since bc478de this is only the bench-side "forget cups" (`POST /api/lq/dev/roster/clear`); the between-races reset that keeps the roster is the board's `reset_betting()` (`POST /api/quiniela/reset`, in the board section). |
+| `set_state(phase=None, scratched=None, renum=None, results=None) -> rev` | Change any part of the state, the others kept. Validated exactly as the gateway does (`ValueError` on bad input: phase 0..6, scratched horses 1..24, at most 4 renum pairs with `from != to` and no `from` twice, exactly 3 results 0..24). Bumps `state_rev`, persists, logs `state_set`, sends if the port is open, emits `lq_snapshot`. Identical values are a no-op returning the current rev. |
+| `forget_cups(mac_prefix=None) -> int` | Drop cups from the cache (all, or those whose MAC starts with the prefix), in memory and in `lq_cups`; a `cups_forgotten` event and a fresh `lq_snapshot`. Returns how many went. Decides nothing (above). |
 | `get_snapshot() -> dict` | The `lq_snapshot` payload. |
 | `set_gateway_debug(on) -> bool` | Sends `{"t":"debug","on":...}`; True if it went out. |
+| `add_listener(fn)` | `fn()` is called after every emit and at the end of `set_state()` (the betting board's hook, below). |
 
-`Phase` in `la_quiniela/protocol.py` is an `IntEnum` matching `DdmRaceState`
-in `ddm_common.h`; a test parses the header so the two cannot drift.
+`state_rev`, `phase`, `scratched`, `renum` and `results` are readable
+attributes. `Phase` in `la_quiniela/protocol.py` is an `IntEnum` matching
+`DdmRaceState` in `ddm_common.h`; `test_smoke` parses the header so the two
+cannot drift, and pins `MAX_HORSE`, `RENUM_SLOTS`, `RESULT_SLOTS` and the
+protocol version to the header's `DDM_MAX_HORSE`, `DDM_RENUM_SLOTS`,
+`DDM_RESULT_SLOTS` and `DDM_PROTO_VERSION`.
 
 ## HTTP
 
-- `GET /api/lq/snapshot`: always on, read-only, returns `get_snapshot()`.
-- Only with `LQ_DEV_ENDPOINTS` true (otherwise 404):
-  - `POST /api/lq/dev/state` body `{"phase":1,"horses":[...20],"scratched":[...20]}`
-  - `POST /api/lq/dev/roster` body `{"macs":[...20]}`
-  - `POST /api/lq/dev/roster/adopt`
-  - `POST /api/lq/dev/debug` body `{"on":true}`
-  - `POST /api/lq/dev/roster/clear` body `{"reason":"..."}` (optional): "forget
-    cups", `reset_link()` as it always was, returns
-    `{"success":true,"state_rev":N,"roster_rev":N,"cups_dropped":N}`. Nothing
-    goes to the gateway (see "Resetting the link").
-  - `POST /api/lq/dev/reset`: **deprecated alias** doing both resets, the
-    betting one (`POST /api/quiniela/reset`, which needs no flag) first and
-    then the roster clear, so the gateway hears PRE_RACE with the assignments
-    before DevPi forgets them. The reply is the clear's plus `"betting"`: the
-    betting reset's reply, `null` when no board is bound to this bridge. Kept
-    so nothing that calls it breaks; new callers use the two routes.
+- `GET /api/lq/snapshot`: read-only, returns `get_snapshot()`.
+- `POST /api/lq/debug` body `{"on": true}`: the gateway's human-readable
+  serial output, a bench toggle. Returns `{"success": true, "sent": bool}`.
+- `POST /api/lq/cups/forget` body `{"mac": "A0:..."}` for one cup,
+  `{"prefix": "02:DD:4D:"}` for a family, `{}` for all. Returns
+  `{"success": true, "forgotten": N}`.
 
-  The others return `{"success":true,"rev":N}` or a 400 with the validation
-  message.
+None of them needs a flag. The v1 dev routes (`/api/lq/dev/state`,
+`/dev/roster`, `/dev/roster/adopt`, `/dev/roster/clear`, `/dev/reset`,
+`/dev/debug`) are gone and answer 404; the race state is set through the
+betting board's `POST /api/quiniela/cmd`, scratches through
+`POST /api/quiniela/scratch`, and there is nothing to adopt or clear.
 
 ## Tests
 
@@ -369,8 +379,11 @@ python -m la_quiniela.test_smoke
 
 No hardware and no real port: a fake serial port feeds the gateway's lines
 and captures what the bridge writes, a stub SocketIO records every emit, and
-a fake clock drives the timers. Byte-exact roster and state lines are checked
-against the README examples.
+a fake clock drives the timers. The state line is checked byte-exact against
+the README examples; the v1 database shape is built by hand and migrated; the
+hello answer, the status reconcile, the cup table backstop, a cup changing
+its horse, two cups claiming one horse, offline detection, the watchdog and
+the HTTP routes (the dev paths 404) are all exercised.
 
 ## Betting board (`/api/quiniela`)
 
@@ -379,11 +392,13 @@ and `static/js/quiniela_board.js`) renders one JSON model: the pot, the three
 prizes, tokens per horse, the horses' names, the last few drops, the race
 state and whether the link is up. That model is built here, in
 `la_quiniela/betting.py`, from the bridge's own picture (`get_snapshot()`)
-plus the operator's names (`la_quiniela/horses.py`), and served by
-`la_quiniela/board.py` at the three paths the page expects. The splash
-display is an HTTP client of these routes and re-serves them on its own
-origin, so the page itself never changed. Nothing in the board reads the
-serial port.
+plus the operator's names and scratches (`la_quiniela/horses.py`) and the
+dashboard's results, and served by `la_quiniela/board.py` at the three paths
+the page expects. The splash display is an HTTP client of these routes and
+re-serves them on its own origin, so the page itself never changed (it only
+tests a horse's `cup` for `null`, which is why the change of `cup` from a cup
+number to a MAC needed nothing there). Nothing in the board reads the serial
+port.
 
 ### How La Quiniela pays
 
@@ -408,7 +423,10 @@ Horses are numbers 1..24 (`protocol.MAX_HORSE`, which `test_smoke` pins to
 `DDM_MAX_HORSE` in `firmware/quiniela/ddm_common.h`): 1..20 are the field,
 21..24 the also-eligibles, whose names can be entered ahead of time but who
 are not in the field until they replace someone. The model's `horses` map is
-keyed `"1"`..`"24"` and every entry carries `in_field`.
+keyed `"1"`..`"24"` and every entry carries `in_field`. A cup can be set to
+any of the 24; a cup set to an also-eligible that is standing in for nobody
+is listed on that horse (its tokens counted in `total_tokens`) but the horse
+is not in the field.
 
 ### Two kinds of scratch
 
@@ -416,36 +434,42 @@ keyed `"1"`..`"24"` and every entry carries `in_field`.
    that draws in keeps its own program number (2026: The Puma, #9, scratched
    and Ocelli ran as #22, not as #9). `POST /api/quiniela/scratch {"horse":
    9, "replacement": {"number": 22, "name": "Ocelli"}}` therefore changes the
-   cup's horse number: the cup that was 9 becomes 22 through `set_state()`
-   (the same path as the `horse <cup> <n>` command, so its screen changes and
-   its tokens come along, because it is the same cup), 9 leaves the field,
-   and the board lists whoever is in the field in numeric order. Nothing is
-   physically moved on the mantle. The store records `{was: 9, now: 22}` in
-   `lq_scratches`, gives 22 the name if one was sent (else 22 keeps its
-   stored name) and bumps `names_rev` once. With no cup carrying 9 yet (a
-   scratch before adoption) only the record is made, and a later `horse
-   <cup> 9` assigns 22. The name-swap of 726d4c2 (same number, new name) is
-   gone: a bare string `replacement` is a 400 that says the shape.
+   cup's horse number, through the cup itself: the store records `{was: 9,
+   now: 22}` in `lq_scratches`, gives 22 the name if one was sent (else 22
+   keeps its stored name), bumps `names_rev` once, and the board's
+   `refresh()` puts the pair `[9, 22]` into the gateway's state line. The
+   cup whose horse is 9 hears it, becomes 22, saves 22 and reports 22 from
+   then on, tokens and all, because it is the same cup; 9 leaves the field;
+   the board lists whoever is in the field in numeric order. Nothing is
+   physically moved on the mantle and no cup is addressed: **the pair stays
+   in the line for as long as the record stands**, so a cup set to 9 later
+   (a spare, a cup that was off) becomes 22 the moment it hears the gateway,
+   and a cup that has already followed it no longer matches. With no cup
+   saying 9 yet, only the record is made and the pair still goes down. The
+   name-swap of 726d4c2 (same number, new name) is gone: a bare string
+   `replacement` is a 400 that says the shape.
+
+   **Undo** (`POST /api/quiniela/unscratch {"horse": 9}`) removes the record
+   (22's name stays stored), bumps `names_rev`, and the board sends the pair
+   back, `[22, 9]`, for `UNDO_RENUM_S` (60 s) or until a cup reports 9,
+   whichever is first, so the cup that became 22 goes back to 9. A fresh
+   record that contradicts a pending undo pair (9 scratched again with 22, a
+   record moving cups onto 22, a record with the same `from`) wins and the
+   undo pair is dropped, so the line never asks a cup to bounce. At most
+   `RENUM_SLOTS` (4) pairs fit the line: records first, an undo pair waits
+   for a free slot with one warning (four also-eligibles make more than four
+   records impossible through the routes).
 2. **No replacement** (`{"horse": 9}` alone, or `"replacement": null`): a
    scratch is about the horse, not the cup (bench, 2026-09-26: with one cup
    online, scratching 20 answered "not on any cup"). pi5 records it in
-   `lq_scratches` (`was` 9, `now` NULL) whether or not a cup carries 9, so
+   `lq_scratches` (`was` 9, `now` NULL) whether or not a cup says 9, so
    `horses["9"].scratched` is true, `in_field` false and the entry `{"was":
-   {...}, "now": null}` is in `scratches` at once; `names_rev` bumps. If a
-   cup carries 9 the bridge's scratched flag goes to the gateway through
-   `set_state()` too, so the cup shows SCRATCHED; the reply says `"cup": 9`
-   and `"sent": true` (`"cup": null, "sent": false` when no cup does). **A
-   cup assigned to an already-scratched horse gets the flag at that moment**:
-   the `horse <cup> <n>` command sets it in the same state line (and clears
-   it from a cup given any other horse), and the board's `refresh()` pushes
-   it for any cup found carrying a recorded horse without the flag (the
-   dev/state route, a re-assignment after a reset: the reset clears the
-   bridge's flags but the record stays). The assignment is never refused.
-   `unscratch` mirrors it: the record goes and the flag on the horse's cup,
-   if set, is cleared. The `scratch <cup> 0|1` command keeps the record in
-   step for the horse on that cup, so every path agrees. A repeat scratch is
-   a 400 `horse 9 is already scratched`. **Its tokens are excluded from the
-   pot and the prizes**; Joey refunds them by hand. `total_tokens` still
+   {...}, "now": null}` is in `scratches` at once; `names_rev` bumps; and the
+   board's `refresh()` puts 9 into the state line's `scr` list, so the cup
+   whose horse is 9 draws its X, now or whenever a cup is set to 9. `unscratch`
+   mirrors it: the record goes and the bit leaves the line. A repeat scratch
+   is a 400 `horse 9 is already scratched`. **Its tokens are excluded from
+   the pot and the prizes**; Joey refunds them by hand. `total_tokens` still
    counts every cup. This pot rule is an assumption about how a
    no-replacement scratch is settled; if the tokens should stay in the pot
    instead, it is the one `if not h["scratched"]` in `apply_snapshot()`.
@@ -453,35 +477,47 @@ keyed `"1"`..`"24"` and every entry carries `in_field`.
 **`in_field`**, per horse, computed by pi5: 1..20 true unless scratched
 (either kind); 21..24 true only while standing in for a scratched horse. A
 horse of any number that is the `now` of a replacement record is in the
-field; a horse that is the `was` of a record, or whose cup carries the
-gateway's scratched flag, is not (`horses.in_field()`). `horses[n].replaced`
-is the upper-cased name of the horse n stands in for (the `was` of the
-record whose `now` is n), else `null`.
+field; a horse that is the `was` of a record, or in the state line's `scr`
+list, is not (`horses.in_field()`). `horses[n].replaced` is the upper-cased
+name of the horse n stands in for (the `was` of the record whose `now` is
+n), else `null`.
 
-**The unused-number rule.** The replacement number must be unused: not
-carried by any cup, not in the field, not the `was` or `now` of any record
-(400 `22 is in use`; the scratched horse's own number counts as in use). The
-horse itself must be in the field (400 `horse 9 is not in the field`), so a
-horse is never scratched twice; 22 can be scratched in turn (22 -> 23: the
-records chain, `horse <cup> 9` then assigns 23, and undo walks back one
+**The unused-number rule.** The replacement number must be unused: not the
+horse of any cup DevPi has heard, not in the field, not the `was` or `now`
+of any record (400 `22 is in use`; the scratched horse's own number counts
+as in use). The horse itself must be in the field (400 `horse 9 is not in
+the field`), so a horse is never scratched twice; 22 can be scratched in
+turn (22 -> 23: the records chain, both pairs ride in the line and a cup
+walks them in order, so a cup set to 9 ends up 23; undo walks back one
 record at a time, last record first: undoing 9 while 22 -> 23 stands is a
-400 `horse 9: undo 22 first`, since the cup carries 23 and nothing could go
+400 `horse 9: undo 22 first`, since the cup says 23 and nothing could go
 back to 9, and 22 would be left out of the field with no record to bring it
 back; the admin page withholds that Undo and says so).
 
 Changing names or scratches of either kind never produces an event on the
 ticker and never resets the baseline: events only ever come from token
 diffs on the same cup, and a renumber is exactly a cup move (horse 9 goes
-cup 9 -> none and horse 22 none -> cup 9, tokens along), so the ticker keeps
-what it had, other horses' bets in the same snapshot still count, the pot
-does not move, and the JSONL log carries the move as `"cup": [9, null]` and
-`"cup": [null, 9]`. The one blind spot of diffing by horse: a token that
-lands in the renumbered cup in the very snapshot that carries the renumber
-(the moment between the scratch route's `set_state()` and its refresh) is
+from its cup's MAC to none and horse 22 from none to that MAC, tokens
+along), so the ticker keeps what it had, other horses' bets in the same
+snapshot still count, the pot does not move, and the JSONL log carries the
+move as `"cup": ["A0:B7:65:12:34:56", null]` and `"cup": [null,
+"A0:B7:65:12:34:56"]`. The one blind spot of diffing by horse: a token that
+lands in the renumbered cup in the very packet that carries the renumber is
 counted, in the pot and in the log, but not tickered, because on that horse
-the count change is also a cup move. Joey's brief suggested bumping `roster_rev` for a
-renumber; that is not done, because a moved `roster_rev` also wipes the
-whole ticker history and the same-cup rule already yields no event.
+the count change is also a cup move.
+
+### Results
+
+The dashboard's `POST /api/results` (main.py) writes
+`pi5/data/results.json` (`{"win","place","show","timestamp"}`). The board
+reads that file on every `refresh()` (`read_results()`: a missing or broken
+file, a number outside 1..24 or a horse named twice all read as no results)
+and puts the three numbers into the state line's `res`, so in WINNER and
+AFTER_PARTY the named cups show their WIN / PLACE / SHOW frame; the model
+carries them as `results` (`{"win": 19, "place": 1, "show": 22}`, `null`
+each when not set). **Reset betting** removes the file and clears them. No
+other integration with the dashboard has landed, so this file is the only
+channel.
 
 ### Admin page
 
@@ -499,37 +535,35 @@ Top to bottom:
   WIN / PLACE / SHOW / Bets, big enough to read at arm's length (Bets is the
   tokens in the pot; tokens in scratched cups are counted beside the label);
   **Reset betting** behind a `confirm()`, calling `POST /api/quiniela/reset`
-  and reporting `Reset. Pot $N (tokens still in cups ...) · 20 cups keep their
-  horses`; and **Cups**, two table rows per cup from `GET /api/lq/snapshot`
-  (the cup number as the `horse` command takes it, the MAC's last four,
-  online, tokens, last heard) with a picker of the 24 horses (`#n NAME`, the
-  current one selected, `—` for none) that sends `horse <cup> <n>` on change
-  and writes the reply into that cup's own line; a horse scratched with no
-  replacement, one replaced by a record, or an also-eligible not in the field
-  is listed but disabled. **Adopt** and **Forget cups** (`POST
-  /api/lq/dev/roster/adopt`, `/dev/roster/clear`) are rendered only when
-  `LQ_DEV_ENDPOINTS` is on, the flag that gates those routes; the rest of the
-  page needs no flag. The cups are rebuilt on every refresh (last heard
-  moves) but never while a picker has focus.
+  and reporting `Reset. Pot $N (M tokens still in the cup(s) of horse(s) ...)
+  · K cups online`; and **Horses**, one row per horse 1..24 from the model
+  and nothing to click: the number in its cloth colour, the name, the status
+  (`● online`, `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup
+  claims the horse), the tokens, and `WIN` / `PLACE` / `SHOW` / `SCR` tags
+  from the results and the scratches. The line above it reads `N cups online
+  · M with no horse` (`cups_online` and `cups_no_horse` from the model; a cup
+  showing `NO HORSE` is counted there and appears in no row). There is no
+  cups table, no picker, nothing to adopt and nothing to forget: a cup's
+  number is set on the cup.
 - **Horse names**: the 24 names in a textarea (`1. NAME` lines, 21..24
   labelled as the also-eligibles in the caption, Save puts them back as text).
 - **Scratches**: a row per horse **in the field** with a picker of the unused
-  numbers (21..24 not yet carried by a cup or in any record; a 1..20 number
-  is always in use, in the field or scratched), a name box prefilled from the
+  numbers (21..24 not claimed by a cup or in any record; a 1..20 number is
+  always in use, in the field or scratched), a name box prefilled from the
   store when the picked number has a name (re-prefilled when the pick
   changes), Scratch, and a "No replacement" checkbox that makes it the
-  gateway kind; below that a row per scratched horse of either kind showing
-  was -> now (or "no replacement") with Undo (withheld, with the reason, on a
-  record whose `now` was scratched in turn: the later record is undone
-  first). The 5 s refresh never rebuilds the scratch rows while the operator
-  is in them and carries a pick, a typed name or a ticked box over into
-  rebuilt rows.
+  no-replacement kind; below that a row per scratched horse of either kind
+  showing was -> now (or "no replacement") with Undo (withheld, with the
+  reason, on a record whose `now` was scratched in turn: the later record is
+  undone first). The 5 s refresh never rebuilds the scratch rows while the
+  operator is in them and carries a pick, a typed name or a ticked box over
+  into rebuilt rows.
 - **Betting closes**: a date-time picker plus +15 / +30 / +60 min and Clear.
 
-Everything refreshes every 5 s from `GET /api/quiniela` and the snapshot, and
-every button reports into its own status line (the pressed row's, for a cup
-or a scratch), errors verbatim in red, network and non-JSON failures named.
-Vanilla JS, no CDN.
+Everything refreshes every 5 s from `GET /api/quiniela` alone, and every
+button reports into its own status line (the pressed row's, for a scratch),
+errors verbatim in red, network and non-JSON failures named. Vanilla JS, no
+CDN.
 
 ### Ports
 
@@ -549,13 +583,13 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | --- | --- |
 | `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
-| `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see the translation table. |
+| `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
-| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}, "cup": 9, "names_rev": N}` (names as typed; `cup` null when no cup carried 9). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup carries 9, and the cup's flag through `set_state()` when one does: `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9 or null, "sent": bool, "scratched": true, "rev": R or null, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`; 400 `horse 9 is already scratched`, `horse 9 is not in the field`. Works without a bridge (recorded, `cup` null). |
-| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the cup carrying the record's `now` (if any does) goes back to 9 through `set_state()`, the record is removed (22's name stays stored) and `names_rev` bumps, `{"ok": true, "kind": "replacement", "was": {...}, "now": {...}, "cup": 9 or null, "names_rev": N}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the no-replacement record goes and the flag on the horse's cup, if any and if set, is cleared, `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9 or null, "cleared": bool, "scratched": false, "rev": R or null, "gateway_online": bool, "names_rev": N}` (a cup flagged at the gateway with no record, from dev/state, is cleared the same way); 400 `horse 9 is not scratched` when neither applies. |
+| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. Both work without a bridge (recorded, `cup` null, `rev` null). |
+| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name stays stored), `names_rev` bumps and the pair `[22, 9]` goes down for a minute or until a cup reports 9: `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
-| `POST /api/quiniela/reset` | The between-races reset, no dev flag (bc478de): `reset_betting()`. PRE_RACE with the same horses on the same cups and the same scratched flags (one state line), the closing time cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names, both kinds of scratch and the also-eligibles untouched; the roster and every assignment kept. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "cups_with_tokens": [3, 9], "cups_assigned": 20, "roster_kept": true, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). Forgetting the cups is the dev route `POST /api/lq/dev/roster/clear`. |
+| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). |
 | `GET /quiniela/admin` | The admin page above. |
 
 These operator routes refresh the model synchronously before answering, so a
@@ -583,13 +617,13 @@ rewrites `Cache-Control`.
  "race_state": 1, "race_state_name": "BETTING_OPEN",
  "token_value": 1.0, "pot": 33.0, "total_tokens": 33,
  "horses": {"1": {"tokens": 0, "share": 0.0, "scratched": false, "online": false, "cup": null,
-                  "name": "", "replaced": null, "in_field": true},
-            "7": {"tokens": 23, "share": 0.697, "scratched": false, "online": true, "cup": 1,
-                  "name": "HONOR MARIE", "replaced": null, "in_field": true},
+                  "conflict": false, "cups": [], "name": "", "replaced": null, "in_field": true},
+            "7": {"tokens": 23, "share": 0.697, "scratched": false, "online": true, "cup": "A0:B7:65:12:34:56",
+                  "conflict": false, "cups": ["A0:B7:65:12:34:56"], "name": "HONOR MARIE", "replaced": null, "in_field": true},
             "9": {"tokens": 0, "share": 0.0, "scratched": false, "online": false, "cup": null,
-                  "name": "ENCINO", "replaced": null, "in_field": false},
-            "22": {"tokens": 10, "share": 0.303, "scratched": false, "online": true, "cup": 9,
-                   "name": "OCELLI", "replaced": "ENCINO", "in_field": true},
+                  "conflict": false, "cups": [], "name": "ENCINO", "replaced": null, "in_field": false},
+            "22": {"tokens": 10, "share": 0.303, "scratched": false, "online": true, "cup": "A0:B7:65:12:34:57",
+                   "conflict": false, "cups": ["A0:B7:65:12:34:57"], "name": "OCELLI", "replaced": "ENCINO", "in_field": true},
             "...": "...24 entries, keys \"1\"..\"24\"..."},
  "leader": 7,
  "events": [{"horse": 7, "delta": 1, "ts": 1777662847.2}],
@@ -599,58 +633,60 @@ rewrites `Cache-Control`.
  "closes_at": 1777664400.0,
  "prizes": {"win": 20, "place": 8, "show": 5},
  "split": {"win": 0.6, "place": 0.25, "show": 0.15},
- "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS \u00b7 FINAL RESULTS HAND COUNTED",
+ "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
             "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
  "names_rev": 4,
  "scratches": [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}},
-               {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}]}
+               {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}],
+ "cups_online": 20, "cups_no_horse": 0,
+ "results": {"win": null, "place": null, "show": null}}
 ```
 
 The first eleven keys are the original contract and are unchanged; the rest
-are additive (the splash relays the whole model untouched). From the snapshot
-and the store as follows:
+are additive (the splash relays the whole model untouched). From the snapshot,
+the store and the results file as follows:
 
 - `link_ok` = `link.port_open and link.gateway_online`.
 - `race_state` = `devpi.phase` (DevPi's own phase, the one `set_state()`
   holds), `race_state_name` its `Phase` name, `STATE_<n>` for a value the
   enum does not know.
-- `horses[n]`: the cup whose `horse` is `n` supplies `tokens` (`count`,
-  `None` until the first telemetry line reads as 0, negatives clamp to 0),
-  `scratched`, `online` and `cup`. **`cup` is the 1-based cup number**, as
-  everywhere on pi5; the old splash model carried the gateway's 0-based slot
-  there, and the page only tests it for `null`. When two cups claim one horse
-  the lowest cup number wins and one WARNING is logged per pair. `share` =
-  `round(tokens / total, 4)`, 0.0 with no tokens.
-- `pot` = `round(tokens * token_value, 2)` over the horses whose cup is **not**
-  scratched at the gateway (kind 2 above); `total_tokens` is every cup.
+- `horses[n]`: the cups claiming horse `n` are the snapshot's cups whose
+  `horse` is `n`, ordered online first and most recently heard first. The
+  first supplies `tokens` (`count`, `None` until the first telemetry line
+  reads as 0, negatives clamp to 0), `online` (true when any online cup
+  claims the horse) and **`cup`, its MAC** (`null` when no cup claims the
+  horse). `conflict` is true when more than one **online** cup claims the
+  horse and `cups` lists their MACs (the one shown first); one WARNING is
+  logged per (horse, cups). A cup that went offline while another took its
+  horse is listed alone and is no conflict. `share` = `round(tokens /
+  total, 4)`, 0.0 with no tokens. Since protocol v2 `cup` is a MAC where it
+  used to be a cup number; the splash page only tests it for `null`.
+- `pot` = `round(tokens * token_value, 2)` over the horses that are **not**
+  scratched (the no-replacement kind above); `total_tokens` is every cup.
 - `leader`: strictly the most tokens, the lowest horse number on a tie, `null`
   when every count is 0. Scratched horses are not excluded.
 - `events`: the last eight token changes, newest first. The first snapshot a
   board digests is a baseline, not a bet, so a restart never invents drops:
-  the bridge seeds each cup's count from the `cups` table before the gateway
-  is heard, and only a count that moved while pi5 was down shows up as a
-  (late but real) drop. A reset-shaped transition is a baseline too: when
-  `devpi.roster_rev` moves (`reset_link()`, `set_roster()`, `adopt_roster()`)
-  the events are cleared and nothing is diffed, so a pre-party
-  `POST /api/lq/dev/reset` (today the deprecated alias) leaves no `-50` ghosts
-  on the ticker (found on the bench, 2026-09-25); `reset_betting()` applies
-  its snapshot with `baseline=True`, the same rule without a rev moving, so
-  the between-races reset keeps the roster and still starts the ticker
-  clean; and a horse moved to another cup, or unassigned, gets no
-  event for the count that came with the cup (a replacement scratch, which
-  renumbers the cup, is exactly that). Only a count that changed on the
-  same cup under the same roster is a bet or a removal, and that cuts both
-  ways: cups emptied or re-tared between two races on one evening (same cups,
-  same roster) are removals, and their `-N` chips stay on the ticker into the
-  next BETTING_OPEN until eight newer bets push them off. Before a second
-  race, empty the cups and press Reset betting (`POST /api/quiniela/reset`,
-  no flag, the roster kept) once the zeros have been heard; a reset with
-  tokens still in the cups makes those counts the baseline instead, and
-  emptying them afterwards shows as removals. The log records a reset as a
-  baseline (see the log below). The one exception is a fresh or deleted
-  `la_subasta.db` started with tokens already in the cups: the baseline then
-  holds zero for every cup, and the first telemetry shows those counts once
-  as drops on the ticker.
+  the bridge seeds each cup's count from `lq_cups` before the gateway is
+  heard, and only a count that moved while pi5 was down shows up as a (late
+  but real) drop. `reset_betting()` applies its snapshot with `baseline=True`:
+  the events are cleared and nothing is diffed, so the between-races reset
+  starts the ticker clean whatever sits in the cups. A horse whose cup
+  changed (the MAC claiming it moved, or went away, or a cup newly heard on
+  it) gets no event for the count that came with the cup: a replacement
+  scratch, which renumbers the cup, is exactly that, and so is a spare
+  swapped in with the dead cup's tokens. Only a count that changed on the
+  same cup is a bet or a removal, and that cuts both ways: cups emptied or
+  re-tared between two races on one evening are removals, and their `-N`
+  chips stay on the ticker into the next BETTING_OPEN until eight newer bets
+  push them off. Before a second race, empty the cups and press Reset
+  betting (`POST /api/quiniela/reset`) once the zeros have been heard; a
+  reset with tokens still in the cups makes those counts the baseline
+  instead, and emptying them afterwards shows as removals. The log records a
+  reset as a baseline (see the log below). The one exception is a fresh or
+  deleted `la_subasta.db` started with tokens already in the cups: the
+  baseline then holds zero for every cup, and the first telemetry shows
+  those counts once as drops on the ticker.
 - `updated`: wall time of the last change. A snapshot that changes nothing
   publishes nothing and leaves it alone.
 - `board_states`: the race states in which the page takes over the TV.
@@ -659,19 +695,13 @@ and the store as follows:
   changed-comparison, so the stream stays quiet between real changes. The
   page counts down `closes_at` against it rather than the phone's clock.
 - `closes_at`: unix time or `null`, from `PUT /api/quiniela/closes_at`.
-  **A reset of either kind clears it**: `reset_link()` through
-  `devpi.reset_count`, which the board watches, `reset_betting()` directly;
-  names survive both.
+  `reset_betting()` clears it; names survive.
 - `prizes`: `{"win", "place", "show"}` whole dollars summing to `pot`, by the
   rule above. `split`: the three fractions from config.
 - `chyron`: `LQ_CHYRON_LINES` from config, for the crawl along the bottom.
 - `names_rev`: the names store's revision, bumped by any name change, any
   scratch of either kind and its undo, persisted in `lq_board`; a change
-  publishes a model (it differs) but yields no events. A scratched flag set
-  at the gateway with no record (dev/state, `scratch <cup> 1` on a cup with
-  no horse) is the bridge's state, versioned by its state rev, and leaves
-  `names_rev` alone (the model still publishes: `scratched`, `pot` and
-  `prizes` moved).
+  publishes a model (it differs) but yields no events.
 - `horses[n].name`: the store's name **upper-cased** (`""` when unset).
   `horses[n].in_field`: the rule above. `horses[n].replaced`: the
   upper-cased name of the horse n stands in for (the `was` of the record
@@ -679,41 +709,42 @@ and the store as follows:
 - `scratches`: one entry per scratch, ordered by `was.number`, names
   upper-cased and `""` when unnamed: a replacement record `{"was":
   {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}`,
-  a gateway (no-replacement) scratch `{"was": {"number": 20, "name":
-  "SOCIETY MAN"}, "now": null}` (a record with `now` NULL, or a cup flagged
-  at the gateway with no record). A gateway-scratched cup whose horse is also
-  the `was` of a record appears once, as the record. A renumber never
-  changes `pot` (the cup keeps counting under its new number); a gateway
-  scratch still takes its cup's tokens out of it.
+  a no-replacement scratch `{"was": {"number": 20, "name": "SOCIETY MAN"},
+  "now": null}`. A renumber never changes `pot` (the cup keeps counting
+  under its new number); a no-replacement scratch takes its horse's tokens
+  out of it.
+- `cups_online`: every online cup, whatever it says; `cups_no_horse`: the
+  online cups reporting horse 0 (their screens say `NO HORSE`). The admin
+  page's `N cups online · M with no horse` line.
+- `results`: the three numbers from the dashboard's file (above), `null`
+  each when not set.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### `POST /api/quiniela/cmd`
 
 The splash's whitelist of gateway text commands is kept, so the operator's
-habits and the splash's tests carry over, but nothing is ever written to
-the port as text: the bridge's revision model is the source of truth, and a
-hand-typed line would be overwritten by the next hello answer. Each command
-is translated onto the bridge's own API. **Cup numbers are 1-based**, as
-everywhere on pi5 (the gateway's own `horse` command took a 0-based slot).
+habits and the splash's tests carry over, but nothing is ever written to the
+port as text: the bridge's revision model is the source of truth, and a
+hand-typed line would be overwritten by the next hello answer. Since
+protocol v2 only one command has a meaning here:
 
 | Command | Does | Answer |
 | --- | --- | --- |
-| `state N` (0..6) | `set_state(N, horses, scratched)` with the current lists from the snapshot | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
-| `horse C H` (cup 1..20, horse 0..24) | `set_state(phase, horses with cup C = H, scratched)`. An H that is the `was` of a replacement record is substituted by the record's `now`, following a chain to its end (`horse 1 9` puts 22 on cup 1 after The Puma's scratch). An H of 21..24 that is the `now` of no record is refused: a cup carries an also-eligible only through a record | as above plus `"cup":C,"horse":<assigned>`, and `"note":"9 is scratched; cup assigned 22"` when substituted; 400 `23 is not in the field; scratch a horse with 23 as the replacement first` |
-| `scratch C F` (cup 1..20, F 0 or 1) | `set_state(phase, horses, scratched with cup C = F)` | as above plus `"cup":C,"scratched":bool` |
-| `roster` | nothing written | `{"ok":true,"roster":[20 MACs or null, cup 1..20],"roster_rev":R,"has_roster":bool}` |
+| `state N` (0..6) | `set_state(phase=N)`; scratched, renum and results stay | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
 | `demo` | refused, 400 | `demo is not routed through pi5: the bridge speaks the JSON line protocol, and every state line turns demo off` |
-| `json` | refused, 400 | `json is not routed through pi5: the bridge already reads the gateway's protocol, and the up state line would exceed its 1024-byte cap` |
+| `json` | refused, 400 | `json is not routed through pi5: the bridge already reads the gateway's protocol, and the up state line is the gateway's report, not a command` |
 
-A state change is applied even when the gateway is offline: DevPi holds it
-and re-sends it on the next hello or status line, and `gateway_online` in the
-answer says which of the two happened. Errors are `{"ok":false,"error":...}`:
-400 for a command that is not a string, empty, longer than 200 characters,
-not a single line, or whose first word is not one of `state horse scratch
-demo roster json` (case matters); 400 `usage: state 0-6`, `usage: horse <cup
-1-20> <horse 0-24>` or `usage: scratch <cup 1-20> <0|1>` for bad arguments;
-400 with the message from `validate_state` if the bridge rejects the state;
-503 `bridge not initialised` when there is no bridge.
+The v1 `horse`, `scratch` and `roster` commands no longer exist (400, the
+first word is not one of `state demo json`): a cup's number is set on the
+cup, scratches go through `POST /api/quiniela/scratch`, and there is no
+roster. A state change is applied even when the gateway is offline: DevPi
+holds it and re-sends it on the next hello or status line, and
+`gateway_online` in the answer says which of the two happened. Errors are
+`{"ok":false,"error":...}`: 400 for a command that is not a string, empty,
+longer than 200 characters, not a single line, or whose first word is not
+whitelisted (case matters); 400 `usage: state 0-6` for bad arguments; 400
+with the message from `validate_phase` if the bridge rejects the state; 503
+`bridge not initialised` when there is no bridge.
 
 ### Configuration
 
@@ -739,17 +770,24 @@ resolves them, and warns once when the three splits do not sum to 1 within
 
 The bridge has a small in-process hook: `add_listener(fn)` registers a
 no-argument callable that is called after every `lq_update`, `lq_snapshot`
-and `lq_link` emit and at the end of `set_state()` and `reset_link()` (a
-phase-only `set_state` emits nothing, so the emits alone would miss it).
-Listeners run on the reader thread with the bridge's lock held, so they may
-only set an `Event` or `put_nowait()`; the board's `wake()` does exactly
-that. A listener that raises is logged at WARNING and dropped.
+and `lq_link` emit and at the end of `set_state()`. Listeners run on the
+reader thread with the bridge's lock held, so they may only set an `Event`
+or `put_nowait()`; the board's `wake()` does exactly that. A listener that
+raises is logged at WARNING and dropped.
 
 The board's daemon thread, `lq-board`, waits on that event with a one second
 timeout and calls `refresh()` on every wake, so the model also follows a
 gateway that has simply gone quiet (the bridge's offline timer emits, but the
 timeout is the backstop). `refresh()` takes `get_snapshot()` without holding
-the board's own lock and only then applies it under that lock, so the lock
+the board's own lock, applies it under that lock, and then **keeps the
+gateway's state line in step with what pi5 knows** (`_sync_gateway()`): the
+no-replacement scratches from `lq_scratches` as the `scr` list, the
+replacement records as `[was, now]` pairs plus any undo pairs still being
+sent, and the dashboard's results; when the bridge's `devpi` state differs,
+one `set_state()` goes out and the fresh snapshot is applied. So every path
+agrees: a scratch made without a bridge reaches the gateway on the first
+refresh after one appears, a cup set to a scratched horse tomorrow finds its
+bit already in the line, and nothing is ever addressed to a cup. The lock
 order is always bridge then board and nothing can deadlock against the reader
 thread. `main.py` calls `init_board()` at import and `start_board()` from its
 `__main__` block only, after `start_la_quiniela()`; the thread runs even when
@@ -767,16 +805,14 @@ git-ignored):
 ```
 
 An `online` or `link_ok` flip alone writes nothing. Two marks keep the log
-honest about what was not a bet: a reset-shaped transition (`roster_rev`
-moved, see `events` above) writes a record with `"baseline": true`, with an
-empty `changes` list when nothing else moved, so a roster change mid-race
-leaves a trace (the between-races reset writes the same record with
-`"reset": "betting"` added, always, even when nothing moved); and a count
-that came with a cup move under the same roster
-(the horse re-assigned or unassigned) carries the move in its change, e.g.
-`{"horse":3,"tokens":[0,51],"cup":[null,1]}`. The first write failure
-logs one WARNING and disables the log for the rest of the process; the model
-is unaffected.
+honest about what was not a bet: a baseline (the first snapshot after a
+start, or the between-races reset) writes a record with `"baseline": true`,
+the reset adding `"reset": "betting"` and leaving its trace even when
+nothing moved; and a count that came with a cup move (the MAC claiming the
+horse changed, or went away, or arrived) carries the move in its change,
+e.g. `{"horse":22,"tokens":[0,51],"cup":[null,"A0:B7:65:12:34:56"]}`. The
+first write failure logs one WARNING and disables the log for the rest of
+the process; the model is unaffected.
 
 ### Tests
 
@@ -786,22 +822,24 @@ python -m la_quiniela.test_betting
 ```
 
 Hand-built snapshots and a real `LqBridge` over the smoke test's fake port
-exercise the model, the log, the settings, the listener hook, the thread,
-the command translation (byte-exact against `protocol.build_state_line`,
-the scratched-number substitution included), the prize rounding, both kinds
-of scratch (the renumber 9 -> 22 on a real bridge: the cup's tokens under
-22, no events, the pot unchanged, the downlink line byte-exact, undo; the
-in_field rule; the unused-number and not-in-the-field rejections; a scratch
-before adoption), the names text parser for 24 lines, the closing time (and
-its reset), the two resets (the betting reset keeps the roster, the MACs,
-the horses and the flags, sends one byte-exact PRE_RACE line, zeroes
-events, `closes_at` and the state, reads the tokens still in the cups and
-names their cups; the roster clear drops the roster and assignments, sends
-nothing and keeps names and both records; the alias does both in order),
-the `now` stamp, the three tables with the `lq_horses` CHECK migration and
-every route on a Flask test app, the admin page's Race section included
-(the seven state buttons, the figures, Reset betting behind a confirm, the
-cup pickers, Adopt / Forget cups only with the flag). `test_smoke` pins
-`protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h` and also checks
-that importing `main.py` starts no `lq-board` thread and registers the
-routes, the admin page included.
+exercise the model (a conflict from two cups claiming one horse, a cup at
+horse 0 counted but in no row, the cup-move rule by MAC), the log, the
+settings, the listener hook, the thread, the `state` command (byte-exact
+against `protocol.build_state_line`; the v1 commands refused), the prize
+rounding, both kinds of scratch (the renumber 9 -> 22 on a real bridge: the
+pair in the line, the cup's tokens under 22, no events, the pot unchanged,
+undo with the pair sent back until the cup reports 9 or 60 s pass, a fresh
+record beating a pending undo, the four-slot cap; a scratch before any cup
+says the horse; the in_field rule; the unused-number and not-in-the-field
+rejections), the results file into the state line and out again on reset,
+the names text parser for 24 lines, the closing time, the between-races
+reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
+results cleared, the ticker and `closes_at` zeroed, the tokens still in the
+cups read and their horses named), the `now` stamp, the three tables with
+the `lq_horses` and `lq_scratches` migrations and every route on a Flask
+test app, the admin page's Race section included (the seven state buttons,
+the figures, Reset betting behind a confirm, the Horses list with its four
+statuses and no cup controls), and that the v1 dev routes are gone.
+`test_smoke` pins `protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h`
+and also checks that importing `main.py` starts no `lq-board` thread and
+registers the routes, the admin page included.

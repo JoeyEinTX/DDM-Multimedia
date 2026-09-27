@@ -1,19 +1,24 @@
 # la_quiniela/bridge.py - The DevPi end of the gateway's serial link
 #
 # A daemon thread reads the gateway's JSON lines, keeps a live picture of the
-# cups in memory, writes the cups / telemetry / events tables sparingly (DevPi
-# runs on an SD card), and emits lq_* SocketIO events to the "lq" room. It
-# writes roster and state lines down, answers the gateway's hello, and
+# cups in memory, writes the lq_cups / telemetry / events tables sparingly
+# (DevPi runs on an SD card), and emits lq_* SocketIO events to the "lq"
+# room. It writes the state line down, answers the gateway's hello, and
 # re-sends whenever a status line shows the gateway out of sync. Nothing here
 # may take Flask down: every serial failure is caught, logged and retried.
+#
+# Protocol v2 (2026-09-27): the cup owns its horse number. A cup is known by
+# its MAC and by the horse it reports in every packet; pi5 learns which
+# horses have cups by listening, and sends nothing per cup. What goes down is
+# one state line keyed by horse number: the phase, the horses scratched with
+# no replacement, the renumber pairs (a replacement scratch: the cup that was
+# 9 becomes 22) and the three results. There are no cup IDs, slots, rosters
+# or MAC tables on this side of the wire.
 #
 # Conventions follow la_subasta: a module-level init called from main.py, a
 # stub-able socketio, raw sqlite3, plain threads. SocketIO runs in threading
 # mode in this app (no eventlet/gevent), so socketio.emit() from this thread
 # is the same path main.py's odds poller uses.
-#
-# Cup numbers are 1-based everywhere in this file. The only conversions are
-# protocol.wire_to_cup() / cup_to_wire(), called where a line is read or built.
 
 import json
 import logging
@@ -21,7 +26,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from la_quiniela import protocol as P
 from la_quiniela.models import LqDb, default_db_path, utc_now_iso
@@ -51,7 +56,6 @@ DEFAULTS: Dict[str, Any] = {
     "LQ_GATEWAY_OFFLINE_S": 12,
     "LQ_DEAF_REOPEN_S": 20,       # port open but no valid JSON line for this long -> reopen
     "LQ_REOPEN_MIN_GAP_S": 30,    # never reopen more often than this
-    "LQ_DEV_ENDPOINTS": False,
 }
 
 # Fixed timing. The gateway side of each is documented in firmware/quiniela/README.md.
@@ -66,14 +70,15 @@ PORT_LOG_MIN_S = 60.0         # repeated port failures are logged at most this o
 TICK_S = 1.0                  # timer check interval
 RESEND_MIN_S = 2.0            # at most one reconcile re-send per this
 HELLO_EVENT_MIN_S = 10.0      # gateway_hello event at most this often
-PER_CUP_EVENT_MIN_S = 10.0    # cup_claim_mismatch / roster_mismatch per cup at most this often
+GATEWAY_STALE_MS = 3000       # the gateway's own STALE threshold: its status ages under this count as heard
 PENDING_MAX = 4 * P.MAX_LINE_BYTES   # partial-line buffer ceiling
 
 LINK_REASONS = ("boot", "reboot", "online", "offline", "port_open", "port_closed",
-                "status", "protocol_mismatch", "reset", "deaf")
+                "status", "protocol_mismatch", "deaf")
 
 # Every MAC the cup simulator invents starts with this. Nothing real does: it
-# is a locally-administered address, and no ESP32 ships with one.
+# is a locally-administered address, and no ESP32 ships with one. The moment
+# a real gateway says hello, simulated cups are dropped from the cache.
 SIM_MAC_PREFIX = "02:DD:4D:"
 
 
@@ -174,7 +179,7 @@ def pyserial_factory(port: str, baud: int, timeout: float):
 @dataclass
 class CupLive:
     mac: str
-    cup: Optional[int] = None            # 1-based, None = not in the roster
+    horse: int = 0                       # the cup's own claim, 0 = none set
     count: Optional[int] = None
     raw: Optional[int] = None
     rssi: Optional[int] = None
@@ -182,12 +187,11 @@ class CupLive:
     drop: Optional[int] = None
     seq: Optional[int] = None
     online: bool = False
+    hello: bool = False                  # its last packet was a HELLO: no gateway MAC yet
     last_seen_mono: Optional[float] = None
     last_seen_ts: Optional[str] = None
     last_row_mono: Optional[float] = None    # when the last telemetry row was written
     last_row_count: Optional[int] = None     # the token count in that row
-    last_claim_event_mono: Optional[float] = None
-    last_mismatch_event_mono: Optional[float] = None
 
 
 @dataclass
@@ -199,8 +203,7 @@ class LinkLive:
     gateway_mac: Optional[str] = None
     phase: Optional[int] = None
     state_rev: int = 0                   # what the gateway last reported
-    roster_rev: int = 0
-    cups_heard: int = 0
+    cups_heard: int = 0                  # cups in the gateway's table heard within its STALE window
     rejects: int = 0
     up_s: Optional[int] = None
     last_line_mono: Optional[float] = None           # any line at all, junk included
@@ -246,18 +249,14 @@ class LqBridge:
                       "unknown_type": 0, "sent": 0, "bytes_rx": 0, "reopens": 0,
                       "thread_restarts": 0}
 
-        # DevPi-owned state, 1-based cups. Revs start at 0 and only go up,
-        # including across a reset_link(), so a rev never says whether DevPi
-        # actually holds anything. has_state / has_roster say that.
-        self.state_rev = 0
-        self.has_state = False
-        self.has_roster = False
+        # DevPi-owned state, keyed by horse number. DevPi always holds a
+        # state (PRE_RACE with nothing scratched until something is set) and
+        # answers every hello with it; state_rev starts at 1 and only goes up.
+        self.state_rev = 1
         self.phase: int = int(P.Phase.PRE_RACE)
-        self.horses: Dict[int, int] = {cup: 0 for cup in P.CUP_NUMBERS}
-        self.scratched: Dict[int, bool] = {cup: False for cup in P.CUP_NUMBERS}
-        self.roster_rev = 0
-        self.roster: Dict[int, str] = {}      # cup -> MAC, filled slots only
-        self.reset_count = 0                  # reset_link() calls this process; the board watches it
+        self.scratched: List[int] = []
+        self.renum: List[Tuple[int, int]] = []
+        self.results: List[int] = [0] * P.RESULT_SLOTS
 
         self.db = LqDb(db_path or default_db_path())
         self.schema_error = self.db.check_shape()
@@ -272,47 +271,42 @@ class LqBridge:
 
     def _load_persisted(self) -> None:
         row = self.db.load_link_state()
-        self.state_rev = int(row["state_rev"] or 0)
-        self.roster_rev = int(row["roster_rev"] or 0)
+        self.state_rev = max(1, int(row["state_rev"] or 0))
         if row["state_json"]:
             try:
                 data = json.loads(row["state_json"])
-                self.phase = int(data["phase"])
-                self.horses = {cup: int(data["horses"].get(str(cup), 0)) for cup in P.CUP_NUMBERS}
-                self.scratched = {cup: bool(data["scratched"].get(str(cup), False))
-                                  for cup in P.CUP_NUMBERS}
-                self.has_state = True
+                if not isinstance(data, dict):
+                    raise TypeError("state_json is not an object")
+                if "horses" in data or isinstance(data.get("scratched"), dict):
+                    # A v1 state_json (cup slots: horses and scratched keyed
+                    # by slot) carries nothing v2 can use but the phase.
+                    data = {"phase": data.get("phase")}
+                self.phase = P.validate_phase(data["phase"])
+                self.scratched = P.validate_scratched(data.get("scratched", []))
+                self.renum = P.validate_renum(data.get("renum", []))
+                self.results = P.validate_results(data.get("results", [0] * P.RESULT_SLOTS))
             except (ValueError, KeyError, TypeError) as exc:
                 logger.error("La Quiniela bridge: persisted state unreadable (%s), "
-                             "treating it as unset", exc)
-                self.has_state = False
-        if row["roster_json"]:
-            try:
-                data = json.loads(row["roster_json"])
-                self.roster = {int(cup): str(mac) for cup, mac in data.items() if mac}
-                self.has_roster = True
-            except (ValueError, AttributeError, TypeError) as exc:
-                logger.error("La Quiniela bridge: persisted roster unreadable (%s), "
-                             "treating it as unset", exc)
-                self.has_roster = False
-                self.roster = {}
+                             "starting from PRE_RACE", exc)
+                self.phase = int(P.Phase.PRE_RACE)
+                self.scratched, self.renum, self.results = [], [], [0] * P.RESULT_SLOTS
+        if not row["state_json"] or int(row["state_rev"] or 0) < 1:
+            self._persist()
 
     def _persist(self) -> None:
-        state_json = json.dumps({
+        self.db.save_link_state(self.state_rev, json.dumps({
             "phase": self.phase,
-            "horses": {str(cup): self.horses[cup] for cup in P.CUP_NUMBERS},
-            "scratched": {str(cup): self.scratched[cup] for cup in P.CUP_NUMBERS},
-        }) if self.has_state else None
-        roster_json = json.dumps({str(cup): mac for cup, mac in self.roster.items()}) \
-            if self.has_roster else None
-        self.db.save_link_state(self.state_rev, state_json, self.roster_rev, roster_json)
+            "scratched": list(self.scratched),
+            "renum": [[f, t] for f, t in self.renum],
+            "results": list(self.results),
+        }))
 
     def _load_cups(self) -> None:
-        """Seed the live table from the cups rows so a snapshot right after a
-        restart shows the last known values, all offline."""
+        """Seed the live table from the lq_cups rows so a snapshot right after
+        a restart shows the last known cups and their horses, all offline."""
         for row in self.db.load_cups():
             live = CupLive(mac=row["mac"])
-            live.cup = int(row["cup_id"]) if row["cup_id"] is not None else None
+            live.horse = P.parse_horse(row["horse"])
             live.count = row["last_count"]
             live.raw = row["last_raw"]
             live.rssi = row["rssi"]
@@ -320,8 +314,6 @@ class LqBridge:
             live.last_seen_ts = row["last_seen"]
             live.online = False
             self.cups[live.mac] = live
-        if self.has_roster:
-            self._apply_roster_to_live()
 
     # -- the port -------------------------------------------------------------
 
@@ -596,8 +588,6 @@ class LqBridge:
             kind = msg.get("t")
             if kind == "telem":
                 self._on_telem(msg, now)
-            elif kind == "cup_hello":
-                self._on_cup_hello(msg, now)
             elif kind == "hello":
                 self._on_hello(msg, now)
             elif kind == "status":
@@ -621,119 +611,55 @@ class LqBridge:
             self.cups[mac] = live
         return live
 
-    def _resolve_cup(self, live: CupLive, reported: Optional[int], now: float) -> None:
-        """Who owns cup numbers. With no roster DevPi mirrors the gateway;
-        with one, DevPi is right and a disagreeing gateway is told again."""
-        if not self.has_roster:
-            if reported != live.cup:
-                if reported is not None:
-                    for other in self.cups.values():
-                        if other is not live and other.cup == reported:
-                            other.cup = None
-                live.cup = reported
-        else:
-            mine = self._roster_cup_for(live.mac)
-            live.cup = mine
-            if reported != mine:
-                last = live.last_mismatch_event_mono
-                if last is None or now - last >= PER_CUP_EVENT_MIN_S:
-                    live.last_mismatch_event_mono = now
-                    self._event("roster_mismatch", mine, {
-                        "mac": live.mac, "devpi_cup": mine, "gateway_cup": reported,
-                        "roster_rev": self.roster_rev})
-                self._reconcile(now, roster=True, state=self.has_state)
-
-    def _roster_is_simulated(self) -> bool:
-        """True when DevPi holds a roster the cup simulator wrote. One
-        simulated MAC is enough: a scenario names all twenty of its own."""
-        return self.has_roster and any(is_sim_mac(mac) for mac in self.roster.values())
-
-    def _roster_cup_for(self, mac: str) -> Optional[int]:
-        for cup, roster_mac in self.roster.items():
-            if roster_mac == mac:
-                return cup
-        return None
-
     def _on_telem(self, msg: Dict[str, Any], now: float) -> None:
+        """One packet from a cup: what it says it is and what it weighs.
+        Events when it comes online and when its horse changes; a telemetry
+        row when the count changed, when the heartbeat interval has passed or
+        when the cup comes back; the lq_cups row and lq_update at those
+        moments; a fresh snapshot when the per-horse picture moved (a horse
+        came online or changed hands)."""
         mac = P.normalize_mac(msg.get("mac"))
         if mac is None:
             return
         live = self._live_for(mac)
-        old_cup = live.cup
-        unassigned_before = self._unassigned_macs()
-        self._resolve_cup(live, P.wire_to_cup(self._int(msg, "cup")), now)
-        cup_changed = live.cup != old_cup
-
+        old_horse = live.horse
+        live.horse = P.parse_horse(msg.get("horse"))
         live.count = self._int(msg, "count")
         live.raw = self._int(msg, "raw")
         live.rssi = self._int(msg, "rssi")
         live.up = self._int(msg, "up")
         live.drop = self._int(msg, "drop")
         live.seq = self._int(msg, "seq")
+        live.hello = self._int(msg, "hello") == 1
         live.last_seen_mono = now
         live.last_seen_ts = utc_now_iso()
         came_online = not live.online
         live.online = True
-
-        claim = self._int(msg, "claim")
-        if claim is not None:
-            last = live.last_claim_event_mono
-            if last is None or now - last >= PER_CUP_EVENT_MIN_S:
-                live.last_claim_event_mono = now
-                claimed = P.wire_to_cup(claim) if 0 <= claim < P.NUM_CUPS else None
-                self._event("cup_claim_mismatch", live.cup, {
-                    "mac": mac, "devpi_cup": live.cup, "claimed_cup": claimed,
-                    "claimed_wire_id": claim})
-
-        if live.cup is None:
-            # An unassigned cup: it exists in cups with a NULL id and in the
-            # snapshot's unassigned list, and never gets a telemetry row.
-            self._upsert_cup_row(live)
-            if cup_changed or came_online or self._unassigned_macs() != unassigned_before:
-                self._emit_snapshot()
-            return
+        horse_changed = live.horse != old_horse
 
         if came_online:
-            self._event("cup_online", live.cup, {"mac": mac})
+            self._event("cup_online", live.horse or None, {"mac": mac, "horse": live.horse})
+        if horse_changed:
+            self._event("cup_horse", live.horse or None, {"mac": mac, "from": old_horse, "to": live.horse})
+            if old_horse or live.horse:
+                self.say("cup %s is horse %s%s" % (mac, live.horse or "none",
+                                                   "" if not old_horse else " (was %d)" % old_horse))
 
-        # A telemetry row when the count changed, when the heartbeat interval
-        # has passed, or when the cup comes back; the cups row and lq_update at
-        # those moments and when the cup number itself changed.
         count_changed = live.count != live.last_row_count
         heartbeat_due = (live.last_row_mono is None
                          or now - live.last_row_mono >= float(self.settings["LQ_HEARTBEAT_LOG_S"]))
         row_due = count_changed or heartbeat_due or came_online
         if row_due:
             reason = "change" if count_changed else "heartbeat"
-            self.db.insert_telemetry(live.last_seen_ts, live.cup, mac, live.raw, live.count,
+            self.db.insert_telemetry(live.last_seen_ts, mac, live.horse or None, live.raw, live.count,
                                      live.seq, live.drop, live.rssi, live.up, reason)
             live.last_row_mono = now
             live.last_row_count = live.count
-        if row_due or cup_changed:
+        if row_due or horse_changed:
             self._upsert_cup_row(live)
-            self._emit_cup(live.cup, live)
-        if cup_changed:
-            self._emit_snapshot()      # a slot changed hands: the whole table is the honest picture
-
-    def _on_cup_hello(self, msg: Dict[str, Any], now: float) -> None:
-        mac = P.normalize_mac(msg.get("mac"))
-        if mac is None:
-            return
-        live = self._live_for(mac)
-        unassigned_before = self._unassigned_macs()
-        self._resolve_cup(live, P.wire_to_cup(self._int(msg, "cup")), now)
-        live.last_seen_mono = now
-        live.last_seen_ts = utc_now_iso()
-        came_online = not live.online
-        live.online = True
-        self._event("cup_hello", live.cup, {"mac": mac})
-        self._upsert_cup_row(live)
-        if live.cup is None:
-            if self._unassigned_macs() != unassigned_before or came_online:
-                self._emit_snapshot()
-        elif came_online:
-            self._event("cup_online", live.cup, {"mac": mac})
-            self._emit_cup(live.cup, live)
+            self._emit_cup(live)
+        if horse_changed or came_online:
+            self._emit_snapshot()      # the per-horse picture moved: the whole table is the honest picture
 
     def _on_hello(self, msg: Dict[str, Any], now: float) -> None:
         version = self._int(msg, "v")
@@ -751,56 +677,83 @@ class LqBridge:
                          "sending nothing", version, P.LINE_PROTO_VERSION)
             self._set_link(reason="protocol_mismatch", force=True, in_sync=False)
             return
-        # A hello means the gateway knows nothing: it has no state and no roster.
+        # A hello means the gateway knows nothing: it has no state.
         self.link.state_rev = 0
-        self.link.roster_rev = 0
         if announce:
             self.link.last_hello_event_mono = now
             self._event("gateway_hello", None, {"mac": mac, "v": version,
                                                  "proto": self._int(msg, "proto")})
-        # A simulator session leaves its fake roster in the database, and the
-        # next hello would hand it to whatever gateway said it. A real gateway
-        # given fake MACs owns no real cups at all: every real cup comes back
-        # as -1 and sits on its MAC screen with nothing on it to explain why.
-        # So the moment a real gateway turns up holding a simulated roster,
-        # throw the roster away and answer with nothing.
-        if self._roster_is_simulated() and not is_sim_mac(mac):
-            logger.warning("La Quiniela bridge: the stored roster is a simulator roster and the "
-                           "gateway that just said hello is not the simulator (%s); discarding it",
-                           mac or "no MAC")
-            self.reset_link("sim_roster_discarded")
-        answered = []
-        if self.has_roster:
-            self._send_roster()
-            answered.append("roster rev %d" % self.roster_rev)
-        if self.has_state:
-            self._send_state()
-            answered.append("state rev %d" % self.state_rev)
+        # The cup simulator's cups live in the same cache. A real gateway
+        # saying hello means the simulator is done: its cups are dropped so
+        # they do not sit on the admin page as offline cups forever.
+        if mac and not is_sim_mac(mac):
+            dropped = self.forget_cups(SIM_MAC_PREFIX, quiet=True)
+            if dropped:
+                self.say("dropped %d simulated cup(s) from the cache: a real gateway said hello" % dropped)
+        self._send_state()
         if announce:
-            self.say("answered the hello with " + (" and ".join(answered) if answered else "nothing"))
+            self.say("answered the hello with state rev %d" % self.state_rev)
         self.link.last_resend_mono = now
         self._set_link(reason="boot", force=True, in_sync=self._compute_sync())
 
     def _on_status(self, msg: Dict[str, Any], now: float) -> None:
+        """The gateway's heartbeat: its phase and state rev (reconciled if
+        they differ from ours) and its cup table. The table is a backstop:
+        an entry fresher than anything heard directly from that cup (after a
+        pi5 restart, or a telem line lost to a reopen) updates the cup's
+        horse, count and signal, and puts it online if the gateway heard it
+        within the offline window."""
         up_s = self._int(msg, "up_s")
         rebooted = (up_s is not None and self.link.up_s is not None and up_s < self.link.up_s)
         self.link.phase = self._int(msg, "phase")
         self.link.state_rev = self._int(msg, "state_rev") or 0
-        self.link.roster_rev = self._int(msg, "roster_rev") or 0
-        self.link.cups_heard = self._int(msg, "cups") or 0
         self.link.rejects = self._int(msg, "rejects") or 0
         self.link.up_s = up_s
         if rebooted:
             self._event("gateway_reboot", None, {"up_s": up_s, "gseq": self._int(msg, "gseq")})
-        # Reconcile: a roster mismatch sends roster then state, a state
-        # mismatch sends state, at most one re-send every RESEND_MIN_S.
-        roster_off = self.has_roster and self.link.roster_rev != self.roster_rev
-        state_off = self.has_state and self.link.state_rev != self.state_rev
-        if roster_off:
-            self._reconcile(now, roster=True, state=self.has_state)
-        elif state_off:
-            self._reconcile(now, roster=False, state=True)
+
+        entries = msg.get("cups")
+        heard = 0
+        changed = False
+        if isinstance(entries, list):
+            cup_limit = float(self.settings["LQ_CUP_OFFLINE_S"])
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                mac = P.normalize_mac(entry.get("mac"))
+                age = self._int(entry, "age")
+                if mac is None or age is None or age < 0:
+                    continue
+                if age <= GATEWAY_STALE_MS:
+                    heard += 1
+                seen_at = now - age / 1000.0
+                live = self._live_for(mac)
+                if live.last_seen_mono is not None and seen_at <= live.last_seen_mono:
+                    continue                    # we heard this cup ourselves, more recently
+                old_horse, was_online = live.horse, live.online
+                live.horse = P.parse_horse(entry.get("horse"))
+                if self._int(entry, "tok") is not None:
+                    live.count = self._int(entry, "tok")
+                if self._int(entry, "rssi") is not None:
+                    live.rssi = self._int(entry, "rssi")
+                if self._int(entry, "up") is not None:
+                    live.up = self._int(entry, "up")
+                live.last_seen_mono = seen_at
+                live.last_seen_ts = utc_now_iso()
+                live.online = age / 1000.0 < cup_limit
+                if live.online and not was_online:
+                    self._event("cup_online", live.horse or None, {"mac": mac, "horse": live.horse, "via": "status"})
+                if live.horse != old_horse:
+                    self._event("cup_horse", live.horse or None, {"mac": mac, "from": old_horse, "to": live.horse, "via": "status"})
+                if live.horse != old_horse or live.online != was_online or live.count != live.last_row_count:
+                    self._upsert_cup_row(live)
+                    changed = True
+        self.link.cups_heard = heard
+        if self.link.state_rev != self.state_rev:
+            self._reconcile(now)
         self._set_link(in_sync=self._compute_sync(), reason="reboot" if rebooted else "status")
+        if changed:
+            self._emit_snapshot()
 
     def _on_err(self, msg: Dict[str, Any]) -> None:
         detail = {"msg": msg.get("msg"), "line": msg.get("line")}
@@ -822,12 +775,10 @@ class LqBridge:
                 if live.online and live.last_seen_mono is not None \
                         and now - live.last_seen_mono >= cup_limit:
                     live.online = False
-                    self._event("cup_offline", live.cup, {"mac": live.mac})
+                    self._event("cup_offline", live.horse or None, {"mac": live.mac, "horse": live.horse})
                     self.db.set_cup_online(live.mac, False)
-                    if live.cup is not None:
-                        self._emit_cup(live.cup, live)
-                    else:
-                        snapshot_dirty = True
+                    self._emit_cup(live)
+                    snapshot_dirty = True
             if snapshot_dirty:
                 self._emit_snapshot()
             gw_limit = float(self.settings["LQ_GATEWAY_OFFLINE_S"])
@@ -896,30 +847,24 @@ class LqBridge:
         self.stats["sent"] += 1
         return True
 
-    def _send_roster(self) -> bool:
-        return self._send_line(P.build_roster_line(self.roster_rev, self.roster))
+    def state_line(self) -> str:
+        """The state line as it goes down the wire, byte-exact."""
+        return P.build_state_line(self.state_rev, self.phase, self.scratched, self.renum, self.results)
 
     def _send_state(self) -> bool:
-        return self._send_line(P.build_state_line(self.state_rev, self.phase,
-                                                  self.horses, self.scratched))
+        return self._send_line(self.state_line())
 
-    def _reconcile(self, now: float, roster: bool, state: bool) -> bool:
-        """Rate-limited re-send used by status and telemetry mismatches."""
+    def _reconcile(self, now: float) -> bool:
+        """Rate-limited re-send of the state, used when a status line shows
+        the gateway holding another rev."""
         last = self.link.last_resend_mono
         if last is not None and now - last < RESEND_MIN_S:
             return False
         if self._port is None:
             return False
         self.link.last_resend_mono = now
-        sent = []
-        if roster and self.has_roster:
-            self._send_roster()
-            sent.append("roster rev %d" % self.roster_rev)
-        if state and self.has_state:
-            self._send_state()
-            sent.append("state rev %d" % self.state_rev)
-        if sent:
-            self.say("re-sent " + " and ".join(sent) + " to the gateway")
+        self._send_state()
+        self.say("re-sent state rev %d to the gateway" % self.state_rev)
         return True
 
     # -- link bookkeeping -----------------------------------------------------
@@ -931,12 +876,8 @@ class LqBridge:
             self.say("gateway online")
 
     def _compute_sync(self) -> bool:
-        """In sync means the gateway agrees about everything DevPi holds. With
-        nothing held there is nothing to disagree about, which matters after a
-        reset: the revs have moved on but DevPi is claiming nothing."""
-        return (self.link.gateway_online
-                and (not self.has_state or self.link.state_rev == self.state_rev)
-                and (not self.has_roster or self.link.roster_rev == self.roster_rev))
+        """In sync means the gateway holds the state DevPi holds."""
+        return self.link.gateway_online and self.link.state_rev == self.state_rev
 
     def _set_link(self, reason: str, force: bool = False, **changes: Any) -> None:
         """Apply changes to the link record and emit lq_link only when one of
@@ -967,12 +908,11 @@ class LqBridge:
     # -- database writes ------------------------------------------------------
 
     def _upsert_cup_row(self, live: CupLive) -> None:
-        horse = self.horses.get(live.cup) if live.cup is not None else None
-        self.db.upsert_cup(live.mac, live.cup, horse or None, live.last_seen_ts, live.rssi,
+        self.db.upsert_cup(live.mac, live.horse, live.last_seen_ts, live.rssi,
                            live.up, live.count, live.raw, live.online)
 
-    def _event(self, type_: str, cup: Optional[int], detail: Optional[Dict[str, Any]]) -> None:
-        self.db.insert_event(utc_now_iso(), type_, cup,
+    def _event(self, type_: str, horse: Optional[int], detail: Optional[Dict[str, Any]]) -> None:
+        self.db.insert_event(utc_now_iso(), type_, horse,
                              json.dumps(detail) if detail is not None else None)
 
     # -- in-process listeners -------------------------------------------------
@@ -980,9 +920,9 @@ class LqBridge:
     def add_listener(self, fn: Callable[[], None]) -> None:
         """Register fn() to be called whenever the bridge's picture changed:
         after every lq_update / lq_snapshot / lq_link emit and at the end of
-        set_state() and reset_link() (a phase-only set_state emits nothing,
-        so the emits alone would miss it). It carries no payload: the caller
-        reads get_snapshot() when it is ready.
+        set_state() (a phase-only set_state emits nothing on its own, so the
+        emits alone would miss it). It carries no payload: the caller reads
+        get_snapshot() when it is ready.
 
         Listeners run on the reader thread, with the bridge's RLock held, so
         they must only set a threading.Event or queue.put_nowait(): never
@@ -1008,26 +948,26 @@ class LqBridge:
                 logger.exception("La Quiniela bridge: emit %s failed", event)
         self._notify()
 
-    def _emit_cup(self, cup: int, live: Optional[CupLive]) -> None:
-        self._emit("lq_update", self._cup_payload(cup, live))
+    def _emit_cup(self, live: CupLive) -> None:
+        self._emit("lq_update", self._cup_payload(live))
 
     def _emit_snapshot(self) -> None:
         self._emit("lq_snapshot", self.get_snapshot())
 
-    def _cup_payload(self, cup: int, live: Optional[CupLive]) -> Dict[str, Any]:
-        horse = self.horses.get(cup, 0)
+    @staticmethod
+    def _cup_payload(live: CupLive) -> Dict[str, Any]:
         return {
-            "cup": cup,
-            "mac": live.mac if live else None,
-            "horse": horse if horse else None,
-            "scratched": bool(self.scratched.get(cup, False)),
-            "count": live.count if live else None,
-            "raw": live.raw if live else None,
-            "rssi": live.rssi if live else None,
-            "up": live.up if live else None,
-            "drop": live.drop if live else None,
-            "online": bool(live.online) if live else False,
-            "last_seen": live.last_seen_ts if live else None,
+            "mac": live.mac,
+            "horse": live.horse,
+            "count": live.count,
+            "raw": live.raw,
+            "rssi": live.rssi,
+            "up": live.up,
+            "drop": live.drop,
+            "seq": live.seq,
+            "online": bool(live.online),
+            "hello": bool(live.hello),
+            "last_seen": live.last_seen_ts,
         }
 
     def _link_payload(self) -> Dict[str, Any]:
@@ -1040,7 +980,6 @@ class LqBridge:
             "gateway_mac": link.gateway_mac,
             "phase": link.phase,
             "state_rev": link.state_rev,
-            "roster_rev": link.roster_rev,
             "cups_heard": link.cups_heard,
             "rejects": link.rejects,
             "up_s": link.up_s,
@@ -1055,149 +994,67 @@ class LqBridge:
             "reopens": self.stats["reopens"],
         }
 
-    def _mac_by_cup(self) -> Dict[int, str]:
-        if self.has_roster:
-            return dict(self.roster)
-        return {live.cup: live.mac for live in self.cups.values() if live.cup is not None}
-
-    def _unassigned_macs(self) -> List[str]:
-        return sorted(live.mac for live in self.cups.values() if live.cup is None and live.online)
-
     def get_snapshot(self) -> Dict[str, Any]:
+        """The whole picture: the link, DevPi's state (keyed by horse), and
+        every cup in the cache by MAC with the horse it claims."""
         with self._lock:
-            mac_by_cup = self._mac_by_cup()
-            cups = []
-            for cup in P.CUP_NUMBERS:
-                mac = mac_by_cup.get(cup)
-                cups.append(self._cup_payload(cup, self.cups.get(mac) if mac else None))
-            unassigned = [{"mac": mac, "last_seen": self.cups[mac].last_seen_ts}
-                          for mac in self._unassigned_macs()]
             return {
                 "link": self._link_payload(),
-                "devpi": {"state_rev": self.state_rev, "roster_rev": self.roster_rev,
-                          "phase": self.phase, "has_state": self.has_state,
-                          "has_roster": self.has_roster, "reset_count": self.reset_count},
-                "cups": cups,
-                "unassigned": unassigned,
+                "devpi": {"state_rev": self.state_rev, "phase": self.phase,
+                          "scratched": list(self.scratched),
+                          "renum": [[f, t] for f, t in self.renum],
+                          "results": list(self.results)},
+                "cups": [self._cup_payload(self.cups[mac]) for mac in sorted(self.cups)],
             }
 
-    # -- public API (1-based cups) ---------------------------------------------
+    # -- public API -------------------------------------------------------------
 
-    def set_state(self, phase: int, horses: List[int], scratched: List[Any]) -> int:
-        """Validate exactly as the gateway does, bump state_rev, persist, send
-        if the port is open, emit lq_update for every cup that changed. The
-        same values as the current state are a no-op that returns the rev."""
-        phase_i, horses_by_cup, scratched_by_cup = P.validate_state(phase, horses, scratched)
+    def set_state(self, phase: Any = None, scratched: Any = None, renum: Any = None,
+                  results: Any = None) -> int:
+        """Change any part of the state (the others stay): validate exactly as
+        the gateway does, bump state_rev, persist, send if the port is open,
+        emit a snapshot. The same values as the current state are a no-op that
+        returns the rev."""
+        new_phase = self.phase if phase is None else P.validate_phase(phase)
+        new_scr = list(self.scratched) if scratched is None else P.validate_scratched(scratched)
+        new_renum = list(self.renum) if renum is None else P.validate_renum(renum)
+        new_results = list(self.results) if results is None else P.validate_results(results)
         with self._lock:
-            if (self.has_state and phase_i == self.phase
-                    and horses_by_cup == self.horses and scratched_by_cup == self.scratched):
+            if (new_phase == self.phase and new_scr == self.scratched
+                    and new_renum == self.renum and new_results == self.results):
                 return self.state_rev
-            changed = [cup for cup in P.CUP_NUMBERS
-                       if horses_by_cup[cup] != self.horses[cup]
-                       or scratched_by_cup[cup] != self.scratched[cup]]
-            self.phase = phase_i
-            self.horses = horses_by_cup
-            self.scratched = scratched_by_cup
+            changed = [name for name, before, after in (
+                ("phase", self.phase, new_phase), ("scratched", self.scratched, new_scr),
+                ("renum", self.renum, new_renum), ("results", self.results, new_results)) if before != after]
+            self.phase, self.scratched, self.renum, self.results = new_phase, new_scr, new_renum, new_results
             self.state_rev += 1
-            self.has_state = True
             self._persist()
-            self.db.set_cup_horses({cup: (self.horses[cup] or None) for cup in P.CUP_NUMBERS})
             self._event("state_set", None, {"rev": self.state_rev, "phase": self.phase,
-                                            "changed_cups": changed})
+                                            "scratched": list(self.scratched),
+                                            "renum": [[f, t] for f, t in self.renum],
+                                            "results": list(self.results), "changed": changed})
             self._send_state()
             self._set_link(reason="status", in_sync=self._compute_sync())
-            mac_by_cup = self._mac_by_cup()
-            for cup in changed:
-                mac = mac_by_cup.get(cup)
-                self._emit_cup(cup, self.cups.get(mac) if mac else None)
-            self._notify()          # a phase-only change emitted nothing above
+            self._emit_snapshot()
             return self.state_rev
 
-    def set_roster(self, macs: List[Optional[str]]) -> int:
-        """Validate, bump roster_rev, persist, rewrite cup_id in cups, send
-        roster then state, emit a fresh snapshot to the room."""
-        by_cup = P.validate_roster(macs)
+    def forget_cups(self, mac_prefix: Optional[str] = None, quiet: bool = False) -> int:
+        """Drop cups from the cache (all, or those whose MAC starts with
+        mac_prefix), in memory and in lq_cups. The cache decides nothing, so
+        this changes nothing but what the admin page lists as offline; a cup
+        that is still talking is back within a packet. Returns how many
+        went."""
         with self._lock:
-            self.roster = by_cup
-            self.roster_rev += 1
-            self.has_roster = True
-            self._persist()
-            self.db.rewrite_cup_ids(self.roster)
-            self._apply_roster_to_live()
-            self.db.set_cup_horses({cup: (self.horses[cup] or None) for cup in P.CUP_NUMBERS})
-            self._event("roster_set", None, {"rev": self.roster_rev,
-                                             "macs": {str(c): m for c, m in self.roster.items()}})
-            self._send_roster()
-            if self.has_state:
-                self._send_state()
-            self.link.last_resend_mono = self._clock()
-            self._set_link(reason="status", in_sync=self._compute_sync())
-            self._emit_snapshot()
-            return self.roster_rev
-
-    def _apply_roster_to_live(self) -> None:
-        for live in self.cups.values():
-            live.cup = self._roster_cup_for(live.mac)
-        for cup, mac in self.roster.items():
-            self._live_for(mac).cup = cup
-
-    def adopt_roster(self) -> int:
-        """Turn the cup numbers currently mirrored from the gateway into
-        DevPi's first roster. When two MACs claim one cup the most recently
-        heard one wins."""
-        with self._lock:
-            chosen: Dict[int, CupLive] = {}
-            for live in self.cups.values():
-                if live.cup is None:
-                    continue
-                current = chosen.get(live.cup)
-                if current is None or (live.last_seen_mono or -1) > (current.last_seen_mono or -1):
-                    chosen[live.cup] = live
-            macs = [chosen[cup].mac if cup in chosen else "" for cup in P.CUP_NUMBERS]
-            return self.set_roster(macs)
-
-    def reset_link(self, reason: str = "manual") -> Dict[str, int]:
-        """Forget DevPi's roster and state and go back to mirroring the gateway.
-
-        This is how a simulator session is thrown away. The revs still only
-        ever increase, so a gateway can never mistake the reset for an older
-        roster; what changes is that DevPi stops claiming to hold one, and
-        answers the next hello with nothing.
-
-        Nothing is sent to the gateway. A gateway that already holds a roster
-        keeps it until it is power-cycled, because there is no line in the
-        protocol that means "forget what I told you".
-
-        Cup numbers and horses are cleared on every cups row. Rows for
-        simulated cups are deleted outright. Telemetry and event history are
-        left alone, and one lq_reset event records what happened."""
-        with self._lock:
-            self.has_state = False
-            self.has_roster = False
-            self.roster = {}
-            self.phase = int(P.Phase.PRE_RACE)
-            self.horses = {cup: 0 for cup in P.CUP_NUMBERS}
-            self.scratched = {cup: False for cup in P.CUP_NUMBERS}
-            self.state_rev += 1
-            self.roster_rev += 1
-            self.reset_count += 1
-            self._persist()
-            dropped = self.db.clear_cup_assignments(SIM_MAC_PREFIX)
-            for mac in [m for m in self.cups if is_sim_mac(m)]:
+            macs = [m for m in self.cups if not mac_prefix or m.startswith(mac_prefix.upper())]
+            for mac in macs:
                 del self.cups[mac]
-            for live in self.cups.values():
-                live.cup = None
-            result = {"state_rev": self.state_rev, "roster_rev": self.roster_rev,
-                      "cups_dropped": dropped}
-            self._event("lq_reset", None, dict(result, reason=reason))
-            logger.warning("La Quiniela bridge: link reset (%s); roster and state forgotten, "
-                           "%d simulated cup row(s) deleted", reason, dropped)
-            self.link.in_sync = self._compute_sync()
-            self.link.reason = "reset"
-            self._emit("lq_link", self._link_payload())
-            self._emit_snapshot()
-            self._notify()
-            return result
+            dropped = self.db.delete_cups(mac_prefix)
+            if macs or dropped:
+                self._event("cups_forgotten", None, {"prefix": mac_prefix, "count": len(macs)})
+                if not quiet:
+                    logger.info("La Quiniela bridge: %d cup(s) dropped from the cache", len(macs))
+                self._emit_snapshot()
+            return len(macs)
 
     def set_gateway_debug(self, on: bool) -> bool:
         """Flip the gateway's human-readable output. True if the line was sent."""

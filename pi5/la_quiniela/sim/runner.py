@@ -1,5 +1,12 @@
 # la_quiniela/sim/runner.py - runs the world: cups, gateway, pty, scenario,
 # operator steps, hand commands, console output and the self-check.
+#
+# Protocol v2: every cup knows its own horse (cups 1..20 come up as horses
+# 1..20, the spares as none until the scenario sets them), so there is no
+# roster and no adopt. Operator steps are DevPi's: a race state, a scratch
+# (with or without a replacement) and its undo, and the between-races
+# reset, driven through the board's routes (--devpi) or its Python API
+# (tests), or waited for from the state line DevPi sends.
 
 import json
 import queue
@@ -13,9 +20,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from la_quiniela.sim import protocol as W
 from la_quiniela.sim.model import (
-    NUM_SPARES, CupSim, GatewaySim, cup_mac, tick_cup,
+    NUM_SPARES, SIM_MAC_PREFIX, CupSim, GatewaySim, cup_mac, tick_cup,
 )
-from la_quiniela.sim.protocol import Phase, cup_to_slot, slot_to_cup
+from la_quiniela.sim.protocol import Phase
 from la_quiniela.sim.scenarios import DESCRIPTIONS, SCENARIOS
 
 LOOP_S = 0.02
@@ -49,7 +56,7 @@ class VirtualClock:
 # -----------------------------------------------------------------------------
 
 class HttpOperator:
-    """Drives DevPi through the bridge's dev endpoints (LQ_DEV_ENDPOINTS on)."""
+    """Drives DevPi through the betting board's routes (no flag needed)."""
 
     def __init__(self, base_url: str):
         self.base = base_url.rstrip("/")
@@ -64,34 +71,59 @@ class HttpOperator:
         except urllib.error.HTTPError as exc:
             raise RuntimeError("%s -> HTTP %d: %s" % (path, exc.code, exc.read().decode(errors="replace")[:200]))
 
-    def state(self, phase: int, horses: List[int], scratched: List[int]) -> None:
-        self._post("/api/lq/dev/state", {"phase": phase, "horses": horses, "scratched": scratched})
+    def state(self, phase: int) -> None:
+        self._post("/api/quiniela/cmd", {"cmd": "state %d" % int(phase)})
 
-    def roster(self, macs: List[str]) -> None:
-        self._post("/api/lq/dev/roster", {"macs": macs})
+    def scratch(self, horse: int, replacement: Optional[int] = None, name: Optional[str] = None) -> None:
+        body: Dict[str, Any] = {"horse": int(horse)}
+        if replacement is not None:
+            body["replacement"] = {"number": int(replacement), "name": name or ""}
+        self._post("/api/quiniela/scratch", body)
 
-    def adopt(self) -> None:
-        self._post("/api/lq/dev/roster/adopt", None)
+    def unscratch(self, horse: int) -> None:
+        self._post("/api/quiniela/unscratch", {"horse": int(horse)})
 
-    def reset(self, reason: str = "simulator") -> dict:
-        """Tell DevPi to forget its roster and state. Returns the new revs."""
-        return self._post("/api/lq/dev/reset", {"reason": reason})
+    def reset(self) -> dict:
+        """The between-races reset. Returns the route's reply."""
+        return self._post("/api/quiniela/reset", None)
+
+    def forget_cups(self) -> int:
+        """Drop this run's pretend cups from DevPi's cache (POST
+        /api/lq/cups/forget with the simulator's MAC prefix). DevPi does the
+        same by itself the next time a real gateway says hello."""
+        return int(self._post("/api/lq/cups/forget", {"prefix": SIM_MAC_PREFIX}).get("forgotten", 0))
 
 
 class ApiOperator:
-    """Drives the bridge in-process through its Python API (tests)."""
+    """Drives the board in-process through its Python API (tests)."""
 
-    def __init__(self, bridge):
-        self.bridge = bridge
+    def __init__(self, board):
+        self.board = board
 
-    def state(self, phase, horses, scratched):
-        self.bridge.set_state(phase, horses, scratched)
+    def state(self, phase):
+        self.board.bridge.set_state(phase=int(phase))
 
-    def roster(self, macs):
-        self.bridge.set_roster(macs)
+    def scratch(self, horse, replacement=None, name=None):
+        if replacement is None:
+            self.board.store.scratch_gateway(int(horse))
+        else:
+            self.board.store.scratch_replace(int(horse), int(replacement), name)
+        self.board.refresh()
 
-    def adopt(self):
-        self.bridge.adopt_roster()
+    def unscratch(self, horse):
+        now = self.board.store.replacement_of(int(horse))
+        if now is not None:
+            self.board.queue_undo_renum(now, int(horse))
+            self.board.store.unscratch_replace(int(horse))
+        else:
+            self.board.store.unscratch_gateway(int(horse))
+        self.board.refresh()
+
+    def reset(self):
+        return self.board.reset_betting()
+
+    def forget_cups(self):
+        return self.board.bridge.forget_cups(SIM_MAC_PREFIX)
 
 
 # -----------------------------------------------------------------------------
@@ -113,7 +145,7 @@ class Until:
 
 class OperatorStep:
     def __init__(self, kind: str, desc: str, pred: Callable[[], bool], payload: Dict[str, Any]):
-        self.kind = kind              # "state" | "roster" | "adopt"
+        self.kind = kind              # "state" | "scratch" | "unscratch" | "reset"
         self.desc = desc
         self.pred = pred
         self.payload = payload
@@ -162,11 +194,11 @@ class Simulator:
         self.expected_events: List[str] = []
         self.intended_finish: Optional[List[int]] = None
         self.empty_cup: Optional[int] = None
-        # what the operator is meant to have set (DevPi's state), human cup numbers
-        self.intended_phase: int = int(Phase.BETTING_OPEN)
-        self.intended_horses: Dict[int, int] = {c: 0 for c in range(1, 21)}
-        self.intended_scratched: Dict[int, bool] = {c: False for c in range(1, 21)}
-        self.intended_roster: Dict[int, Optional[str]] = {c: None for c in range(1, 21)}
+        # what the operator is meant to have set (DevPi's state), by horse number
+        self.intended_phase: int = int(Phase.PRE_RACE)
+        self.intended_scratched: set = set()
+        self.intended_renum: List[tuple] = []     # (was, now) pairs that must be in the state line
+        self.intended_gone: set = set()           # horses no pair may start from any more (an undone renumber)
         self.scenario_name: Optional[str] = None
         self.reboot_log_mark: int = 0        # gw.applied_log length at the last reboot
         self._gen = None
@@ -199,15 +231,23 @@ class Simulator:
             raise ValueError("no cup %s (1..20, spares 21 and 22)" % number)
         return self.cups[number]
 
+    def cup_for_horse(self, horse: int) -> Optional[CupSim]:
+        """The powered cup that says it is `horse` (the most recently booted
+        one if two do), or None."""
+        found = [c for c in self.cups.values() if c.powered and c.horse == horse]
+        if not found:
+            return None
+        return max(found, key=lambda c: c.booted_at or 0)
+
     def drop(self, number: int, n: int) -> None:
         c = self.cup(number)
         c.drop(n, self.clock.now())
-        self.say("cup %d: +%d tokens (now %d)" % (number, n, c.tokens))
+        self.say("cup %d (horse %s): +%d tokens (now %d)" % (number, c.horse or "-", n, c.tokens))
 
     def take(self, number: int, n: int) -> None:
         c = self.cup(number)
         taken = c.take(n, self.clock.now())
-        self.say("cup %d: -%d tokens (now %d)" % (number, taken, c.tokens))
+        self.say("cup %d (horse %s): -%d tokens (now %d)" % (number, c.horse or "-", taken, c.tokens))
 
     def kill(self, number: int) -> None:
         c = self.cup(number)
@@ -217,15 +257,21 @@ class Simulator:
     def boot(self, number: int) -> None:
         c = self.cup(number)
         c.power_on(self.clock.now())
-        self.say("cup %d: power on (%s), sending HELLO" % (number, c.mac))
+        self.say("cup %d: power on (%s, horse %s), sending HELLO" % (number, c.mac, c.horse or "none"))
 
     def boot_spare(self, k: int) -> CupSim:
         if k not in (1, 2):
             raise ValueError("spares are 1 and 2")
         c = self.cup(20 + k)
         c.power_on(self.clock.now())
-        self.say("spare %d: power on (%s), sending HELLO" % (k, c.mac))
+        self.say("spare %d: power on (%s, no horse), sending HELLO" % (k, c.mac))
         return c
+
+    def set_horse(self, number: int, horse: int) -> None:
+        """The touch menu on that cup: HORSE -> the number -> SET."""
+        c = self.cup(number)
+        c.set_horse(horse, self.clock.now())
+        self.say("cup %d: HORSE set to %s on the cup" % (number, horse or "none"))
 
     def reboot_gateway(self) -> None:
         # Where the gateway's applied log stood when it went down. Everything
@@ -241,15 +287,12 @@ class Simulator:
     def total_tokens(self) -> int:
         return sum(c.tokens for c in self.cups.values())
 
-    def slot_of_cup(self, number: int) -> int:
-        return cup_to_slot(number)
-
     def move_tokens_to_spare(self, number: int, spare: CupSim) -> None:
         dead = self.cup(number)
         n = dead.tokens
         dead.tokens = 0
         spare.drop(n, self.clock.now())
-        self.say("cup %d's %d tokens moved into %s (spare)" % (number, n, spare.mac))
+        self.say("cup %d's %d tokens moved into %s (spare, horse %s)" % (number, n, spare.mac, spare.horse or "-"))
 
     # -- scenario helpers -----------------------------------------------------
 
@@ -259,11 +302,11 @@ class Simulator:
     def until(self, desc: str, pred: Callable[[], bool], timeout: float = 60.0) -> Until:
         return Until(desc, pred, timeout)
 
-    def expect_event(self, type_: str, cup: Optional[int]) -> None:
-        self.expected_events.append("%s%s" % (type_, "" if cup is None else " for cup %d" % cup))
+    def expect_event(self, type_: str, horse: Optional[int]) -> None:
+        self.expected_events.append("%s%s" % (type_, "" if horse is None else " for horse %d" % horse))
 
-    def expect_no_event(self, type_: str, cup: int) -> None:
-        self.expected_events.append("no %s for cup %d" % (type_, cup))
+    def expect_no_event(self, type_: str, horse: int) -> None:
+        self.expected_events.append("no %s for horse %d" % (type_, horse))
 
     def assert_equal(self, what: str, a, b) -> None:
         if a != b:
@@ -272,101 +315,62 @@ class Simulator:
         else:
             self.say("check ok: %s" % what)
 
-    def _state_payload(self) -> Dict[str, Any]:
-        return {"phase": int(self.intended_phase),
-                "horses": [self.intended_horses[c] for c in range(1, 21)],
-                "scratched": [1 if self.intended_scratched[c] else 0 for c in range(1, 21)]}
-
-    def _roster_payload(self) -> List[str]:
-        return [self.intended_roster[c] or "" for c in range(1, 21)]
-
     def _state_applied(self) -> bool:
         gw = self.gw
         if gw.state_rev == 0 or gw.phase != int(self.intended_phase):
             return False
-        for c in range(1, 21):
-            slot = cup_to_slot(c)
-            if gw.horse[slot] != self.intended_horses[c]:
-                return False
-            if bool(gw.scr[slot]) != self.intended_scratched[c]:
-                return False
-        return True
-
-    def _roster_applied(self) -> bool:
-        gw = self.gw
-        if gw.roster_rev == 0:
+        if set(gw.scratched) != set(self.intended_scratched):
             return False
-        return all(gw.roster[cup_to_slot(c)] == self.intended_roster[c] for c in range(1, 21))
+        if any(f in self.intended_gone for f, _ in gw.renum):
+            return False                          # the undone record's pair is still in the packet
+        return all(tuple(pair) in gw.renum for pair in self.intended_renum)
 
-    def operator_state(self, desc: str, phase=None, horses: Optional[Dict[int, int]] = None,
-                       scratched: Optional[Dict[int, bool]] = None) -> OperatorStep:
-        if phase is not None:
-            self.intended_phase = int(phase)
-        if horses:
-            self.intended_horses.update(horses)
-        if scratched:
-            self.intended_scratched.update(scratched)
-        return OperatorStep("state", desc, self._state_applied, self._state_payload())
+    def operator_state(self, desc: str, phase) -> OperatorStep:
+        self.intended_phase = int(phase)
+        return OperatorStep("state", desc, self._state_applied, {"phase": int(phase)})
 
-    def operator_roster(self, desc: str, cup: int, mac: Optional[str]) -> OperatorStep:
-        for c, m in self.intended_roster.items():
-            if m == mac:
-                self.intended_roster[c] = None
-        self.intended_roster[cup] = mac
-        return OperatorStep("roster", desc, self._roster_applied, {"macs": self._roster_payload()})
+    def operator_scratch(self, desc: str, horse: int, replacement: Optional[int] = None,
+                         name: Optional[str] = None) -> OperatorStep:
+        if replacement is None:
+            self.intended_scratched.add(int(horse))
+        else:
+            self.intended_renum.append((int(horse), int(replacement)))
+            self.intended_gone.discard(int(horse))
+        return OperatorStep("scratch", desc, self._state_applied,
+                            {"horse": int(horse), "replacement": replacement, "name": name})
 
-    def operator_adopt(self) -> OperatorStep:
-        # what adopting should produce: every powered, assigned cup in its slot
-        for c in range(1, 21):
-            self.intended_roster[c] = None
-        for c in self.cups.values():
-            if c.powered and c.cup_id is not None:
-                self.intended_roster[slot_to_cup(c.cup_id)] = c.mac
-        return OperatorStep("adopt", "adopt the roster (POST /api/lq/dev/roster/adopt)",
-                            self._roster_applied, {})
+    def operator_unscratch(self, desc: str, horse: int) -> OperatorStep:
+        self.intended_scratched.discard(int(horse))
+        if any(p[0] == int(horse) for p in self.intended_renum):
+            self.intended_gone.add(int(horse))    # DevPi must take the pair out (and send it back for a while)
+        self.intended_renum = [p for p in self.intended_renum if p[0] != int(horse)]
+        return OperatorStep("unscratch", desc, self._state_applied, {"horse": int(horse)})
 
-    def operator_roster_all(self, desc: str) -> OperatorStep:
-        """Put the 20 simulated cups in cups 1..20, by MAC.
-
-        Scenarios start from this rather than from adopt. Adopt only turns the
-        cup numbers DevPi has already mirrored from the gateway into DevPi's
-        own roster, so it leaves out any cup DevPi had not heard from yet -
-        and leaves it out for good, because from then on DevPi owns the roster
-        and the gateway reports that cup as -1. DevPi also keeps its roster
-        between runs, so one short adopt would spoil every later run. Naming
-        all 20 MACs is exact from any starting state."""
-        for c in range(1, 21):
-            self.intended_roster[c] = self.cups[c].mac
-        return OperatorStep("roster", desc, self._roster_applied,
-                            {"macs": self._roster_payload()})
+    def operator_reset(self, desc: str = "reset betting (POST /api/quiniela/reset)") -> OperatorStep:
+        self.intended_phase = int(Phase.PRE_RACE)
+        return OperatorStep("reset", desc, self._state_applied, {})
 
     def prologue(self):
-        """Every scenario starts the same way: cups power on and get slots,
-        DevPi is given the roster, horses 1..20 go to cups 1..20, BETTING_OPEN."""
+        """Every scenario starts the same way: cups 1..20 power on (each
+        knows it is horse 1..20), the gateway hears them all, DevPi opens
+        betting."""
         for n in range(1, 21):
             self.boot(n)
-        # The roster goes down before the cups are checked, not after. DevPi
-        # keeps its roster between runs, and while it holds one the gateway
-        # hands out no number of its own: any cup outside that roster would
-        # wait for a slot that is never coming. Naming all twenty first makes
-        # the start of a scenario the same from any DevPi state.
-        yield self.operator_roster_all("put the 20 cups in cups 1..20 (POST /api/lq/dev/roster)")
-        yield self.until("all 20 cups hold their numbers",
-                         lambda: all(self.cups[n].cup_id == cup_to_slot(n) for n in range(1, 21)),
+        yield self.until("the gateway has heard all 20 cups",
+                         lambda: sum(1 for n in range(1, 21) if self.cups[n].mac in self.gw.cups) == 20,
                          timeout=30)
-        yield self.operator_state("assign horses 1..20 to cups 1..20 and open betting",
-                                  phase=Phase.BETTING_OPEN, horses={c: c for c in range(1, 21)},
-                                  scratched={c: False for c in range(1, 21)})
+        yield self.operator_state("open betting (BETTING_OPEN)", phase=Phase.BETTING_OPEN)
 
     # -- hand commands ----------------------------------------------------------
 
     HELP = ("drop CUP N       tokens into a cup (cups are 1..20)\n"
             "take CUP N       tokens out of a cup\n"
             "kill CUP         cup loses power\n"
-            "boot CUP         cup powers on (keeps its tokens)\n"
-            "boot-spare 1|2   power on a spare cup (unassigned until the roster includes it)\n"
+            "boot CUP         cup powers on (keeps its tokens and its horse)\n"
+            "boot-spare 1|2   power on a spare cup (no horse until set-horse)\n"
+            "set-horse CUP H  the touch menu on that cup: HORSE -> H (0 = none); spares are cups 21 and 22\n"
             "reboot-gateway   the gateway reboots\n"
-            "cups             table of cups: number, MAC, slot, count, powered\n"
+            "cups             table of cups: number, MAC, horse, count, powered\n"
             "help             this text\n"
             "quit             stop the simulator")
 
@@ -386,6 +390,8 @@ class Simulator:
                 self.reboot_gateway()
             elif cmd == "boot-spare" and len(parts) == 2:
                 self.boot_spare(int(parts[1]))
+            elif cmd == "set-horse" and len(parts) == 3:
+                self.set_horse(int(parts[1]), int(parts[2]))
             elif cmd in ("drop", "take") and len(parts) == 3:
                 (self.drop if cmd == "drop" else self.take)(int(parts[1]), int(parts[2]))
             elif cmd in ("kill", "boot") and len(parts) == 2:
@@ -397,11 +403,11 @@ class Simulator:
 
     def cups_table(self) -> str:
         now = self.clock.now()
-        rows = [" cup  mac                slot  count  powered"]
+        rows = [" cup  mac                horse  count  powered"]
         for n, c in sorted(self.cups.items()):
             label = ("%2d" % n) if n <= 20 else ("s%d" % (n - 20))
-            slot = "-" if c.cup_id is None else str(slot_to_cup(c.cup_id))
-            rows.append(" %3s  %s  %4s  %5d  %s" % (label, c.mac, slot, c.sample(now)[1] if c.powered else c.tokens,
+            rows.append(" %3s  %s  %5s  %5d  %s" % (label, c.mac, c.horse or "-",
+                                                    c.sample(now)[1] if c.powered else c.tokens,
                                                     "yes" if c.powered else "no"))
         return "\n".join(rows)
 
@@ -518,15 +524,13 @@ class Simulator:
                 if p.pred():
                     self.say("operator step done: %s" % p.desc, important=self.operator is None)
                 elif now >= self._pending_deadline:
-                    raise ScenarioFailed("no %s line from DevPi within %.0f s for: %s%s"
-                                         % (p.kind if p.kind != "adopt" else "roster",
-                                            self.operator_timeout, p.desc,
+                    raise ScenarioFailed("no state line from DevPi within %.0f s for: %s%s"
+                                         % (self.operator_timeout, p.desc,
                                             "" if not self._pending_error
                                             else " (last error: %s)" % self._pending_error))
                 else:
                     # Nothing came back. Ask again: DevPi may not have had the
-                    # port open when the first request went out, or (for adopt)
-                    # may not yet have heard from every cup.
+                    # port open when the first request went out.
                     if (self.operator is not None
                             and now - self._pending_asked >= OPERATOR_RETRY_S):
                         self._dispatch_operator(p, now, again=True)
@@ -554,8 +558,7 @@ class Simulator:
     def _dispatch_operator(self, step: "OperatorStep", now: float, again: bool = False) -> None:
         """Ask the operator (or the human at the console) for one step. Called
         again every OPERATOR_RETRY_S while the step has had no effect: a
-        request made before DevPi opened the port is simply gone, and an adopt
-        is only as good as the cups DevPi had heard from when it ran."""
+        request made before DevPi opened the port is simply gone."""
         self._pending_asked = now
         if self.operator is None:
             if not again:
@@ -564,11 +567,15 @@ class Simulator:
         self.say("operator (driven%s): %s" % (", again" if again else "", step.desc))
         try:
             if step.kind == "state":
-                self.operator.state(**step.payload)
-            elif step.kind == "roster":
-                self.operator.roster(step.payload["macs"])
+                self.operator.state(step.payload["phase"])
+            elif step.kind == "scratch":
+                if not again:      # a scratch is not idempotent: DevPi refuses a repeat as "already scratched"
+                    self.operator.scratch(step.payload["horse"], step.payload["replacement"], step.payload["name"])
+            elif step.kind == "unscratch":
+                if not again:
+                    self.operator.unscratch(step.payload["horse"])
             else:
-                self.operator.adopt()
+                self.operator.reset()
             self._pending_error = None
         except Exception as exc:
             # DevPi may not be up yet: LQ_SIMULATOR.md starts this window
@@ -582,36 +589,30 @@ class Simulator:
     # -- expectations and the self-check --------------------------------------
 
     def expectation(self) -> Dict[str, Any]:
-        """What DevPi should end up believing, by human cup number."""
-        now = self.clock.now()
-        by_mac = {c.mac: c for c in self.cups.values()}
+        """What DevPi should end up believing, by cup MAC: the horse each cup
+        says it is, its count, and whether it is online."""
         cups = {}
-        for n in range(1, 21):
-            mac = self.gw.roster[cup_to_slot(n)]
-            c = by_mac.get(mac) if mac else None
-            cups[n] = {
-                "mac": mac,
-                "count": (c.tokens if c else None),
-                "online": bool(c and c.powered and c.cup_id == cup_to_slot(n)),
-            }
+        for c in self.cups.values():
+            if c.booted_at is None:
+                continue                          # never powered: DevPi has never heard of it
+            cups[c.mac] = {"horse": c.horse, "count": c.tokens, "online": bool(c.powered)}
         return {"cups": cups, "in_sync": True, "events": list(self.expected_events),
                 "intended_finish": self.intended_finish, "empty_cup": self.empty_cup}
 
     def _print_expectations(self) -> None:
         exp = self.expectation()
         lines = ["", "EXPECTED RESULTS (%s%s)" % (self.scenario_name, "" if self.seed is None else ", seed %s" % self.seed),
-                 " cup  mac                count  online"]
-        for n in range(1, 21):
-            e = exp["cups"][n]
-            lines.append(" %3d  %-17s  %5s  %s" % (n, e["mac"] or "-", "-" if e["count"] is None else e["count"],
-                                                   "yes" if e["online"] else "no"))
-        lines.append(" total tokens in play: %d" % sum(e["count"] or 0 for e in exp["cups"].values()))
+                 " mac                horse  count  online"]
+        for mac in sorted(exp["cups"]):
+            e = exp["cups"][mac]
+            lines.append(" %-17s  %5s  %5d  %s" % (mac, e["horse"] or "-", e["count"], "yes" if e["online"] else "no"))
+        lines.append(" total tokens in play: %d" % sum(e["count"] for e in exp["cups"].values()))
         lines.append(" link in_sync: true")
         if exp["events"]:
             lines.append(" events that should have been logged: " + ", ".join(exp["events"]))
         if exp["intended_finish"]:
-            lines.append(" intended finish order (win, place, show): %s; cup %s is empty"
-                         % (", ".join("cup %d" % c for c in exp["intended_finish"]), exp["empty_cup"]))
+            lines.append(" intended finish order (win, place, show): %s; horse %s has no tokens"
+                         % (", ".join("horse %d" % c for c in exp["intended_finish"]), exp["empty_cup"]))
         for f in self.failures:
             lines.append(" FAILED: " + f)
         self.out("\n".join(lines))
@@ -619,22 +620,20 @@ class Simulator:
     def compare(self, snapshot: dict, tolerance: int) -> List[str]:
         exp = self.expectation()
         problems = []
-        cups = {c["cup"]: c for c in snapshot.get("cups", [])}
-        for n in range(1, 21):
-            e = exp["cups"][n]
-            s = cups.get(n)
+        by_mac = {c.get("mac"): c for c in snapshot.get("cups", []) if isinstance(c, dict)}
+        for mac, e in exp["cups"].items():
+            s = by_mac.get(mac)
             if s is None:
-                problems.append("cup %d missing from the snapshot" % n)
+                problems.append("cup %s missing from the snapshot" % mac)
                 continue
-            if (s.get("mac") or None) != e["mac"]:
-                problems.append("cup %d: mac %s, expected %s" % (n, s.get("mac"), e["mac"]))
+            if int(s.get("horse") or 0) != e["horse"]:
+                problems.append("cup %s: horse %s, expected %s" % (mac, s.get("horse"), e["horse"]))
             if bool(s.get("online")) != e["online"]:
-                problems.append("cup %d: online %s, expected %s" % (n, s.get("online"), e["online"]))
-            if e["count"] is not None:
-                got = s.get("count")
-                if got is None or abs(int(got) - e["count"]) > tolerance:
-                    problems.append("cup %d: count %s, expected %d%s" % (n, got, e["count"],
-                                                                        "" if tolerance == 0 else " (+-%d)" % tolerance))
+                problems.append("cup %s: online %s, expected %s" % (mac, s.get("online"), e["online"]))
+            got = s.get("count")
+            if got is None or abs(int(got) - e["count"]) > tolerance:
+                problems.append("cup %s: count %s, expected %d%s" % (mac, got, e["count"],
+                                                                     "" if tolerance == 0 else " (+-%d)" % tolerance))
         if not snapshot.get("link", {}).get("in_sync"):
             problems.append("link in_sync is %s, expected true" % snapshot.get("link", {}).get("in_sync"))
         return problems

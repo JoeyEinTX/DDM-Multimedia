@@ -35,7 +35,7 @@ def main(argv=None) -> int:
     ap.add_argument("--ideal", action="store_true", help="scale without noise or overshoot: counts are exact")
     ap.add_argument("--auto-demo", action="store_true", help="emulate a DDM_AUTO_DEMO 1 bench build")
     ap.add_argument("--link", default=DEFAULT_LINK, metavar="PATH", help="stable symlink to the port (default %(default)s)")
-    ap.add_argument("--devpi", metavar="URL", help="drive operator steps through DevPi's dev endpoints, e.g. http://localhost:5000")
+    ap.add_argument("--devpi", metavar="URL", help="drive operator steps through DevPi's betting-board routes, e.g. http://localhost:5000")
     ap.add_argument("--check", metavar="URL", help="at the end, compare DevPi's /api/lq/snapshot with the expectation and print PASS or FAIL")
     ap.add_argument("--operator-timeout", type=float, default=120.0, metavar="S", help="fail an operator step after this long (default 120)")
     ap.add_argument("--settle", type=float, default=12.0, metavar="S", help="how long --check waits for DevPi to catch up (default 12)")
@@ -43,10 +43,10 @@ def main(argv=None) -> int:
     ap.add_argument("--wire", action="store_true", help="also echo every line sent and received")
     ap.add_argument("--no-stdin", action="store_true", help="do not read commands from stdin")
     ap.add_argument("--duration", type=float, metavar="S", help="with no scenario: stop after this many seconds")
-    ap.add_argument("--reset-after", action="store_true",
-                    help="when the run ends, tell DevPi to forget this run's roster and state "
-                         "(needs --devpi). DevPi does this by itself the next time a real gateway "
-                         "says hello, so this is only to leave it tidy straight away")
+    ap.add_argument("--forget-after", action="store_true",
+                    help="when the run ends, tell DevPi to drop this run's pretend cups from its "
+                         "cache (needs --devpi). DevPi does this by itself the next time a real "
+                         "gateway says hello, so this is only to leave the Horses list tidy at once")
     args = ap.parse_args(argv)
 
     if args.list:
@@ -59,7 +59,7 @@ def main(argv=None) -> int:
 
     link = PtyLink(args.link)
     print("virtual serial port: %s  (symlink %s)" % (link.slave_path, args.link), flush=True)
-    print("start the app with: DDM_LQ_SERIAL_PORT=%s DDM_LQ_DEV_ENDPOINTS=1 python main.py" % args.link, flush=True)
+    print("start the app with: DDM_LQ_SERIAL_PORT=%s python main.py" % args.link, flush=True)
     sim = Simulator(link=link, seed=args.seed, ideal=args.ideal, auto_demo=args.auto_demo,
                     speed=args.speed, quiet=args.quiet, wire=args.wire,
                     operator=HttpOperator(args.devpi) if args.devpi else None,
@@ -72,18 +72,15 @@ def main(argv=None) -> int:
         print("\nstopped", flush=True)
         return 130
     finally:
-        if args.reset_after:
+        if args.forget_after:
             if not args.devpi:
-                print("--reset-after needs --devpi; DevPi was not told anything", flush=True)
+                print("--forget-after needs --devpi; DevPi was not told anything", flush=True)
             else:
                 try:
-                    revs = HttpOperator(args.devpi).reset("simulator_run_ended")
-                    print("DevPi reset: roster and state forgotten (state rev %s, roster rev %s, "
-                          "%s simulated cup row(s) deleted)"
-                          % (revs.get("state_rev"), revs.get("roster_rev"),
-                             revs.get("cups_dropped")), flush=True)
+                    n = HttpOperator(args.devpi).forget_cups()
+                    print("DevPi dropped %d pretend cup(s) from its cache" % n, flush=True)
                 except Exception as exc:
-                    print("could not reset DevPi (%s); it will throw this run away by itself the "
+                    print("could not reach DevPi (%s); it drops the pretend cups by itself the "
                           "next time a real gateway says hello" % exc, flush=True)
         link.close()
 

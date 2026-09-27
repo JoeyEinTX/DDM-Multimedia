@@ -5,7 +5,8 @@
 # No hardware, no real serial port: a fake port feeds the bridge the
 # gateway's lines and captures what it writes, a stub SocketIO records every
 # emit, and a fake clock drives the timers. Same tiny runner as
-# la_subasta/test_smoke.py.
+# la_subasta/test_smoke.py. Protocol v2: cups are known by MAC and by the
+# horse they report; there are no slots, rosters or cup IDs to test.
 
 import io
 import json
@@ -38,8 +39,8 @@ from la_quiniela import bridge as bridge_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import (  # noqa: E402
-    HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX, PER_CUP_EVENT_MIN_S,
-    RESEND_MIN_S, SERIAL_LINE_MODES, LqBridge, load_settings, open_serial_port,
+    HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX, RESEND_MIN_S, SERIAL_LINE_MODES,
+    LqBridge, load_settings, open_serial_port,
 )
 from la_quiniela.models import LqDb  # noqa: E402
 
@@ -184,25 +185,34 @@ class ConsoleCapture:
         self.lines.clear()
 
 
-def _fresh_bridge(clock=True, **settings):
-    """A bridge on an empty database with a fake port, stub socketio and (by
-    default) a fake clock. The port is opened straight away, no thread."""
+def _drop_db():
+    """Close the bridge the last _fresh_bridge() made and remove the temp
+    database. The close matters on Windows, which keeps the file locked while
+    a connection is open; on DevPi the remove would go through regardless."""
     global _current
     if _current is not None:
         try:
             _current.close()
         except Exception:
             pass
+        _current = None
     for suffix in ("", "-wal", "-shm"):
         try:
             os.remove(_TMP_DB + suffix)
         except OSError:
             pass
+
+
+def _fresh_bridge(clock=True, **settings):
+    """A bridge on an empty database with a fake port, stub socketio and (by
+    default) a fake clock. The port is opened straight away, no thread."""
+    global _current
+    _drop_db()
     port = FakeSerial()
     sio = StubSocketIO()
     clk = FakeClock() if clock else None
     cfg = {"LQ_SERIAL_PORT": "/dev/fake", "LQ_SERIAL_BAUD": 115200, "LQ_HEARTBEAT_LOG_S": 10,
-           "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12, "LQ_DEV_ENDPOINTS": False}
+           "LQ_CUP_OFFLINE_S": 6, "LQ_GATEWAY_OFFLINE_S": 12}
     cfg.update(settings)
     b = LqBridge(settings=cfg, db_path=_TMP_DB, serial_factory=lambda p, baud, t: port,
                  socketio=sio, clock=clk, console=ConsoleCapture())
@@ -219,26 +229,27 @@ SIM_MAC_B = "02:DD:4D:00:00:02"
 SIM_GW_MAC = "02:DD:4D:FF:FF:FF"     # the simulator's own gateway
 
 
-def telem(cup_wire, mac, count=14, raw=812345, seq=9021, drop=2, rssi=-64, up=-61, claim=None):
-    d = {"t": "telem", "cup": cup_wire, "mac": mac, "raw": raw, "count": count, "seq": seq,
+def telem(mac, horse=0, count=14, raw=812345, seq=9021, drop=2, rssi=-64, up=-61, hello=False):
+    """A v2 telem line: the cup's MAC and the horse it says it is."""
+    d = {"t": "telem", "mac": mac, "horse": horse, "raw": raw, "count": count, "seq": seq,
          "drop": drop, "rssi": rssi, "up": up}
-    if claim is not None:
-        d["claim"] = claim
+    if hello:
+        d["hello"] = 1
     return (json.dumps(d, separators=(",", ":")) + "\n").encode()
 
 
-def status(gseq=1, phase=1, state_rev=0, roster_rev=0, cups=0, rejects=0, up_s=10):
+def cup_entry(mac, horse=0, tok=0, rssi=-63, up=-61, age=180):
+    return {"mac": mac, "horse": horse, "tok": tok, "rssi": rssi, "up": up, "age": age}
+
+
+def status(gseq=1, phase=1, state_rev=0, cups=(), rejects=0, up_s=10):
     return (json.dumps({"t": "status", "gseq": gseq, "phase": phase, "state_rev": state_rev,
-                        "roster_rev": roster_rev, "cups": cups, "rejects": rejects,
-                        "up_s": up_s}, separators=(",", ":")) + "\n").encode()
+                        "cups": list(cups), "rejects": rejects, "up_s": up_s},
+                       separators=(",", ":")) + "\n").encode()
 
 
-def hello(v=1, mac=GW_MAC, proto=1):
+def hello(v=2, mac=GW_MAC, proto=2):
     return (json.dumps({"t": "hello", "v": v, "proto": proto, "mac": mac}) + "\n").encode()
-
-
-def cup_hello(cup_wire, mac):
-    return (json.dumps({"t": "cup_hello", "cup": cup_wire, "mac": mac}) + "\n").encode()
 
 
 def events_of(b, type_):
@@ -250,8 +261,12 @@ def telemetry_rows(b):
 
 
 def cup_row(b, mac):
-    r = b.db.query_one("SELECT * FROM cups WHERE mac = ?", (mac,))
+    r = b.db.query_one("SELECT * FROM lq_cups WHERE mac = ?", (mac,))
     return dict(r) if r else None
+
+
+def cup_in(snap, mac):
+    return next((c for c in snap["cups"] if c["mac"] == mac), None)
 
 
 # What a real port hands over the instant it is opened: the tail of a line
@@ -264,11 +279,13 @@ MID_LINE = b'5:12:34:56","count":3,"seq":11}\n'
 # newline, values above 0x7F and long runs of NUL.
 JUNK = bytes((i * 7 + 3) % 256 for i in range(6000)).replace(b"\n", b"\x01")
 NULS = b"\x00" * 9000
-GOOD_LINES = (b'{"t":"hello","v":1,"proto":1,"mac":"24:6F:28:AA:BB:CC"}\n'
-              b'{"t":"telem","cup":0,"mac":"A0:B7:65:12:34:56","raw":812345,"count":3,'
+GOOD_LINES = (b'{"t":"hello","v":2,"proto":2,"mac":"24:6F:28:AA:BB:CC"}\n'
+              b'{"t":"telem","mac":"A0:B7:65:12:34:56","horse":7,"raw":812345,"count":3,'
               b'"seq":11,"drop":0,"rssi":-64,"up":-61}\n'
-              b'{"t":"status","gseq":1,"phase":1,"state_rev":0,"roster_rev":0,"cups":1,'
-              b'"rejects":0,"up_s":145}\n')
+              b'{"t":"status","gseq":1,"phase":1,"state_rev":0,"cups":[{"mac":"A0:B7:65:12:34:56",'
+              b'"horse":7,"tok":3,"rssi":-64,"up":-61,"age":120}],"rejects":0,"up_s":145}\n')
+
+STATE_REV1 = '{"t":"state","rev":1,"st":0,"scr":[],"renum":[],"res":[0,0,0]}'
 
 
 def drain(b, port, limit=500):
@@ -279,35 +296,10 @@ def drain(b, port, limit=500):
         b._read_once()
     raise AssertionError("port never drained")
 
-HORSES_1_TO_20 = list(range(1, 21))
-SCR_CUP7 = [1 if cup == 7 else 0 for cup in range(1, 21)]
-NO_SCR = [0] * 20
-
 
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
-
-def test_id_conversion():
-    _check("wire 0 -> cup 1", P.wire_to_cup(0) == 1)
-    _check("wire 19 -> cup 20", P.wire_to_cup(19) == 20)
-    _check("wire -1 -> None", P.wire_to_cup(-1) is None)
-    _check("wire None -> None", P.wire_to_cup(None) is None)
-    _check("cup 1 -> wire 0", P.cup_to_wire(1) == 0)
-    _check("cup 20 -> wire 19", P.cup_to_wire(20) == 19)
-    _check("cup None -> wire -1", P.cup_to_wire(None) == -1)
-    _check("round trip 0..19", all(P.cup_to_wire(P.wire_to_cup(w)) == w for w in range(20)))
-    _check("round trip 1..20", all(P.wire_to_cup(P.cup_to_wire(c)) == c for c in range(1, 21)))
-    # The one ID rule: no other +1 / -1 on a cup ID outside protocol.py
-    pat = re.compile(r"cup\w*\s*[-+]\s*1\b|[-+]\s*1\s*\]")
-    offenders = []
-    for name in ("bridge.py", "blueprint.py", "models.py", "__init__.py"):
-        with open(os.path.join(_PI5_DIR, "la_quiniela", name), encoding="utf-8") as f:
-            for n, line in enumerate(f, 1):
-                if pat.search(line):
-                    offenders.append(f"{name}:{n}: {line.strip()}")
-    _check("no cup-ID arithmetic outside protocol.py", not offenders, "; ".join(offenders))
-
 
 def test_phase_enum_matches_header():
     header = os.path.join(_PI5_DIR, "..", "firmware", "quiniela", "ddm_common.h")
@@ -323,11 +315,40 @@ def test_phase_enum_matches_header():
     _check("Phase names match header", set(p.name for p in P.Phase) == set(parsed), str(parsed))
     _check("Phase values match header",
            all(P.Phase[name].value == value for name, value in parsed.items()), str(parsed))
-    m2 = re.search(r"#define DDM_MAX_CUPS\s+(\d+)", text)
-    _check("NUM_CUPS matches DDM_MAX_CUPS", m2 and int(m2.group(1)) == P.NUM_CUPS)
-    m3 = re.search(r"#define DDM_MAX_HORSE\s+(\d+)", text)
-    _check("MAX_HORSE matches DDM_MAX_HORSE", m3 is not None and int(m3.group(1)) == P.MAX_HORSE,
-           f"header {m3.group(1) if m3 else None}, protocol {P.MAX_HORSE}")
+    for define, ours in (("DDM_MAX_HORSE", P.MAX_HORSE), ("DDM_RENUM_SLOTS", P.RENUM_SLOTS),
+                         ("DDM_RESULT_SLOTS", P.RESULT_SLOTS), ("DDM_PROTO_VERSION", P.LINE_PROTO_VERSION)):
+        m2 = re.search(r"#define %s\s+(\d+)" % define, text)
+        _check(f"{define} matches the header", m2 is not None and int(m2.group(1)) == ours,
+               f"header {m2.group(1) if m2 else None}, protocol {ours}")
+    _check("no slot arithmetic left in the package",
+           not [name for name in ("bridge.py", "blueprint.py", "models.py", "board.py", "betting.py")
+                if re.search(r"wire_to_cup|cup_to_wire|CUP_NUMBERS|NUM_CUPS",
+                             open(os.path.join(_PI5_DIR, "la_quiniela", name), encoding="utf-8").read())])
+
+
+def test_protocol_validation_and_lines():
+    ok = P.validate_state(1, [9, 15, 9], [[9, 22], (22, 23)], [19, 1, 22])
+    _check("validate_state: sorted unique scratched, tuple pairs, results",
+           ok == (1, [9, 15], [(9, 22), (22, 23)], [19, 1, 22]), str(ok))
+    for args, why in (((7, [], [], [0, 0, 0]), "phase 7"), ((True, [], [], [0, 0, 0]), "bool phase"),
+                      ((1, [0], [], [0, 0, 0]), "scratched 0"), ((1, [25], [], [0, 0, 0]), "scratched 25"),
+                      ((1, "9", [], [0, 0, 0]), "scratched a string"), ((1, [], [[9, 9]], [0, 0, 0]), "from == to"),
+                      ((1, [], [[9, 22], [9, 23]], [0, 0, 0]), "from twice"),
+                      ((1, [], [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]], [0, 0, 0]), "five pairs"),
+                      ((1, [], [[9]], [0, 0, 0]), "a one-item pair"), ((1, [], [], [1, 2]), "two results"),
+                      ((1, [], [], [1, 1, 0]), "the same horse twice"), ((1, [], [], [25, 0, 0]), "result 25")):
+        try:
+            P.validate_state(*args)
+            _check(f"validate_state rejects {why}", False)
+        except ValueError:
+            _check(f"validate_state rejects {why}", True)
+    _check("build_state_line byte-exact (README example)",
+           P.build_state_line(42, 1, [9, 15], [(9, 22)], [0, 0, 0])
+           == '{"t":"state","rev":42,"st":1,"scr":[9,15],"renum":[[9,22]],"res":[0,0,0]}')
+    _check("build_debug_line", P.build_debug_line(True) == '{"t":"debug","on":true}')
+    _check("parse_horse: 1..24 as themselves, everything else 0",
+           [P.parse_horse(v) for v in (7, 24, 0, 25, -1, None, "7", True, 3.0)] == [7, 24, 0, 0, 0, 0, 0, 0, 0])
+    _check("MAX_LINE_BYTES fits a full status line (24 cups)", P.MAX_LINE_BYTES >= 2560)
 
 
 def test_garbage_lines_ignored():
@@ -337,229 +358,190 @@ def test_garbage_lines_ignored():
                 b"# ---- CUPS seq=1 ----\n", b"\n", b"\r\n", b"[1,2,3]\n",
                 b'{"t":"telem"\n', b"{not json}\n",
                 b'{"t":"whatever","x":1}\n', b'{"t":"status","gseq":1,"phase":1,"state_rev":0,'
-                b'"roster_rev":0,"cups":0,"rejects":0,"up_s":3,"future":{"k":[1]}}\n',
-                b'{"t":"telem","cup":"seven","mac":5}\n',
-                b"{" + b"x" * 1100 + b"}\n"):
+                b'"cups":[],"rejects":0,"up_s":3,"future":{"k":[1]}}\n',
+                b'{"t":"telem","horse":"seven","mac":5}\n',
+                b'{"t":"roster","rev":7,"macs":[]}\n',
+                b"{" + b"x" * 5000 + b"}\n"):
         b.handle_raw_line(raw)
     _check("non-object lines counted as text, not parsed", b.stats["text"] == 3, str(b.stats))
     _check("bad JSON counted", b.stats["bad_json"] == 2, str(b.stats))
     _check("over-long line dropped", b.stats["too_long"] == 1)
-    _check("unknown t ignored", b.stats["unknown_type"] == 1)
+    _check("unknown t ignored (a v1 roster line included)", b.stats["unknown_type"] == 2)
     _check("unknown keys ignored, status applied", b.link.up_s == 3)
-    _check("nothing written back", port.written == [])
+    _check("the only thing written back is the state, once, for the status holding rev 0",
+           port.lines() == [STATE_REV1], str(port.lines()))
     _check("no cups from garbage", b.cups == {})
 
 
 def test_telem_live_state_and_rows():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.handle_raw_line(telem(7, MAC_A, count=14))
+    b.handle_raw_line(telem(MAC_A, horse=8, count=14))
     live = b.cups[MAC_A]
-    _check("live cup is 1-based (wire 7 -> cup 8)", live.cup == 8)
+    _check("live cup keyed by MAC, the horse it reports", live.horse == 8 and b.cups.get(MAC_A) is live)
     _check("live fields updated", live.count == 14 and live.raw == 812345 and live.rssi == -64
-           and live.up == -61 and live.drop == 2 and live.online)
+           and live.up == -61 and live.drop == 2 and live.online and not live.hello)
     rows = telemetry_rows(b)
     _check("first packet writes a telemetry row", len(rows) == 1)
-    _check("row is 1-based and reason=change", rows[0]["cup_id"] == 8 and rows[0]["reason"] == "change")
-    _check("cups row upserted with cup_id 8", cup_row(b, MAC_A)["cup_id"] == 8 and cup_row(b, MAC_A)["online"] == 1)
-    _check("cup_online event", len(events_of(b, "cup_online")) == 1)
+    _check("row carries mac and horse, reason=change",
+           rows[0]["mac"] == MAC_A and rows[0]["horse"] == 8 and rows[0]["reason"] == "change")
+    _check("lq_cups row upserted", cup_row(b, MAC_A)["horse"] == 8 and cup_row(b, MAC_A)["online"] == 1)
+    ev = events_of(b, "cup_online")
+    _check("cup_online event, keyed by horse", len(ev) == 1 and ev[0]["horse"] == 8
+           and json.loads(ev[0]["detail"])["mac"] == MAC_A)
     ups = len(sio.of("lq_update"))
     _check("lq_update emitted", ups == 1)
+    _check("a cup coming online emits a snapshot", len(sio.of("lq_snapshot")) == 1)
 
     clk.advance(2)
-    b.handle_raw_line(telem(7, MAC_A, count=14))
+    b.handle_raw_line(telem(MAC_A, horse=8, count=14))
     _check("unchanged packet inside the interval: no row", len(telemetry_rows(b)) == 1)
     _check("unchanged packet: no lq_update", len(sio.of("lq_update")) == ups)
 
     clk.advance(1)
-    b.handle_raw_line(telem(7, MAC_A, count=15))
+    b.handle_raw_line(telem(MAC_A, horse=8, count=15))
     rows = telemetry_rows(b)
     _check("count change: row with reason=change", len(rows) == 2 and rows[1]["reason"] == "change"
            and rows[1]["token_count"] == 15)
     _check("count change: lq_update", len(sio.of("lq_update")) == ups + 1)
 
     clk.advance(10)
-    b.handle_raw_line(telem(7, MAC_A, count=15))
+    b.handle_raw_line(telem(MAC_A, horse=8, count=15))
     rows = telemetry_rows(b)
     _check("heartbeat row after the interval", len(rows) == 3 and rows[2]["reason"] == "heartbeat")
     _check("heartbeat: lq_update", len(sio.of("lq_update")) == ups + 2)
     payload = sio.of("lq_update")[-1]
-    _check("lq_update payload shape", set(payload) == {"cup", "mac", "horse", "scratched", "count",
-                                                        "raw", "rssi", "up", "drop", "online",
-                                                        "last_seen"} and payload["cup"] == 8)
+    _check("lq_update payload shape", set(payload) == {"mac", "horse", "count", "raw", "rssi", "up", "drop",
+                                                        "seq", "online", "hello", "last_seen"}
+           and payload["mac"] == MAC_A and payload["horse"] == 8, str(sorted(payload)))
     _check("every emit went to the lq room", all(room == LQ_ROOM for _, _, room in sio.events))
+    b.handle_raw_line(telem(MAC_B, horse=0, count=0, hello=True))
+    live_b = b.cups[MAC_B]
+    _check("a HELLO packet: tracked with horse 0 and the hello flag", live_b.horse == 0 and live_b.hello
+           and live_b.online and cup_row(b, MAC_B)["horse"] == 0)
 
 
-def test_mirroring_without_roster():
+def test_horse_changes_and_conflicts():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.handle_raw_line(telem(2, MAC_A))
-    _check("no roster: cup mirrored from gateway", cup_row(b, MAC_A)["cup_id"] == 3)
-    b.handle_raw_line(telem(4, MAC_A))
-    _check("no roster: reassignment followed", cup_row(b, MAC_A)["cup_id"] == 5 and b.cups[MAC_A].cup == 5)
-    _check("cup number change -> lq_update + snapshot", sio.of("lq_update")[-1]["cup"] == 5 and sio.of("lq_snapshot"))
-    b.handle_raw_line(telem(4, MAC_B))
-    _check("no roster: a cup number moves to the newest MAC",
-           cup_row(b, MAC_B)["cup_id"] == 5 and cup_row(b, MAC_A)["cup_id"] is None)
-    _check("no mismatch events in mirror mode", events_of(b, "roster_mismatch") == [])
-    _check("nothing sent in mirror mode", port.written == [])
-
-
-def test_mismatch_with_roster():
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    macs = [""] * 20
-    macs[2] = MAC_A                       # cup 3
-    b.set_roster(macs)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    port.written.clear()
-    clk.advance(RESEND_MIN_S + 1)
-    b.handle_raw_line(telem(5, MAC_A))    # gateway says wire 5 = cup 6
-    _check("with a roster DevPi's cup wins", b.cups[MAC_A].cup == 3 and cup_row(b, MAC_A)["cup_id"] == 3)
-    ev = events_of(b, "roster_mismatch")
-    _check("roster_mismatch event logged", len(ev) == 1 and json.loads(ev[0]["detail"])["gateway_cup"] == 6)
-    lines = port.lines()
-    _check("mismatch re-sends roster then state", len(lines) == 2 and lines[0].startswith('{"t":"roster"')
-           and lines[1].startswith('{"t":"state"'))
-    clk.advance(0.5)
-    b.handle_raw_line(telem(5, MAC_A))
-    _check("re-send rate limited", len(port.lines()) == 2)
-    _check("mismatch event rate limited per cup", len(events_of(b, "roster_mismatch")) == 1)
-    clk.advance(PER_CUP_EVENT_MIN_S)
-    b.handle_raw_line(telem(5, MAC_A))
-    _check("mismatch event again after the interval", len(events_of(b, "roster_mismatch")) == 2)
-
-
-def test_claim_event_rate_limited():
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.handle_raw_line(telem(7, MAC_A, claim=3))
-    ev = events_of(b, "cup_claim_mismatch")
-    _check("claim -> cup_claim_mismatch event", len(ev) == 1)
-    d = json.loads(ev[0]["detail"])
-    _check("claim detail is 1-based", d["claimed_cup"] == 4 and d["devpi_cup"] == 8 and d["claimed_wire_id"] == 3)
-    clk.advance(3)
-    b.handle_raw_line(telem(7, MAC_A, claim=3))
-    _check("claim event rate limited (10 s)", len(events_of(b, "cup_claim_mismatch")) == 1)
-    clk.advance(PER_CUP_EVENT_MIN_S)
-    b.handle_raw_line(telem(7, MAC_A, claim=255))
-    ev = events_of(b, "cup_claim_mismatch")
-    _check("claim event again after 10 s, out-of-range claim kept raw",
-           len(ev) == 2 and json.loads(ev[1]["detail"])["claimed_cup"] is None
-           and json.loads(ev[1]["detail"])["claimed_wire_id"] == 255)
-    _check("claim does not change DevPi's cup", b.cups[MAC_A].cup == 8)
-
-
-def test_unassigned_mac():
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.handle_raw_line(telem(-1, MAC_C))
-    row = cup_row(b, MAC_C)
-    _check("unassigned MAC -> cups row with NULL cup_id", row is not None and row["cup_id"] is None)
-    _check("unassigned MAC -> no telemetry row", telemetry_rows(b) == [])
-    snap = b.get_snapshot()
-    _check("unassigned MAC in snapshot", [u["mac"] for u in snap["unassigned"]] == [MAC_C])
-    _check("unassigned MAC not among the 20 cups", all(c["mac"] != MAC_C for c in snap["cups"]))
+    b.handle_raw_line(telem(MAC_A, horse=7, count=5))
     sio.clear()
-    b.handle_raw_line(cup_hello(-1, MAC_B))
-    _check("cup_hello event for an unassigned cup", len(events_of(b, "cup_hello")) == 1
-           and events_of(b, "cup_hello")[0]["cup_id"] is None)
-    _check("unassigned list change -> lq_snapshot to the room",
-           any(e == "lq_snapshot" and room == LQ_ROOM for e, _, room in sio.events))
-    _check("both unassigned MACs listed",
-           sorted(u["mac"] for u in b.get_snapshot()["unassigned"]) == sorted([MAC_B, MAC_C]))
+    b.handle_raw_line(telem(MAC_A, horse=22, count=5))
+    ev = events_of(b, "cup_horse")
+    _check("a cup changing its horse logs cup_horse from -> to (after the from-0 one of its first packet)",
+           len(ev) == 2 and json.loads(ev[-1]["detail"]) == {"mac": MAC_A, "from": 7, "to": 22} and ev[-1]["horse"] == 22,
+           str(ev))
+    _check("...emits lq_update and a snapshot", sio.of("lq_update")[-1]["horse"] == 22 and sio.of("lq_snapshot"))
+    _check("...and says so on the console", b._console.matching("is horse 22 (was 7)"), str(b._console.lines))
+    _check("...and the cache follows", cup_row(b, MAC_A)["horse"] == 22)
+    b.handle_raw_line(telem(MAC_B, horse=22, count=1))
+    snap = b.get_snapshot()
+    claimers = [c["mac"] for c in snap["cups"] if c["horse"] == 22]
+    _check("two cups claiming one horse are both in the snapshot; the bridge resolves nothing",
+           sorted(claimers) == sorted([MAC_A, MAC_B]), str(claimers))
+    _check("the snapshot lists cups by MAC, sorted", [c["mac"] for c in snap["cups"]] == sorted([MAC_A, MAC_B]))
+    b.handle_raw_line(telem(MAC_C, horse=99, count=0))
+    _check("an out-of-range horse reads as 0 (none)", b.cups[MAC_C].horse == 0)
+    _check("cup_horse for a cup first heard with a horse is logged too (from 0)",
+           any(json.loads(e["detail"])["from"] == 0 for e in events_of(b, "cup_horse")))
 
 
-def test_hello_nothing_persisted():
+def test_hello_answered_with_state():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
     b.handle_raw_line(hello())
-    _check("hello with nothing persisted sends nothing", port.written == [])
+    _check("a fresh bridge answers the hello with its state, rev 1, byte-exact", port.lines() == [STATE_REV1], str(port.lines()))
     _check("gateway_hello event", len(events_of(b, "gateway_hello")) == 1)
     _check("gateway MAC recorded", b.link.gateway_mac == GW_MAC)
+    _check("the console says what it answered", b._console.matching("answered the hello with state rev 1"))
     clk.advance(2)
     b.handle_raw_line(hello())
     clk.advance(2)
     b.handle_raw_line(hello())
-    _check("repeated hellos: one event per 10 s", len(events_of(b, "gateway_hello")) == 1)
+    _check("repeated hellos: one event per 10 s, every one answered",
+           len(events_of(b, "gateway_hello")) == 1 and len(port.lines()) == 3)
     clk.advance(HELLO_EVENT_MIN_S)
     b.handle_raw_line(hello())
     _check("hello event again after 10 s", len(events_of(b, "gateway_hello")) == 2)
-
-
-def test_hello_sends_roster_then_state_byte_exact():
-    b, port, sio, clk = _fresh_bridge()
-    # Persist rev 7 / rev 42 straight into the table, then start a new bridge
-    # over it: the same path a service restart takes.
-    state_json = json.dumps({"phase": 1, "horses": {str(c): c for c in range(1, 21)},
-                             "scratched": {str(c): (c == 7) for c in range(1, 21)}})
-    roster_json = json.dumps({"1": MAC_A, "2": MAC_B})
-    b.db.save_link_state(42, state_json, 7, roster_json)
-    port = FakeSerial(); sio = StubSocketIO(); clk = FakeClock()
+    # Persist rev 42 with a full v2 state straight into the table, then start a
+    # new bridge over it: the same path a service restart takes.
+    b.db.save_link_state(42, json.dumps({"phase": 1, "scratched": [9, 15], "renum": [[9, 22]], "results": [0, 0, 0]}))
+    port2 = FakeSerial(); sio2 = StubSocketIO(); clk2 = FakeClock()
     b2 = LqBridge(settings=dict(b.settings), db_path=_TMP_DB,
-                  serial_factory=lambda p, baud, t: port, socketio=sio, clock=clk)
+                  serial_factory=lambda p, baud, t: port2, socketio=sio2, clock=clk2)
     _check("state_rev restored", b2.state_rev == 42)
-    _check("roster_rev restored", b2.roster_rev == 7)
+    _check("the state restored", (b2.phase, b2.scratched, b2.renum) == (1, [9, 15], [(9, 22)]))
     b2._open_port()
     b2.handle_raw_line(hello())
-    lines = port.lines()
-    _check("hello answered with two lines", len(lines) == 2, str(lines))
-    _check("roster line byte-exact (README example)",
-           lines[0] == '{"t":"roster","rev":7,"macs":["A0:B7:65:12:34:56","A0:B7:65:12:34:57",'
-                       '"","","","","","","","","","","","","","","","","",""]}', lines[0])
-    _check("state line byte-exact (README example, cup 7 scratched = wire index 6)",
-           lines[1] == '{"t":"state","rev":42,"phase":1,"horse":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,'
-                       '15,16,17,18,19,20],"scr":[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0]}', lines[1])
-    _check("lines end with a single newline", all(w.endswith(b"\n") and w.count(b"\n") == 1 for w in port.written))
-    _check("lines under 1024 bytes", all(len(w) <= 1025 for w in port.written))
+    _check("hello answered with the restored state, byte-exact (README example)",
+           port2.lines() == ['{"t":"state","rev":42,"st":1,"scr":[9,15],"renum":[[9,22]],"res":[0,0,0]}'], str(port2.lines()))
+    _check("lines end with a single newline", all(w.endswith(b"\n") and w.count(b"\n") == 1 for w in port2.written))
     b2.close()
+    # A v1 state_json (cup slots): its phase is kept, the rest starts empty.
+    b.db.close()
+    b.db = LqDb(_TMP_DB)
+    b.db.save_link_state(7, json.dumps({"phase": 2, "horses": {"1": 1}, "scratched": {"7": True}}))
+    b3 = LqBridge(settings=dict(b.settings), db_path=_TMP_DB, serial_factory=lambda p, baud, t: FakeSerial(),
+                  socketio=StubSocketIO(), clock=FakeClock())
+    _check("a v1 state_json keeps its phase and nothing else",
+           (b3.state_rev, b3.phase, b3.scratched, b3.renum, b3.results) == (7, 2, [], [], [0, 0, 0]))
+    b3.close()
+    b.db.close()
+    b.db = LqDb(_TMP_DB)
 
 
 def test_hello_wrong_version():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    port.written.clear()
-    b.handle_raw_line(hello(v=2))
-    _check("wrong v: nothing sent", port.written == [])
+    b.handle_raw_line(hello(v=1, proto=1))
+    _check("a v1 gateway: nothing sent", port.written == [])
     _check("wrong v: link reason protocol_mismatch", b.link.reason == "protocol_mismatch" and not b.link.in_sync)
     links = sio.of("lq_link")
     _check("wrong v: lq_link emitted with the reason", links and links[-1]["reason"] == "protocol_mismatch")
 
 
-def test_status_reconcile():
+def test_status_reconcile_and_cup_table():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.set_roster([MAC_A] + [""] * 19)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
+    b.set_state(phase=1)
     port.written.clear()
     sio.clear()
     clk.advance(RESEND_MIN_S + 1)
-    b.handle_raw_line(status(state_rev=0, roster_rev=1))
+    b.handle_raw_line(status(state_rev=0))
     lines = port.lines()
-    _check("state rev mismatch -> state re-sent only", len(lines) == 1 and lines[0].startswith('{"t":"state","rev":1,'))
+    _check("state rev mismatch -> state re-sent", len(lines) == 1 and lines[0].startswith('{"t":"state","rev":2,'), str(lines))
     _check("not in sync yet", not b.link.in_sync)
-    clk.advance(RESEND_MIN_S + 1)
-    port.written.clear()
-    b.handle_raw_line(status(state_rev=1, roster_rev=0))
-    lines = port.lines()
-    _check("roster rev mismatch -> roster then state", len(lines) == 2 and lines[0].startswith('{"t":"roster","rev":1,')
-           and lines[1].startswith('{"t":"state","rev":1,'))
     clk.advance(0.5)
     port.written.clear()
-    b.handle_raw_line(status(state_rev=0, roster_rev=0))
+    b.handle_raw_line(status(state_rev=0))
     _check("re-send rate limit honoured (2 s)", port.written == [])
     clk.advance(RESEND_MIN_S)
-    b.handle_raw_line(status(state_rev=1, roster_rev=1))
-    _check("matching revs -> nothing sent", port.written == [])
-    _check("matching revs -> in_sync", b.link.in_sync)
+    b.handle_raw_line(status(state_rev=2))
+    _check("matching rev -> nothing sent", port.written == [])
+    _check("matching rev -> in_sync", b.link.in_sync)
     links = sio.of("lq_link")
     _check("lq_link emitted on the in_sync change, not on every status",
            len(links) >= 1 and links[-1]["in_sync"] is True and links[-1]["reason"] == "status")
     n = len(links)
-    b.handle_raw_line(status(state_rev=1, roster_rev=1, up_s=11))
+    b.handle_raw_line(status(state_rev=2, up_s=11))
     _check("a plain status emits no lq_link", len(sio.of("lq_link")) == n)
     _check("link fields updated", b.link.up_s == 11 and b.link.phase == 1)
+    # The cup table in the status line: a backstop for cups pi5 has not heard itself.
+    sio.clear()
+    b.handle_raw_line(status(state_rev=2, cups=[cup_entry(MAC_A, horse=7, tok=23, age=500),
+                                                cup_entry(MAC_B, horse=0, tok=0, age=9000)]))
+    _check("cups_heard counts the entries the gateway heard within 3 s", b.link.cups_heard == 1)
+    a, bb = b.cups[MAC_A], b.cups[MAC_B]
+    _check("a cup never heard directly is seeded from the table: horse, count, online",
+           a.horse == 7 and a.count == 23 and a.online and cup_row(b, MAC_A)["horse"] == 7)
+    _check("...with a cup_online and a cup_horse event", len(events_of(b, "cup_online")) == 1
+           and json.loads(events_of(b, "cup_horse")[0]["detail"]).get("via") == "status")
+    _check("an entry older than the offline window is cached but offline", bb.horse == 0 and not bb.online)
+    _check("a changed table emits a snapshot", sio.of("lq_snapshot"))
+    clk.advance(1)
+    b.handle_raw_line(telem(MAC_A, horse=7, count=24))
+    b.handle_raw_line(status(state_rev=2, cups=[cup_entry(MAC_A, horse=9, tok=1, age=4000)]))
+    _check("a table entry older than a direct hearing changes nothing", a.horse == 7 and a.count == 24)
 
 
 def test_status_reboot():
@@ -576,7 +558,7 @@ def test_status_reboot():
 def test_cup_offline_online():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.handle_raw_line(telem(0, MAC_A))
+    b.handle_raw_line(telem(MAC_A, horse=1))
     sio.clear()
     clk.advance(3)
     b.tick(clk())
@@ -584,16 +566,18 @@ def test_cup_offline_online():
     clk.advance(3.5)
     b.tick(clk())
     _check("offline after LQ_CUP_OFFLINE_S", not b.cups[MAC_A].online)
-    _check("cup_offline event (cup 1)", len(events_of(b, "cup_offline")) == 1
-           and events_of(b, "cup_offline")[0]["cup_id"] == 1)
+    ev = events_of(b, "cup_offline")
+    _check("cup_offline event keyed by the horse, the MAC in the detail",
+           len(ev) == 1 and ev[0]["horse"] == 1 and json.loads(ev[0]["detail"])["mac"] == MAC_A)
     ups = sio.of("lq_update")
-    _check("lq_update online:false", len(ups) == 1 and ups[0]["online"] is False and ups[0]["cup"] == 1)
-    _check("cups.online = 0", cup_row(b, MAC_A)["online"] == 0)
-    b.handle_raw_line(telem(0, MAC_A))
+    _check("lq_update online:false", len(ups) == 1 and ups[0]["online"] is False and ups[0]["mac"] == MAC_A)
+    _check("a snapshot too (the per-horse picture moved)", len(sio.of("lq_snapshot")) == 1)
+    _check("lq_cups.online = 0", cup_row(b, MAC_A)["online"] == 0)
+    b.handle_raw_line(telem(MAC_A, horse=1))
     _check("first telemetry after -> cup_online event", len(events_of(b, "cup_online")) == 2)
     ups = sio.of("lq_update")
     _check("lq_update online:true", ups[-1]["online"] is True)
-    _check("cups.online = 1", cup_row(b, MAC_A)["online"] == 1)
+    _check("lq_cups.online = 1", cup_row(b, MAC_A)["online"] == 1)
 
 
 def test_gateway_offline():
@@ -615,7 +599,7 @@ def test_gateway_offline():
     _check("next line -> online again", b.link.gateway_online and sio.of("lq_link")[-1]["gateway_online"])
     snap = b.get_snapshot()
     _check("snapshot link shape", set(snap["link"]) == {"port_open", "gateway_online", "in_sync", "reason",
-                                                          "gateway_mac", "phase", "state_rev", "roster_rev",
+                                                          "gateway_mac", "phase", "state_rev",
                                                           "cups_heard", "rejects", "up_s",
                                                           "thread_alive", "last_line_age_s", "lines_ok",
                                                           "lines_bad", "bytes_rx", "reopens"},
@@ -625,128 +609,61 @@ def test_gateway_offline():
 def test_set_state_validation_and_persistence():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    for args, why in ((( 7, HORSES_1_TO_20, NO_SCR), "phase 7"),
-                      ((-1, HORSES_1_TO_20, NO_SCR), "phase -1"),
-                      ((True, HORSES_1_TO_20, NO_SCR), "bool phase"),
-                      (("1", HORSES_1_TO_20, NO_SCR), "string phase"),
-                      ((1, HORSES_1_TO_20[:19], NO_SCR), "19 horses"),
-                      ((1, HORSES_1_TO_20 + [1], NO_SCR), "21 horses"),
-                      ((1, [P.MAX_HORSE + 1] + HORSES_1_TO_20[1:], NO_SCR), f"horse {P.MAX_HORSE + 1}"),
-                      ((1, [1.0] + HORSES_1_TO_20[1:], NO_SCR), "float horse"),
-                      ((1, HORSES_1_TO_20, [2] + NO_SCR[1:]), "scratched 2"),
-                      ((1, HORSES_1_TO_20, NO_SCR[:19]), "19 scratched")):
+    for kwargs, why in (({"phase": 7}, "phase 7"), ({"phase": -1}, "phase -1"), ({"phase": True}, "bool phase"),
+                        ({"phase": "1"}, "string phase"), ({"scratched": [0]}, "scratched 0"),
+                        ({"scratched": [25]}, f"scratched {P.MAX_HORSE + 1}"), ({"scratched": [1.0]}, "float scratched"),
+                        ({"renum": [[9, 9]]}, "renum from == to"), ({"renum": [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]}, "five pairs"),
+                        ({"results": [1, 2]}, "two results"), ({"results": [1, 1, 2]}, "a horse placed twice")):
         try:
-            b.set_state(*args)
+            b.set_state(**kwargs)
             _check(f"set_state rejects {why}", False)
         except ValueError:
             _check(f"set_state rejects {why}", True)
     _check("nothing sent for rejected states", port.written == [])
-    rev = b.set_state(1, HORSES_1_TO_20, SCR_CUP7)
-    _check("first set_state -> rev 1", rev == 1)
+    _check("a fresh bridge starts at rev 1 (persisted, so a hello has a line to get)", b.state_rev == 1
+           and b.db.load_link_state()["state_rev"] == 1)
+    rev = b.set_state(phase=1, scratched=[7])
+    _check("first change -> rev 2", rev == 2)
     lines = port.lines()
-    _check("state line sent, 0-based on the wire",
-           lines == ['{"t":"state","rev":1,"phase":1,"horse":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],'
-                     '"scr":[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0]}'], str(lines))
-    _check("lq_update for every cup that changed (20 horses)", len(sio.of("lq_update")) == 20)
-    _check("lq_update carries horse and scratched from DevPi state",
-           any(u["cup"] == 7 and u["horse"] == 7 and u["scratched"] is True for u in sio.of("lq_update")))
+    _check("state line sent, byte-exact",
+           lines == ['{"t":"state","rev":2,"st":1,"scr":[7],"renum":[],"res":[0,0,0]}'], str(lines))
+    _check("a snapshot went to the room, no per-cup lq_update", sio.of("lq_snapshot") and not sio.of("lq_update"))
     sio.clear(); port.written.clear()
-    _check("identical state is a no-op returning the rev", b.set_state(1, list(HORSES_1_TO_20), list(SCR_CUP7)) == 1)
+    _check("identical state is a no-op returning the rev", b.set_state(phase=1, scratched=[7]) == 2)
+    _check("a part left out is kept: scratched stays", b.set_state(phase=1) == 2 and b.scratched == [7])
     _check("no-op sends and emits nothing", port.written == [] and sio.events == [])
-    _check("bool scratched accepted as identical", b.set_state(1, HORSES_1_TO_20, [c == 7 for c in range(1, 21)]) == 1)
-    horses = list(HORSES_1_TO_20); horses[0] = 0
-    rev = b.set_state(2, horses, NO_SCR)
-    _check("changed state -> rev 2", rev == 2)
-    _check("only changed cups emitted (cup 1 horse, cup 7 scratched)",
-           sorted(u["cup"] for u in sio.of("lq_update")) == [1, 7])
-    _check("cup 1 horse None when 0", next(u for u in sio.of("lq_update") if u["cup"] == 1)["horse"] is None)
-    _check("state_set events logged", len(events_of(b, "state_set")) == 2)
+    rev = b.set_state(renum=[(9, 22)], results=[19, 1, 22])
+    _check("changed parts -> rev 3, the rest kept", rev == 3 and b.phase == 1 and b.scratched == [7]
+           and b.renum == [(9, 22)] and b.results == [19, 1, 22])
+    ev = events_of(b, "state_set")
+    _check("state_set events logged with what changed", len(ev) == 2
+           and json.loads(ev[1]["detail"])["changed"] == ["renum", "results"], str(ev))
+    _check("state_line() is what went down", port.lines()[-1] == b.state_line())
     # persistence across a restart
     port2 = FakeSerial()
     b2 = LqBridge(settings=dict(b.settings), db_path=_TMP_DB, serial_factory=lambda p, baud, t: port2,
                   socketio=StubSocketIO(), clock=FakeClock())
-    _check("state survives a bridge restart", b2.state_rev == 2 and b2.phase == 2 and b2.horses[1] == 0
-           and b2.horses[2] == 2 and not b2.scratched[7])
-    _check("revs only increase", b2.set_state(3, horses, NO_SCR) == 3)
+    _check("state survives a bridge restart", b2.state_rev == 3 and b2.phase == 1 and b2.scratched == [7]
+           and b2.renum == [(9, 22)] and b2.results == [19, 1, 22])
+    _check("revs only increase", b2.set_state(phase=3) == 4)
     b2.close()
     b.db = LqDb(_TMP_DB)   # b2.close() closed only its own connection; give b a fresh one for _fresh_bridge's cleanup
-
-
-def test_set_roster_validation_and_persistence():
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.handle_raw_line(telem(0, MAC_A))       # mirrored cup 1
-    b.handle_raw_line(telem(1, MAC_B))       # mirrored cup 2
-    for macs, why in (([MAC_A] * 20, "duplicate MACs"),
-                      (["FF:FF:FF:FF:FF:FF"] + [""] * 19, "broadcast MAC"),
-                      (["A0:B7:65:12:34:5G"] + [""] * 19, "bad MAC"),
-                      ([""] * 19, "19 entries"),
-                      ([""] * 21, "21 entries"),
-                      ([12] + [""] * 19, "non-string entry"),
-                      (None, "not a list")):
-        try:
-            b.set_roster(macs)
-            _check(f"set_roster rejects {why}", False)
-        except ValueError:
-            _check(f"set_roster rejects {why}", True)
-    _check("roster_rev still 0", b.roster_rev == 0 and port.written == [])
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    port.written.clear(); sio.clear()
-    macs = [""] * 20
-    macs[2] = "a0:b7:65:12:34:56"           # MAC_A to cup 3, lowercase on purpose
-    macs[3] = None                          # None is an empty slot
-    rev = b.set_roster(macs)
-    _check("set_roster -> rev 1", rev == 1)
-    _check("roster stored uppercase", b.roster == {3: MAC_A})
-    _check("cups.cup_id rewritten: A -> 3, B -> NULL", cup_row(b, MAC_A)["cup_id"] == 3 and cup_row(b, MAC_B)["cup_id"] is None)
-    _check("live cups follow the roster", b.cups[MAC_A].cup == 3 and b.cups[MAC_B].cup is None)
-    lines = port.lines()
-    _check("roster then state sent", len(lines) == 2 and lines[0].startswith('{"t":"roster","rev":1,')
-           and lines[1].startswith('{"t":"state","rev":1,'))
-    _check("roster line 0-based: cup 3 at wire index 2",
-           json.loads(lines[0])["macs"][2] == MAC_A and json.loads(lines[0])["macs"][0] == "")
-    _check("fresh lq_snapshot emitted", len(sio.of("lq_snapshot")) == 1)
-    snap = sio.of("lq_snapshot")[0]
-    _check("snapshot cup 3 has MAC_A, cup 1 empty", snap["cups"][2]["mac"] == MAC_A and snap["cups"][0]["mac"] is None
-           and snap["cups"][0]["online"] is False)
-    _check("B now unassigned in snapshot", [u["mac"] for u in snap["unassigned"]] == [MAC_B])
-    _check("roster_set event", len(events_of(b, "roster_set")) == 1)
-    b2 = LqBridge(settings=dict(b.settings), db_path=_TMP_DB, serial_factory=lambda p, baud, t: FakeSerial(),
-                  socketio=StubSocketIO(), clock=FakeClock())
-    _check("roster survives a restart", b2.roster_rev == 1 and b2.roster == {3: MAC_A})
-    _check("revs only increase", b2.set_roster(macs) == 2)
-    b2.close()
-    b.db = LqDb(_TMP_DB)
-
-
-def test_adopt_roster():
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.handle_raw_line(telem(0, MAC_A))
-    b.handle_raw_line(telem(5, MAC_B))
-    clk.advance(1)
-    b.handle_raw_line(telem(5, MAC_C))       # newest claimant of cup 6 wins
-    port.written.clear()
-    rev = b.adopt_roster()
-    _check("adopt_roster -> rev 1", rev == 1)
-    _check("adopted roster from mirrored cups", b.roster == {1: MAC_A, 6: MAC_C})
-    _check("roster line sent", port.lines() and port.lines()[0].startswith('{"t":"roster","rev":1,'))
-    _check("no state line when none is set", len(port.lines()) == 1)
 
 
 def test_snapshot_shape():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.set_state(1, HORSES_1_TO_20, SCR_CUP7)
-    b.handle_raw_line(telem(7, MAC_A, count=3))
+    b.set_state(phase=1, scratched=[7], renum=[(9, 22)])
+    b.handle_raw_line(telem(MAC_A, horse=8, count=3))
     snap = b.get_snapshot()
-    _check("snapshot has link, cups, unassigned", set(snap) >= {"link", "cups", "unassigned"})
-    _check("exactly 20 cups, 1..20", [c["cup"] for c in snap["cups"]] == list(range(1, 21)))
-    c8 = snap["cups"][7]
-    _check("cup 8 filled from live", c8["mac"] == MAC_A and c8["count"] == 3 and c8["online"] is True and c8["horse"] == 8)
-    c7 = snap["cups"][6]
-    _check("empty slot: mac None, online False, horse/scratched from DevPi",
-           c7["mac"] is None and c7["online"] is False and c7["horse"] == 7 and c7["scratched"] is True)
+    _check("snapshot has link, devpi, cups", set(snap) == {"link", "devpi", "cups"})
+    _check("devpi carries the state keyed by horse",
+           snap["devpi"] == {"state_rev": 2, "phase": 1, "scratched": [7], "renum": [[9, 22]], "results": [0, 0, 0]},
+           str(snap["devpi"]))
+    _check("one entry per cup heard, by MAC", [c["mac"] for c in snap["cups"]] == [MAC_A])
+    c = snap["cups"][0]
+    _check("the entry: horse, count, online, no slot number",
+           c["horse"] == 8 and c["count"] == 3 and c["online"] is True and "cup" not in c)
     _check("JSON serialisable", json.dumps(snap) is not None)
 
 
@@ -766,45 +683,85 @@ def test_bridge_disabled_and_no_pyserial():
             del sys.modules["serial"]
         else:
             sys.modules["serial"] = saved
-    _check("API still works without a port", b3.set_state(1, HORSES_1_TO_20, NO_SCR) == 1)
+    _check("API still works without a port", b3.set_state(phase=1) == 2)
 
 
 def test_schema_mismatch_refuses():
-    for suffix in ("", "-wal", "-shm"):
-        try:
-            os.remove(_TMP_DB + suffix)
-        except OSError:
-            pass
+    _drop_db()
     db = LqDb(_TMP_DB)
     with db.txn() as conn:
-        conn.execute("CREATE TABLE cups (mac TEXT, something_else INTEGER)")
+        conn.execute("CREATE TABLE events (ts TEXT, something_else INTEGER)")
     db.close()
     b = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake"}, db_path=_TMP_DB,
                  serial_factory=lambda p, baud, t: FakeSerial(), socketio=StubSocketIO())
-    _check("existing table with another shape is reported", b.schema_error is not None and "cups" in b.schema_error)
+    _check("existing table with another shape is reported", b.schema_error is not None and "events" in b.schema_error)
     _check("bridge refuses to start", b.start() is False)
-    cols = [r["name"] for r in b.db.query("PRAGMA table_info(cups)")]
-    _check("table left untouched", cols == ["mac", "something_else"])
+    cols = [r["name"] for r in b.db.query("PRAGMA table_info(events)")]
+    _check("table left untouched", cols == ["ts", "something_else"])
+    b.close()
+
+
+def test_v1_schema_migrates():
+    """DevPi's database holds the protocol v1 tables: cups with cup_id,
+    telemetry and events keyed by cup_id, the roster in lq_link_state. A v2
+    bridge rebuilds them on start, rows kept."""
+    _drop_db()
+    db = LqDb(_TMP_DB)
+    db.conn.executescript("""
+            CREATE TABLE cups (mac TEXT PRIMARY KEY, cup_id INTEGER UNIQUE, horse INTEGER, last_seen TEXT,
+                               rssi INTEGER, up_rssi INTEGER, last_count INTEGER, last_raw INTEGER,
+                               online INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO cups VALUES ('A0:B7:65:12:34:56', 3, 7, '2026-09-26T00:00:00Z', -60, -58, 5, 812345, 0);
+            CREATE TABLE telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, cup_id INTEGER,
+                                    mac TEXT NOT NULL, raw_weight INTEGER, token_count INTEGER, seq INTEGER,
+                                    dropped INTEGER, rssi INTEGER, up_rssi INTEGER,
+                                    reason TEXT NOT NULL CHECK (reason IN ('change', 'heartbeat')));
+            CREATE INDEX idx_telemetry_cup_ts ON telemetry(cup_id, ts);
+            INSERT INTO telemetry (ts, cup_id, mac, raw_weight, token_count, seq, dropped, rssi, up_rssi, reason)
+                VALUES ('2026-09-26T00:00:00Z', 3, 'A0:B7:65:12:34:56', 812345, 5, 9, 0, -60, -58, 'change');
+            CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, type TEXT NOT NULL,
+                                 cup_id INTEGER, detail TEXT);
+            INSERT INTO events (ts, type, cup_id, detail) VALUES ('2026-09-26T00:00:00Z', 'cup_online', 3, '{"mac": "x"}');
+            CREATE TABLE lq_link_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_rev INTEGER NOT NULL DEFAULT 0,
+                                        state_json TEXT, roster_rev INTEGER NOT NULL DEFAULT 0, roster_json TEXT);
+            INSERT INTO lq_link_state VALUES (1, 42, '{"phase": 2, "horses": {"3": 7}, "scratched": {"3": false}}', 7,
+                                              '{"3": "A0:B7:65:12:34:56"}');
+        """)
+    db.close()
+    b = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake"}, db_path=_TMP_DB,
+                 serial_factory=lambda p, baud, t: FakeSerial(), socketio=StubSocketIO(), clock=FakeClock())
+    _check("the v1 shape is accepted, not refused", b.schema_error is None, str(b.schema_error))
+    cols = lambda t: [r["name"] for r in b.db.query(f"PRAGMA table_info({t})")]   # noqa: E731
+    _check("cups (the slot table) is gone, lq_cups exists", cols("cups") == [] and "horse" in cols("lq_cups"))
+    _check("telemetry rebuilt with horse in place of cup_id, the row kept",
+           cols("telemetry")[:4] == ["id", "ts", "mac", "horse"] and len(telemetry_rows(b)) == 1
+           and telemetry_rows(b)[0]["horse"] is None)
+    _check("events rebuilt, the row kept", cols("events") == ["id", "ts", "type", "horse", "detail"]
+           and len(events_of(b, "cup_online")) == 1)
+    _check("lq_link_state rebuilt: rev and phase kept, the roster gone",
+           cols("lq_link_state") == ["id", "state_rev", "state_json"] and b.state_rev == 42 and b.phase == 2)
+    _check("the migration is idempotent", b.db._migrate_v2() == [])
     b.close()
 
 
 def test_env_overrides():
     import config  # noqa: F401  (pi5/config.py evaluates DDM_ overrides at import: load it clean first)
     os.environ["DDM_LQ_SERIAL_BAUD"] = "9600"
-    os.environ["DDM_LQ_DEV_ENDPOINTS"] = "yes"
+    os.environ["DDM_LQ_BRIDGE_ENABLED"] = "no"
     os.environ["DDM_LQ_SERIAL_PORT"] = "/dev/pts/9"
     try:
         s = load_settings()
         _check("DDM_ env overrides int", s["LQ_SERIAL_BAUD"] == 9600)
-        _check("DDM_ env overrides bool", s["LQ_DEV_ENDPOINTS"] is True)
+        _check("DDM_ env overrides bool", s["LQ_BRIDGE_ENABLED"] is False)
         _check("DDM_ env overrides str", s["LQ_SERIAL_PORT"] == "/dev/pts/9")
         _check("explicit overrides win", load_settings({"LQ_SERIAL_BAUD": 1})["LQ_SERIAL_BAUD"] == 1)
     finally:
-        for k in ("DDM_LQ_SERIAL_BAUD", "DDM_LQ_DEV_ENDPOINTS", "DDM_LQ_SERIAL_PORT"):
+        for k in ("DDM_LQ_SERIAL_BAUD", "DDM_LQ_BRIDGE_ENABLED", "DDM_LQ_SERIAL_PORT"):
             os.environ.pop(k, None)
     s = load_settings()
     _check("defaults without env", s["LQ_SERIAL_BAUD"] == 115200 and s["LQ_HEARTBEAT_LOG_S"] == 10
            and s["LQ_CUP_OFFLINE_S"] == 6 and s["LQ_GATEWAY_OFFLINE_S"] == 12)
+    _check("no dev flag any more", "LQ_DEV_ENDPOINTS" not in s)
 
 
 def _make_app(bridge, socketio=None):
@@ -816,158 +773,30 @@ def _make_app(bridge, socketio=None):
     return app
 
 
-def test_reset_link():
-    """reset_link forgets the roster and the state, clears the cups table and
-    deletes simulated rows, keeps the history, and sends the gateway nothing."""
+def test_forget_cups():
+    """The cup cache decides nothing, but a cup that went home would sit on
+    the admin page as offline forever, and the simulator's cups would too."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    b.handle_raw_line(telem(0, MAC_A, count=3))
-    b.handle_raw_line(telem(1, SIM_MAC_A, count=5))
-    b.set_roster([MAC_A, SIM_MAC_A] + [""] * 18)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    before = (b.state_rev, b.roster_rev)
-    telem_before = len(telemetry_rows(b))
-    events_before = len(b.db.query("SELECT id FROM events"))
+    b.handle_raw_line(telem(MAC_A, horse=1, count=3))
+    b.handle_raw_line(telem(SIM_MAC_A, horse=2, count=5))
+    b.handle_raw_line(telem(SIM_MAC_B, horse=3, count=5))
     sio.clear()
+    _check("forget by prefix drops the simulator's cups, in memory and in lq_cups",
+           b.forget_cups(bridge_mod.SIM_MAC_PREFIX) == 2 and sorted(b.cups) == [MAC_A]
+           and cup_row(b, SIM_MAC_A) is None and cup_row(b, MAC_A) is not None)
+    _check("...with an event and a snapshot", events_of(b, "cups_forgotten") and sio.of("lq_snapshot"))
+    _check("the state is untouched", b.state_rev == 1)
+    b.handle_raw_line(telem(SIM_MAC_A, horse=2, count=5))
     port.written.clear()
-
-    result = b.reset_link("manual")
-
-    _check("reset sends the gateway nothing", port.written == [], str(port.lines()))
-    _check("reset reports the new revs",
-           result["state_rev"] > before[0] and result["roster_rev"] > before[1], str(result))
-    _check("revs only went up", b.state_rev > before[0] and b.roster_rev > before[1])
-    _check("DevPi no longer holds a roster or a state", not b.has_roster and not b.has_state)
-    snap = b.get_snapshot()
-    _check("snapshot says nothing is held",
-           snap["devpi"]["has_roster"] is False and snap["devpi"]["has_state"] is False)
-    _check("snapshot revs match the bridge",
-           snap["devpi"]["state_rev"] == b.state_rev and snap["devpi"]["roster_rev"] == b.roster_rev)
-    _check("snapshot has no cup addresses left", all(c["mac"] is None for c in snap["cups"]),
-           str([c["cup"] for c in snap["cups"] if c["mac"]]))
-    _check("snapshot has no horses left", all(c["horse"] is None for c in snap["cups"]))
-    _check("telemetry history kept", len(telemetry_rows(b)) == telem_before and telem_before > 0)
-    _check("event history kept", len(b.db.query("SELECT id FROM events")) > events_before)
-    resets = events_of(b, "lq_reset")
-    _check("one lq_reset event with the reason",
-           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "manual", str(resets))
-    _check("the simulated cup row is gone", cup_row(b, SIM_MAC_A) is None)
-    _check("reset counted the deleted row", result["cups_dropped"] == 1, str(result))
-    real = cup_row(b, MAC_A)
-    _check("the real cup row is kept, with no number and no horse",
-           real is not None and real["cup_id"] is None and real["horse"] is None, str(real))
-    _check("a fresh snapshot went to the room", "lq_snapshot" in [e for e, _, _ in sio.events])
-    _check("an lq_link went to the room", "lq_link" in [e for e, _, _ in sio.events])
-    port.written.clear()
+    b.handle_raw_line(hello(mac=SIM_GW_MAC))
+    _check("the simulator's own gateway keeps them", SIM_MAC_A in b.cups)
     b.handle_raw_line(hello())
-    _check("a hello after a reset is answered with nothing", port.written == [], str(port.lines()))
-
-
-def test_reset_then_set_again():
-    """Everything that used to read a rev of 0 as 'nothing set' still works
-    once the revs are past 0 but nothing is held."""
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.set_roster([MAC_A] + [""] * 19)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    b.reset_link("manual")
-    after_reset = (b.state_rev, b.roster_rev)
-
-    b.handle_raw_line(telem(2, MAC_B, count=4))
-    _check("with nothing held DevPi mirrors the gateway's numbering", b.cups[MAC_B].cup == 3)
-
-    b.handle_raw_line(status(state_rev=0, roster_rev=0))
-    _check("in sync when DevPi holds nothing, whatever the revs say", b.link.in_sync is True)
-    port.written.clear()
-    clk.advance(RESEND_MIN_S + 1)
-    b.handle_raw_line(status(state_rev=0, roster_rev=0))
-    _check("nothing is re-sent when DevPi holds nothing", port.written == [], str(port.lines()))
-
-    rev = b.set_roster([MAC_B, MAC_A] + [""] * 18)
-    _check("set_roster after a reset keeps counting up", rev == after_reset[1] + 1, str(rev))
-    srev = b.set_state(2, HORSES_1_TO_20, SCR_CUP7)
-    _check("set_state after a reset keeps counting up", srev == after_reset[0] + 1, str(srev))
-    _check("DevPi holds them again", b.has_roster and b.has_state)
-    _check("the new roster owns the numbering", b.cups[MAC_B].cup == 1 and b.cups[MAC_A].cup == 2)
-    b.handle_raw_line(status(state_rev=srev, roster_rev=rev))
-    _check("in sync once the gateway reports the new revs", b.link.in_sync is True)
-    b.handle_raw_line(status(state_rev=srev, roster_rev=rev - 1))
-    _check("out of sync when the gateway's roster rev is stale", b.link.in_sync is False)
-
-
-def test_guard_discards_a_simulator_roster():
-    """The whole point: a real gateway must never be handed the simulator's
-    cups, or every real cup is reported as -1 and never gets a number."""
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.set_roster([SIM_MAC_A, SIM_MAC_B] + [""] * 18)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    before = (b.state_rev, b.roster_rev)
-    port.written.clear()
-
-    b.handle_raw_line(hello())               # a real gateway, 24:6F:28:...
-
-    _check("the simulator roster was discarded", not b.has_roster and not b.has_state)
-    _check("the real gateway was sent nothing at all", port.written == [], str(port.lines()))
-    resets = events_of(b, "lq_reset")
-    _check("one lq_reset event, reason sim_roster_discarded",
-           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "sim_roster_discarded",
-           str(resets))
-    _check("revs still only went up", b.state_rev > before[0] and b.roster_rev > before[1])
-    _check("the simulated cup rows are gone",
-           cup_row(b, SIM_MAC_A) is None and cup_row(b, SIM_MAC_B) is None)
-    b.handle_raw_line(telem(0, MAC_A, count=2))
-    b.handle_raw_line(telem(1, MAC_B, count=3))
-    snap = b.get_snapshot()
-    _check("the real cups are mirrored into cups 1 and 2",
-           snap["cups"][0]["mac"] == MAC_A and snap["cups"][1]["mac"] == MAC_B,
-           str([(c["cup"], c["mac"]) for c in snap["cups"][:3]]))
-
-
-def test_guard_does_not_misfire():
-    """It must not fire for a real roster, nor when the simulator itself is
-    the gateway: a scenario replaces the whole roster at its start anyway."""
-    b, port, sio, clk = _fresh_bridge()
-    b._open_port()
-    b.set_roster([MAC_A, MAC_B] + [""] * 18)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    rev = b.roster_rev
-    port.written.clear()
-    b.handle_raw_line(hello())
-    _check("a real roster survives a real gateway", b.has_roster and b.roster_rev == rev)
-    _check("no reset event", events_of(b, "lq_reset") == [])
-    _check("the real gateway gets its roster and state", len(port.lines()) == 2, str(port.lines()))
-
-    b2, port2, sio2, clk2 = _fresh_bridge()
-    b2._open_port()
-    b2.set_roster([SIM_MAC_A, SIM_MAC_B] + [""] * 18)
-    b2.set_state(1, HORSES_1_TO_20, NO_SCR)
-    rev2 = b2.roster_rev
-    port2.written.clear()
-    b2.handle_raw_line(hello(mac=SIM_GW_MAC))
-    _check("a simulator roster survives the simulator's own gateway",
-           b2.has_roster and b2.roster_rev == rev2)
-    _check("no reset event for the simulator", events_of(b2, "lq_reset") == [])
-    _check("the simulator gets its roster and state back", len(port2.lines()) == 2, str(port2.lines()))
-
-
-def test_dev_reset_route():
-    b, port, sio, clk = _fresh_bridge(LQ_DEV_ENDPOINTS=True)
-    b._open_port()
-    b.set_roster([SIM_MAC_A] + [""] * 19)
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
-    before = (b.state_rev, b.roster_rev)
-    app = _make_app(b)
-    client = app.test_client()
-    r = client.post("/api/lq/dev/reset", json={"reason": "simulator_run_ended"})
-    body = r.get_json()
-    _check("POST /api/lq/dev/reset returns the new revs",
-           r.status_code == 200 and body["state_rev"] > before[0] and body["roster_rev"] > before[1],
-           str(body))
-    _check("the route really reset the bridge", not b.has_roster and not b.has_state)
-    resets = events_of(b, "lq_reset")
-    _check("the route's reason is recorded",
-           len(resets) == 1 and json.loads(resets[0]["detail"])["reason"] == "simulator_run_ended")
+    _check("a real gateway's hello drops them", SIM_MAC_A not in b.cups and MAC_A in b.cups)
+    _check("...and is answered with the state all the same", port.lines()[-1] == STATE_REV1)
+    _check("forget all", b.forget_cups() == 1 and b.cups == {})
+    _check("a forgotten cup that still talks is back within a packet",
+           (b.handle_raw_line(telem(MAC_A, horse=1, count=3)) or MAC_A in b.cups))
 
 
 class RecordingSerial:
@@ -1106,7 +935,6 @@ def test_junk_at_open_every_shape():
     }
     for name, chunks in shapes.items():
         b, port, sio, clk = _fresh_bridge()
-        b.set_state(1, HORSES_1_TO_20, NO_SCR)      # so a hello has something to answer
         b._open_port()
         port.written.clear()
         for chunk in chunks:
@@ -1119,7 +947,7 @@ def test_junk_at_open_every_shape():
                b.stats["bytes_rx"] == sum(len(c) for c in chunks))
         # The hello may be swallowed by junk that runs straight into it, exactly
         # as it would be on the wire. The gateway repeats it every 2 s.
-        port.feed(b'{"t":"hello","v":1,"proto":1,"mac":"24:6F:28:AA:BB:CC"}\n')
+        port.feed(b'{"t":"hello","v":2,"proto":2,"mac":"24:6F:28:AA:BB:CC"}\n')
         drain(b, port)
         _check("junk %s: the next hello is answered" % name,
                any(l.startswith('{"t":"state"') for l in port.lines()), str(port.lines()))
@@ -1129,7 +957,6 @@ def test_junk_mid_run():
     """Junk is not only an open-time problem: a glitch mid-run must recover
     the same way."""
     b, port, sio, clk = _fresh_bridge()
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
     b._open_port()
     port.feed(MID_LINE + GOOD_LINES)
     drain(b, port)
@@ -1296,16 +1123,16 @@ def test_console_lines():
     b._factory = lambda p, baud, t: ports.pop(0)
     con = b._console
     _check("every console line is prefixed", all(l.startswith("[LQ] ") for l in con.lines))
-    b.set_state(1, HORSES_1_TO_20, NO_SCR)
     b._open_port()
     port.feed(MID_LINE + GOOD_LINES)
     drain(b, port)
     _check("console: gateway online", con.matching("gateway online"))
     _check("console: gateway hello with its MAC", con.matching("gateway hello from 24:6F:28:AA:BB:CC"))
     _check("console: the hello answer", con.matching("answered the hello with state rev 1"))
+    _check("console: a cup announcing its horse", con.matching("cup A0:B7:65:12:34:56 is horse 7"), str(con.lines))
     con.clear()
     for n in range(30):                       # telemetry must never reach the console
-        port.feed(telem(0, MAC_A, count=n, seq=100 + n))
+        port.feed(telem(MAC_A, horse=7, count=n, seq=100 + n))
         drain(b, port)
     _check("console: silent for telemetry", con.lines == [], str(con.lines))
     clk.advance(13)
@@ -1314,11 +1141,10 @@ def test_console_lines():
     clk.advance(30)
     b.tick(clk())
     _check("console: watchdog reopen", con.matching("reopening the port"))
-    b.set_roster([MAC_A] + [""] * 19)
     clk.advance(RESEND_MIN_S + 1)             # else the reconcile is rate-limited
     con.clear()
-    b.handle_raw_line(status(state_rev=0, roster_rev=0, up_s=200))
-    _check("console: a re-send is announced", con.matching("re-sent"), str(con.lines))
+    b.handle_raw_line(status(state_rev=0, up_s=200))
+    _check("console: a re-send is announced", con.matching("re-sent state rev"), str(con.lines))
     # and the two failure paths
     b2, port2, sio2, clk2 = _fresh_bridge()
     b2._factory = lambda p, baud, t: (_ for _ in ()).throw(OSError("no such device"))
@@ -1356,7 +1182,7 @@ def test_reason_never_lies_about_online():
 
     b._open_port()
     _check("port open does not call itself online", b.link.reason == "port_open" and ok())
-    port.feed(MID_LINE + b'{"t":"telem","cup":0,"mac":"A0:B7:65:12:34:56","count":3}\n')
+    port.feed(MID_LINE + b'{"t":"telem","mac":"A0:B7:65:12:34:56","horse":7,"count":3}\n')
     drain(b, port)
     _check("the gateway coming online does", b.link.reason == "online" and b.link.gateway_online)
     port.feed(GOOD_LINES)
@@ -1382,33 +1208,27 @@ def test_reason_never_lies_about_online():
     _check("no emitted lq_link ever said online while offline", bad == [], str(bad))
 
 
-def test_http_routes_and_dev_gating():
+def test_http_routes():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
+    b.handle_raw_line(telem(MAC_A, horse=7, count=3))
     app = _make_app(b)
     client = app.test_client()
     r = client.get("/api/lq/snapshot")
-    _check("GET /api/lq/snapshot 200", r.status_code == 200 and len(r.get_json()["cups"]) == 20)
+    _check("GET /api/lq/snapshot 200 with the cups by MAC", r.status_code == 200
+           and [c["mac"] for c in r.get_json()["cups"]] == [MAC_A] and r.get_json()["devpi"]["state_rev"] == 1)
     for path in ("/api/lq/dev/state", "/api/lq/dev/roster", "/api/lq/dev/roster/adopt",
-                 "/api/lq/dev/debug", "/api/lq/dev/reset", "/api/lq/dev/roster/clear"):
+                 "/api/lq/dev/reset", "/api/lq/dev/roster/clear", "/api/lq/dev/debug"):
         r = client.post(path, json={})
-        _check(f"POST {path} is 404 with LQ_DEV_ENDPOINTS off", r.status_code == 404)
-    b.settings["LQ_DEV_ENDPOINTS"] = True
-    r = client.post("/api/lq/dev/state", json={"phase": 1, "horses": HORSES_1_TO_20, "scratched": NO_SCR})
-    _check("dev/state returns the new rev", r.status_code == 200 and r.get_json()["rev"] == 1)
-    r = client.post("/api/lq/dev/state", json={"phase": 9, "horses": HORSES_1_TO_20, "scratched": NO_SCR})
-    _check("dev/state 400 with the validation message", r.status_code == 400 and "phase" in r.get_json()["error"])
-    r = client.post("/api/lq/dev/roster", json={"macs": [MAC_A] + [""] * 19})
-    _check("dev/roster returns the new rev", r.status_code == 200 and r.get_json()["rev"] == 1)
-    r = client.post("/api/lq/dev/roster", json={"macs": [MAC_A, MAC_A] + [""] * 18})
-    _check("dev/roster 400 on duplicates", r.status_code == 400)
-    r = client.post("/api/lq/dev/roster/adopt")
-    _check("dev/roster/adopt returns a rev", r.status_code == 200 and r.get_json()["rev"] == 2)
+        _check(f"POST {path} no longer exists (404)", r.status_code == 404)
     port.written.clear()
-    r = client.post("/api/lq/dev/debug", json={"on": True})
-    _check("dev/debug sends the debug line", r.status_code == 200 and port.lines() == ['{"t":"debug","on":true}'])
-    r = client.post("/api/lq/dev/debug", json={"on": "yes"})
-    _check("dev/debug 400 on a non-boolean", r.status_code == 400)
+    r = client.post("/api/lq/debug", json={"on": True})
+    _check("POST /api/lq/debug sends the debug line, no flag needed",
+           r.status_code == 200 and port.lines() == ['{"t":"debug","on":true}'])
+    r = client.post("/api/lq/debug", json={"on": "yes"})
+    _check("debug 400 on a non-boolean", r.status_code == 400)
+    r = client.post("/api/lq/cups/forget", json={"mac": MAC_A})
+    _check("POST /api/lq/cups/forget drops the cup", r.status_code == 200 and r.get_json()["forgotten"] == 1 and b.cups == {})
     _check("snapshot responses are no-store", "no-store" in client.get("/api/lq/snapshot").headers.get("Cache-Control", ""))
 
 
@@ -1428,12 +1248,12 @@ def test_room_isolation_real_socketio():
     a.emit("lq_request_snapshot")
     got = a.get_received()
     _check("lq_request_snapshot answered with lq_snapshot to that client",
-           any(m["name"] == "lq_snapshot" and len(m["args"][0]["cups"]) == 20 for m in got))
+           any(m["name"] == "lq_snapshot" and "cups" in m["args"][0] for m in got))
     _check("the other client got nothing", other.get_received() == [])
-    b.handle_raw_line(telem(2, MAC_A))
+    b.handle_raw_line(telem(MAC_A, horse=3))
     got_a = a.get_received()
     got_other = other.get_received()
-    _check("room member receives lq_update", any(m["name"] == "lq_update" and m["args"][0]["cup"] == 3 for m in got_a))
+    _check("room member receives lq_update", any(m["name"] == "lq_update" and m["args"][0]["mac"] == MAC_A for m in got_a))
     _check("client outside the room receives no lq_* events",
            not any(m["name"].startswith("lq_") for m in got_other))
     a.disconnect(); other.disconnect()
@@ -1460,11 +1280,11 @@ def test_port_missing_then_appears():
     _check("port opened after retries", b.link.port_open and attempts["n"] >= 3, str(attempts))
     _check("Flask still answers while the port is missing/retrying", client.get("/api/lq/snapshot").status_code == 200)
     _check("thread alive, no exception escaped", b.running)
-    port.feed(MID_LINE + telem(0, MAC_A))
+    port.feed(MID_LINE + telem(MAC_A, horse=1))
     deadline = time.time() + 2
     while time.time() < deadline and MAC_A not in b.cups:
         time.sleep(0.02)
-    _check("lines from the port are handled by the thread", MAC_A in b.cups and b.cups[MAC_A].cup == 1)
+    _check("lines from the port are handled by the thread", MAC_A in b.cups and b.cups[MAC_A].horse == 1)
     b.stop()
     _check("stop() joins the thread and closes the port", not b.running and port.closed)
 
@@ -1519,11 +1339,12 @@ def test_import_main_starts_nothing():
     _check("importing main opens no port", get_bridge()._port is None and not get_bridge().running)
     rules = {rule.rule for rule in main.app.url_map.iter_rules()}
     _check("/api/lq/snapshot route registered", "/api/lq/snapshot" in rules)
-    _check("/api/lq/dev/state route registered", "/api/lq/dev/state" in rules)
+    _check("/api/lq/debug and /api/lq/cups/forget registered", "/api/lq/debug" in rules and "/api/lq/cups/forget" in rules)
+    _check("no dev routes registered", not any(r.startswith("/api/lq/dev/") for r in rules), str(sorted(rules)))
     _check("La Subasta routes still registered", "/la-subasta/api/state" in rules)
     for path in ("/api/quiniela", "/api/quiniela/stream", "/api/quiniela/cmd", "/api/quiniela/horses",
                  "/api/quiniela/scratch", "/api/quiniela/unscratch", "/api/quiniela/closes_at",
-                 "/quiniela/admin"):
+                 "/api/quiniela/reset", "/quiniela/admin"):
         _check(f"{path} route registered", path in rules)
 
 
@@ -1534,28 +1355,24 @@ def test_import_main_starts_nothing():
 def main():
     print(f"La Quiniela bridge smoke test\n  DB: {_TMP_DB}")
 
-    _run("ID conversion (the one ID rule)", test_id_conversion)
-    _run("Phase enum matches ddm_common.h", test_phase_enum_matches_header)
+    _run("Phase enum and the v2 constants match ddm_common.h", test_phase_enum_matches_header)
+    _run("protocol — validation and byte-exact lines", test_protocol_validation_and_lines)
     _run("garbage lines ignored", test_garbage_lines_ignored)
     _run("telem — live state, rows, heartbeat", test_telem_live_state_and_rows)
-    _run("telem — mirroring without a roster", test_mirroring_without_roster)
-    _run("telem — mismatch with a roster", test_mismatch_with_roster)
-    _run("telem — claim event rate limited", test_claim_event_rate_limited)
-    _run("telem — unassigned MAC", test_unassigned_mac)
-    _run("hello — nothing persisted", test_hello_nothing_persisted)
-    _run("hello — roster then state, byte-exact", test_hello_sends_roster_then_state_byte_exact)
+    _run("telem — a cup changes its horse; two cups claim one", test_horse_changes_and_conflicts)
+    _run("hello — answered with the state, byte-exact, restored", test_hello_answered_with_state)
     _run("hello — wrong version", test_hello_wrong_version)
-    _run("status — reconcile", test_status_reconcile)
+    _run("status — reconcile and the cup table", test_status_reconcile_and_cup_table)
     _run("status — reboot detection", test_status_reboot)
     _run("timers — cup offline / online", test_cup_offline_online)
     _run("timers — gateway offline", test_gateway_offline)
-    _run("set_state — validation, no-op, persistence", test_set_state_validation_and_persistence)
-    _run("set_roster — validation, persistence", test_set_roster_validation_and_persistence)
-    _run("adopt_roster", test_adopt_roster)
+    _run("set_state — validation, no-op, parts, persistence", test_set_state_validation_and_persistence)
     _run("snapshot shape", test_snapshot_shape)
     _run("disabled / no port / no pyserial", test_bridge_disabled_and_no_pyserial)
     _run("schema mismatch refuses", test_schema_mismatch_refuses)
+    _run("the v1 schema migrates", test_v1_schema_migrates)
     _run("config env overrides", test_env_overrides)
+    _run("forget_cups and the simulator's cups", test_forget_cups)
     _run("serial lines: leave never touches DTR/RTS", test_serial_lines_leave_never_touches_them)
     _run("serial lines: low holds them low", test_serial_lines_low_holds_them_low_before_open)
     _run("serial lines: mode resolution", test_serial_lines_mode_resolution)
@@ -1571,12 +1388,7 @@ def main():
     _run("[LQ] console lines", test_console_lines)
     _run("a forced emit follows the gateway MAC", test_forced_emit_follows_the_gateway_mac)
     _run("reason never lies about online", test_reason_never_lies_about_online)
-    _run("reset_link forgets the roster and state", test_reset_link)
-    _run("setting a roster and state again after a reset", test_reset_then_set_again)
-    _run("a real gateway never gets a simulator roster", test_guard_discards_a_simulator_roster)
-    _run("the guard does not misfire", test_guard_does_not_misfire)
-    _run("POST /api/lq/dev/reset", test_dev_reset_route)
-    _run("HTTP routes + dev gating", test_http_routes_and_dev_gating)
+    _run("HTTP routes", test_http_routes)
     _run("SocketIO room isolation (real Flask-SocketIO)", test_room_isolation_real_socketio)
     _run("serial — port missing at start", test_port_missing_then_appears)
     _run("serial — port vanishes mid-run", test_port_vanishes_mid_run)
@@ -1588,17 +1400,7 @@ def main():
     print(f"RESULTS: {passed} passed, {failed} failed, {len(_results)} total")
     print("=" * 50)
 
-    global _current
-    if _current is not None:
-        try:
-            _current.close()
-        except Exception:
-            pass
-    for suffix in ("", "-wal", "-shm"):
-        try:
-            os.remove(_TMP_DB + suffix)
-        except OSError:
-            pass
+    _drop_db()
     return 0 if failed == 0 else 1
 
 

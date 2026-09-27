@@ -1,18 +1,19 @@
 # la_quiniela/horses.py - Horse names, replacement scratches and the closing time
 #
 # What the betting board knows about a horse beyond its cup: a name typed by
-# the operator, and the replacement scratches. Horses are numbers 1..24:
-# 1..20 are the field, 21..24 the also-eligibles, whose names can be entered
-# ahead of time but who are not in the field until they replace someone. At
-# Churchill an also-eligible that draws in keeps its own program number (in
-# the 2026 Derby The Puma, #9, scratched and Ocelli ran as #22, not as #9),
-# so a replacement scratch is a RENUMBER: the record {was: 9, now: 22} says
-# horse 9 left the field and the cup that was 9 now carries 22 (its tokens
-# come along, because it is the same cup; nothing moves on the mantle). The
-# cup's number itself is the bridge's state; this store keeps the record and
-# the names, and the board's model derives in_field / replaced / scratches
-# from the two together. A no-replacement scratch (the gateway's scratched
-# flag on the cup) is bridge state and is never stored here.
+# the operator, and the scratches. Horses are numbers 1..24: 1..20 are the
+# field, 21..24 the also-eligibles, whose names can be entered ahead of time
+# but who are not in the field until they replace someone. At Churchill an
+# also-eligible that draws in keeps its own program number (in the 2026
+# Derby The Puma, #9, scratched and Ocelli ran as #22, not as #9), so a
+# replacement scratch is a RENUMBER: the record {was: 9, now: 22} says horse
+# 9 left the field and the cup that was 9 is now 22 (its tokens come along,
+# because it is the same cup; nothing moves on the mantle). Since protocol
+# v2 the cup owns its number: the board turns the record into the renumber
+# pair [9, 22] in the gateway's state line and the cup adopts it on its own.
+# A no-replacement scratch is a record with now None; the board turns it
+# into the horse's bit in the state line. The board's model derives
+# in_field / replaced / scratches from the records and the names.
 #
 # For the board as a whole, when betting closes. None of it comes from the
 # gateway, so none of it lives in the bridge; the board reads this store when
@@ -125,10 +126,10 @@ class HorseStore:
     """Names for horses 1..24, the scratch records and closes_at.
 
     A record is was -> now: a replacement scratch (the cup that was `was`
-    now carries `now`) or, with now None, a no-replacement scratch (the
-    horse is out, its tokens refunded; the cup carrying it, if any, gets the
-    gateway's scratched flag from board.py / BettingBoard.refresh()). Both
-    kinds live in lq_scratches and survive a reset.
+    becomes `now`, through the renumber pair the board sends) or, with now
+    None, a no-replacement scratch (the horse is out, its tokens refunded;
+    its bit goes in the state line from BettingBoard.refresh()). Both kinds
+    live in lq_scratches and survive a reset.
 
     db is an LqDb (models.py) or None for a memory-only store. on_change is a
     no-argument callable invoked after every write, outside the lock."""

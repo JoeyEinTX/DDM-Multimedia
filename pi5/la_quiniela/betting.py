@@ -8,31 +8,37 @@
 #
 # Nothing in this file reads the serial port. BettingBoard.apply_snapshot()
 # digests one get_snapshot() dict (pure, so tests need no bridge), refresh()
-# takes a snapshot from the bridge and applies it, and a daemon thread calls
-# refresh() whenever the bridge's listener wakes it, and once a second
-# regardless (so link_ok follows a gateway that has gone quiet).
+# takes a snapshot from the bridge, applies it and keeps the gateway's state
+# line in step with the store (the scratched bits, the renumber pairs, the
+# results), and a daemon thread calls refresh() whenever the bridge's
+# listener wakes it, and once a second regardless (so link_ok follows a
+# gateway that has gone quiet).
 #
 # The model JSON, the SSE bytes and validate_cmd() are a contract with the
 # board page (splash_display/static/js/quiniela_board.js) and must not
-# change; the one documented difference from the old splash model is that
-# horses[n].cup is the 1-based cup number (pi5's ID rule) rather than the
-# gateway's 0-based slot. The board only tests it for null.
+# change; the one documented difference from the old splash model is what
+# horses[n].cup holds: since protocol v2 it is the MAC of the cup claiming
+# that horse (null when none does), never a cup number. The board only tests
+# it for null. Additive keys: conflict and cups per horse, cups_online,
+# cups_no_horse and results on the model.
 #
 # How La Quiniela pays, which is what the additive keys carry: a token is one
 # dollar and one raffle ticket. After the race one token is drawn from the WIN
 # cup, one from PLACE, one from SHOW, and each drawn token's owner takes that
 # cup's whole prize, a fixed fraction of the pot (prizes_for()). Nobody
 # splits anything and there are no odds; the only number per horse is how
-# many tokens are in its cup. Names, the replacement records and the closing
+# many tokens are in its cup. Names, the scratch records and the closing
 # time come from the HorseStore (horses.py), never from the gateway.
 #
 # Horses are numbers 1..24 (protocol.MAX_HORSE): 1..20 the field, 21..24 the
-# also-eligibles. A replacement scratch is a renumber (The Puma, #9, out;
-# Ocelli in as #22, on the same cup): the model's in_field / replaced /
-# scratches come from the store's records plus the bridge's scratched flags,
-# and because the cup's tokens simply show up under the new number, the
-# same-cup rule below means a renumber produces no event and never changes
-# the pot.
+# also-eligibles. The cup owns its number (protocol v2): pi5 learns which
+# horses have cups by listening, and two cups claiming one horse is a
+# conflict the model reports, not something pi5 resolves. A replacement
+# scratch is a renumber (The Puma, #9, out; Ocelli in as #22, on the same
+# cup): the store's record makes the board send the pair [9, 22] down, the
+# cup that was 9 becomes 22, and because its tokens simply show up under the
+# new number, the same-cup rule below means a renumber produces no event and
+# never changes the pot.
 
 import json
 import logging
@@ -43,7 +49,7 @@ import time
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from la_quiniela import protocol as P
 from la_quiniela.horses import HorseStore, in_field
@@ -56,14 +62,16 @@ log = logging.getLogger("la_quiniela.betting")
 
 BASE_DIR = Path(__file__).resolve().parent.parent          # pi5/
 LOG_DIR = BASE_DIR / "data"          # quiniela_YYYY-MM-DD.jsonl lives here (git-ignored)
+RESULTS_FILE = LOG_DIR / "results.json"   # the dashboard's results (main.py RESULTS_FILE, POST /api/results)
 
 HORSE_COUNT = P.MAX_HORSE            # 24: the model's horses map is keyed "1".."24"
 MAX_EVENTS = 8                       # the "recent drops" ring the board shows
 SSE_HEARTBEAT_S = 5.0                # ping after this much silence
 SSE_QUEUE_SIZE = 32                  # per-subscriber queue; the oldest is dropped when full
 REFRESH_S = 1.0                      # the board thread's timeout between wake-ups
+UNDO_RENUM_S = 60.0                  # an undone renumber is sent back (to -> was) this long, or until a cup reports was
 
-CMD_WHITELIST = frozenset({"state", "horse", "scratch", "demo", "roster", "json"})
+CMD_WHITELIST = frozenset({"state", "demo", "json"})
 CMD_MAX_LEN = 200
 
 # Configuration keys, their defaults, and the environment override DDM_<key>.
@@ -76,7 +84,7 @@ DEFAULTS: Dict[str, Any] = {
     "LQ_SPLIT_PLACE": 0.25,                   # the PLACE prize's share, rounded half up to whole dollars
     "LQ_SPLIT_SHOW": 0.15,                    # the SHOW prize's share, likewise
     "LQ_CHYRON_LINES": [                      # what crawls along the bottom of the board
-        "TOTALS BASED ON CHEAP CHINESE ELECTRONICS \u00b7 FINAL RESULTS HAND COUNTED",
+        "TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
         "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS",
     ],
 }
@@ -273,46 +281,53 @@ def prizes_for(pot: Any, split: Dict[str, Any]) -> Dict[str, int]:
 
 
 # -----------------------------------------------------------------------------
+# Results: the dashboard's file
+# -----------------------------------------------------------------------------
+
+def read_results(path: Any = None) -> List[int]:
+    """[win, place, show] from the dashboard's results file (main.py writes
+    {"win","place","show","timestamp"} on POST /api/results); [0, 0, 0] when
+    there is no file, it does not parse, a number is out of 1..24 or two
+    are the same. Never raises."""
+    target = Path(path) if path is not None else RESULTS_FILE
+    try:
+        with open(target, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return [0] * P.RESULT_SLOTS
+    if not isinstance(data, dict):
+        return [0] * P.RESULT_SLOTS
+    out: List[int] = []
+    for key in ("win", "place", "show"):
+        h = _as_int(data.get(key), 0) or 0
+        out.append(h if 1 <= h <= HORSE_COUNT else 0)
+    named = [h for h in out if h]
+    if len(set(named)) != len(named):
+        return [0] * P.RESULT_SLOTS
+    return out
+
+
+def clear_results(path: Any = None) -> bool:
+    """Remove the dashboard's results file. True if there was one."""
+    target = Path(path) if path is not None else RESULTS_FILE
+    try:
+        os.remove(target)
+        return True
+    except OSError:
+        return False
+
+
+# -----------------------------------------------------------------------------
 # The model
 # -----------------------------------------------------------------------------
 
-def state_lists(snap: Any) -> Tuple[int, List[int], List[bool]]:
-    """(phase, horses[20], scratched[20]) as LqBridge.set_state() wants
-    them, from a get_snapshot() dict: position 0 = cup 1, horse None -> 0."""
-    snap = snap if isinstance(snap, dict) else {}
-    by_cup: Dict[int, Dict[str, Any]] = {}
-    for entry in snap.get("cups") or []:
-        if isinstance(entry, dict) and isinstance(entry.get("cup"), int) and not isinstance(entry.get("cup"), bool):
-            by_cup[entry["cup"]] = entry
-    horses = [int(by_cup.get(cup, {}).get("horse") or 0) for cup in P.CUP_NUMBERS]
-    scratched = [bool(by_cup.get(cup, {}).get("scratched")) for cup in P.CUP_NUMBERS]
-    phase = int((snap.get("devpi") or {}).get("phase") or 0)
-    return phase, horses, scratched
-
-
 def _unassigned() -> Dict[str, Any]:
-    """A horse no cup carries. name / replaced / in_field are filled in by
-    _name_horses(): in_field is true for 1..20 unless scratched, so an
-    unassigned horse in the field still reads in_field true; 21..24 read
+    """A horse no cup claims. name / replaced / in_field are filled in by
+    _name_horses(): in_field is true for 1..20 unless scratched, so a horse
+    in the field with no cup yet still reads in_field true; 21..24 read
     false until they stand in for someone."""
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None,
-            "name": "", "replaced": None, "in_field": False}
-
-
-def _roster_rev_of(snap: Any) -> Optional[int]:
-    """devpi.roster_rev from a snapshot, or None when it is missing. The bridge
-    bumps it in reset_link() and set_roster() (adopt_roster() included) and
-    never in set_state(), so a change between two consecutive snapshots is
-    exactly a reset-shaped transition: counts moved without a bet."""
-    devpi = snap.get("devpi") if isinstance(snap, dict) else None
-    return _as_int(devpi.get("roster_rev")) if isinstance(devpi, dict) else None
-
-
-def _reset_count_of(snap: Any) -> Optional[int]:
-    """devpi.reset_count: how many times this bridge has reset_link()'d. A
-    move between two snapshots clears the closing time (names stay)."""
-    devpi = snap.get("devpi") if isinstance(snap, dict) else None
-    return _as_int(devpi.get("reset_count")) if isinstance(devpi, dict) else None
+            "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False}
 
 
 def _with_now(text: str, now: float) -> str:
@@ -323,23 +338,35 @@ def _with_now(text: str, now: float) -> str:
     return text[:-1] + ',"now":' + _dumps(now) + "}"
 
 
+def _results_dict(results: Any) -> Dict[str, Optional[int]]:
+    out: Dict[str, Optional[int]] = {"win": None, "place": None, "show": None}
+    if isinstance(results, (list, tuple)):
+        for key, value in zip(("win", "place", "show"), results):
+            h = _as_int(value, 0) or 0
+            out[key] = h if 1 <= h <= HORSE_COUNT else None
+    return out
+
+
 class BettingBoard:
     """The betting model, its event log, its SSE subscribers and the thread
     that keeps it current.
 
     apply_snapshot() digests one bridge snapshot (get_snapshot()); refresh()
-    fetches one from the bridge and applies it. Both publish the full model
-    to every subscriber queue when, and only when, the model changed.
+    fetches one from the bridge, applies it, and pushes whatever the state
+    line should carry (scratched bits, renumber pairs, results) when the
+    bridge's copy differs. Both publish the full model to every subscriber
+    queue when, and only when, the model changed.
 
-    The board never talks to the serial port. It reads the bridge's picture
-    and the bridge stays the source of truth for phase, horses and the roster.
+    The board never talks to the serial port. It reads the bridge's picture;
+    the bridge stays the source of truth for the phase and for which cups it
+    has heard, the store for names and scratches, the dashboard's results
+    file for the results.
 
-    clock is a monotonic seconds source, kept for symmetry with the splash
-    board (link_ok now comes from the snapshot, so nothing times out here);
-    wall is unix time, for the timestamps in the model and the log. Both are
-    injectable for tests, as is log_dir.
+    clock is a monotonic seconds source (the undo-renumber timer runs on
+    it); wall is unix time, for the timestamps in the model and the log.
+    Both are injectable for tests, as are log_dir and results_path.
 
-    store is the HorseStore of names, replacements and the closing time: by
+    store is the HorseStore of names, scratches and the closing time: by
     default one on the bridge's database (memory-only without a bridge). Its
     on_change is wired to wake(), so an admin write refreshes the model.
     """
@@ -352,6 +379,7 @@ class BettingBoard:
         wall: Callable[[], float] = time.time,
         log_dir: Optional[Path] = None,
         store: Optional[HorseStore] = None,
+        results_path: Optional[Any] = None,
     ) -> None:
         self.bridge = bridge
         self.settings: Dict[str, Any] = {k: (list(v) if isinstance(v, list) else v)
@@ -360,14 +388,15 @@ class BettingBoard:
         self._clock = clock
         self._wall = wall
         self._log_dir = log_dir            # None = module-level LOG_DIR, read at write time
+        self._results_path = Path(results_path) if results_path is not None else RESULTS_FILE
         self._lock = threading.Lock()
         self._refresh_lock = threading.Lock()   # serialises refresh(): snapshot then apply, in order
         self._subs: List["queue.Queue[str]"] = []
         self._seen_state = False
-        self._roster_rev: Optional[int] = None    # devpi.roster_rev of the last snapshot applied
-        self._reset_count: Optional[int] = None   # devpi.reset_count of the last snapshot applied
         self._events: List[Dict[str, Any]] = []
+        self._undo_renum: Dict[Tuple[int, int], float] = {}   # (to, was) -> deadline on self._clock
         self._dup_warned: set = set()
+        self._sync_warned: set = set()
         self._log_enabled = True
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -431,35 +460,42 @@ class BettingBoard:
             "chyron": self._chyron(),
             "names_rev": self.store.names_rev,
             "scratches": [],
+            "cups_online": 0,
+            "cups_no_horse": 0,
+            "results": _results_dict(None),
         }
 
-    def _name_horses(self, horses: Dict[str, Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]],
-                                                                      List[Dict[str, Any]]]:
+    def _name_horses(self, horses: Dict[str, Dict[str, Any]], state_scratched: Iterable[int] = ()
+                     ) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
         """Add what the store knows to every horse entry and list the
         scratches. Mutates and returns horses.
 
         name: the store's name, upper-cased ("" when unset). in_field: the
-        rule in horses.in_field(), from the store's records and the cups
-        the gateway has scratched: 1..20 true unless scratched either kind,
-        21..24 true only while standing in for a scratched horse. replaced:
-        the upper-cased name of the horse n stands in for (the "was" of the
-        record whose "now" is n), else None. scratches: one entry per
-        scratch ordered by was.number, {"was": {"number", "name"}, "now":
-        {"number", "name"}} for a replacement record and {"was": {...},
-        "now": None} for a no-replacement scratch (recorded here, or a cup
-        flagged at the gateway with no record); names upper-cased, "" when
-        unnamed.
+        rule in horses.in_field(), from the store's records: 1..20 true
+        unless scratched either kind, 21..24 true only while standing in for
+        a scratched horse. replaced: the upper-cased name of the horse n
+        stands in for (the "was" of the record whose "now" is n), else None.
+        scratches: one entry per scratch ordered by was.number, {"was":
+        {"number", "name"}, "now": {"number", "name"}} for a replacement
+        record and {"was": {...}, "now": None} for a no-replacement scratch;
+        names upper-cased, "" when unnamed.
 
-        A no-replacement scratch is about the horse, not the cup: a record
-        with now None marks the horse scratched whether or not a cup carries
-        it yet, so it is out of the field and its tokens (if any) out of the
-        pot from the moment it is recorded; the cup's own flag follows when
-        one carries it (refresh() pushes it)."""
+        A no-replacement scratch is about the horse, not the cup: the record
+        (now None) marks the horse scratched whether or not a cup claims it,
+        so it is out of the field and its tokens (if any) out of the pot from
+        the moment it is recorded; refresh() puts its bit in the gateway's
+        state line. state_scratched is what the bridge currently sends (the
+        same set, once refresh() has caught up): a horse in either reads
+        scratched."""
         names = self.store.horses()
         records = self.store.scratches()
         for was, now in records.items():
             if now is None:
                 horses[str(was)]["scratched"] = True
+        for h in state_scratched:
+            n = _as_int(h)
+            if n is not None and 1 <= n <= HORSE_COUNT:
+                horses[str(n)]["scratched"] = True
         gateway = {n for n in range(1, HORSE_COUNT + 1) if horses[str(n)]["scratched"]}
         by_now = {now: was for was, now in records.items() if now is not None}
 
@@ -495,15 +531,20 @@ class BettingBoard:
         with self._lock:
             return bool(self._model["link_ok"])
 
-    def _digest(self, snap: Any) -> Tuple[Dict[str, Dict[str, Any]], int, int, bool]:
+    def _digest(self, snap: Any) -> Tuple[Dict[str, Dict[str, Any]], int, int, bool, Dict[str, Any]]:
         """Turn one bridge snapshot into (horses, race_state, total_tokens,
-        link_ok).
+        link_ok, extras).
 
-        Every horse 1..24 gets an entry. A cup claims a horse through its
-        "horse" field; two cups claiming the same horse keep the lowest cup
-        number, with one WARNING per (horse, kept, dup). Missing or odd
-        fields never raise.
-        """
+        Every horse 1..24 gets an entry. A cup claims a horse through the
+        "horse" it reports; the claimers of a horse are ordered online first,
+        most recently heard first, and the first one is the cup whose count
+        the horse shows ("cup" is its MAC). Two online cups claiming the same
+        horse is a conflict: "conflict" true and both MACs in "cups", with
+        one WARNING per (horse, cups). A cup that has gone offline while
+        another took its horse (a spare swapped in) is not a conflict.
+        extras: cups_online (every online cup, horse or not), cups_no_horse
+        (online cups reporting horse 0), the state's scratched list and
+        results. Missing or odd fields never raise."""
         if not isinstance(snap, dict):
             snap = {}
         devpi = snap.get("devpi")
@@ -520,77 +561,82 @@ class BettingBoard:
         if not isinstance(cups, list):
             cups = []
 
-        entries: List[Tuple[int, int, Dict[str, Any]]] = []
+        by_horse: Dict[int, List[Dict[str, Any]]] = {}
+        cups_online = 0
+        cups_no_horse = 0
         for entry in cups:
             if not isinstance(entry, dict):
                 continue
-            cup = _as_int(entry.get("cup"))
-            horse = _as_int(entry.get("horse"))
-            if cup is None or not (1 <= cup <= P.NUM_CUPS):
+            mac = entry.get("mac")
+            if not isinstance(mac, str) or not mac:
                 continue
-            if horse is None or not (1 <= horse <= HORSE_COUNT):
-                continue
-            entries.append((cup, horse, entry))
-        entries.sort(key=lambda e: e[0])
+            horse = _as_int(entry.get("horse"), 0) or 0
+            online = _as_bool(entry.get("online"))
+            if online:
+                cups_online += 1
+                if horse == 0:
+                    cups_no_horse += 1
+            if 1 <= horse <= HORSE_COUNT:
+                by_horse.setdefault(horse, []).append(entry)
 
         horses = {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)}
-        claimed: Dict[int, int] = {}
-        for cup, horse, entry in entries:
-            if horse in claimed:
-                key = (horse, claimed[horse], cup)
+        for horse, claimers in by_horse.items():
+            claimers.sort(key=lambda e: str(e.get("last_seen") or ""), reverse=True)
+            claimers.sort(key=lambda e: 0 if _as_bool(e.get("online")) else 1)
+            online_claimers = [e for e in claimers if _as_bool(e.get("online"))]
+            listed = online_claimers or claimers
+            primary = listed[0]
+            macs = [str(e.get("mac")) for e in listed]
+            conflict = len(online_claimers) > 1
+            if conflict:
+                key = (horse, tuple(macs))
                 if key not in self._dup_warned:
                     self._dup_warned.add(key)
-                    log.warning(
-                        "cups %d and %d both claim horse %d; keeping cup %d",
-                        claimed[horse], cup, horse, claimed[horse],
-                    )
-                continue
-            claimed[horse] = cup
-            tokens = _as_int(entry.get("count"), 0) or 0     # None until the first telem line
+                    log.warning("cups %s all claim horse %d; showing %s", ", ".join(macs), horse, macs[0])
+            tokens = _as_int(primary.get("count"), 0) or 0     # None until the first telem line
             horses[str(horse)] = {
                 "tokens": max(0, tokens),
                 "share": 0.0,
-                "scratched": _as_bool(entry.get("scratched")),
-                "online": _as_bool(entry.get("online")),
-                "cup": cup,
+                "scratched": False,
+                "online": bool(online_claimers),
+                "cup": str(primary.get("mac")),
+                "conflict": conflict,
+                "cups": macs,
             }
 
         total = sum(h["tokens"] for h in horses.values())
         if total:
             for h in horses.values():
                 h["share"] = round(h["tokens"] / total, 4)
-        return horses, st, total, link_ok
+        extras = {
+            "cups_online": cups_online,
+            "cups_no_horse": cups_no_horse,
+            "scratched": devpi.get("scratched") if isinstance(devpi.get("scratched"), list) else [],
+            "results": devpi.get("results") if isinstance(devpi.get("results"), list) else [],
+        }
+        return horses, st, total, link_ok, extras
 
     def apply_snapshot(self, snap: Any, baseline: bool = False) -> bool:
         """Digest one bridge snapshot. Returns True if the model changed (and
         was published to subscribers). Pure: no bridge, no port.
 
-        baseline=True applies the snapshot as a fresh baseline whatever the
-        revs say: the events are cleared and no count is diffed. That is the
-        between-races reset (reset_betting()), which keeps the roster, so no
-        rev moves to say so; its log record carries "reset": "betting".
-
         Events are the per-horse token deltas between this snapshot and the
-        last one, except across a reset-shaped transition: when devpi.roster_rev
-        moved (reset_link(), set_roster(), adopt_roster()) every count that
-        changed did so because horses were forgotten or cups re-mapped, not
-        because a token moved, so this snapshot is a fresh baseline and the
-        events list is cleared rather than filled with ghost removals. Likewise
-        a horse re-mapped to another cup (or unassigned) gets no event for the
-        count that came with the cup. A real removal (a token lifted out of a
-        cup, same cup, same roster) is still a negative event. A replacement
-        scratch is exactly such a re-mapping (horse 9 goes cup 1 -> None and
-        horse 22 None -> cup 1, tokens along), so a renumber yields no event,
-        does not touch the baseline, and other horses' bets in the same
-        snapshot still count.
+        last one. The first snapshot ever is a baseline, and so is any
+        applied with baseline=True (the between-races reset): the events
+        list is cleared and no count is diffed, so what sits in the cups is
+        the starting point, not a bet. A horse whose cup changed (the MAC
+        claiming it moved, or went away) gets no event for the count that
+        came with the cup: a renumber (a replacement scratch, the cup that
+        was 9 now reporting 22) is exactly such a move, so it yields no event
+        and other horses' bets in the same snapshot still count. A real
+        removal (a token lifted out of a cup, same cup) is still a negative
+        event.
 
-        The log tells the two apart from bets: a reset is written as a
-        baseline record even when nothing else moved, and a count that came
-        with a cup move carries the move ("cup": [from, to]) in its change."""
+        The log tells the two apart from bets: a baseline is written as such
+        even when nothing else moved, and a count that came with a cup move
+        carries the move ("cup": [from, to], the MACs) in its change."""
         now_w = self._wall()
-        horses, race_state, total, link_ok = self._digest(snap)
-        roster_rev = _roster_rev_of(snap)
-        reset_count = _reset_count_of(snap)
+        horses, race_state, total, link_ok, extras = self._digest(snap)
 
         leader: Optional[int] = None
         best = 0
@@ -601,25 +647,14 @@ class BettingBoard:
 
         record: Optional[Dict[str, Any]] = None
         with self._lock:
-            # A reset_link() since the last snapshot ends the betting window:
-            # the closing time is cleared. Names survive a reset. The store's
-            # lock is a leaf (its on_change only sets our wake Event), so this
-            # is safe under our own lock.
-            if (reset_count is not None and self._reset_count is not None
-                    and reset_count != self._reset_count):
-                self.store.clear_closes_at()
-            if reset_count is not None:
-                self._reset_count = reset_count
-            horses, scratches = self._name_horses(horses)
+            horses, scratches = self._name_horses(horses, extras["scratched"])
 
             old = self._model
             old_horses = old["horses"]
 
-            # A fresh baseline: the first snapshot ever, or the first after a
-            # reset-shaped transition (roster_rev moved). Neither produces events.
-            fresh = (baseline or not self._seen_state
-                     or (roster_rev is not None and self._roster_rev is not None
-                         and roster_rev != self._roster_rev))
+            # A fresh baseline: the first snapshot ever, or the between-races
+            # reset. Neither produces events.
+            fresh = baseline or not self._seen_state
             changes: List[Dict[str, Any]] = []
             new_events: List[Dict[str, Any]] = []
             for n in range(1, HORSE_COUNT + 1):
@@ -628,14 +663,14 @@ class BettingBoard:
                 if before["tokens"] != after["tokens"]:
                     change: Dict[str, Any] = {"horse": n, "tokens": [before["tokens"], after["tokens"]]}
                     # A bet or a removal is a count that changed on the SAME cup;
-                    # a horse moved to another cup (or unassigned) brings that
-                    # cup's count with it, which is not a token moving. Outside
-                    # a baseline record (flagged as a whole) the log entry says
-                    # so, or a replay would read the jump as a bet. The one
-                    # blind spot: a token that lands in a renumbered cup in the
-                    # very snapshot that carries the renumber is counted (count,
-                    # pot, log) but not tickered, because on that horse the
-                    # count change is also a cup move.
+                    # a horse whose cup changed brings that cup's count with it,
+                    # which is not a token moving. Outside a baseline record
+                    # (flagged as a whole) the log entry says so, or a replay
+                    # would read the jump as a bet. The one blind spot: a token
+                    # that lands in a renumbered cup in the very snapshot that
+                    # carries the renumber is counted (count, pot, log) but not
+                    # tickered, because on that horse the count change is also
+                    # a cup move.
                     moved = before["cup"] != after["cup"]
                     if moved and not fresh:
                         change["cup"] = [before["cup"], after["cup"]]
@@ -652,17 +687,15 @@ class BettingBoard:
                 changes.append({"race_state": [old["race_state"], race_state]})
             reset = fresh and self._seen_state      # a reset, not the first snapshot
             self._seen_state = True
-            if roster_rev is not None:
-                self._roster_rev = roster_rev
             if reset:
                 self._events = []                   # no ghost removals on the ticker
             elif new_events:
                 self._events = (new_events + self._events)[:MAX_EVENTS]
 
             token_value = self._token_value()
-            # The pot is what the prizes are drawn from: a cup scratched at
-            # the gateway (no replacement) is out of the game and its tokens
-            # are refunded by hand, so they leave the pot; total_tokens still
+            # The pot is what the prizes are drawn from: a horse scratched
+            # with no replacement is out of the game and its tokens are
+            # refunded by hand, so they leave the pot; total_tokens still
             # counts every cup. A replacement scratch keeps the cup counting
             # under its new number, so a renumber never changes the pot.
             live = sum(h["tokens"] for h in horses.values() if not h["scratched"])
@@ -686,6 +719,9 @@ class BettingBoard:
                 "chyron": self._chyron(),
                 "names_rev": self.store.names_rev,
                 "scratches": scratches,
+                "cups_online": extras["cups_online"],
+                "cups_no_horse": extras["cups_no_horse"],
+                "results": _results_dict(extras["results"]),
             }
             changed = model != old
             if changed:
@@ -701,16 +737,17 @@ class BettingBoard:
                 if reset:
                     record["baseline"] = True       # counts moved by a reset, not by bets
                 if baseline:
-                    record["reset"] = "betting"     # the between-races reset: roster kept
+                    record["reset"] = "betting"     # the between-races reset
         if record is not None:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed
 
     def refresh(self) -> bool:
-        """Take the bridge's snapshot and apply it. Returns True if the model
-        changed. With no bridge the empty picture is applied instead (link
-        down, no cups), so names and the closing time from the store still
-        reach the model; that is a change only if the store moved.
+        """Take the bridge's snapshot, apply it, and keep the gateway's state
+        line in step with the store and the results file. Returns True if the
+        model changed. With no bridge the empty picture is applied instead
+        (link down, no cups), so names and the closing time from the store
+        still reach the model; that is a change only if the store moved.
 
         Serialised: two overlapping calls (the board thread and a
         start_board() on a running board) apply their snapshots in the order
@@ -730,24 +767,98 @@ class BettingBoard:
         with self._refresh_lock:
             snap = bridge.get_snapshot()
             changed = self.apply_snapshot(snap)
-            self._push_recorded_scratches(bridge, snap)
+            if self._sync_gateway(bridge, snap):
+                changed = self.apply_snapshot(bridge.get_snapshot()) or changed
             return changed
 
+    # -- what goes down to the cups --------------------------------------------
+    def queue_undo_renum(self, to: int, was: int) -> None:
+        """An undone replacement scratch: send [to, was] for UNDO_RENUM_S, or
+        until a cup reports `was`, so the cup that became `to` goes back."""
+        with self._lock:
+            self._undo_renum[(int(to), int(was))] = self._clock() + UNDO_RENUM_S
+
+    def undo_renums(self) -> List[Tuple[int, int]]:
+        """The undo pairs still being sent, oldest first (tests)."""
+        with self._lock:
+            return sorted(self._undo_renum, key=self._undo_renum.get)
+
+    def desired_state(self, snap: Any = None) -> Tuple[List[int], List[Tuple[int, int]], List[int]]:
+        """(scratched, renum, results) as the gateway's state line should
+        carry them: the store's no-replacement scratches; the replacement
+        records as [was, now] pairs, then the undo pairs still pending
+        (dropped when their time is up or when a cup reports the number they
+        restore, or when a fresh record contradicts them); the dashboard's
+        results. At most RENUM_SLOTS pairs: records first, one warning when
+        an undo pair has to wait."""
+        records = self.store.scratches()
+        scratched = sorted(was for was, now in records.items() if now is None)
+        pairs: List[Tuple[int, int]] = sorted((was, now) for was, now in records.items() if now is not None)
+        reported = set()
+        if isinstance(snap, dict):
+            for entry in snap.get("cups") or []:
+                if isinstance(entry, dict) and _as_bool(entry.get("online")):
+                    h = _as_int(entry.get("horse"), 0) or 0
+                    if h:
+                        reported.add(h)
+        now_mono = self._clock()
+        with self._lock:
+            for pair in list(self._undo_renum):
+                to, was = pair
+                # Contradicted by a record: the number it restores is scratched
+                # again (f == was), a record moves cups onto the number it moves
+                # them off (t == to: they would bounce), or a record has the
+                # same from (the gateway refuses a from twice). The record wins.
+                stale = (self._undo_renum[pair] <= now_mono or was in reported
+                         or any(f == was or t == to or f == to for f, t in pairs))
+                if stale:
+                    del self._undo_renum[pair]
+            undo = sorted(self._undo_renum, key=self._undo_renum.get)
+        for pair in undo:
+            if any(f == pair[0] for f, _ in pairs):
+                continue
+            pairs.append(pair)
+        if len(pairs) > P.RENUM_SLOTS:
+            waiting = pairs[P.RENUM_SLOTS:]
+            key = tuple(waiting)
+            if key not in self._sync_warned:
+                self._sync_warned.add(key)
+                log.warning("La Quiniela board: %d renumber pair(s) waiting for a free slot: %s",
+                            len(waiting), waiting)
+            pairs = pairs[:P.RENUM_SLOTS]
+        return scratched, pairs, read_results(self._results_path)
+
+    def _sync_gateway(self, bridge: Any, snap: Any) -> bool:
+        """Push the desired scratched bits, renumber pairs and results to the
+        bridge when its state line differs. Returns whether a set_state()
+        went out; never raises (a refused state is logged once per value)."""
+        scratched, pairs, results = self.desired_state(snap)
+        devpi = snap.get("devpi") if isinstance(snap, dict) and isinstance(snap.get("devpi"), dict) else {}
+        current = (list(devpi.get("scratched") or []),
+                   [tuple(p) for p in (devpi.get("renum") or []) if isinstance(p, (list, tuple)) and len(p) == 2],
+                   list(devpi.get("results") or []))
+        if current == (scratched, pairs, results):
+            return False
+        try:
+            bridge.set_state(scratched=scratched, renum=pairs, results=results)
+        except ValueError as exc:
+            key = ("refused", str(exc))
+            if key not in self._sync_warned:
+                self._sync_warned.add(key)
+                log.warning("La Quiniela board: the bridge refused the state (%s): scratched %s, renum %s, results %s",
+                            exc, scratched, pairs, results)
+            return False
+        return True
+
     def reset_betting(self) -> Dict[str, Any]:
-        """The between-races reset: betting starts over, the roster stays.
-
-        The race goes back to PRE_RACE with the same horses on the same cups
-        and the same scratched flags (one set_state(), so the gateway hears
-        it and every cup keeps its number and its horse); the closing time
-        is cleared; and the bridge's picture is applied as a fresh baseline,
-        so the events are cleared and no count is diffed: what sits in a cup
-        right now is the starting point, not a bet. Tokens still in a cup
-        are not an error, the pot simply reads them, and the reply names
-        those cups so the admin page can say so. Names, both kinds of scratch
-        and the also-eligibles are not touched, nor is the roster.
-
-        Nothing here forgets a cup: that is the bridge's reset_link(), the
-        bench-side "forget cups" behind the dev routes.
+        """The between-races reset: betting starts over. PRE_RACE, the
+        results cleared (the dashboard's file too), the closing time cleared,
+        and the bridge's picture applied as a fresh baseline: the events are
+        cleared and no count is diffed, so what sits in a cup right now is
+        the starting point, not a bet. Tokens still in a cup are not an
+        error, the pot simply reads them, and the reply names those horses
+        so the admin page can say so. Names and both kinds of scratch are not
+        touched; the cups keep their numbers, which are theirs.
 
         Serialised with refresh() under the same lock, so the board thread
         (woken by set_state()) applies its snapshot after this one and finds
@@ -755,9 +866,9 @@ class BettingBoard:
         bridge = self.bridge
         rev: Optional[int] = None
         with self._refresh_lock:
+            clear_results(self._results_path)
             if bridge is not None:
-                phase, horses, scratched = state_lists(bridge.get_snapshot())
-                rev = bridge.set_state(int(P.Phase.PRE_RACE), horses, scratched)
+                rev = bridge.set_state(phase=int(P.Phase.PRE_RACE), results=[0] * P.RESULT_SLOTS)
                 snap: Any = bridge.get_snapshot()
             else:
                 snap = {}
@@ -766,53 +877,22 @@ class BettingBoard:
         model = self.model()
         if not isinstance(snap, dict):
             snap = {}
-        cups = [c for c in (snap.get("cups") or []) if isinstance(c, dict)]
         link = snap.get("link") if isinstance(snap.get("link"), dict) else {}
-        devpi = snap.get("devpi") if isinstance(snap.get("devpi"), dict) else {}
-        assigned = sum(1 for c in cups if c.get("horse"))
-        log.info("La Quiniela board: betting reset (roster kept); pot %s on %d token(s), %d cup(s) assigned",
-                 model["pot"], model["total_tokens"], assigned)
+        with_tokens = [n for n in range(1, HORSE_COUNT + 1) if model["horses"][str(n)]["tokens"]]
+        log.info("La Quiniela board: betting reset; pot %s on %d token(s), %d cup(s) online",
+                 model["pot"], model["total_tokens"], model["cups_online"])
         return {
             "race_state": model["race_state"],
             "pot": model["pot"],
             "total_tokens": model["total_tokens"],
-            "cups_with_tokens": [c["cup"] for c in cups if c.get("count")],
-            "cups_assigned": assigned,
-            "roster_kept": bool(devpi.get("has_roster", False)),
+            "horses_with_tokens": with_tokens,
+            "cups_online": model["cups_online"],
             "events": len(model["events"]),
             "closes_at": model["closes_at"],
             "rev": rev,
             "gateway_online": bool(link.get("gateway_online", False)),
             "names_rev": model["names_rev"],
         }
-
-    def _push_recorded_scratches(self, bridge: Any, snap: Any) -> bool:
-        """A no-replacement scratch is a record in the store; the cup that
-        carries that horse must carry the gateway's scratched flag so it
-        draws its X. A cup found carrying a recorded horse without the flag
-        (the horse assigned after the scratch by the horse command, by
-        dev/state, or again after a reset) gets it here through set_state(),
-        one line for all such cups. The bridge notifies, the board refreshes
-        once more and finds nothing to do. Returns whether a line went down;
-        never raises."""
-        recorded = self.store.gateway_scratches()
-        if not recorded or not isinstance(snap, dict):
-            return False
-        cups = [c for c in snap.get("cups") or [] if isinstance(c, dict)]
-        missing = [c["cup"] for c in cups
-                   if c.get("horse") in recorded and not c.get("scratched")
-                   and isinstance(c.get("cup"), int) and not isinstance(c.get("cup"), bool)]
-        if not missing:
-            return False
-        phase, horses, scratched = state_lists(snap)
-        scratched = [True if c in missing else s for c, s in zip(P.CUP_NUMBERS, scratched)]
-        try:
-            bridge.set_state(phase, horses, scratched)
-        except ValueError as exc:
-            log.warning("La Quiniela board: cannot flag cup(s) %s scratched at the gateway: %s", missing, exc)
-            return False
-        log.info("La Quiniela board: cup(s) %s flagged scratched at the gateway (recorded scratch)", missing)
-        return True
 
     def _set_locked(self, model: Dict[str, Any]) -> None:
         self._model = model
@@ -920,7 +1000,9 @@ def _offer(q: "queue.Queue[str]", item: str) -> None:
 def validate_cmd(cmd: Any) -> Tuple[Optional[str], Optional[str]]:
     """Check one command line. Returns (clean_cmd, None) or (None, error).
     Only the first word is whitelisted; the route that translates the
-    command onto the bridge checks the arguments."""
+    command onto the bridge checks the arguments. Since protocol v2 there is
+    no horse, scratch or roster command: a cup's number is set on the cup,
+    and scratches go through POST /api/quiniela/scratch."""
     if not isinstance(cmd, str):
         return None, "cmd must be a string"
     text = cmd.strip()

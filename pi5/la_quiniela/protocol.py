@@ -1,28 +1,28 @@
 # la_quiniela/protocol.py - The gateway's serial line protocol, in Python
 #
-# The contract is firmware/quiniela/README.md, section "Serial line protocol".
-# Everything that knows what the wire looks like lives here: the phase enum,
-# the two cup-ID conversions, the downlink line builders, uplink line decoding,
-# and the same validation the gateway applies to a line.
+# The contract is firmware/quiniela/README.md, section "Serial line protocol",
+# line protocol v2 (the cup owns its horse number). Everything that knows
+# what the wire looks like lives here: the phase enum, the horse-number
+# limits, the downlink line builders, uplink line decoding, and the same
+# validation the gateway applies to a state line.
 #
-# THE ONE ID RULE. Cup IDs are 0-based on the wire and 1-based everywhere on
-# DevPi (database, Python API, SocketIO events, HTTP JSON). wire_to_cup() and
-# cup_to_wire() are the only two places in the whole system that convert.
-# They are called at the serial boundary and nowhere else.
+# THE ONE KEY RULE. A cup is known by its MAC and by the horse number it
+# reports. There are no cup IDs, slots or rosters on the wire or anywhere on
+# DevPi; the gateway keeps a table of the cups it hears, indexed however it
+# likes, and that index never leaves the gateway.
 
 import json
 import re
 from enum import IntEnum
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-LINE_PROTO_VERSION = 1            # the "v" the gateway reports in its hello line
-NUM_CUPS = 20                     # DDM_MAX_CUPS in ddm_common.h
-MAX_LINE_BYTES = 1024             # both directions, excluding the newline
-MAX_HORSE = 24                    # horse numbers 1..24, 0 = unassigned; mirrors DDM_MAX_HORSE in ddm_common.h
+LINE_PROTO_VERSION = 2            # the "v" the gateway reports in its hello line
+MAX_LINE_BYTES = 4096             # the status line carries the cup table: about 2.3 KB with 24 cups
+MAX_HORSE = 24                    # horse numbers 1..24, 0 = none; mirrors DDM_MAX_HORSE in ddm_common.h
                                   # (1..20 the field, 21..24 the also-eligibles; test_smoke pins the two together)
-CUP_NUMBERS = tuple(range(1, NUM_CUPS + 1))   # 1..20: the DevPi side
-WIRE_IDS = tuple(range(NUM_CUPS))             # 0..19: the gateway side
-BROADCAST_MAC = "FF:FF:FF:FF:FF:FF"
+RENUM_SLOTS = 4                   # DDM_RENUM_SLOTS: renumber pairs a state line may carry
+RESULT_SLOTS = 3                  # DDM_RESULT_SLOTS: win, place, show
+HORSES = tuple(range(1, MAX_HORSE + 1))
 
 
 class Phase(IntEnum):
@@ -39,27 +39,7 @@ class Phase(IntEnum):
 
 
 # -----------------------------------------------------------------------------
-# The two conversions
-# -----------------------------------------------------------------------------
-
-def wire_to_cup(wire_id: Optional[int]) -> Optional[int]:
-    """0-based wire cup ID -> 1-based DevPi cup number.
-
-    Wire -1 (the gateway's "MAC not in the roster") becomes None."""
-    if wire_id is None or int(wire_id) < 0:
-        return None
-    return int(wire_id) + 1
-
-
-def cup_to_wire(cup: Optional[int]) -> int:
-    """1-based DevPi cup number -> 0-based wire cup ID. None becomes -1."""
-    if cup is None:
-        return -1
-    return int(cup) - 1
-
-
-# -----------------------------------------------------------------------------
-# MACs
+# MACs and horse numbers
 # -----------------------------------------------------------------------------
 
 _MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
@@ -75,6 +55,14 @@ def normalize_mac(value: Any) -> Optional[str]:
     return text.upper()
 
 
+def parse_horse(value: Any) -> int:
+    """A horse field off the wire: 1..MAX_HORSE as itself, anything else
+    (0, None, out of range, not an integer) as 0 = none."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value if 1 <= value <= MAX_HORSE else 0
+
+
 # -----------------------------------------------------------------------------
 # Validation, exactly as the gateway does it
 # -----------------------------------------------------------------------------
@@ -85,60 +73,73 @@ def _int_field(value: Any, name: str) -> int:
     return value
 
 
-def validate_state(phase: Any, horses: Sequence[Any], scratched: Sequence[Any]
-                   ) -> Tuple[int, Dict[int, int], Dict[int, bool]]:
-    """Validate a state the way the gateway validates a state line.
-
-    horses and scratched are NUM_CUPS-item lists, position 0 = cup 1.
-    Returns (phase, {cup: horse}, {cup: scratched}) keyed by 1-based cup.
-    Raises ValueError with a message fit for a 400 response."""
+def validate_phase(phase: Any) -> int:
     phase_i = _int_field(phase, "phase")
     if phase_i not in [p.value for p in Phase]:
         raise ValueError(f"phase must be {Phase.PRE_RACE.value}..{Phase.AFTER_PARTY.value}")
-    if not isinstance(horses, (list, tuple)) or len(horses) != NUM_CUPS:
-        raise ValueError(f"horses must be a list of exactly {NUM_CUPS} integers")
-    if not isinstance(scratched, (list, tuple)) or len(scratched) != NUM_CUPS:
-        raise ValueError(f"scratched must be a list of exactly {NUM_CUPS} values")
-    horses_by_cup: Dict[int, int] = {}
-    scratched_by_cup: Dict[int, bool] = {}
-    for cup, value in zip(CUP_NUMBERS, horses):
-        h = _int_field(value, f"horses[{cup}]")
+    return phase_i
+
+
+def validate_scratched(values: Any) -> List[int]:
+    """The horses scratched with no replacement: any iterable of 1..MAX_HORSE.
+    Returns them sorted, without repeats."""
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise ValueError("scratched must be a list of horse numbers")
+    out = set()
+    for value in values:
+        h = _int_field(value, "scratched entry")
+        if h < 1 or h > MAX_HORSE:
+            raise ValueError(f"scratched entries must be 1..{MAX_HORSE}")
+        out.add(h)
+    return sorted(out)
+
+
+def validate_renum(pairs: Any) -> List[Tuple[int, int]]:
+    """The renumber pairs: at most RENUM_SLOTS [from, to] pairs, both
+    1..MAX_HORSE, from != to, no from twice."""
+    if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Iterable):
+        raise ValueError("renum must be a list of [from, to] pairs")
+    out: List[Tuple[int, int]] = []
+    for pair in pairs:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError("renum entries must be [from, to] pairs")
+        frm = _int_field(pair[0], "renum from")
+        to = _int_field(pair[1], "renum to")
+        if not (1 <= frm <= MAX_HORSE and 1 <= to <= MAX_HORSE):
+            raise ValueError(f"renum numbers must be 1..{MAX_HORSE}")
+        if frm == to:
+            raise ValueError(f"renum {frm} -> {to}: from and to must differ")
+        if any(f == frm for f, _ in out):
+            raise ValueError(f"renum {frm} appears twice")
+        out.append((frm, to))
+    if len(out) > RENUM_SLOTS:
+        raise ValueError(f"at most {RENUM_SLOTS} renum pairs")
+    return out
+
+
+def validate_results(values: Any) -> List[int]:
+    """WIN, PLACE, SHOW: exactly RESULT_SLOTS integers 0..MAX_HORSE (0 = not
+    yet); the horses named must differ."""
+    if not isinstance(values, (list, tuple)) or len(values) != RESULT_SLOTS:
+        raise ValueError(f"results must be a list of exactly {RESULT_SLOTS} horse numbers (0 = not yet)")
+    out: List[int] = []
+    for value in values:
+        h = _int_field(value, "results entry")
         if h < 0 or h > MAX_HORSE:
-            raise ValueError(f"horses entries must be 0..{MAX_HORSE} (0 = unassigned)")
-        horses_by_cup[cup] = h
-    for cup, value in zip(CUP_NUMBERS, scratched):
-        if isinstance(value, bool):
-            scratched_by_cup[cup] = value
-        elif isinstance(value, int) and value in (0, 1):
-            scratched_by_cup[cup] = bool(value)
-        else:
-            raise ValueError("scratched entries must be 0 or 1")
-    return phase_i, horses_by_cup, scratched_by_cup
+            raise ValueError(f"results entries must be 0..{MAX_HORSE}")
+        out.append(h)
+    named = [h for h in out if h]
+    if len(set(named)) != len(named):
+        raise ValueError("results must name different horses")
+    return out
 
 
-def validate_roster(macs: Sequence[Any]) -> Dict[int, str]:
-    """Validate a roster the way the gateway validates a roster line.
-
-    macs is a NUM_CUPS-item list, position 0 = cup 1, None or "" for an empty
-    slot. Returns {cup: MAC} for the filled slots only, MACs uppercased.
-    Raises ValueError with a message fit for a 400 response."""
-    if not isinstance(macs, (list, tuple)) or len(macs) != NUM_CUPS:
-        raise ValueError(f"macs must be a list of exactly {NUM_CUPS} entries")
-    by_cup: Dict[int, str] = {}
-    seen: Dict[str, int] = {}
-    for cup, value in zip(CUP_NUMBERS, macs):
-        if value is None or value == "":
-            continue
-        mac = normalize_mac(value)
-        if mac is None:
-            raise ValueError(f"macs[{cup}] is not a MAC address (AA:BB:CC:DD:EE:FF)")
-        if mac == BROADCAST_MAC:
-            raise ValueError("the broadcast address can never be a cup")
-        if mac in seen:
-            raise ValueError(f"{mac} appears twice (cups {seen[mac]} and {cup})")
-        seen[mac] = cup
-        by_cup[cup] = mac
-    return by_cup
+def validate_state(phase: Any, scratched: Any, renum: Any, results: Any
+                   ) -> Tuple[int, List[int], List[Tuple[int, int]], List[int]]:
+    """Validate a state the way the gateway validates a state line. Raises
+    ValueError with a message fit for a 400 response."""
+    return (validate_phase(phase), validate_scratched(scratched),
+            validate_renum(renum), validate_results(results))
 
 
 # -----------------------------------------------------------------------------
@@ -149,17 +150,12 @@ def _compact(obj: Dict[str, Any]) -> str:
     return json.dumps(obj, separators=(",", ":"))
 
 
-def build_state_line(rev: int, phase: int, horses_by_cup: Dict[int, int],
-                     scratched_by_cup: Dict[int, bool]) -> str:
-    horse = [int(horses_by_cup.get(wire_to_cup(w), 0)) for w in WIRE_IDS]
-    scr = [1 if scratched_by_cup.get(wire_to_cup(w)) else 0 for w in WIRE_IDS]
-    return _compact({"t": "state", "rev": int(rev), "phase": int(phase),
-                     "horse": horse, "scr": scr})
-
-
-def build_roster_line(rev: int, macs_by_cup: Dict[int, str]) -> str:
-    macs = [macs_by_cup.get(wire_to_cup(w)) or "" for w in WIRE_IDS]
-    return _compact({"t": "roster", "rev": int(rev), "macs": macs})
+def build_state_line(rev: int, phase: int, scratched: Sequence[int],
+                     renum: Sequence[Sequence[int]], results: Sequence[int]) -> str:
+    return _compact({"t": "state", "rev": int(rev), "st": int(phase),
+                     "scr": [int(h) for h in scratched],
+                     "renum": [[int(f), int(t)] for f, t in renum],
+                     "res": [int(h) for h in results]})
 
 
 def build_debug_line(on: bool) -> str:

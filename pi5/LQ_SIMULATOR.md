@@ -8,6 +8,10 @@ tell it from the real thing. It plays out party scenarios, lets you poke at
 cups by hand, and at the end checks what DevPi believes and says PASS or
 FAIL.
 
+Like the real cups, every pretend cup knows its own horse number: cups 1 to
+20 come up as horses 1 to 20, and the two spare cups come up with no horse
+until you set one, the way you would on a real cup's touch menu.
+
 ## Before you start
 
 > **Warning**
@@ -49,16 +53,17 @@ You need two terminal windows.
 
    ```
    cd ~/DDM-Multimedia/pi5
-   DDM_LQ_SERIAL_PORT=/tmp/ddm-lq-sim DDM_LQ_DEV_ENDPOINTS=1 python main.py
+   DDM_LQ_SERIAL_PORT=/tmp/ddm-lq-sim python main.py
    ```
 
-   The first setting points the app at the simulator instead of the real
-   gateway. The second lets the simulator change the race phase and the cup
-   roster for you.
+   That setting points the app at the simulator instead of the real
+   gateway. Nothing else is needed: the simulator changes the race state
+   and makes its scratches through the same betting-board routes the admin
+   page uses.
 
-4. Watch window 1. The cups power on, get their numbers, tokens start
-   landing, the phases advance, and at the end you see a table of expected
-   results and then `PASS` or `FAIL`.
+4. Watch window 1. The cups power on, each saying which horse it is, tokens
+   start landing, the phases advance, and at the end you see a table of
+   expected results and then `PASS` or `FAIL`.
 
 To stop either window, press `Ctrl` and `C` together.
 
@@ -70,28 +75,27 @@ Stop the app too, or start the simulator again.
 
 ### DevPi remembers the cups
 
-DevPi keeps its cup roster between runs, the same way it does with the real
-gateway. Every scenario starts by telling DevPi all twenty cup addresses
-again, so a leftover roster from an earlier run is corrected rather than
-inherited. You never need to clear anything by hand between runs.
+DevPi keeps a small memory of every cup it has ever heard (its address, the
+horse it last said it was, when it was last heard), the same way it does
+with real cups. That memory decides nothing: a cup that is talking is back
+in the picture within a packet, and every cup tells DevPi its horse itself.
+So a leftover memory from an earlier run is simply corrected as the cups
+report, and you never need to clear anything by hand between runs.
 
 ### Going back to the real gateway
 
 Nothing to remember here either. The twenty cups the simulator invents are
 not real, and DevPi can tell: their addresses all start `02:DD:4D:`. The
-moment the real gateway is plugged back in and says hello, DevPi sees that
-the cups it is holding are pretend ones and a real gateway is asking, throws
-the whole lot away, and tells the gateway nothing. The real cups then get
-their numbers normally.
+moment the real gateway is plugged back in and says hello, DevPi drops the
+pretend cups from its memory so they do not sit on the admin page as
+offline cups, and answers the hello with its state as it always does. The
+real cups then show up under their own numbers as they report.
 
-This matters. Without it the real gateway would be handed twenty addresses
-that do not exist, no real cup would ever get a number, and every cup would
-sit on its address screen with nothing on it to say why.
-
-One thing is worth knowing: the gateway itself keeps whatever it was last
-told until it loses power. So if you have been simulating and then plug the
-real gateway back in, give the gateway a power cycle as well. DevPi clears
-itself; the gateway needs the switch.
+One thing is worth knowing: the gateway itself keeps whatever state it was
+last sent until it loses power or DevPi sends the next one, which the hello
+answer is. So if you have been simulating and then plug the real gateway
+back in, a quick power cycle of the gateway makes it say hello and get the
+current state straight away.
 
 ## Seeing it work
 
@@ -103,8 +107,10 @@ http://<devpi>:5000/api/lq/snapshot
 ```
 
 You get a page of text showing what DevPi believes about the link and every
-cup: its number, its address, its token count, and whether it is online.
-Refresh the page and the counts change as the scenario runs.
+cup: its address, the horse it says it is, its token count, and whether it
+is online. Refresh the page and the counts change as the scenario runs. The
+admin page, `http://<devpi>:5000/quiniela/admin`, shows the same thing as
+the Horses list.
 
 ## The scenarios
 
@@ -115,16 +121,18 @@ watch things happen more slowly; leave `--ideal` on for exact counts.
 | Scenario | What happens |
 | --- | --- |
 | `normal` | A full party: uneven betting with two favourites, a rush at final call, then every phase through to the after-party. |
-| `scratch-rebet` | Betting is under way, one horse with tokens in its cup is scratched, that cup is emptied, and the same tokens are dropped into other cups. |
+| `scratch-rebet` | Betting is under way, one horse with tokens in its cup is scratched with no replacement (the cup shows its X), that cup is emptied, and the same tokens are dropped into other cups. |
+| `scratch-renumber` | Horse 9 is scratched with 22 drawing in: the cup that was 9 becomes 22 on its own, tokens and all. Then the scratch is undone and the cup goes back to 9. |
 | `late-tokens` | Normal betting, then a few more tokens land in two cups after the horses are at the post. |
-| `dropout-reboot` | One cup goes silent for 20 seconds and comes back with the same count; another cup blinks off for 3 seconds. |
+| `dropout-reboot` | One cup goes silent for 20 seconds and comes back with the same count and the same horse; another cup blinks off for 3 seconds. |
 | `empty-show-cup` | Betting where one horse gets no tokens at all, and that horse is meant to finish third. |
-| `gateway-reboot` | The gateway reboots in the middle of betting; DevPi must restore it without any help. |
-| `cup-swap` | One cup dies for good; a spare is switched on and takes over that cup's number and horse. |
+| `gateway-reboot` | The gateway reboots in the middle of betting; DevPi must send it the state again without any help. |
+| `cup-swap` | One cup dies for good; a spare is switched on, set to the dead cup's horse on its own screen, and takes over. |
 
 ```
 python -m la_quiniela.simulator --scenario normal --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario scratch-rebet --ideal --devpi http://localhost:5000 --check http://localhost:5000
+python -m la_quiniela.simulator --scenario scratch-renumber --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario late-tokens --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario dropout-reboot --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario empty-show-cup --ideal --devpi http://localhost:5000 --check http://localhost:5000
@@ -150,9 +158,10 @@ Useful extras:
   `--wire` prints every line that goes over the fake serial port.
 - `--auto-demo` pretends the gateway was flashed as a bench build that
   starts demo mode on its own.
-- `--reset-after` tells DevPi to forget this run's cups the moment the run
-  ends, instead of waiting for the real gateway to turn up. Needs `--devpi`.
-  Tidy rather than necessary: DevPi does it by itself either way.
+- `--forget-after` tells DevPi to drop this run's pretend cups from its
+  memory the moment the run ends, instead of waiting for the real gateway
+  to turn up. Needs `--devpi`. Tidy rather than necessary: DevPi does it by
+  itself either way.
 
 ## Driving it by hand
 
@@ -163,17 +172,19 @@ for you to type:
 python -m la_quiniela.simulator
 ```
 
-Cup numbers are 1 to 20, the same numbers DevPi shows.
+Cup numbers are 1 to 20; cup 7 is the cup that came up as horse 7. The
+spares are cups 21 and 22.
 
 | Type | Does |
 | --- | --- |
 | `drop 7 3` | drops 3 tokens into cup 7 |
 | `take 7 2` | takes 2 tokens out of cup 7 |
 | `kill 7` | cup 7 loses power |
-| `boot 7` | cup 7 powers back on, with the same tokens |
-| `boot-spare 1` | switches on spare cup 1 (there is also spare 2); it stays unassigned until the roster includes it |
+| `boot 7` | cup 7 powers back on, with the same tokens and the same horse |
+| `boot-spare 1` | switches on spare cup 1 (there is also spare 2); it shows up with no horse until you set one |
+| `set-horse 21 7` | the touch menu on that cup: HORSE → 7 → SET (here on spare 1); `0` means none |
 | `reboot-gateway` | the gateway reboots |
-| `cups` | a table of every cup: number, address, slot, count, powered |
+| `cups` | a table of every cup: number, address, horse, count, powered |
 | `help` | the list above |
 | `quit` | stops the simulator |
 
@@ -182,13 +193,13 @@ You can also type these while a scenario is running.
 ## PASS and FAIL
 
 At the end of a scenario the simulator prints an **EXPECTED RESULTS** table:
-the token count each cup should show, which cups should be online, and the
-events DevPi should have logged. With `--check` it then reads DevPi's
-snapshot and compares it.
+for every cup, by address, the horse it should be saying, the token count it
+should show and whether it should be online, plus the events DevPi should
+have logged. With `--check` it then reads DevPi's snapshot and compares it.
 
-- **PASS** means DevPi's picture matches: every cup has the right address,
-  the right count and the right online flag, and the link says it is in
-  sync.
+- **PASS** means DevPi's picture matches: every cup is there under its
+  address with the right horse, the right count and the right online flag,
+  and the link says it is in sync.
 - **FAIL** means at least one thing differs. Each difference is printed on
   its own line starting with `MISMATCH:`, before the word FAIL. A scenario
   that could not finish, for example because an operator step never
@@ -208,5 +219,7 @@ cd ~/DDM-Multimedia/pi5
 python -m la_quiniela.test_simulator
 ```
 
-This runs the simulator against the real bridge inside one process, with
-no app and no hardware, and takes about a minute.
+This runs the simulator against the real bridge and a real betting board
+inside one process, with no app and no hardware, and takes about a minute.
+The end-to-end part needs a Linux pty, so on a Windows PC it reports those
+tests as skipped and runs the rest.

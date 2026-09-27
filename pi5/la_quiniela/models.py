@@ -2,12 +2,15 @@
 #
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
-# cups, telemetry, events, lq_link_state, and the betting board's lq_horses,
-# lq_scratches and lq_board. Raw sqlite3, like la_subasta/models.
+# lq_cups, telemetry, events, lq_link_state, and the betting board's
+# lq_horses, lq_scratches and lq_board. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
-# Cup numbers in these tables are 1-based, the DevPi convention.
+# Protocol v2 (2026-09-27): a cup is known by its MAC and the horse number it
+# reports. The v1 slot tables (cups with cup_id, telemetry and events keyed
+# by cup_id, the roster in lq_link_state) are migrated by init_schema(): see
+# _migrate_v2().
 
 import os
 import re
@@ -31,10 +34,13 @@ def utc_now_iso() -> str:
 
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS cups (
+-- The cup cache: every cup ever heard, by MAC, with the horse it last
+-- claimed and when it was last heard. It is what lets the admin page say
+-- "offline" (seen before, silent now) rather than "no cup" (never seen), and
+-- it survives restarts. Nothing decides anything from it.
+CREATE TABLE IF NOT EXISTS lq_cups (
     mac        TEXT    PRIMARY KEY,
-    cup_id     INTEGER UNIQUE,
-    horse      INTEGER,
+    horse      INTEGER NOT NULL DEFAULT 0,
     last_seen  TEXT,
     rssi       INTEGER,
     up_rssi    INTEGER,
@@ -46,8 +52,8 @@ CREATE TABLE IF NOT EXISTS cups (
 CREATE TABLE IF NOT EXISTS telemetry (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          TEXT    NOT NULL,
-    cup_id      INTEGER,
     mac         TEXT    NOT NULL,
+    horse       INTEGER,
     raw_weight  INTEGER,
     token_count INTEGER,
     seq         INTEGER,
@@ -57,43 +63,42 @@ CREATE TABLE IF NOT EXISTS telemetry (
     reason      TEXT    NOT NULL CHECK (reason IN ('change', 'heartbeat'))
 );
 CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(ts);
-CREATE INDEX IF NOT EXISTS idx_telemetry_cup_ts ON telemetry(cup_id, ts);
+CREATE INDEX IF NOT EXISTS idx_telemetry_mac_ts ON telemetry(mac, ts);
 
 CREATE TABLE IF NOT EXISTS events (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     ts     TEXT    NOT NULL,
     type   TEXT    NOT NULL,
-    cup_id INTEGER,
+    horse  INTEGER,
     detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 
 CREATE TABLE IF NOT EXISTS lq_link_state (
-    id          INTEGER PRIMARY KEY CHECK (id = 1),
-    state_rev   INTEGER NOT NULL DEFAULT 0,
-    state_json  TEXT,
-    roster_rev  INTEGER NOT NULL DEFAULT 0,
-    roster_json TEXT
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    state_rev  INTEGER NOT NULL DEFAULT 0,
+    state_json TEXT
 );
 INSERT OR IGNORE INTO lq_link_state (id) VALUES (1);
 
 -- The betting board's own rows (la_quiniela/horses.py): horse names (1..20
 -- the field, 21..24 the also-eligibles; 24 is protocol.MAX_HORSE), the
--- replacement scratches, and when betting closes. lq_horses.replaced is a
--- legacy column from the name-swap replacement (kept NULL, never read for
--- anything but a warning); a database created with CHECK (horse BETWEEN 1
--- AND 20) is rebuilt by init_schema() (see _migrate_lq_horses).
+-- scratches, and when betting closes. lq_horses.replaced is a legacy column
+-- from the name-swap replacement (kept NULL, never read for anything but a
+-- warning); a database created with CHECK (horse BETWEEN 1 AND 20) is
+-- rebuilt by init_schema() (see _migrate_lq_horses).
 CREATE TABLE IF NOT EXISTS lq_horses (
     horse    INTEGER PRIMARY KEY CHECK (horse BETWEEN 1 AND 24),
     name     TEXT    NOT NULL DEFAULT '',
     replaced TEXT
 );
 
--- One row per scratch: horse `was` left the field and its cup now carries
--- horse `now`, or, with now NULL, `was` was scratched with no replacement
--- (its tokens refunded; the cup's gateway flag follows from the record). A
--- table created with now NOT NULL (c70d894, live on DevPi) is rebuilt by
--- init_schema() (see _migrate_lq_scratches).
+-- One row per scratch: horse `was` left the field and the cup that was
+-- `was` now reports horse `now` (a renumber pair the gateway sends until the
+-- record is undone), or, with now NULL, `was` was scratched with no
+-- replacement (its tokens refunded; its bit in the gateway's scratched mask
+-- follows from the record). A table created with now NOT NULL (c70d894,
+-- live on DevPi) is rebuilt by init_schema() (see _migrate_lq_scratches).
 CREATE TABLE IF NOT EXISTS lq_scratches (
     was INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
     now INTEGER CHECK (now IS NULL OR now BETWEEN 1 AND 24)
@@ -108,17 +113,26 @@ INSERT OR IGNORE INTO lq_board (id) VALUES (1);
 """
 
 # The shape each table must have if it already exists. A table of the same
-# name with different columns is reported, never altered.
+# name with different columns is reported, never altered, unless it is the
+# protocol v1 shape, which init_schema() migrates.
 EXPECTED_COLUMNS: Dict[str, List[str]] = {
-    "cups": ["mac", "cup_id", "horse", "last_seen", "rssi", "up_rssi",
-             "last_count", "last_raw", "online"],
+    "lq_cups": ["mac", "horse", "last_seen", "rssi", "up_rssi", "last_count", "last_raw", "online"],
+    "telemetry": ["id", "ts", "mac", "horse", "raw_weight", "token_count",
+                  "seq", "dropped", "rssi", "up_rssi", "reason"],
+    "events": ["id", "ts", "type", "horse", "detail"],
+    "lq_link_state": ["id", "state_rev", "state_json"],
+    "lq_horses": ["horse", "name", "replaced"],
+    "lq_scratches": ["was", "now"],
+    "lq_board": ["id", "names_rev", "closes_at"],
+}
+
+# Protocol v1 (cup slots), live on DevPi until the v2 flash: accepted by
+# check_shape() because init_schema() rebuilds them (see _migrate_v2).
+V1_COLUMNS: Dict[str, List[str]] = {
     "telemetry": ["id", "ts", "cup_id", "mac", "raw_weight", "token_count",
                   "seq", "dropped", "rssi", "up_rssi", "reason"],
     "events": ["id", "ts", "type", "cup_id", "detail"],
     "lq_link_state": ["id", "state_rev", "state_json", "roster_rev", "roster_json"],
-    "lq_horses": ["horse", "name", "replaced"],
-    "lq_scratches": ["was", "now"],
-    "lq_board": ["id", "names_rev", "closes_at"],
 }
 
 # The CHECK the first lq_horses carried (horses 1..20). A table whose CREATE
@@ -147,28 +161,105 @@ class LqDb:
 
     # -- schema ---------------------------------------------------------------
 
+    def _columns(self, table: str) -> List[str]:
+        return [r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
     def check_shape(self) -> Optional[str]:
         """Return a description of the first existing table whose columns
-        differ from EXPECTED_COLUMNS, or None when every table is absent or
-        matches. Nothing is altered."""
+        differ from EXPECTED_COLUMNS (or the v1 shape init_schema() knows how
+        to rebuild), or None when every table is absent or matches. Nothing
+        is altered."""
         with self.lock:
             for table, expected in EXPECTED_COLUMNS.items():
-                rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
-                if not rows:
+                have = self._columns(table)
+                if not have:
                     continue
-                have = [r["name"] for r in rows]
-                if have != expected:
+                if have != expected and have != V1_COLUMNS.get(table):
                     return (f"table {table} already exists with columns {have}, "
                             f"expected {expected}; not altering it")
         return None
 
     def init_schema(self) -> None:
-        """Create the tables that are missing and migrate the one that
+        """Create the tables that are missing and migrate the ones that
         changed shape. Idempotent."""
         with self.lock:
+            self._migrate_v2()
             self._migrate_lq_horses()
             self._migrate_lq_scratches()
             self.conn.executescript(SCHEMA_SQL)
+
+    def _migrate_v2(self) -> List[str]:
+        """Protocol v1 kept cups in slots: a cups table keyed by cup_id, a
+        telemetry and an events table with a cup_id column, and a roster in
+        lq_link_state. v2 knows a cup by its MAC and the horse it reports, so:
+        the cups table is dropped (its rows were per slot; lq_cups fills from
+        the air within seconds), telemetry and events are rebuilt with a
+        horse column in place of cup_id (rows kept, the old slot numbers are
+        not horses so the column starts NULL), and lq_link_state loses
+        roster_rev and roster_json (state_rev and state_json kept; a v1
+        state_json is read for its phase and nothing else). Each step runs
+        only when the old shape is found, in its own transaction. Returns the
+        steps taken."""
+        done: List[str] = []
+        cups_cols = self._columns("cups")
+        if cups_cols and {"mac", "cup_id"} <= set(cups_cols):     # the v1 slot table, nobody else's
+            with self.txn() as conn:
+                conn.execute("DROP TABLE cups")
+            done.append("cups dropped")
+        if "cup_id" in self._columns("telemetry"):
+            with self.txn() as conn:
+                conn.execute("DROP TABLE IF EXISTS telemetry_new")
+                conn.execute(
+                    "CREATE TABLE telemetry_new ("
+                    "    id          INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "    ts          TEXT    NOT NULL,"
+                    "    mac         TEXT    NOT NULL,"
+                    "    horse       INTEGER,"
+                    "    raw_weight  INTEGER,"
+                    "    token_count INTEGER,"
+                    "    seq         INTEGER,"
+                    "    dropped     INTEGER,"
+                    "    rssi        INTEGER,"
+                    "    up_rssi     INTEGER,"
+                    "    reason      TEXT    NOT NULL CHECK (reason IN ('change', 'heartbeat'))"
+                    ")")
+                conn.execute("INSERT INTO telemetry_new (id, ts, mac, horse, raw_weight, token_count, seq, "
+                             "dropped, rssi, up_rssi, reason) SELECT id, ts, mac, NULL, raw_weight, "
+                             "token_count, seq, dropped, rssi, up_rssi, reason FROM telemetry")
+                conn.execute("DROP TABLE telemetry")
+                conn.execute("ALTER TABLE telemetry_new RENAME TO telemetry")
+            done.append("telemetry rebuilt")
+        if "cup_id" in self._columns("events"):
+            with self.txn() as conn:
+                conn.execute("DROP TABLE IF EXISTS events_new")
+                conn.execute(
+                    "CREATE TABLE events_new ("
+                    "    id     INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "    ts     TEXT    NOT NULL,"
+                    "    type   TEXT    NOT NULL,"
+                    "    horse  INTEGER,"
+                    "    detail TEXT"
+                    ")")
+                conn.execute("INSERT INTO events_new (id, ts, type, horse, detail) "
+                             "SELECT id, ts, type, NULL, detail FROM events")
+                conn.execute("DROP TABLE events")
+                conn.execute("ALTER TABLE events_new RENAME TO events")
+            done.append("events rebuilt")
+        if "roster_rev" in self._columns("lq_link_state"):
+            with self.txn() as conn:
+                conn.execute("DROP TABLE IF EXISTS lq_link_state_new")
+                conn.execute(
+                    "CREATE TABLE lq_link_state_new ("
+                    "    id         INTEGER PRIMARY KEY CHECK (id = 1),"
+                    "    state_rev  INTEGER NOT NULL DEFAULT 0,"
+                    "    state_json TEXT"
+                    ")")
+                conn.execute("INSERT INTO lq_link_state_new (id, state_rev, state_json) "
+                             "SELECT id, state_rev, state_json FROM lq_link_state")
+                conn.execute("DROP TABLE lq_link_state")
+                conn.execute("ALTER TABLE lq_link_state_new RENAME TO lq_link_state")
+            done.append("lq_link_state rebuilt")
+        return done
 
     def _migrate_lq_horses(self) -> bool:
         """lq_horses was created with CHECK (horse BETWEEN 1 AND 20) and is
@@ -248,101 +339,73 @@ class LqDb:
     # -- link state -----------------------------------------------------------
 
     def load_link_state(self) -> Dict[str, Any]:
-        row = self.query_one("SELECT state_rev, state_json, roster_rev, roster_json "
-                             "FROM lq_link_state WHERE id = 1")
+        row = self.query_one("SELECT state_rev, state_json FROM lq_link_state WHERE id = 1")
         if row is None:
-            return {"state_rev": 0, "state_json": None, "roster_rev": 0, "roster_json": None}
+            return {"state_rev": 0, "state_json": None}
         return dict(row)
 
-    def save_link_state(self, state_rev: int, state_json: Optional[str],
-                        roster_rev: int, roster_json: Optional[str]) -> None:
+    def save_link_state(self, state_rev: int, state_json: Optional[str]) -> None:
         with self.txn() as conn:
-            conn.execute(
-                "UPDATE lq_link_state SET state_rev = ?, state_json = ?, "
-                "roster_rev = ?, roster_json = ? WHERE id = 1",
-                (int(state_rev), state_json, int(roster_rev), roster_json))
+            conn.execute("INSERT OR IGNORE INTO lq_link_state (id) VALUES (1)")
+            conn.execute("UPDATE lq_link_state SET state_rev = ?, state_json = ? WHERE id = 1",
+                         (int(state_rev), state_json))
 
     # -- cups -----------------------------------------------------------------
 
     def load_cups(self) -> List[sqlite3.Row]:
-        return self.query("SELECT * FROM cups")
+        return self.query("SELECT * FROM lq_cups")
 
-    def upsert_cup(self, mac: str, cup_id: Optional[int], horse: Optional[int],
-                   last_seen: Optional[str], rssi: Optional[int], up_rssi: Optional[int],
-                   last_count: Optional[int], last_raw: Optional[int], online: bool) -> None:
+    def upsert_cup(self, mac: str, horse: int, last_seen: Optional[str], rssi: Optional[int],
+                   up_rssi: Optional[int], last_count: Optional[int], last_raw: Optional[int],
+                   online: bool) -> None:
         with self.txn() as conn:
-            if cup_id is not None:
-                # cup_id is UNIQUE when not NULL: whoever held it before loses it.
-                conn.execute("UPDATE cups SET cup_id = NULL WHERE cup_id = ? AND mac != ?",
-                             (cup_id, mac))
             conn.execute(
-                """INSERT INTO cups (mac, cup_id, horse, last_seen, rssi, up_rssi,
-                                     last_count, last_raw, online)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """INSERT INTO lq_cups (mac, horse, last_seen, rssi, up_rssi, last_count, last_raw, online)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(mac) DO UPDATE SET
-                       cup_id = excluded.cup_id, horse = excluded.horse,
-                       last_seen = excluded.last_seen, rssi = excluded.rssi,
-                       up_rssi = excluded.up_rssi, last_count = excluded.last_count,
-                       last_raw = excluded.last_raw, online = excluded.online""",
-                (mac, cup_id, horse, last_seen, rssi, up_rssi, last_count, last_raw,
+                       horse = excluded.horse, last_seen = excluded.last_seen,
+                       rssi = excluded.rssi, up_rssi = excluded.up_rssi,
+                       last_count = excluded.last_count, last_raw = excluded.last_raw,
+                       online = excluded.online""",
+                (mac, int(horse or 0), last_seen, rssi, up_rssi, last_count, last_raw,
                  1 if online else 0))
-
-    def rewrite_cup_ids(self, macs_by_cup: Dict[int, str]) -> None:
-        """Make the cups table's cup_id column match a roster exactly: MACs no
-        longer in the roster become NULL, roster MACs get their cup, rows for
-        roster MACs never seen before are created."""
-        with self.txn() as conn:
-            conn.execute("UPDATE cups SET cup_id = NULL")
-            for cup, mac in macs_by_cup.items():
-                conn.execute(
-                    "INSERT INTO cups (mac, cup_id, online) VALUES (?, ?, 0) "
-                    "ON CONFLICT(mac) DO UPDATE SET cup_id = excluded.cup_id",
-                    (mac, cup))
-
-    def set_cup_horses(self, horses_by_cup: Dict[int, Optional[int]]) -> None:
-        with self.txn() as conn:
-            for cup, horse in horses_by_cup.items():
-                conn.execute("UPDATE cups SET horse = ? WHERE cup_id = ?", (horse, cup))
-
-    def clear_cup_assignments(self, drop_mac_prefix: Optional[str] = None) -> int:
-        """Forget every cup number and horse, for a link reset. Rows whose MAC
-        starts with drop_mac_prefix are deleted outright rather than kept with
-        a NULL cup_id: they belong to a simulator run and there is no real cup
-        behind them. Returns how many rows were deleted."""
-        with self.txn() as conn:
-            deleted = 0
-            if drop_mac_prefix:
-                cur = conn.execute("DELETE FROM cups WHERE mac LIKE ? || '%'", (drop_mac_prefix,))
-                deleted = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
-            conn.execute("UPDATE cups SET cup_id = NULL, horse = NULL")
-            return deleted
 
     def set_cup_online(self, mac: str, online: bool, last_seen: Optional[str] = None) -> None:
         with self.txn() as conn:
             if last_seen is None:
-                conn.execute("UPDATE cups SET online = ? WHERE mac = ?", (1 if online else 0, mac))
+                conn.execute("UPDATE lq_cups SET online = ? WHERE mac = ?", (1 if online else 0, mac))
             else:
-                conn.execute("UPDATE cups SET online = ?, last_seen = ? WHERE mac = ?",
+                conn.execute("UPDATE lq_cups SET online = ?, last_seen = ? WHERE mac = ?",
                              (1 if online else 0, last_seen, mac))
+
+    def delete_cups(self, mac_prefix: Optional[str] = None) -> int:
+        """Drop cup rows, all of them or those whose MAC starts with a prefix
+        (the simulator's). Returns how many went."""
+        with self.txn() as conn:
+            if mac_prefix:
+                cur = conn.execute("DELETE FROM lq_cups WHERE mac LIKE ? || '%'", (mac_prefix,))
+            else:
+                cur = conn.execute("DELETE FROM lq_cups")
+            return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
     # -- telemetry / events ---------------------------------------------------
 
-    def insert_telemetry(self, ts: str, cup_id: Optional[int], mac: str, raw_weight: Optional[int],
+    def insert_telemetry(self, ts: str, mac: str, horse: Optional[int], raw_weight: Optional[int],
                          token_count: Optional[int], seq: Optional[int], dropped: Optional[int],
                          rssi: Optional[int], up_rssi: Optional[int], reason: str) -> None:
         with self.txn() as conn:
             conn.execute(
-                """INSERT INTO telemetry (ts, cup_id, mac, raw_weight, token_count, seq,
+                """INSERT INTO telemetry (ts, mac, horse, raw_weight, token_count, seq,
                                           dropped, rssi, up_rssi, reason)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (ts, cup_id, mac, raw_weight, token_count, seq, dropped, rssi, up_rssi, reason))
+                (ts, mac, horse, raw_weight, token_count, seq, dropped, rssi, up_rssi, reason))
 
-    def insert_event(self, ts: str, type_: str, cup_id: Optional[int], detail: Optional[str]) -> None:
+    def insert_event(self, ts: str, type_: str, horse: Optional[int], detail: Optional[str]) -> None:
         with self.txn() as conn:
-            conn.execute("INSERT INTO events (ts, type, cup_id, detail) VALUES (?, ?, ?, ?)",
-                         (ts, type_, cup_id, detail))
+            conn.execute("INSERT INTO events (ts, type, horse, detail) VALUES (?, ?, ?, ?)",
+                         (ts, type_, horse, detail))
 
-    # -- betting board: horse names, replacement scratches, closing time ------
+    # -- betting board: horse names, scratches, closing time -------------------
 
     def load_horses(self) -> Dict[int, Dict[str, Optional[str]]]:
         """{horse: {"name": str, "replaced": str | None}} for every row present

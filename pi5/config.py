@@ -82,7 +82,6 @@ LQ_SERIAL_BAUD = _lq_env('LQ_SERIAL_BAUD', 115200)
 LQ_HEARTBEAT_LOG_S = _lq_env('LQ_HEARTBEAT_LOG_S', 10)    # per-cup heartbeat interval for logging and display refresh
 LQ_CUP_OFFLINE_S = _lq_env('LQ_CUP_OFFLINE_S', 6)         # no telemetry for this long = cup offline
 LQ_GATEWAY_OFFLINE_S = _lq_env('LQ_GATEWAY_OFFLINE_S', 12) # no line at all for this long = gateway offline
-LQ_DEV_ENDPOINTS = _lq_env('LQ_DEV_ENDPOINTS', False)     # enables POST /api/lq/dev/* (testing only)
 
 # La Quiniela betting board (GET /api/quiniela; "Betting board" in pi5/LQ_BRIDGE.md)
 TOKEN_VALUE = 1.00  # dollars per token, for the board's POT

@@ -1,45 +1,32 @@
 # la_quiniela/sim/protocol.py - the gateway's serial line protocol, written
-# for the simulator from firmware/quiniela/README.md ("Serial line protocol")
-# and the behaviour in ddm_gateway.ino.
+# for the simulator from firmware/quiniela/README.md ("Serial line protocol",
+# line protocol v2) and the behaviour in ddm_gateway.ino.
 #
 # Deliberately NOT shared with the bridge's la_quiniela/protocol.py: if both
 # sides shared this code, a shared mistake would pass every test. The only
 # import from the bridge is the Phase enum.
 #
-# Cup numbers: the person at the keyboard uses 1..20, the wire uses 0..19.
-# cup_to_slot() and slot_to_cup() below are the one place the simulator
-# converts; everything the simulator prints or reads from a person goes
-# through them.
+# Protocol v2: a cup is known by its MAC and the horse number it reports.
+# There are no slots, no roster line and no cup IDs; the gateway's cup table
+# is its own and only its contents (MAC, horse, tokens, signal, age) are
+# reported.
 
 import json
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from la_quiniela.protocol import Phase
 
-LINE_PROTO_VERSION = 1          # "v" in the hello line
-PROTO_VERSION = 1               # "proto" in the hello line (DDM_PROTO_VERSION)
-NUM_CUPS = 20                   # DDM_MAX_CUPS
-MAX_LINE = 1024                 # bytes per line, both directions, excluding the newline
+LINE_PROTO_VERSION = 2          # "v" in the hello line
+PROTO_VERSION = 2               # "proto" in the hello line (DDM_PROTO_VERSION)
+MAX_CUPS = 24                   # DDM_MAX_CUPS: the gateway's table
+MAX_LINE = 1024                 # bytes per downlink line, excluding the newline
+BIG_LINE = 2560                 # the status and up state lines (they carry the table)
 EXCERPT_CHARS = 40              # of a rejected line echoed in err
-MAX_HORSE = 20
-BROADCAST_MAC = "FF:FF:FF:FF:FF:FF"
+MAX_HORSE = 24                  # DDM_MAX_HORSE
+RENUM_SLOTS = 4                 # DDM_RENUM_SLOTS
+RESULT_SLOTS = 3                # DDM_RESULT_SLOTS
 PHASE_MIN = min(p.value for p in Phase)
 PHASE_MAX = max(p.value for p in Phase)
-
-
-# -----------------------------------------------------------------------------
-# The one conversion between human cup numbers and wire slots
-# -----------------------------------------------------------------------------
-
-def cup_to_slot(cup: int) -> int:
-    """Human cup number 1..20 -> wire slot 0..19."""
-    return cup - 1
-
-
-def slot_to_cup(slot: int) -> int:
-    """Wire slot 0..19 -> human cup number 1..20."""
-    return slot + 1
 
 
 # -----------------------------------------------------------------------------
@@ -50,29 +37,41 @@ def _compact(obj: Dict[str, Any]) -> str:
     return json.dumps(obj, separators=(",", ":"))
 
 
-def telem_line(slot: int, mac: str, raw: int, count: int, seq: int, drop: int,
-               rssi: int, up: int, claim: Optional[int] = None) -> str:
-    obj: Dict[str, Any] = {"t": "telem", "cup": slot, "mac": mac, "raw": int(raw),
+def telem_line(mac: str, horse: int, raw: int, count: int, seq: int, drop: int,
+               rssi: int, up: int, hello: bool = False) -> str:
+    obj: Dict[str, Any] = {"t": "telem", "mac": mac, "horse": int(horse), "raw": int(raw),
                            "count": int(count), "seq": int(seq), "drop": int(drop),
                            "rssi": int(rssi), "up": int(up)}
-    if claim is not None:
-        obj["claim"] = int(claim)
+    if hello:
+        obj["hello"] = 1
     return _compact(obj)
-
-
-def cup_hello_line(slot: int, mac: str) -> str:
-    return _compact({"t": "cup_hello", "cup": slot, "mac": mac})
 
 
 def hello_line(mac: str) -> str:
     return _compact({"t": "hello", "v": LINE_PROTO_VERSION, "proto": PROTO_VERSION, "mac": mac})
 
 
-def status_line(gseq: int, phase: int, state_rev: int, roster_rev: int, cups: int,
+def cup_entry(mac: str, horse: int, tok: int, rssi: int, up: int, age_ms: int) -> Dict[str, Any]:
+    """One entry of the status / up state line's cups[], in the sketch's key order."""
+    return {"mac": mac, "horse": int(horse), "tok": int(tok), "rssi": int(rssi),
+            "up": int(up), "age": int(age_ms)}
+
+
+def status_line(gseq: int, phase: int, state_rev: int, cups: List[Dict[str, Any]],
                 rejects: int, up_s: int) -> str:
     return _compact({"t": "status", "gseq": int(gseq), "phase": int(phase),
-                     "state_rev": int(state_rev), "roster_rev": int(roster_rev),
-                     "cups": int(cups), "rejects": int(rejects), "up_s": int(up_s)})
+                     "state_rev": int(state_rev), "cups": list(cups),
+                     "rejects": int(rejects), "up_s": int(up_s)})
+
+
+def state_report_line(gseq: int, demo: bool, mac: str, phase: int, scratched: List[int],
+                      renum: List[Tuple[int, int]], results: List[int],
+                      cups: List[Dict[str, Any]]) -> str:
+    """The up `state` line (typed `json`): the packet's contents and the table."""
+    return _compact({"t": "state", "seq": int(gseq), "demo": 1 if demo else 0, "mac": mac,
+                     "st": int(phase), "scr": sorted(int(h) for h in scratched),
+                     "renum": [[int(f), int(t)] for f, t in renum],
+                     "res": [int(h) for h in results], "cups": list(cups)})
 
 
 def excerpt(line: bytes) -> str:
@@ -106,15 +105,6 @@ def err_line(msg: str, line: Optional[bytes] = None) -> str:
 # Downlink lines (DevPi -> gateway): validation exactly as the README
 # -----------------------------------------------------------------------------
 
-_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
-
-
-def parse_mac(value: Any) -> Optional[str]:
-    if not isinstance(value, str) or not _MAC_RE.match(value):
-        return None
-    return value.upper()
-
-
 class Rejected(Exception):
     """A downlink line the gateway answers with err. .msg is 'parse' or 'invalid'."""
 
@@ -144,10 +134,10 @@ def _rev(obj: Dict[str, Any]) -> int:
 def parse_downlink(body: bytes) -> Tuple[str, Any]:
     """One line without its newline, already known to start with '{'.
 
-    Returns ("state", {"rev","phase","horse","scr"}), ("roster", {"rev","macs"}),
-    ("debug", bool) or ("ignore", None) for an unknown "t". Unknown keys are
-    ignored. Raises Rejected("parse") for bad JSON and Rejected("invalid")
-    for a line that fails validation."""
+    Returns ("state", {"rev","st","scr": set,"renum": [(from,to)],"res": [w,p,s]}),
+    ("debug", bool) or ("ignore", None) for an unknown "t" (a v1 "roster"
+    included). Unknown keys are ignored. Raises Rejected("parse") for bad
+    JSON and Rejected("invalid") for a line that fails validation."""
     try:
         obj = json.loads(body.decode("utf-8", errors="replace"))
     except ValueError:
@@ -159,37 +149,30 @@ def parse_downlink(body: bytes) -> Tuple[str, Any]:
         raise Rejected("invalid", "missing t")
     if kind == "state":
         rev = _rev(obj)
-        phase = _int_in(obj.get("phase"), PHASE_MIN, PHASE_MAX, "phase")
-        horse = obj.get("horse")
+        st = _int_in(obj.get("st"), PHASE_MIN, PHASE_MAX, "st")
         scr = obj.get("scr")
-        if not isinstance(horse, list) or len(horse) != NUM_CUPS:
-            raise Rejected("invalid", f"horse must have exactly {NUM_CUPS} entries")
-        if not isinstance(scr, list) or len(scr) != NUM_CUPS:
-            raise Rejected("invalid", f"scr must have exactly {NUM_CUPS} entries")
-        horse = [_int_in(h, 0, MAX_HORSE, "horse entry") for h in horse]
-        scr = [_int_in(s, 0, 1, "scr entry") for s in scr]
-        return "state", {"rev": rev, "phase": phase, "horse": horse, "scr": scr}
-    if kind == "roster":
-        rev = _rev(obj)
-        macs = obj.get("macs")
-        if not isinstance(macs, list) or len(macs) != NUM_CUPS:
-            raise Rejected("invalid", f"macs must have exactly {NUM_CUPS} entries")
-        parsed: List[Optional[str]] = []
-        for entry in macs:
-            if not isinstance(entry, str):
-                raise Rejected("invalid", "macs entries must be strings")
-            if entry == "":
-                parsed.append(None)
-                continue
-            mac = parse_mac(entry)
-            if mac is None:
-                raise Rejected("invalid", f"not a MAC: {entry!r}")
-            if mac == BROADCAST_MAC:
-                raise Rejected("invalid", "the broadcast address is never a cup")
-            if mac in parsed:
-                raise Rejected("invalid", f"{mac} appears twice")
-            parsed.append(mac)
-        return "roster", {"rev": rev, "macs": parsed}
+        if not isinstance(scr, list):
+            raise Rejected("invalid", "scr must be an array")
+        scratched = {_int_in(h, 1, MAX_HORSE, "scr entry") for h in scr}
+        renum = obj.get("renum")
+        if not isinstance(renum, list) or len(renum) > RENUM_SLOTS:
+            raise Rejected("invalid", f"renum must be an array of at most {RENUM_SLOTS} pairs")
+        pairs: List[Tuple[int, int]] = []
+        for pair in renum:
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise Rejected("invalid", "renum entries must be [from, to]")
+            frm = _int_in(pair[0], 1, MAX_HORSE, "renum from")
+            to = _int_in(pair[1], 1, MAX_HORSE, "renum to")
+            if frm == to:
+                raise Rejected("invalid", "renum from and to must differ")
+            if any(f == frm for f, _ in pairs):
+                raise Rejected("invalid", f"renum from {frm} appears twice")
+            pairs.append((frm, to))
+        res = obj.get("res")
+        if not isinstance(res, list) or len(res) != RESULT_SLOTS:
+            raise Rejected("invalid", f"res must have exactly {RESULT_SLOTS} entries")
+        results = [_int_in(h, 0, MAX_HORSE, "res entry") for h in res]
+        return "state", {"rev": rev, "st": st, "scr": scratched, "renum": pairs, "res": results}
     if kind == "debug":
         on = obj.get("on")
         if not isinstance(on, bool):
