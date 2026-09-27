@@ -4,7 +4,10 @@ Firmware for the La Quiniela betting cups (target: DDM 2027).
 
 Each cup is a self-contained node. It shows a horse number on its TFT, reads a
 load cell through an HX711 to count the tokens dropped in it, and talks to a
-single gateway over **ESP-NOW**.
+single gateway over **ESP-NOW**. The horse number is the cup's own (protocol
+v2, 2026-09-27): it is set on the cup, saved in its NVS and reported in every
+packet the cup sends; nothing assigns it from outside. There are no cup IDs and
+no MAC roster anywhere.
 
 **There is no router and no WiFi network.** ESP-NOW is a direct radio protocol
 between ESP32s. The gateway broadcasts state to every cup at once; each cup
@@ -17,7 +20,7 @@ nothing depends on venue infrastructure.
                         ESP-NOW, channel 6
                        broadcast ↓   ↑ unicast
                     ┌─────────┬──────┴───┬─────────┐
-                  cup 0     cup 1      cup 2  …  cup 19
+                  cup 1     cup 2      cup 3  …  cup 20   (each cup knows its own horse)
 ```
 
 ## Hardware
@@ -217,61 +220,57 @@ other hardware.
    broadcasts nothing over ESP-NOW until it is told what to broadcast (see
    [Serial line protocol](#serial-line-protocol)). For the bench, either
    open the serial monitor and type `demo`, or build with `DDM_AUTO_DEMO 1`
-   at the top of `ddm_gateway.ino`; either way the gateway then walks horse
-   numbers every 3 seconds on channel 6 and runs standalone off a USB brick,
-   no Pi needed. Never leave a `DDM_AUTO_DEMO 1` build on the party gateway;
-   the boot banner prints the value so a serial log shows it.
-2. Flash each cup (CYD, hold BOOT during upload as above). A cup with no
-   assigned ID shows a waiting screen with **its own MAC address in large
-   gold text**.
-3. Power everything up. Cups hello the gateway and get IDs assigned at
-   once, and show horse numbers within a few seconds of the broadcast
-   starting (`demo` typed, or a `DDM_AUTO_DEMO 1` build).
-
-### Collecting the four MACs
-
-Cup IDs assigned at runtime are RAM-only and reshuffle when the gateway
-reboots. To pin them down:
-
-- Read each MAC off the cup's waiting screen (power cups **without** the
-  gateway running and they sit on that screen indefinitely), **or**
-- watch the gateway's serial log — every unknown cup produces a `# NEWCUP`
-  line with the MAC pre-formatted as a `KNOWN_CUPS[]` table row (only until
-  DevPi has sent a roster; after that DevPi owns the IDs, see below).
-
-Paste the four rows into `KNOWN_CUPS[]` at the top of `ddm_gateway.ino`
-(table index = cup ID), reflash the gateway, and IDs are stable forever.
+   at the top of `ddm_gateway.ino`; either way the gateway then broadcasts
+   WINNER with the results walking through the horses every 3 seconds, so
+   every cup that hears it shows a WIN / PLACE / SHOW banner in turn. It runs
+   standalone off a USB brick, no Pi needed. Never leave a `DDM_AUTO_DEMO 1`
+   build on the party gateway; the boot banner prints the value so a serial
+   log shows it.
+2. Flash each cup (CYD, hold BOOT during upload as above). A cup that has
+   never been given a horse shows `NO HORSE` / `HOLD TO SET`.
+3. Give each cup its horse: hold the glass 3 s → `HORSE` → tap above the
+   number for up, below it for down → `SET`. Or type `n7` in the cup's serial
+   monitor. The number is saved in the cup's NVS, survives reflashing, and is
+   what the cup reports in every packet. The gateway hands out nothing.
+4. Power everything up. Each cup shows its number at once (it needs no
+   gateway for that) and appears in the gateway's `cups` table and `status`
+   line within a couple of seconds; the banners appear once the broadcast
+   starts.
 
 ### Reading the gateway output
 
 Serial monitor at 115200. Type `help` for the command list (`state`,
-`horse`, `scratch`, `roster`, `demo`, `debug`, `json`). `json` prints the
+`scratch`, `renum`, `results`, `cups`, `demo`, `debug`, `json`). `cups`
+dumps the cup table (MAC, horse, tokens, signal, age). `json` prints the
 whole gateway state as one JSON line and `json 1` repeats it every second in
 place of the summary table (`json 0` to stop); see `state` under "Up:
-gateway → DevPi" below. A default build prints the
-JSON lines DevPi reads (one `{"t":"telem",...}` per telemetry packet, a
-`{"t":"status",...}` every 5 seconds, see
+gateway → DevPi" below. A default build prints the JSON lines DevPi reads
+(one `{"t":"telem",...}` per packet from a cup and a `{"t":"status",...}`
+every 5 seconds carrying the cup table, see
 [Serial line protocol](#serial-line-protocol)) and prefixes every other line
 with `# `. Type `debug on` (or build with `DDM_DEBUG_TEXT 1`) to also get the
 human-readable `# TELEM ...` line per packet and, every 5 seconds, the
 summary table — this is the range-test readout:
 
 ```
-# ---- CUPS seq=1234 state=1 demo=on rejects=0 ----
-#  id mac                age_ms   drop  rssi  up_rssi  status
-#   0 A4:CF:12:34:56:78     420      0   -58      -55  OK
-#   1 A4:CF:12:34:56:9A    4200      9   -77      -71  STALE
+# ---- CUPS seq=1234 state=5 demo=on rejects=0 heard=2 ----
+#  mac               horse  age_ms   drop  rssi  up_rssi  tok  status
+#  A4:CF:12:34:56:78     7     420      0   -58      -55   23  OK
+#  A4:CF:12:34:56:9A     3    4200      9   -77      -71    0  STALE
 ```
 
+- **horse** — the number the cup says it is; `0` = not set on that cup yet.
 - **age_ms** — time since that cup was last heard from. Cups report every
-  2 s, so a healthy cup sits under ~2100. `STALE` = silent for over 3 s.
+  2 s, so a healthy cup sits under ~2100. `STALE` = silent for over 3 s. A
+  cup silent for 10 minutes is dropped from the table.
 - **drop** — state packets the cup detected as missed (gaps in `seq`),
   cumulative. A slowly rising count at range is packet loss in the
   gateway→cup direction.
 - **rssi** — signal strength the *cup* measures on gateway broadcasts
   (downlink). **up_rssi** — signal strength the *gateway* measures on that
-  cup's telemetry (uplink). Both directions matter; they are usually within
+  cup's packets (uplink). Both directions matter; they are usually within
   a few dB of each other.
+- **tok** — the token count from the cup's last packet.
 - **rejects** — packets discarded for a protocol-version mismatch. Nonzero
   means a device is running an old flash.
 
@@ -285,18 +284,41 @@ summary table — this is the range-test readout:
   gateway, or pick a quieter channel in `ddm_common.h` (and reflash
   everything).
 
-A short **BOOT press on any cup** toggles its diagnostic overlay — cup ID,
-horse, RSSI, drop count, seq, last-packet age — which is what you read
-while walking a board around the room.
+A short **BOOT press on any cup** toggles its diagnostic overlay — horse
+(and `SCR` when its scratched bit is set), state, RSSI, drop count, whether
+it has the gateway's MAC yet, renumbers followed, seq, last-packet age,
+tokens — which is what you read while walking a board around the room.
+
+### ESP-NOW, and why it scales to twenty cups
+
+- **Downlink is one broadcast frame** (`DdmStatePacket`, 22 bytes) every
+  500 ms to the broadcast address, the gateway's one and only peer. Nothing is
+  unicast from the gateway and no peer is added or removed at runtime, so the
+  fleet is bounded by the cup table (`DDM_MAX_CUPS`, 24), not by ESP-NOW's
+  20-peer limit.
+- **Uplink** is one 18-byte frame per cup every 2 s (unicast to the gateway's
+  MAC once the cup has heard a state packet; a broadcast `HELLO` with the
+  same payload every 1 s before that). A cup registers two peers, broadcast
+  and the gateway. Receiving needs no peer entry on either side.
+- Twenty cups: 2 packets/s down, 10/s up, under 400 bytes/s of air time.
+- Nothing prints or blocks inside a receive callback: the gateway's callback
+  queues the packet for `loop()`, the cup's copies it into a buffer and sets
+  a flag. Every serial byte is written from `loop()`.
 
 ## Serial line protocol
 
 The gateway's USB serial port (115200 8N1) is a machine-readable bridge
 between ESP-NOW and DevPi: **one compact JSON object per line** in each
-direction, `\n`-terminated, at most 1024 bytes per line (one exception, the
-on-request up `state` snapshot, is sized under its own heading). Every JSON
-line has a `"t"` key naming its type. Unknown `"t"` values and unknown keys are
+direction, `\n`-terminated, at most 1024 bytes per line down and for most
+lines up (the two lines that carry the cup table, `status` and the
+on-request up `state`, are sized under their own headings). Every JSON line
+has a `"t"` key naming its type. Unknown `"t"` values and unknown keys are
 ignored silently, which is how one end can move ahead of the other.
+
+This is line protocol **v2** (`"v":2` in `hello`), which goes with ESP-NOW
+protocol v2 (`DDM_PROTO_VERSION 2`): the cup owns its horse number, so every
+line is keyed by **MAC** (which cup) and **horse** (what it says it is), and
+there are no cup IDs, slots or roster lines anywhere.
 
 Rules that apply to every line:
 
@@ -304,14 +326,11 @@ Rules that apply to every line:
   it. So every non-JSON line the gateway prints — boot banner, command
   replies, the debug table — starts with `# ` (hash, space). The ESP32 ROM's
   own boot messages cannot be prefixed and fall under the same rule.
-- **Cup IDs are the wire value: 0-based, untranslated.** A cup with
-  `cupId == n` reads `horseForCup[n]` and `scratched[n]`, valid IDs are
-  0..19, and that is the number in the JSON. `-1` means "MAC not in the
-  roster". Any 1-based presentation is DevPi's job; the gateway never
-  converts.
-- `phase` is the numeric `DdmRaceState` value from `ddm_common.h` (0..6).
+- **Horse numbers are 1..24, 0 = none.** 1..20 is the field, 21..24 the
+  also-eligibles (`DDM_MAX_HORSE`).
+- `phase` / `st` is the numeric `DdmRaceState` value from `ddm_common.h` (0..6).
 - MAC addresses are strings, uppercase hex, colon separated:
-  `"A0:B7:65:12:34:56"`. Either case is accepted on input.
+  `"A0:B7:65:12:34:56"`.
 - No timestamps: the gateway has no clock. DevPi stamps lines on receipt.
 - Lines never interleave. Everything the gateway prints comes from `loop()`;
   packets arriving in the ESP-NOW receive callback are queued and reported
@@ -321,36 +340,28 @@ Rules that apply to every line:
 
 ### Up: gateway → DevPi
 
-#### `telem` — one per telemetry packet, always, whatever the debug flag
+#### `telem` — one per packet from a cup, always, whatever the debug flag
 
 ```json
-{"t":"telem","cup":7,"mac":"A0:B7:65:12:34:56","raw":812345,"count":14,"seq":9021,"drop":2,"rssi":-64,"up":-61}
+{"t":"telem","mac":"A0:B7:65:12:34:56","horse":7,"raw":812345,"count":14,"seq":9021,"drop":2,"rssi":-64,"up":-61}
 ```
 
 | Key | Source |
 | --- | ------ |
-| `cup` | Roster slot looked up from the **sender MAC**, not from the packet. `-1` if the MAC is not in the roster. |
-| `mac` | ESP-NOW sender address |
+| `mac` | ESP-NOW sender address: which cup |
+| `horse` | packet `horse`: the number the cup says it is, `0` = none set |
 | `raw` | `rawWeight` (HX711 counts, reading minus tare) |
 | `count` | `tokenCount` |
 | `seq` | packet `seq`: the last state seq the cup saw (not a telemetry counter) |
 | `drop` | `dropped` |
 | `rssi` | packet `rssi`: the cup's view of the gateway (downlink) |
 | `up` | gateway-side RSSI of this packet (uplink, the table's `up_rssi`) |
-| `claim` | **Only present when the packet's `cupId` differs from `cup`.** The packet's `cupId`, so DevPi can spot a cup running on a stale ID. The gateway also re-acks that cup, see "Stale IDs" below. |
-
-#### `cup_hello` — one per `DDM_MSG_HELLO` received
-
-```json
-{"t":"cup_hello","cup":7,"mac":"A0:B7:65:12:34:56"}
-```
-
-`cup` is the roster slot for that MAC, or `-1`.
+| `hello` | **Only present, as `1`, when the packet was a `DDM_MSG_HELLO`**: the cup is still broadcasting because it has not heard a state packet yet. Same payload otherwise. |
 
 #### `hello` — gateway boot announcement
 
 ```json
-{"t":"hello","v":1,"proto":1,"mac":"24:6F:28:AA:BB:CC"}
+{"t":"hello","v":2,"proto":2,"mac":"24:6F:28:AA:BB:CC"}
 ```
 
 | Key | Meaning |
@@ -361,12 +372,12 @@ Rules that apply to every line:
 
 Sent once at boot, then every 2 seconds **until the first valid `state` line
 has been applied**, then never again until the next reboot. A `hello` tells
-DevPi the gateway has (re)booted and needs its state and roster again.
+DevPi the gateway has (re)booted and needs its state again.
 
-#### `status` — heartbeat and acknowledgement
+#### `status` — heartbeat, acknowledgement, and the cup table
 
 ```json
-{"t":"status","gseq":10412,"phase":1,"state_rev":42,"roster_rev":7,"cups":18,"rejects":0,"up_s":5230}
+{"t":"status","gseq":10412,"phase":1,"state_rev":42,"cups":[{"mac":"A0:B7:65:12:34:56","horse":7,"tok":23,"rssi":-63,"up":-61,"age":180},{"mac":"A0:B7:65:12:34:57","horse":0,"tok":0,"rssi":-70,"up":-66,"age":900}],"rejects":0,"up_s":5230}
 ```
 
 | Key | Meaning |
@@ -374,13 +385,25 @@ DevPi the gateway has (re)booted and needs its state and roster again.
 | `gseq` | the gateway's current state broadcast `seq` (stays 0 while silent) |
 | `phase` | current `raceState` |
 | `state_rev` | `rev` of the last applied `state` line, `0` if none yet |
-| `roster_rev` | `rev` of the last applied `roster` line, `0` if none yet |
-| `cups` | roster cups heard from within the last 3 seconds (the table's `STALE` threshold) |
+| `cups` | every cup in the gateway's table, in the order first heard |
+| `cups[].mac` | the cup's MAC |
+| `cups[].horse` | the horse the cup last claimed, `0` = none set |
+| `cups[].tok` | `tokenCount` from its last packet |
+| `cups[].rssi` | `rssi` from that packet: the cup's view of the gateway (downlink) |
+| `cups[].up` | gateway-side RSSI of that packet (uplink) |
+| `cups[].age` | ms since the cup was last heard from |
 | `rejects` | packets rejected for a `DDM_PROTO_VERSION` mismatch |
 | `up_s` | seconds since boot |
 
-Sent every 5 seconds, **and immediately after any `state`, `roster` or
-`debug` line is applied**. This is the only acknowledgement mechanism.
+Sent every 5 seconds, **and immediately after any `state` or `debug` line
+is applied**. This is the only acknowledgement mechanism. Two cups claiming
+the same horse are both listed; DevPi decides what to show. A cup silent
+for 10 minutes leaves the table.
+
+**Length.** With the table this line may exceed 1024 bytes: a cup entry is
+at most 90 bytes, so 24 cups come to about 2.3 KB. The sketch builds it in
+its own 2560-byte buffer (`BIG_LINE_MAX`), and the DevPi bridge reads lines
+up to 4096 bytes.
 
 #### `err` — a downlink line was rejected
 
@@ -402,81 +425,63 @@ is sent for it.
 #### `state` — full gateway snapshot, only when asked
 
 ```json
-{"t":"state","seq":1234,"st":1,"demo":0,"mac":"A4:F0:0F:5E:0B:08","cups":[{"id":0,"mac":"20:50:0D:11:D9:AC","h":7,"scr":0,"tok":23,"rssi":-63,"up":-61,"age":180},{"id":1,"mac":"20:50:0D:11:D9:B0","h":3,"scr":0,"tok":0,"rssi":0,"up":0,"age":-1}]}
+{"t":"state","seq":1234,"demo":0,"mac":"A4:F0:0F:5E:0B:08","st":1,"scr":[9,15],"renum":[[9,22]],"res":[0,0,0],"cups":[{"mac":"20:50:0D:11:D9:AC","horse":7,"tok":23,"rssi":-63,"up":-61,"age":180}]}
 ```
 
 | Key | Meaning |
 | --- | ------- |
 | `seq` | the gateway's current state broadcast `seq` (`gseq` in `status`; stays 0 while silent) |
-| `st` | current `raceState` (`phase` in `status`) |
 | `demo` | `1` while demo mode is on, else `0` |
 | `mac` | the gateway's own MAC |
-| `cups` | one entry per slot, in ID order, for every slot that is in the roster **or** has a horse assigned (see below) |
-| `cups[].id` | cup ID, the slot index |
-| `cups[].mac` | the slot's MAC, `""` if the slot is not in the roster |
-| `cups[].h` | `horseForCup[id]` from the broadcast packet, `0` = unassigned |
-| `cups[].scr` | `scratched[id]` from the broadcast packet |
-| `cups[].tok` | `tokenCount` from the cup's last telemetry packet |
-| `cups[].rssi` | `rssi` from that packet: the cup's view of the gateway (downlink) |
-| `cups[].up` | gateway-side RSSI of that packet (uplink, the table's `up_rssi`) |
-| `cups[].age` | ms since the cup was last heard from (the table's `age_ms`); `-1` if never |
-
-`cups` is a superset of the roster. A slot is listed if it is in the roster,
-heard from or not, **or** if `horseForCup` is nonzero for it, so a horse
-assigned before its cup has said hello still shows, with `"mac":""` and
-`"age":-1`. A slot that is neither is left out. `tok`, `rssi` and `up` are
-`0` until the first telemetry packet from that cup.
+| `st` | the broadcast packet's `raceState` (`phase` in `status`) |
+| `scr` | the horses whose scratched bit is set, ascending |
+| `renum` | the renumber pairs in the packet, `[from, to]` each |
+| `res` | the packet's `results`: WIN, PLACE, SHOW horse numbers, `0` = not yet |
+| `cups` | the cup table, as in `status` |
 
 Sent only on request, never on its own. Typing `json` prints one line at
 once; `json 1` prints one every 1000 ms, and silences the 5-second summary
 table while it runs (see "Debug flag" below), until `json 0`. The boot
-default is off, so a hand-driven Serial Monitor session sees nothing new.
-The line is written from `loop()` like every other one, so it never
-interleaves with a `telem`.
-
-**Length.** This is the one line that may exceed the 1024-byte limit: a cup
-entry is up to 101 bytes, so a full fleet of 20 comes to about 2.1 KB
-(2121 bytes worst case; the sketch builds it in its own 2560-byte buffer,
-`STATE_LINE_MAX`, and raises the serial TX buffer to 8 KB so that it and a
-burst of `telem` lines drain in the background). Its consumer is whoever
-typed `json`, reading with a limit that fits. The DevPi bridge in `pi5/`
-keeps its 1024-byte cap (`MAX_LINE_BYTES`) and never sends `json`; if it
-ever did see this line it would drop it as `too_long`, so the bridge is not
-its consumer.
+default is off. Same buffer and length as `status`. The line is written from
+`loop()` like every other one, so it never interleaves with a `telem`.
 
 **Naming.** The down-link `state` line (next section) is a different line
-that happens to share the type name. DevPi → gateway carries `rev`,
-`phase`, `horse[]` and `scr[]` and is what the gateway *applies*; this
-gateway → DevPi line is a *report* the gateway never parses. Direction tells
-them apart, and beyond `t` the two key sets do not overlap.
+that happens to share the type name. DevPi → gateway carries `rev`, `st`,
+`scr`, `renum` and `res` and is what the gateway *applies*; this gateway →
+DevPi line is a *report* the gateway never parses.
 
 ### Down: DevPi → gateway
 
 The gateway reads without blocking, strips a trailing `\r`, ignores empty
 lines, and dispatches on the first character: `{` goes to the JSON handler,
-anything else to the hand-typed command handler (`help`), which is unchanged.
+anything else to the hand-typed command handler (`help`).
 
 #### `state` — full snapshot, never a delta
 
 ```json
-{"t":"state","rev":42,"phase":1,"horse":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20],"scr":[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"t":"state","rev":42,"st":1,"scr":[9,15],"renum":[[9,22]],"res":[0,0,0]}
 ```
 
 All of these must hold or the whole line is rejected with `err` / `invalid`:
 
 - `rev` present, integer ≥ 1
-- `phase` integer 0..6 (the `DdmRaceState` range)
-- `horse` an array of **exactly** `DDM_MAX_CUPS` (20) integers, each
-  0..`DDM_MAX_HORSE` (24; 0 = unassigned), index = cup ID. 21..24 are the
-  also-eligibles: at Churchill an also-eligible that draws in keeps its own
-  program number, so a replacement scratch renumbers the cup (the cup that was
-  9 becomes 22) rather than renaming 9. Both sketches must be flashed from
-  `DDM_MAX_HORSE` on for that: an older gateway answers `err invalid` to a
-  state line carrying 21..24, and an older cup shows them on the grey default
-  cloth.
-- `scr` an array of **exactly** `DDM_MAX_CUPS` integers, each 0 or 1
+- `st` integer 0..6 (the `DdmRaceState` range)
+- `scr` an array (any length, may be empty) of integers 1..`DDM_MAX_HORSE`:
+  the horses scratched **with no replacement**; each becomes a bit in the
+  packet's `scratched` mask, and a cup whose horse is in it shows the boxed X
+- `renum` an array of at most `DDM_RENUM_SLOTS` (4) pairs `[from, to]`, both
+  1..`DDM_MAX_HORSE`, `from` ≠ `to`, no `from` twice: a replacement scratch.
+  A cup whose horse is `from` adopts `to`, saves it and reports `to` from then
+  on (at Churchill an also-eligible that draws in keeps its own program
+  number: the cup that was 9 becomes 22). Keep the pair in the line for as
+  long as the scratch stands; a cup that has already followed it no longer
+  matches, so repeating it is harmless. To undo, send `[to, from]` for a
+  while.
+- `res` an array of exactly `DDM_RESULT_SLOTS` (3) integers 0..`DDM_MAX_HORSE`:
+  WIN, PLACE, SHOW; `0` = not yet. In WINNER (and AFTER_PARTY) a cup whose
+  horse is named shows the WIN / PLACE / SHOW frame in gold, silver or bronze.
 
-On a valid line, in this order: `phase`, `horse[]` and `scr[]` go into the
+On a valid line, in this order: `st`, `scr`, `renum` and `res` go into the
 broadcast packet in one step (no packet goes out half-applied); `rev` becomes
 `state_rev`; demo mode goes **off**; the state broadcast starts if it was not
 running yet (see "Silent boot" below); `hello` stops; a `status` is emitted.
@@ -484,56 +489,8 @@ The line is idempotent: the same line arriving twice is normal and harmless.
 Send the full snapshot on every change, and again whenever a `hello` shows
 the gateway has rebooted.
 
-#### `roster` — MAC → cup ID, owned by DevPi
-
-```json
-{"t":"roster","rev":7,"macs":["A0:B7:65:12:34:56","A0:B7:65:12:34:57","","","","","","","","","","","","","","","","","",""]}
-```
-
-Validation:
-
-- `rev` present, integer ≥ 1
-- `macs` an array of **exactly** `DDM_MAX_CUPS` strings; index = cup ID
-- each entry is `""` (empty slot) or a well-formed MAC, either case (the
-  broadcast address `FF:FF:FF:FF:FF:FF` is refused: it can never be a cup)
-- no MAC appears twice
-
-On a valid line: the RAM roster is replaced **entirely** with the new table
-(a MAC missing from the new roster becomes unknown, `cup: -1`; per-slot
-stats are reset for every slot whose MAC changed); `rev` becomes
-`roster_rev`; every MAC whose slot changed compared to the previous roster
-is sent a fresh hello-ack carrying
-its new ID, which the cup adopts at once (a newly added MAC needs nothing
-here: it is still sending HELLO and is acked on the next one); a `status` is
-emitted. The gateway also prints one `# [roster] rev N applied: ...` line.
-
-**Roster ownership:**
-
-- **Before any `roster` line** (`roster_rev == 0`) the gateway behaves as it
-  always did on the bench: `KNOWN_CUPS[]` seeds the roster, an unknown MAC is
-  auto-assigned the next free slot on its HELLO (or on telemetry after a
-  gateway reboot) and printed as a `# NEWCUP` line. This keeps the no-Pi
-  bench test working.
-- **After a `roster` line** (`roster_rev > 0`) DevPi owns identity. The
-  gateway stops auto-assigning: a HELLO from an unknown MAC produces a
-  `cup_hello` with `cup: -1` and **no ack**, so the cup stays on its MAC
-  waiting screen until DevPi sends a roster that includes it.
-
-**Stale IDs.** Every telemetry packet carries the ID the cup believes it has.
-Whenever that differs from the sender's roster slot (the `claim` case: a lost
-re-ack, an ID from before a gateway reboot, or a cup that took a stray HELLO
-for an ack) the gateway re-sends the hello-ack with the slot's ID, so a wrong
-ID lasts at most one telemetry period (2 s) once the cup is talking to the
-gateway. DevPi still sees the `claim` on that packet.
-
-**Transient ack peers.** ESP-NOW holds 20 peers in all, broadcast included,
-and receiving needs no peer entry, so the broadcast address is the gateway's
-only permanent peer. A hello-ack is queued (one entry per MAC, newest ID
-wins, `DDM_MAX_CUPS + 4` entries, `# ERR ack queue full` if it overflows)
-and sent one at a time from `loop()`: the cup's MAC is added as a peer, the
-ack is sent, and the peer is deleted once the send callback has reported or
-100 ms have passed. Any number of cups can therefore be acked; a dropped or
-lost ack is retried by the cup's next HELLO or by the claim-mismatch re-ack.
+There is **no roster line** any more. A v1 `{"t":"roster",...}` is an unknown
+type and is ignored without a word.
 
 #### `debug` — runtime toggle for the human-readable output
 
@@ -548,9 +505,9 @@ lost ack is retried by the cup's next HELLO or by the claim-mismatch re-ack.
 
 `#define DDM_DEBUG_TEXT 0` near the top of `ddm_gateway.ino` is the boot
 default. The flag gates the **periodic** human output only: the per-packet
-`# TELEM ...` lines and the 5-second `# ---- CUPS` summary table. Flag off,
-neither prints; flag on, both print as they always did, prefixed with `# `.
-JSON lines are emitted regardless. Replies to hand-typed commands (`roster`,
+`# TELEM ...` / `# HELLO ...` lines and the 5-second `# ---- CUPS` summary
+table. Flag off, neither prints; flag on, both print, prefixed with `# `.
+JSON lines are emitted regardless. Replies to hand-typed commands (`cups`,
 `help`, ...) and the boot banner always print, prefixed with `# `. Flip the
 flag with the JSON `debug` line or by typing `debug on` / `debug off`. One
 override: while `json 1` is on, the summary table is suppressed whatever the
@@ -566,34 +523,27 @@ the banner prints both values (`# build: DDM_AUTO_DEMO=0 DDM_DEBUG_TEXT=0`).
 With `DDM_AUTO_DEMO 0` (the default, the party build):
 
 1. On boot the gateway sends `hello` and **broadcasts nothing** over
-   ESP-NOW. Cups hold their last number on their own.
+   ESP-NOW. Cups show their own number regardless: it lives on the cup.
 2. It stays silent **indefinitely**: no timeout, no automatic fallback.
    `hello` repeats every 2 seconds and `status` every 5 the whole time, and
-   incoming telemetry and HELLOs are received, acked by the roster rules and
-   reported up serial as normal. "Silent" means the state broadcast only.
+   incoming packets are received, tracked and reported up serial as normal.
+   "Silent" means the state broadcast only. A cup that has never heard a
+   state packet keeps broadcasting `HELLO` (reported with `"hello":1`) since
+   it does not know the gateway's MAC yet; the gateway hears those fine.
 3. The 500 ms state broadcast starts only when one of these happens: a valid
    JSON `state` line (broadcast that state, demo stays off); the typed `demo`
-   command (demo mode, as before); a typed `state`, `horse` or `scratch`
-   command (apply it and broadcast the result, demo off).
+   command; a typed `state`, `scratch`, `renum` or `results` command (apply
+   it and broadcast the result, demo off).
 4. Once started it never stops again until reboot.
 
 The reason: a power blip reboots the gateway in about a second but DevPi
 takes most of a minute to boot, and a gateway that started demo mode on its
-own would walk wrong horse numbers across 20 cups of real tokens for that
-minute.
+own would put WIN / PLACE / SHOW banners on cups full of real tokens for
+that minute.
 
 With `DDM_AUTO_DEMO 1` (bench builds only) the gateway boots straight into
-demo mode and broadcasts immediately, exactly as the original bench sketch
-did. `hello` still repeats, and a valid JSON `state` line still takes over
-and turns demo off.
-
-One caveat while the gateway is silent: a cup that has no gateway MAC yet
-*broadcasts* its HELLO, and the current cup firmware takes any
-`DDM_MSG_HELLO` frame as its own hello-ack, so cups rebooting together with
-the gateway silent can hear each other and adopt cup ID 255 (see the
-cup-firmware issues under Status). The gateway cannot prevent that; the
-"Stale IDs" re-ack heals it once the state broadcast has started and the cup
-is talking to the real gateway again.
+demo mode and broadcasts immediately. `hello` still repeats, and a valid
+JSON `state` line still takes over and turns demo off.
 
 ## Scale
 
@@ -695,7 +645,7 @@ survive that; with the sleeve they had turned into the miscount and are gone.
 
 ### Tare
 
-- On boot the cup waits 30 s for the HX711 to settle (the waiting screen says
+- On boot the cup waits 30 s for the HX711 to settle (the NO HORSE screen and the overlay say
   `SCALE WARMING UP`), then averages 30 samples as the empty reading.
 - While the count is 0 the tare follows the slow baseline, so an empty cup keeps
   re-zeroing itself. Once a token is counted the tare freezes.
@@ -719,45 +669,58 @@ The CYD's resistive touch panel (XPT2046, its own SPI bus on GPIO 25/33/32/39,
 IRQ 36; library **XPT2046_Touchscreen** by Paul Stoffregen) carries a hidden
 maintenance menu, because once the board is inside the cup the BOOT button is
 unreachable. It is built so a guest poking the screen sees a cup that ignores
-them.
+them. Since protocol v2 it is also how a cup is told which horse it is.
 
 - **Open:** press anywhere on the glass and hold for 3 s. A tap does nothing,
   and nothing is drawn until the 3 s are up.
 - **Any state:** the menu opens in every race state, linked or not; the 3 s
   hold is the guard against guests, and the destructive actions (`TARE`,
-  `CAL 10`) confirm first.
+  `CAL 10`) confirm first. `HORSE` alone is locked while betting is open or
+  the race is on (states 1–4).
 - **Closes** after 5 s without a touch, and after most actions. On close the
   normal screen is redrawn exactly as it was.
 
-Header: `CUP n   HORSE h` and `V0.5  SEP 17 2026   <MAC>` (firmware version
-from `FW_VERSION`, build date from `__DATE__`). Then seven full-width bars:
+Header: `HORSE 7   STATE 1` (or `NO HORSE   STATE 0`) and `V0.6  SEP 27 2026
+<MAC>` (firmware version from `FW_VERSION`, build date from `__DATE__`).
+Then two pages of full-width bars:
 
-| Bar | Does |
+| Page 1 | Does |
 | --- | --- |
+| `HORSE` | the picker: the number big (or `NONE`), a tap above it counts up, a tap below it counts down (`NONE`, 1..24, wrapping), `SET n` saves it to NVS and shows `HORSE n`, `CANCEL` keeps the old one. The new number is on the screen and in the next packet at once. In states 1–4 the bar reads `HORSE (LOCKED)` and does nothing |
 | `TARE` | confirm screen (`TARE?`, `PLATE HAS n TOKENS`, `YES` / `NO`); YES runs the same tare as the 3 s BOOT hold, shows `TARED`, closes |
 | `CAL 10` | confirm screen (`PUT EXACTLY 10 TOKENS IN`, `DONE` / `CANCEL`); DONE shows `SETTLING...`, waits up to 6 s for the plate to settle, then does what serial `c10` does (counts/token into NVS, count set to 10), shows the value for 2 s, closes; `NOT SETTLED - TRY AGAIN` returns to the menu |
 | `DIAG` | toggles the diagnostic overlay, closes |
-| `FLIP 180` | toggles both MADCTL flip bits, saves, redraws, closes |
 | `BRIGHT n%` | cycles 100 → 60 → 30 → 100, saved in NVS as `bright` and applied at boot; stays in the menu |
-| `ANNOUNCE` | re-sends `DDM_MSG_HELLO` once, shows `SENT`, stays in the menu |
+| `MORE...` | page 2 |
+| `CLOSE` | closes |
+
+| Page 2 | Does |
+| --- | --- |
+| `FLIP 180` | toggles both MADCTL flip bits, saves, redraws, closes |
+| `FLIP H` | mirrors left-right (serial `h`), saves, closes |
+| `FLIP V` | mirrors top-bottom (serial `v`), saves, closes |
+| `ANNOUNCE` | sends one `DDM_MSG_HELLO` now, shows `SENT`, stays on page 2 |
+| `BACK` | page 1 |
 | `CLOSE` | closes |
 
 A tapped bar lights up amber for 120 ms before its action runs. Serial prints
-`[menu] open`, `[menu] tare`, `[menu] cal cpt=N`,
-`[menu] flip madctl=0x..`, `[menu] bright N%`, `[menu] announce`,
-`[menu] close (...)`.
+`[menu] open`, `[horse] 7 saved to NVS (menu HORSE)`, `[menu] tare`,
+`[menu] cal cpt=N`, `[menu] flip madctl=0x..`, `[menu] bright N%`,
+`[menu] announce`, `[menu] close (...)`. A renumber pair from the gateway
+prints `[renum] 9 -> 22 from the gateway` and then the same `[horse]` line.
 
-**Touch mapping.** Hit-testing is on y only: bars are full-width and confirm
-screens are top/bottom halves, so rough calibration is fine. The defines at the
-top of `ddm_cup.ino` are `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` (raw XPT2046
-ranges; raw x is the panel's long axis), `TOUCH_SWAP_XY` (true for portrait:
-raw x becomes screen y) and `TOUCH_FLIP_X/Y`. An orientation away from the
-batch default (FLIP 180) is followed automatically. **Both panel batches need
-their touch axes verified:** type `p` in the serial monitor, touch the top, middle and bottom of the glass, and
-check the printed `screen y` runs 0 → 319 top to bottom; if it runs the other
-way set `TOUCH_FLIP_Y`, if it barely changes set `TOUCH_SWAP_XY` the other way.
-A press counts only after three consecutive 50 ms polls, because resistive
-panels chatter at the edge of a press.
+**Touch mapping.** Hit-testing is on y only: bars are full-width, confirm
+screens are top/bottom halves and the picker splits at y 95, so rough
+calibration is fine. The defines at the top of `ddm_cup.ino` are
+`TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` (raw XPT2046 ranges; raw x is the
+panel's long axis), `TOUCH_SWAP_XY` (true for portrait: raw x becomes screen
+y) and `TOUCH_FLIP_X/Y`. An orientation away from the batch default (FLIP 180,
+H or V) is followed automatically. **Both panel batches need their touch axes
+verified:** type `p` in the serial monitor, touch the top, middle and bottom
+of the glass, and check the printed `screen y` runs 0 → 319 top to bottom; if
+it runs the other way set `TOUCH_FLIP_Y`, if it barely changes set
+`TOUCH_SWAP_XY` the other way. A press counts only after three consecutive
+50 ms polls, because resistive panels chatter at the edge of a press.
 
 ## Tools
 
@@ -803,27 +766,15 @@ tolerance in grid units, default 1.4.
 
 | Component | State |
 | --------- | ----- |
-| `ddm_common.h` — ESP-NOW protocol | ✅ defined (`DDM_MAX_HORSE` 24 since 2026-09-26; packet layout unchanged) |
-| `ddm_gateway/` — gateway sketch | ✅ implemented (JSON serial line protocol to DevPi, silent boot, roster from DevPi, bench commands, demo mode) |
-| `ddm_cup/` — cup sketch | ✅ implemented (bench test: display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
+| `ddm_common.h` — ESP-NOW protocol | ✅ **v2** (2026-09-27): the cup owns its horse number; `DdmStatePacket` 22 bytes keyed by horse (scratched bits, 4 renumber pairs, 3 results), `DdmTelemetryPacket` 18 bytes with `horse` in place of `cupId`. Every device must be reflashed |
+| `ddm_gateway/` — gateway sketch | ✅ implemented (JSON line protocol v2 to DevPi: `telem` by MAC and horse, `status` with the cup table; silent boot; broadcast-only ESP-NOW, no acks, no peers but broadcast; bench commands `state` / `scratch` / `renum` / `results` / `cups`; demo mode walks the results) |
+| `ddm_cup/` — cup sketch | ✅ implemented (v0.6: horse in NVS, touch menu `HORSE` picker locked in states 1–4, `FLIP H` / `FLIP V`, serial `n<N>`, renumber pairs followed and saved, scratched bit, WIN / PLACE / SHOW frame from the results; display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
 
-Known protocol gaps, to fix in a v2 of `ddm_common.h` (bump
-`DDM_PROTO_VERSION`): no dedicated packet assigns a cup its ID (the
-gateway answers `DDM_MSG_HELLO` with the telemetry-struct layout carrying
-the assigned ID), and `DdmStatePacket` carries no win/place/show results,
-so in `DDM_WINNER` every cup cycles the podium treatment on its own
-number.
+The v1 protocol gaps are closed by v2: there is no cup ID to assign (so no
+hello-ack, and no way for a cup to mistake a neighbour's `HELLO` for one), and
+the results ride in the state packet, so a cup shows its own place rather
+than cycling all three.
 
-Known cup-firmware issues, found while the gateway's line protocol was
-written (2026-09-18), to fix in `ddm_cup.ino`:
-
-- The cup takes **any** `DDM_MSG_HELLO` frame of the right length as its
-  hello-ack (`onDataRecv`), including the HELLOs other cups *broadcast* while
-  they have no gateway MAC yet. A cup can therefore adopt `cupId` 0xFF (255)
-  and register a neighbouring cup as its gateway; it then stops sending
-  HELLO and cannot be acked until it hears a real state broadcast. With the
-  gateway silent at boot this is routine rather than rare. Fix: accept an
-  ack only when it was unicast to this cup (the receive info's `des_addr`
-  is not the broadcast address) and its `cupId` is below `DDM_MAX_CUPS`.
-- The acked `cupId` is not range-checked before it indexes `horseForCup[]`
-  and `scratched[]` (`computeRendered`, `drawOverlay`, the menu header).
+Still open on the cup side: the touch axes must be verified per panel batch
+(serial `p`, see the touch menu section), and the scale base has to be proven
+under the sleeve before the count is trusted at fifty tokens (see Scale).
