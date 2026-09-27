@@ -72,6 +72,31 @@ REFRESH_S = 1.0                      # the board thread's timeout between wake-u
 UNDO_RENUM_S = 60.0                  # an undone renumber is sent back (to -> was) this long, or until a cup reports was
 
 CMD_WHITELIST = frozenset({"state", "demo", "json"})
+
+# One race state. The dashboard's modes (its thirteen buttons, which drive
+# the LEDs) are the source of truth, and La Quiniela's race state (the cups,
+# the TV board) is derived from the mode through this table. The keys are
+# the names the dashboard's buttons already use. A button names its mode to
+# POST /api/quiniela/mode; SET WINNERS and RESET are told by the dashboard
+# routes they call (/api/results once the results are applied,
+# /api/results/clear).
+MODE_STATES: Dict[str, int] = {
+    "WELCOME": 0, "TEST": 0, "STANDBY": 0,          # PRE_RACE
+    "BETTING_60": 1, "BETTING_30": 1,               # BETTING_OPEN   60 MIN, 30 MIN
+    "FINAL_CALL": 2,                                # FINAL_CALL
+    "AT_THE_GATE": 3,                               # AT_THE_POST
+    "GATES_BURST": 4, "CHAOS": 4, "FINISH": 4,      # RUNNING        THEY'RE OFF, CHAOS, FINISH
+    "RESULTS": 5,                                   # WINNER         SET WINNERS, once the results are applied
+    "HEARTBEAT_COOLDOWN": 5,                        # WINNER         HEARTBEAT: the race is over, the results may still be coming
+    "RESET": 6,                                     # AFTER_PARTY    the dashboard has no party mode: RESET ends the race
+}
+# What each button says, for messages.
+MODE_LABELS: Dict[str, str] = {
+    "WELCOME": "WELCOME", "TEST": "TEST", "STANDBY": "STANDBY",
+    "BETTING_60": "60 MIN", "BETTING_30": "30 MIN", "FINAL_CALL": "FINAL CALL",
+    "AT_THE_GATE": "AT THE GATE", "GATES_BURST": "THEY'RE OFF", "CHAOS": "CHAOS", "FINISH": "FINISH",
+    "RESULTS": "SET WINNERS", "HEARTBEAT_COOLDOWN": "HEARTBEAT", "RESET": "RESET",
+}
 CMD_MAX_LEN = 200
 
 # Configuration keys, their defaults, and the environment override DDM_<key>.
@@ -395,6 +420,8 @@ class BettingBoard:
         self._seen_state = False
         self._events: List[Dict[str, Any]] = []
         self._undo_renum: Dict[Tuple[int, int], float] = {}   # (to, was) -> deadline on self._clock
+        self._race_mode: Optional[str] = None      # the dashboard mode that last set the race state
+        self._race_source: Optional[str] = None    # "dashboard" | "cmd" | "reset"; None: nothing set since start
         self._dup_warned: set = set()
         self._sync_warned: set = set()
         self._log_enabled = True
@@ -850,6 +877,61 @@ class BettingBoard:
             return False
         return True
 
+    # -- the one race state ------------------------------------------------------
+    def set_race_state(self, state: Any, mode: Optional[str] = None, source: str = "cmd") -> Dict[str, Any]:
+        """The one path every race-state change takes: a dashboard mode
+        (set_mode()), the admin page's seven buttons and `state N` on POST
+        /api/quiniela/cmd. The shared value is the bridge's phase (persisted,
+        and carried by the rev the gateway acknowledges); `mode` is the
+        dashboard mode that set it, None when it was set directly.
+
+        One state line goes down with the new state and whatever else the
+        line should carry at this moment (scratched bits, renumber pairs,
+        the results), so a cup never shows WINNER a moment before it knows
+        who won. Raises ValueError for a state outside 0..6 and RuntimeError
+        without a bridge. Returns {"rev", "state", "state_name", "mode",
+        "source", "gateway_online"}."""
+        bridge = self.bridge
+        if bridge is None:
+            raise RuntimeError("bridge not initialised")
+        phase = P.validate_phase(state)
+        with self._refresh_lock:
+            scratched, pairs, results = self.desired_state(bridge.get_snapshot())
+            rev = bridge.set_state(phase=phase, scratched=scratched, renum=pairs, results=results)
+            with self._lock:
+                self._race_mode, self._race_source = mode, source
+            snap = bridge.get_snapshot()
+            self.apply_snapshot(snap)
+        link = snap.get("link") if isinstance(snap.get("link"), dict) else {}
+        return {"rev": rev, "state": phase, "state_name": race_state_name(phase), "mode": mode,
+                "source": source, "gateway_online": bool(link.get("gateway_online", False))}
+
+    def set_mode(self, mode: Any, source: str = "dashboard") -> Dict[str, Any]:
+        """A dashboard mode: the race state it means (MODE_STATES), through
+        set_race_state(). ValueError for a name that is not a mode."""
+        key = str(mode).strip().upper() if isinstance(mode, str) else ""
+        if key not in MODE_STATES:
+            raise ValueError("unknown mode %r; one of %s" % (mode, " ".join(MODE_STATES)))
+        return self.set_race_state(MODE_STATES[key], mode=key, source=source)
+
+    def race_mode(self) -> Dict[str, Any]:
+        """{"state", "state_name", "mode", "label", "source"}: the race state
+        as the bridge holds it now, and the dashboard mode that set it. The
+        mode is only named while it still explains the state: a state set
+        directly since (the admin page, `state N`, a reset) has mode None."""
+        bridge = self.bridge
+        if bridge is not None:
+            state = int(bridge.phase)
+        else:
+            with self._lock:
+                state = int(self._model["race_state"])
+        with self._lock:
+            mode, source = self._race_mode, self._race_source
+        if mode is not None and MODE_STATES.get(mode) != state:
+            mode = None
+        return {"state": state, "state_name": race_state_name(state), "mode": mode,
+                "label": MODE_LABELS.get(mode) if mode else None, "source": source}
+
     def reset_betting(self) -> Dict[str, Any]:
         """The between-races reset: betting starts over. PRE_RACE, the
         results cleared (the dashboard's file too), the closing time cleared,
@@ -869,6 +951,8 @@ class BettingBoard:
             clear_results(self._results_path)
             if bridge is not None:
                 rev = bridge.set_state(phase=int(P.Phase.PRE_RACE), results=[0] * P.RESULT_SLOTS)
+                with self._lock:
+                    self._race_mode, self._race_source = None, "reset"
                 snap: Any = bridge.get_snapshot()
             else:
                 snap = {}

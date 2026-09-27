@@ -285,9 +285,11 @@ function buildTicker() {
         weatherText = temp + 'F ' + cond;
     }
 
-    // --- 3. Race state ---
+    // --- 3. Race state: the one pi5 holds (La Quiniela's, set by the mode
+    //        buttons or its admin page); the LED mode's name until pi5 has said ---
     const modeEl = document.getElementById('current-mode');
-    const raceState = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
+    const modeText = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
+    const raceState = (typeof raceStateLabel === 'function' && raceStateLabel(raceModeInfo)) || modeText;
 
     // --- 4. Date ---
     const days   = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
@@ -644,6 +646,74 @@ function flashButton(buttonElement) {
     }
 }
 
+// =====================================================================
+// One race state
+// =====================================================================
+// The dashboard's modes are the race's state. A mode button starts its LED
+// animation, as it always did, and names its mode to pi5, which derives La
+// Quiniela's race state from it (the cups, the TV board). The table is
+// pi5's (la_quiniela/betting.py MODE_STATES) and is not repeated here; a
+// button carries its mode in data-mode. SET WINNERS and RESET are told by
+// the routes they already call (/api/results once the results are applied,
+// /api/results/clear). La Quiniela's admin page sets the same state with
+// its seven buttons, so what it is now is read back every 5 s and shown on
+// the ticker. The race state does not wait on the LEDs: with the LED
+// controller unreachable the button still moves it, and says so.
+let raceModeInfo = null;   // {state, state_name, mode, label, source} as pi5 last reported it
+
+async function setRaceMode(mode) {
+    try {
+        const response = await fetch('/api/quiniela/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode })
+        });
+        const data = await response.json();
+        if (data && data.ok) {
+            raceModeInfo = data;
+            buildTicker();
+            return data;
+        }
+        console.error('[Race state] pi5 refused mode', mode, data && data.error);
+        return { ok: false, error: (data && data.error) || ('HTTP ' + response.status) };
+    } catch (error) {
+        console.error('[Race state] Error setting mode:', error);
+        return { ok: false, error: 'connection error' };
+    }
+}
+
+async function pollRaceMode() {
+    try {
+        const response = await fetch('/api/quiniela/mode', { cache: 'no-store' });
+        const data = await response.json();
+        if (data && data.ok) {
+            raceModeInfo = data;
+            buildTicker();
+        }
+    } catch (error) {
+        // pi5 not answering: the ticker keeps what it had
+    }
+    return raceModeInfo;
+}
+
+// "BETTING OPEN" for {state_name: "BETTING_OPEN"}; '' when pi5 has not said
+function raceStateLabel(info) {
+    return info && info.state_name ? String(info.state_name).replace(/_/g, ' ') : '';
+}
+
+// What a mode button reports: the LED message, then the race state it set
+// ("Animation: BETTING_60 · BETTING OPEN"), or why it could not
+function withRaceState(message, race) {
+    if (!race) return message;
+    if (race.ok) return `${message} \u00b7 ${raceStateLabel(race)}`;
+    return `${message} \u00b7 race state not set (${race.error})`;
+}
+
+// The mode a button stands for (data-mode), or null
+function modeOf(buttonElement) {
+    return (buttonElement && buttonElement.dataset && buttonElement.dataset.mode) || null;
+}
+
 // ----- Race Control (AUTO / MANUAL) -----
 
 async function fetchRaceControlMode() {
@@ -842,17 +912,21 @@ async function sendAnimation(animName, buttonElement) {
         return;
     }
     
-    // Start new toggle animation
+    // Start new toggle animation. A mode button also names its mode to pi5
+    // (one race state); the LEDs are not waited for.
+    const mode = modeOf(buttonElement);
+    const raceSet = mode ? setRaceMode(mode) : null;
     showLoader();
     try {
         const response = await fetch(`/api/animation/${animName}`, {
             method: 'POST'
         });
-        
+
         const data = await response.json();
-        
+        const race = raceSet ? await raceSet : null;
+
         if (data.success) {
-            showNotification(`Animation: ${animName}`, 'success');
+            showNotification(withRaceState(`Animation: ${animName}`, race), 'success');
             document.getElementById('current-mode').textContent = animName;
             filterTuningGroups(animName.toUpperCase());
             setActiveButton(buttonElement);
@@ -860,29 +934,31 @@ async function sendAnimation(animName, buttonElement) {
             hideLoader();
         } else {
             hideLoader(true); // Hide immediately on error
-            showNotification(`Error: ${data.response}`, 'error');
+            showNotification(withRaceState(`Error: ${data.response}`, race), 'error');
         }
     } catch (error) {
         hideLoader(true); // Hide immediately on error
         console.error('Error sending animation:', error);
-        showNotification('Connection error', 'error');
+        showNotification(withRaceState('Connection error', raceSet ? await raceSet : null), 'error');
     }
 }
 
 // Standby - turns off LEDs without clearing results
 async function sendStandby() {
     if (raceControlMode === 'auto') return;
+    const raceSet = setRaceMode('STANDBY');
     showLoader();
     try {
         // Turn off all LEDs
         const response = await fetch('/api/led/all_off', {
             method: 'POST'
         });
-        
+
         const data = await response.json();
-        
+        const race = await raceSet;
+
         if (data.success) {
-            showNotification('Standby mode - LEDs off', 'success');
+            showNotification(withRaceState('Standby mode - LEDs off', race), 'success');
             document.getElementById('current-mode').textContent = 'STANDBY';
             filterTuningGroups('STANDBY');
             // Clear active button state
@@ -944,6 +1020,8 @@ async function sendReset() {
                 hideResultsBanner();
                 // Re-enable all race-phase buttons
                 setRaceComplete(false);
+                // /api/results/clear ended the race on pi5 (AFTER PARTY): show it
+                await pollRaceMode();
                 await checkESP32Status();
                 hideLoader();
             } else {
@@ -1014,6 +1092,7 @@ let currentBrightness = 75;
 // Open test modal with color wheel
 function openTestModal() {
     clearAllActiveButtons();
+    setRaceMode('TEST');
     document.getElementById('current-mode').textContent = 'TEST';
     filterTuningGroups('TEST');
     const modal = document.getElementById('test-modal');
@@ -1537,6 +1616,12 @@ async function resultsConfirm() {
                 win: winHorse, place: placeHorse, show: showHorse
             }));
             showResultsBanner(winHorse, placeHorse, showHorse);
+
+            // /api/results set the race state (WINNER, with the results): show it
+            if (data.race) {
+                raceModeInfo = data.race;
+                buildTicker();
+            }
 
             // Signal ESP32 to blend winner chase into heartbeat seamlessly
             await fetch('/api/results/finalize', { method: 'POST' });
@@ -2675,6 +2760,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Race control toggle + state polling
     initRaceControlToggle();
     startRaceStatePolling();
+
+    // The one race state (pi5's), now and every 5 s: La Quiniela's admin
+    // page or another dashboard may have set it
+    pollRaceMode();
+    setInterval(pollRaceMode, 5000);
     
     // BUG FIX #1: Clear localStorage on page load to prevent persistence across server restarts
     localStorage.removeItem('raceResults');

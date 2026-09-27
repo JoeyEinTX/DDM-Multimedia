@@ -41,7 +41,8 @@ from la_quiniela import betting  # noqa: E402
 from la_quiniela import board as board_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
-    DEFAULTS, MAX_EVENTS, SSE_QUEUE_SIZE, UNDO_RENUM_S, BettingBoard, clear_results, load_board_settings,
+    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, UNDO_RENUM_S, BettingBoard, clear_results,
+    load_board_settings,
     prizes_for, read_results, round_half_up, sse_events, validate_cmd,
 )
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
@@ -2387,6 +2388,141 @@ def test_settings_new_keys():
                 os.environ[k] = v
 
 
+# The table of the brief, adjusted to the modes the dashboard has: its
+# thirteen buttons by the names they use, HEARTBEAT added at 5 (the race is
+# over; the dashboard's own map calls it OFFICIAL) and RESET standing in for
+# the after-party mode it does not have.
+EXPECTED_MODE_STATES = {
+    "WELCOME": 0, "TEST": 0, "STANDBY": 0,
+    "BETTING_60": 1, "BETTING_30": 1,
+    "FINAL_CALL": 2,
+    "AT_THE_GATE": 3,
+    "GATES_BURST": 4, "CHAOS": 4, "FINISH": 4,
+    "RESULTS": 5, "HEARTBEAT_COOLDOWN": 5,
+    "RESET": 6,
+}
+
+
+def test_modes_set_the_race_state():
+    """One race state: every dashboard mode means a race state, and the cmd
+    route, the admin page's buttons and the modes all set the same value."""
+    _check("the table: thirteen modes, the expected states", MODE_STATES == EXPECTED_MODE_STATES, str(MODE_STATES))
+    _check("every mode has a label and every state 0..6 has a mode",
+           set(MODE_LABELS) == set(MODE_STATES) and set(MODE_STATES.values()) == set(range(7)))
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    log_dir = tmpdir() / "logs"
+    client = _make_board_app(b, log_dir=log_dir).test_client()
+    r = client.get("/api/quiniela/mode")
+    body = r.get_json()
+    _check("GET /api/quiniela/mode before anything was set: state 0, no mode, no source, the table, no-store",
+           r.status_code == 200 and r.headers.get("Cache-Control") == "no-store"
+           and body == {"ok": True, "state": 0, "state_name": "PRE_RACE", "mode": None, "label": None,
+                        "source": None, "modes": EXPECTED_MODE_STATES}, str(body))
+    names = {0: "PRE_RACE", 1: "BETTING_OPEN", 2: "FINAL_CALL", 3: "AT_THE_POST", 4: "RUNNING", 5: "WINNER",
+             6: "AFTER_PARTY"}
+    # Walk the modes in an order in which every one changes the state, so every one sends a line.
+    order = ["BETTING_60", "WELCOME", "BETTING_30", "TEST", "FINAL_CALL", "STANDBY", "AT_THE_GATE", "GATES_BURST",
+             "FINAL_CALL", "CHAOS", "AT_THE_GATE", "FINISH", "RESULTS", "RESET", "HEARTBEAT_COOLDOWN"]
+    _check("the walk covers all thirteen modes", set(order) == set(EXPECTED_MODE_STATES))
+    rev = b.state_rev
+    for mode in order:
+        state = EXPECTED_MODE_STATES[mode]
+        port.written.clear()
+        r = client.post("/api/quiniela/mode", json={"mode": mode})
+        body = r.get_json()
+        rev += 1
+        _check(f"mode {mode} -> state {state} {names[state]}",
+               r.status_code == 200 and body == {"ok": True, "mode": mode, "state": state, "state_name": names[state],
+                                                 "source": "dashboard", "rev": rev, "gateway_online": False}
+               and b.phase == state and port.lines() == [state_line(rev, state)], f"{body} {port.lines()}")
+        m = client.get("/api/quiniela").get_json()
+        info = client.get("/api/quiniela/mode").get_json()
+        _check(f"...the model and GET mode say so ({MODE_LABELS[mode]})",
+               m["race_state"] == state and m["race_state_name"] == names[state]
+               and (info["state"], info["mode"], info["label"], info["source"]) == (state, mode, MODE_LABELS[mode], "dashboard"),
+               str(info))
+    # 60 MIN then 30 MIN: two modes, one state. No line, no new rev; the mode is the newer one.
+    client.post("/api/quiniela/mode", json={"mode": "BETTING_60"})
+    rev = b.state_rev
+    port.written.clear()
+    r = client.post("/api/quiniela/mode", json={"mode": "betting_30"})
+    _check("a second mode of the same state sends nothing and keeps the rev; the mode is the newer one (case forgiven)",
+           r.status_code == 200 and r.get_json()["rev"] == rev and r.get_json()["mode"] == "BETTING_30"
+           and port.written == [] and client.get("/api/quiniela/mode").get_json()["mode"] == "BETTING_30")
+    # The cmd route and the admin page's buttons are the same path and the same value.
+    port.written.clear()
+    r = client.post("/api/quiniela/cmd", json={"cmd": "state 3"})
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("cmd state 3 (what the admin page's AT THE POST button sends): the same state, set directly",
+           r.status_code == 200 and r.get_json() == {"ok": True, "rev": rev + 1, "phase": 3, "gateway_online": False}
+           and (info["state"], info["state_name"], info["mode"], info["label"], info["source"])
+           == (3, "AT_THE_POST", None, None, "cmd") and port.lines() == [state_line(rev + 1, 3)], str(info))
+    _check("...and the model the admin page lights its button from follows", client.get("/api/quiniela").get_json()["race_state"] == 3)
+    r = client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("the dashboard's AT THE GATE on top of it: the same state, no line, the mode named",
+           r.get_json()["rev"] == rev + 1 and (info["state"], info["mode"], info["source"]) == (3, "AT_THE_GATE", "dashboard"))
+    client.post("/api/quiniela/cmd", json={"cmd": "state 1"})
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("a mode is only named while it explains the state", (info["state"], info["mode"]) == (1, None))
+    html = client.get("/quiniela/admin").get_data(as_text=True)
+    _check("the admin page's seven buttons send state N to the cmd route and light from the model's race_state",
+           'cmd: "state " + n' in html and "/api/quiniela/cmd" in html and "=== model.race_state" in html)
+    # Something the bridge was told behind the board's back: the mode no longer explains the state.
+    client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL"})
+    b.set_state(phase=4)
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("a phase set on the bridge directly: GET mode reports the state, no mode", (info["state"], info["mode"]) == (4, None), str(info))
+    # The state line carries everything in one go: a scratch made without a refresh rides along.
+    get_board().store.scratch_gateway(7)
+    write_results(get_board(), 19, 1, 22)
+    port.written.clear()
+    rev = b.state_rev
+    r = client.post("/api/quiniela/mode", json={"mode": "RESULTS"})
+    _check("WINNER goes down in ONE line with the results (and the scratched bit)",
+           r.status_code == 200 and port.lines() == [state_line(rev + 1, 5, [7], [], [19, 1, 22])], str(port.lines()))
+    # Reset betting is a state change too: PRE_RACE, set by the reset.
+    client.post("/api/quiniela/reset")
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("after Reset betting: state 0, source reset, no mode", (info["state"], info["mode"], info["source"]) == (0, None, "reset"), str(info))
+    _, lines = log_lines(log_dir)
+    _check("the log recorded the state changes", {"race_state": [4, 5]} in [c for l in lines for c in l["changes"]])
+    # Errors
+    for bad in ({"mode": "PARTY"}, {"mode": ""}, {"mode": 5}, {"mode": None}, {}, [], {"mode": "state 1"}):
+        r = client.post("/api/quiniela/mode", json=bad)
+        _check(f"POST mode {bad!r:.30} -> 400 naming the modes", r.status_code == 400 and r.get_json()["ok"] is False
+               and "unknown mode" in r.get_json()["error"] and "BETTING_60" in r.get_json()["error"], str(r.get_json()))
+    before = (b.phase, b.state_rev)
+    _check("...and nothing moved", (b.phase, b.state_rev) == before)
+    get_board().bridge = None
+    r = client.post("/api/quiniela/mode", json={"mode": "WELCOME"})
+    _check("without a bridge -> 503", r.status_code == 503 and r.get_json() == {"ok": False, "error": "bridge not initialised"})
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("GET mode without a bridge still answers, from the model", info["ok"] is True and info["state"] == 0)
+    bd, wall, _ = fresh_board()
+    try:
+        bd.set_mode("WELCOME")
+        _check("set_mode without a bridge raises RuntimeError", False)
+    except RuntimeError:
+        _check("set_mode without a bridge raises RuntimeError", True)
+    b2, port2, sio2, clk2 = _fresh_bridge()
+    b2._open_port()
+    bd2, _, _ = fresh_board(bridge=b2)
+    for bad in (7, -1, "x", None):
+        try:
+            bd2.set_race_state(bad)
+            _check(f"set_race_state({bad!r}) raises ValueError", False)
+        except ValueError:
+            _check(f"set_race_state({bad!r}) raises ValueError", True)
+    try:
+        bd2.set_mode("PARTY")
+        _check("set_mode('PARTY') raises ValueError", False)
+    except ValueError:
+        _check("set_mode('PARTY') raises ValueError", True)
+    _check("a refused state sent nothing", port2.written == [] and b2.phase == 0)
+
+
 def test_field_by_post():
     """GET /api/quiniela/field: what the dashboard's SET WINNERS pickers and
     results tote show. A post is a place on the mantle (and its LED cup); the
@@ -2503,6 +2639,7 @@ def main():
     _run("v2 — the removed routes are gone; a conflict and a horse-0 cup on a real bridge", test_removed_routes_and_conflict_on_a_real_bridge)
     _run("settings — the payout keys", test_settings_new_keys)
     _run("names — the field by post (GET /api/quiniela/field)", test_field_by_post)
+    _run("one race state — each mode, the cmd route and the admin page agree", test_modes_set_the_race_state)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

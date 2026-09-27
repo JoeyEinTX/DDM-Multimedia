@@ -34,7 +34,7 @@ sys.path.insert(0, _PI5_DIR)
 
 from la_quiniela import test_smoke as S  # noqa: E402  (repoints the DB before the bridge loads)
 from la_quiniela import protocol as P  # noqa: E402
-from la_quiniela.blueprint import init_la_quiniela  # noqa: E402
+from la_quiniela.blueprint import get_bridge, init_la_quiniela  # noqa: E402
 from la_quiniela.board import get_board, init_board  # noqa: E402
 from la_quiniela.test_smoke import FakeClock, MAC_A, MAC_B, _fresh_bridge, telem  # noqa: E402
 
@@ -44,6 +44,14 @@ try:
     import main  # noqa: E402
 finally:
     sys.stdout = _real_stdout
+
+# main.py made a bridge of its own at import, on the same temp database. It
+# is not the one under test, and while its connection is open Windows will
+# not let a test replace the file: close it.
+try:
+    get_bridge().close()
+except Exception:
+    pass
 
 DERBY = ["Dornoch", "Sierra Leone", "Mystik Dan", "Catching Freedom", "Catalytic", "Just Steel",
          "Honor Marie", "Just a Touch", "Encino", "T O Password", "Forever Young", "Track Phantom",
@@ -82,10 +90,15 @@ class Rig:
     """main's app over a fresh bridge and board; the hardware stubbed."""
 
     def __init__(self, led_ok=True):
+        # A database of its own per rig. main.py's import left connections
+        # open on test_smoke's temp file (La Subasta shares it), and Windows
+        # does not let an open file be replaced, so that one cannot be made
+        # fresh again; a new path always is.
+        self.dir = tmpdir()
+        S._TMP_DB = str(self.dir / "la_quiniela_dash.db")
         self.bridge, self.port, self.sio, self.clk = _fresh_bridge()
         self.bridge._open_port()
         init_la_quiniela(socketio=None, bridge=self.bridge)
-        self.dir = tmpdir()
         self.results_file = self.dir / "results.json"
         main.RESULTS_FILE = str(self.results_file)
         self.wall = FakeClock(1_700_000_000.0)
@@ -215,6 +228,148 @@ def test_field_route_on_the_real_app():
 
 
 # -----------------------------------------------------------------------------
+# Commit 2: one race state
+# -----------------------------------------------------------------------------
+
+BUTTONS = [   # (the button's text, its mode, what it calls)
+    ("Welcome", "WELCOME", "sendAnimation('WELCOME', this)"),
+    ("Test", "TEST", "openTestModal()"),
+    ("Standby", "STANDBY", "sendStandby()"),
+    ("60 Min", "BETTING_60", "sendAnimation('BETTING_60', this)"),
+    ("30 Min", "BETTING_30", "sendAnimation('BETTING_30', this)"),
+    ("Final Call", "FINAL_CALL", "sendAnimation('FINAL_CALL', this)"),
+    ("AT THE GATE", "AT_THE_GATE", "sendAnimation('AT_THE_GATE', this)"),
+    ("THEY'RE OFF!", "GATES_BURST", "sendAnimation('GATES_BURST', this)"),
+    ("Chaos", "CHAOS", "sendAnimation('CHAOS', this)"),
+    ("Finish", "FINISH", "sendAnimation('FINISH', this)"),
+    ("Set Winners", "RESULTS", "showResultsModal()"),
+    ("Heartbeat", "HEARTBEAT_COOLDOWN", "sendAnimation('HEARTBEAT_COOLDOWN', this)"),
+    ("Reset", "RESET", "sendReset()"),
+]
+
+
+def test_buttons_carry_their_mode():
+    from la_quiniela.betting import MODE_STATES
+    rig = Rig()
+    html = rig.client.get("/").get_data(as_text=True)
+    panels = html[html.index('<div class="panels">'):html.index('<!-- Spectator Panel')]
+    import re
+    found = re.findall(r'<button class="btn"[^>]*?data-mode="([A-Z_0-9]+)"[^>]*?onclick="([^"]+)"[^>]*>([^<]+)</button>', panels)
+    _check("thirteen buttons on the four panels, each with a mode", len(found) == 13 and panels.count("<button") == 13, str(len(found)))
+    _check("every button's mode and call are the expected ones",
+           [(text, mode, call) for mode, call, text in found] == BUTTONS, str(found))
+    _check("every button's mode is in pi5's table, and the table has no mode without a button",
+           {mode for mode, _, _ in found} == set(MODE_STATES), str(set(MODE_STATES) ^ {m for m, _, _ in found}))
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    _check("a mode button names its mode to pi5 before the LEDs answer",
+           "const raceSet = mode ? setRaceMode(mode) : null;" in js and "'/api/quiniela/mode'" in js
+           and js.index("const raceSet = mode ? setRaceMode(mode) : null;") < js.index("showNotification(withRaceState(`Animation: ${animName}`, race), 'success');"))
+    _check("Standby and Test name theirs", "const raceSet = setRaceMode('STANDBY');" in js and "setRaceMode('TEST');" in js)
+    _check("the table is pi5's, not repeated in the page", "MODE_STATES" not in js.replace("la_quiniela/betting.py MODE_STATES", "")
+           and "BETTING_60: 1" not in js)
+    _check("the race state is read back every 5 s and the ticker shows it",
+           "setInterval(pollRaceMode, 5000);" in js and "raceStateLabel(raceModeInfo)" in js)
+
+
+def test_dashboard_modes_move_la_quiniela():
+    """What a dashboard button does, as the page does it: the LED route it
+    always called, and the mode to pi5."""
+    from la_quiniela.betting import MODE_STATES
+    rig = Rig()
+    rig.bridge.handle_raw_line(telem(MAC_A, horse=19, count=5))
+    led_routes = {   # mode -> (the LED route the button calls, the command the LED controller must get)
+        "WELCOME": ("/api/animation/WELCOME", "ANIM:WELCOME"),
+        "BETTING_60": ("/api/animation/BETTING_60", "ANIM:BETTING_60"),
+        "BETTING_30": ("/api/animation/BETTING_30", "ANIM:BETTING_30"),
+        "FINAL_CALL": ("/api/animation/FINAL_CALL", "ANIM:FINAL_CALL"),
+        "AT_THE_GATE": ("/api/animation/AT_THE_GATE", "ANIM:AT_THE_GATE"),
+        "GATES_BURST": ("/api/animation/GATES_BURST", "ANIM:GATES_BURST"),
+        "CHAOS": ("/api/animation/CHAOS", "ANIM:CHAOS"),
+        "FINISH": ("/api/animation/FINISH", "ANIM:FINISH"),
+        "HEARTBEAT_COOLDOWN": ("/api/animation/HEARTBEAT_COOLDOWN", "ANIM:HEARTBEAT_COOLDOWN"),
+        "STANDBY": ("/api/led/all_off", "LED:ALL_OFF"),
+    }
+    for mode in ("BETTING_60", "WELCOME", "BETTING_30", "STANDBY", "FINAL_CALL", "AT_THE_GATE", "GATES_BURST",
+                 "AT_THE_GATE", "CHAOS", "FINAL_CALL", "FINISH", "HEARTBEAT_COOLDOWN"):
+        route, command = led_routes[mode]
+        rig.led.clear()
+        r_mode = rig.post("/api/quiniela/mode", {"mode": mode})
+        r_led = rig.post(route)
+        _check(f"{mode}: the LEDs get {command} as before, La Quiniela state {MODE_STATES[mode]}",
+               r_led.status_code == 200 and r_led.get_json()["success"] is True and rig.led == [command]
+               and r_mode.get_json()["state"] == MODE_STATES[mode] and rig.bridge.phase == MODE_STATES[mode]
+               and rig.model()["race_state"] == MODE_STATES[mode], f"{rig.led} {r_mode.get_json()}")
+    _check("the LED routes alone never move the race state (a preview, the Animations list)",
+           rig.post("/api/animation/BETTING_60").status_code == 200 and rig.bridge.phase == 5
+           and rig.post("/api/led/all_off").status_code == 200 and rig.bridge.phase == 5)
+    # The LED controller unreachable: the race state moves all the same.
+    dead = Rig(led_ok=False)
+    r_mode = dead.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    r_led = dead.post("/api/animation/BETTING_60")
+    _check("LED controller unreachable: the LED route says so, the race state is set",
+           r_led.get_json()["success"] is False and r_mode.get_json()["ok"] is True and dead.bridge.phase == 1)
+
+
+def test_results_and_reset_are_modes():
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    rig.post("/api/quiniela/mode", {"mode": "FINISH"})
+    rev = rig.bridge.state_rev
+    rig.port.written.clear()
+    rig.led.clear()
+    # SET WINNERS opens its modal on RESULTS_ENTRY: the LEDs only, the state stays RUNNING
+    rig.post("/api/animation/RESULTS_ENTRY")
+    _check("opening SET WINNERS moves nothing", rig.bridge.phase == 4 and rig.port.written == [] and rig.led == ["ANIM:RESULTS_ENTRY"])
+    r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
+    body = r.get_json()
+    _check("POST /api/results: success, the results as sent", r.status_code == 200 and body["success"] is True
+           and body["results"] == {"win": 19, "place": 1, "show": 22}, str(body))
+    _check("...and the race state it set: WINNER, mode RESULTS",
+           body["race"] == {"rev": rev + 1, "state": 5, "state_name": "WINNER", "mode": "RESULTS", "source": "dashboard",
+                            "gateway_online": False}, str(body.get("race")))
+    _check("one state line: WINNER with the results and the renumber pair, byte-exact",
+           rig.lines() == [state_line(rev + 1, 5, [], [(9, 22)], [19, 1, 22])], str(rig.lines()))
+    _check("the file holds horse numbers", json.loads(rig.results_file.read_text())["show"] == 22)
+    m = rig.model()
+    _check("the model: state 5, the results", m["race_state"] == 5 and m["results"] == {"win": 19, "place": 1, "show": 22}, str(m["results"]))
+    info = rig.client.get("/api/quiniela/mode").get_json()
+    _check("GET mode: SET WINNERS", (info["state"], info["mode"], info["label"]) == (5, "RESULTS", "SET WINNERS"))
+    r = rig.post("/api/results", {"win": 19, "place": 19, "show": 22})
+    _check("results naming a horse twice: 400, nothing moved", r.status_code == 400 and rig.bridge.state_rev == rev + 1)
+    # RESET
+    rig.port.written.clear()
+    r = rig.post("/api/results/clear")
+    body = r.get_json()
+    _check("POST /api/results/clear: success, the race ended: AFTER_PARTY, mode RESET",
+           r.status_code == 200 and body["success"] is True and body["race"]["state"] == 6
+           and body["race"]["state_name"] == "AFTER_PARTY" and body["race"]["mode"] == "RESET", str(body))
+    _check("one state line: AFTER_PARTY, the results cleared, the pair kept",
+           rig.lines() == [state_line(rev + 2, 6, [], [(9, 22)])], str(rig.lines()))
+    _check("the file is gone, the model has no results", not rig.results_file.exists()
+           and rig.model()["results"] in (None, {"win": None, "place": None, "show": None}))
+    _check("the LEDs went off as they always did on a reset", "LED:ALL_OFF" in rig.led)
+    # The next race: WELCOME is PRE_RACE again
+    rig.post("/api/quiniela/mode", {"mode": "WELCOME"})
+    _check("WELCOME after the reset: PRE_RACE", rig.bridge.phase == 0)
+    # Without a board the dashboard's routes still do their own work
+    saved = main.get_board
+
+    def no_board():
+        raise RuntimeError("La Quiniela board not initialised")
+    main.get_board = no_board
+    try:
+        r = rig.post("/api/results", {"win": 1, "place": 2, "show": 3})
+        _check("La Quiniela unavailable: the results are still saved, race null",
+               r.status_code == 200 and r.get_json()["success"] is True and r.get_json()["race"] is None
+               and rig.results_file.exists())
+        r = rig.post("/api/results/clear")
+        _check("...and still cleared", r.status_code == 200 and r.get_json()["race"] is None and not rig.results_file.exists())
+    finally:
+        main.get_board = saved
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -223,6 +378,9 @@ def main_():
     _run("menu — Race Setup out, the two La Quiniela links in", test_menu_and_page)
     _run("names — /api/race lists La Quiniela's field", test_race_roster_uses_la_quiniela_names)
     _run("names — the field route on the real app", test_field_route_on_the_real_app)
+    _run("one race state — the thirteen buttons carry their mode", test_buttons_carry_their_mode)
+    _run("one race state — a dashboard mode moves La Quiniela, the LEDs as before", test_dashboard_modes_move_la_quiniela)
+    _run("one race state — the results make it WINNER, RESET makes it AFTER_PARTY", test_results_and_reset_are_modes)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

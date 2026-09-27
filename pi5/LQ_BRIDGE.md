@@ -603,6 +603,8 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
+| `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "modes": {...the table...}}`, `Cache-Control: no-store`. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |
+| `POST /api/quiniela/mode` | `{"mode": "BETTING_60"}`: a dashboard mode; the race state is the table's. `{"ok": true, "mode": "BETTING_60", "state": 1, "state_name": "BETTING_OPEN", "source": "dashboard", "rev": R, "gateway_online": bool}`. 400 `unknown mode ...; one of ...`, 503 `bridge not initialised`. Sets the race state only: the LEDs are the button's own request. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
 | `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. Both work without a bridge (recorded, `cup` null, `rev` null). |
@@ -740,6 +742,64 @@ the store and the results file as follows:
   each when not set.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
+### One race state
+
+There is one race state, and the dashboard's modes are its source. The
+dashboard's thirteen buttons drive the LEDs, as they always did; each also
+names its mode to pi5 (`POST /api/quiniela/mode`), and La Quiniela's race
+state, the one the cups and the TV board follow, is derived from the mode:
+
+| Dashboard button | Mode | La Quiniela state |
+| --- | --- | --- |
+| WELCOME, TEST, STANDBY | `WELCOME`, `TEST`, `STANDBY` | 0 PRE_RACE |
+| 60 MIN, 30 MIN | `BETTING_60`, `BETTING_30` | 1 BETTING_OPEN |
+| FINAL CALL | `FINAL_CALL` | 2 FINAL_CALL |
+| AT THE GATE | `AT_THE_GATE` | 3 AT_THE_POST |
+| THEY'RE OFF!, CHAOS, FINISH | `GATES_BURST`, `CHAOS`, `FINISH` | 4 RUNNING |
+| SET WINNERS, once the results are applied | `RESULTS` | 5 WINNER |
+| HEARTBEAT | `HEARTBEAT_COOLDOWN` | 5 WINNER |
+| RESET | `RESET` | 6 AFTER_PARTY |
+
+The table is `MODE_STATES` in `la_quiniela/betting.py` and nowhere else (the
+page carries each button's mode in `data-mode` and asks pi5). Two lines
+differ from the first draft of it: HEARTBEAT was not listed, and is WINNER
+(the dashboard's own spectator map calls it OFFICIAL: the race is over, and
+with no results yet the TV says OFFICIAL RESULTS COMING); and the dashboard
+has no after-party mode, so RESET, which ends the race and clears the
+results, is AFTER_PARTY.
+
+**One path.** Every change goes through `BettingBoard.set_race_state()`: a
+mode (`set_mode()`), the admin page's seven buttons and `state N` on `POST
+/api/quiniela/cmd`. The shared value is the bridge's phase, the one that is
+persisted and whose rev the gateway acknowledges; the mode that set it is
+kept beside it (in memory) and named only while it still explains the state.
+One state line goes down per change, carrying the state together with
+whatever else the line should hold at that moment (scratched bits, renumber
+pairs, the results), so a cup never shows WINNER before it knows who won.
+Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
+
+- SET WINNERS and RESET are told by the dashboard routes they call: `POST
+  /api/results` sets mode `RESULTS` once the results are saved (its reply
+  carries `"race": {...}`), `POST /api/results/clear` sets `RESET` after the
+  file is gone. Opening the SET WINNERS modal moves nothing.
+- The LED routes themselves (`/api/animation/<name>`, `/api/led/all_off`)
+  never move the race state: the Animations list, the Animation Library's
+  previews and a button toggled off are LEDs only. Nothing about the LEDs
+  changed.
+- The race state does not wait on the LEDs: with the LED controller
+  unreachable a mode button still sets it, and its notification says both
+  (`Error: ERROR:TIMEOUT · FINAL CALL`).
+- The admin page's seven buttons set the same value directly (they start no
+  LED animation) and light the current one from the model's `race_state`
+  within its 5 s refresh; the dashboard reads the state back every 5 s and
+  shows it on its ticker, so a state set on the phone shows on the
+  touchscreen and the other way round.
+- `closes_at` is untouched by all of it: the countdown is still manual.
+- Not part of it: the mock racing service (`/api/racing/*`, the dashboard's
+  AUTO / MANUAL switch, states DORMANT .. OFFICIAL). In AUTO it drives the
+  LEDs by itself and the mode buttons are disabled; La Quiniela does not
+  follow it.
+
 ### `POST /api/quiniela/cmd`
 
 The splash's whitelist of gateway text commands is kept, so the operator's
@@ -750,7 +810,7 @@ protocol v2 only one command has a meaning here:
 
 | Command | Does | Answer |
 | --- | --- | --- |
-| `state N` (0..6) | `set_state(phase=N)`; scratched, renum and results stay | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
+| `state N` (0..6) | `set_race_state(N)`, the path a dashboard mode takes (above): the state, with the scratched bits, renumber pairs and results as pi5 has them | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
 | `demo` | refused, 400 | `demo is not routed through pi5: the bridge speaks the JSON line protocol, and every state line turns demo off` |
 | `json` | refused, 400 | `json is not routed through pi5: the bridge already reads the gateway's protocol, and the up state line is the gateway's report, not a command` |
 
@@ -853,6 +913,9 @@ record beating a pending undo, the four-slot cap; a scratch before any cup
 says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
 the names text parser for 24 lines, the closing time, the between-races
+one race state (each of the dashboard's thirteen modes against the table,
+byte-exact lines, the cmd route and the admin page's buttons setting the
+same value, WINNER and the results in one line), the between-races
 reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
 results cleared, the ticker and `closes_at` zeroed, the tokens still in the
 cups read and their horses named), the `now` stamp, the three tables with
@@ -863,3 +926,14 @@ statuses and no cup controls), and that the v1 dev routes are gone.
 `test_smoke` pins `protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h`
 and also checks that importing `main.py` starts no `lq-board` thread and
 registers the routes, the admin page included.
+
+```
+python -m la_quiniela.test_dashboard
+```
+
+The dashboard's side, on the real app (`main.py`, its templates and static
+files) with the LED controller stubbed and the tote board off: the menu, the
+names on the tote and in the pickers, `/api/race`, the thirteen buttons each
+carrying its mode, the LED command each one sends (unchanged), the race
+state each one sets, the results making it WINNER and RESET making it
+AFTER_PARTY.

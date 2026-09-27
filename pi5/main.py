@@ -320,6 +320,20 @@ def parse_params_response(response: str) -> dict:
     return params
 
 
+def quiniela_mode(mode):
+    """One race state: tell La Quiniela which mode the dashboard is in, and
+    its race state (the cups, the TV board) follows by pi5's table
+    (la_quiniela.betting.MODE_STATES). The mode buttons say so themselves
+    (POST /api/quiniela/mode); this is for the two modes that are routes
+    here: the results applied, and the reset. Never raises: the LEDs and the
+    results do not wait on La Quiniela. Returns what was set, or None."""
+    try:
+        return get_board().set_mode(mode)
+    except Exception as e:
+        print(f'[La Quiniela] mode {mode} not set: {e}')
+        return None
+
+
 def save_results(win, place, show):
     """Save results to file"""
     results = {
@@ -459,7 +473,8 @@ def api_results():
         win = data.get('win', 1)
         place = data.get('place', 2)
         show = data.get('show', 3)
-        
+        race = None
+
         # Validate unique cups
         if len(set([win, place, show])) != 3:
             return jsonify({
@@ -474,7 +489,10 @@ def api_results():
         if success:
             # Save to file
             save_results(win, place, show)
-            
+
+            # SET WINNERS, results applied: La Quiniela goes to WINNER with them
+            race = quiniela_mode('RESULTS')
+
             # Send official results to tote board
             tote_send('official', win, place, show)
             
@@ -492,7 +510,8 @@ def api_results():
                 'place': place,
                 'show': show
             },
-            'response': response
+            'response': response,
+            'race': race
         })
 
 
@@ -526,7 +545,10 @@ def api_results_clear():
         # Delete the results file if it exists
         if os.path.exists(RESULTS_FILE):
             os.remove(RESULTS_FILE)
-        
+
+        # RESET ends the race: La Quiniela goes to AFTER_PARTY, results cleared
+        race = quiniela_mode('RESET')
+
         # Turn off all LEDs
         esp32.all_off()
         
@@ -535,7 +557,8 @@ def api_results_clear():
         
         return jsonify({
             'success': True,
-            'message': 'Results cleared'
+            'message': 'Results cleared',
+            'race': race
         })
     except Exception as e:
         return jsonify({

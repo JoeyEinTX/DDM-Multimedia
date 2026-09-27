@@ -118,36 +118,36 @@
             <!-- Pre-Race Panel -->
             <div class="panel">
                 <h2>PRE-RACE</h2>
-                <button class="btn" onclick="sendAnimation('WELCOME', this)">Welcome</button>
-                <button class="btn" onclick="openTestModal()">Test</button>
-                <button class="btn" onclick="sendStandby()">Standby</button>
+                <button class="btn" data-mode="WELCOME" onclick="sendAnimation('WELCOME', this)">Welcome</button>
+                <button class="btn" data-mode="TEST" onclick="openTestModal()">Test</button>
+                <button class="btn" data-mode="STANDBY" onclick="sendStandby()">Standby</button>
             </div>
 
             <!-- Betting Panel -->
             <div class="panel">
                 <h2>BETTING OPEN</h2>
-                <button class="btn" onclick="sendAnimation('BETTING_60', this)">60 Min</button>
-                <button class="btn" onclick="sendAnimation('BETTING_30', this)">30 Min</button>
-                <button class="btn" onclick="sendAnimation('FINAL_CALL', this)">Final Call</button>
+                <button class="btn" data-mode="BETTING_60" onclick="sendAnimation('BETTING_60', this)">60 Min</button>
+                <button class="btn" data-mode="BETTING_30" onclick="sendAnimation('BETTING_30', this)">30 Min</button>
+                <button class="btn" data-mode="FINAL_CALL" onclick="sendAnimation('FINAL_CALL', this)">Final Call</button>
             </div>
 
             <!-- During Race Panel -->
             <div class="panel">
                 <h2>DURING RACE</h2>
                 <div style="display:flex; gap:6px; margin:10px 24px;">
-                    <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" onclick="sendAnimation('AT_THE_GATE', this)">AT THE GATE</button>
-                    <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" onclick="sendAnimation('GATES_BURST', this)">THEY'RE OFF!</button>
+                    <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" data-mode="AT_THE_GATE" onclick="sendAnimation('AT_THE_GATE', this)">AT THE GATE</button>
+                    <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" data-mode="GATES_BURST" onclick="sendAnimation('GATES_BURST', this)">THEY'RE OFF!</button>
                 </div>
-                <button class="btn" onclick="sendAnimation('CHAOS', this)">Chaos</button>
-                <button class="btn" onclick="sendAnimation('FINISH', this)">Finish</button>
+                <button class="btn" data-mode="CHAOS" onclick="sendAnimation('CHAOS', this)">Chaos</button>
+                <button class="btn" data-mode="FINISH" onclick="sendAnimation('FINISH', this)">Finish</button>
             </div>
 
             <!-- Results Panel -->
             <div class="panel">
                 <h2>RESULTS</h2>
-                <button class="btn" onclick="showResultsModal()">Set Winners</button>
-                <button class="btn" onclick="sendAnimation('HEARTBEAT_COOLDOWN', this)">Heartbeat</button>
-                <button class="btn" onclick="sendReset()">Reset</button>
+                <button class="btn" data-mode="RESULTS" onclick="showResultsModal()">Set Winners</button>
+                <button class="btn" data-mode="HEARTBEAT_COOLDOWN" onclick="sendAnimation('HEARTBEAT_COOLDOWN', this)">Heartbeat</button>
+                <button class="btn" data-mode="RESET" onclick="sendReset()">Reset</button>
             </div>
         </div>
 

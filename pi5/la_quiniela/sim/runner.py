@@ -101,7 +101,7 @@ class ApiOperator:
         self.board = board
 
     def state(self, phase):
-        self.board.bridge.set_state(phase=int(phase))
+        self.board.set_race_state(int(phase), source="cmd")      # the path the routes take
 
     def scratch(self, horse, replacement=None, name=None):
         if replacement is None:

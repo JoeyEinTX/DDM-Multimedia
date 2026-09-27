@@ -32,7 +32,9 @@ from typing import Any, Dict, Optional, Set, Tuple
 from flask import Blueprint, Response, jsonify, render_template, request
 
 from la_quiniela import protocol as P
-from la_quiniela.betting import BettingBoard, load_board_settings, sse_events, validate_cmd
+from la_quiniela.betting import (
+    MODE_STATES, BettingBoard, load_board_settings, sse_events, validate_cmd,
+)
 from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
 logger = logging.getLogger(__name__)
@@ -176,19 +178,53 @@ def api_quiniela_cmd():
     if isinstance(args, str):
         return _bad(args)
 
-    bridge = get_board().bridge
-    if bridge is None:
+    board = get_board()
+    if board.bridge is None:
         return _bad("bridge not initialised", 503)
 
-    # A state change is applied even when the gateway is offline: DevPi is
-    # the source of truth and re-sends on the next hello / status. The
-    # response's gateway_online tells the caller which of the two happened.
+    # The same path a dashboard mode takes (set_race_state). A state change
+    # is applied even when the gateway is offline: DevPi is the source of
+    # truth and re-sends on the next hello / status. The response's
+    # gateway_online tells the caller which of the two happened.
     try:
-        rev = bridge.set_state(phase=args[0])
+        done = board.set_race_state(args[0], source="cmd")
     except ValueError as exc:
         return _bad(str(exc))
-    online = bool(bridge.get_snapshot()["link"]["gateway_online"])
-    return jsonify({"ok": True, "rev": rev, "phase": args[0], "gateway_online": online})
+    return jsonify({"ok": True, "rev": done["rev"], "phase": args[0], "gateway_online": done["gateway_online"]})
+
+
+@quiniela_board_bp.route("/api/quiniela/mode", methods=["GET"])
+def api_quiniela_mode():
+    """The one race state and the dashboard mode that set it: {"ok": true,
+    "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label":
+    "60 MIN", "source": "dashboard", "modes": {...the table...}}. mode and
+    label are null when the state was set directly (the admin page's
+    buttons, `state N`, a reset) or not since pi5 started."""
+    resp = jsonify({"ok": True, **get_board().race_mode(), "modes": dict(MODE_STATES)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@quiniela_board_bp.route("/api/quiniela/mode", methods=["POST"])
+def api_quiniela_mode_set():
+    """{"mode": "BETTING_60"}: a dashboard mode. La Quiniela's race state is
+    the one the table gives (betting.MODE_STATES), set through the same
+    path as `state N`; the reply is {"ok": true, "mode", "state",
+    "state_name", "source": "dashboard", "rev", "gateway_online"}. 400 for a
+    name that is not a mode, 503 without a bridge. Nothing here touches the
+    LEDs: the dashboard's button does that, as it always did."""
+    body = request.get_json(silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
+    if not isinstance(mode, str) or mode.strip().upper() not in MODE_STATES:
+        return _bad("unknown mode %r; one of %s" % (mode, " ".join(MODE_STATES)))
+    board = get_board()
+    if board.bridge is None:
+        return _bad("bridge not initialised", 503)
+    try:
+        done = board.set_mode(mode)
+    except ValueError as exc:
+        return _bad(str(exc))
+    return jsonify({"ok": True, **done})
 
 
 # -----------------------------------------------------------------------------
