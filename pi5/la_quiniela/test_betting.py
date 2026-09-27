@@ -1028,7 +1028,7 @@ def test_cmd_horse_and_scratch_1_based():
     client2 = _make_board_app(b2).test_client()
     r = client2.post("/api/quiniela/cmd", json={"cmd": "horse 3 12"})
     _check("horse before any state: phase 0, rev 1", r.get_json() == {"ok": True, "rev": 1, "phase": 0, "gateway_online": False,
-                                                                     "cup": 3, "horse": 12}, str(r.get_json()))
+                                                                     "cup": 3, "horse": 12, "scratched": False}, str(r.get_json()))
     _check("...and the line carries it", port2.lines() == [state_line(1, 0, [0, 0, 12] + [0] * 17, NO_SCR_B)], str(port2.lines()))
 
 
@@ -1523,12 +1523,12 @@ def test_routes_scratch_rejections():
     _check("9 -> 22 goes through", r.status_code == 200 and b.horses[9] == 22 and len(port.lines()) == 1)
     b.set_state(1, b.get_snapshot() and [b.horses[c] for c in P.CUP_NUMBERS], [c == 20 for c in P.CUP_NUMBERS])   # cup 20 scratched at the gateway
     port.written.clear()
-    for body, why in (({"horse": 9, "replacement": {"number": 23}}, "horse 9 is not in the field"),   # the was of a record
+    for body, why in (({"horse": 9, "replacement": {"number": 23}}, "horse 9 is already scratched"),   # the was of a record
                       ({"horse": 3, "replacement": {"number": 9}}, "9 is in use"),                     # the was of a record
                       ({"horse": 3, "replacement": {"number": 22}}, "22 is in use"),                   # the now of a record
-                      ({"horse": 20, "replacement": {"number": 23}}, "horse 20 is not in the field"),  # scratched at the gateway
+                      ({"horse": 20, "replacement": {"number": 23}}, "horse 20 is already scratched"),  # scratched at the gateway
                       ({"horse": 3, "replacement": {"number": 20}}, "20 is in use"),                   # carried by cup 20, scratched
-                      ({"horse": 9}, "horse 9 is not on any cup")):                                   # the gateway kind on a horse that left
+                      ({"horse": 9}, "horse 9 is already scratched")):                                 # the no-replacement kind on a horse that left
         r = client.post("/api/quiniela/scratch", json=body)
         _check(f"{body!r:.62} -> 400 {why}", r.status_code == 400 and r.get_json() == {"ok": False, "error": why},
                f"{r.status_code} {r.get_json()}")
@@ -1654,6 +1654,136 @@ def test_kind2_scratch_removes_tokens_from_the_pot():
     board.refresh()
     _check("unscratched at the gateway: the pot is back, 9 in the field, no scratches", board.model()["pot"] == 15.0
            and board.model()["horses"]["9"]["in_field"] is True and board.model()["scratches"] == [])
+
+
+def test_no_replacement_scratch_is_about_the_horse():
+    """Bench, 2026-09-26: one cup online, No replacement + Scratch on horse
+    20 answered "horse 20 is not on any cup". A no-replacement scratch is
+    recorded in pi5 whether or not the horse has a cup; a cup carrying it
+    gets the gateway's scratched flag (at once, or at assignment: the horse
+    command sets it, the board's refresh() sets it for dev/state and for a
+    re-assignment after a reset); unscratch mirrors it; the scratch command
+    keeps the record in step."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    wall = FakeClock(1_700_000_000.0)
+    client = _make_board_app(b, wall=wall, log_dir=tmpdir() / "logs").test_client()
+    only_cup1 = [7 if c == 1 else 0 for c in range(1, 21)]    # one cup adopted and assigned: cup 1 carries 7
+    b.set_state(1, only_cup1, NO_SCR)
+    b.handle_raw_line(telem(0, MAC_A, count=3))                # wire 0 -> cup 1 -> horse 7
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    get_board().refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("before: 20 in the field on no cup, pot 3", m["horses"]["20"]["in_field"] is True and m["horses"]["20"]["cup"] is None and m["pot"] == 3.0)
+    port.written.clear()
+    r = client.post("/api/quiniela/scratch", json={"horse": 20})
+    body = r.get_json()
+    _check("scratch 20 with no cup: 200, kind gateway, cup null, nothing sent, names_rev 2",
+           r.status_code == 200 and body["ok"] is True and body["kind"] == "gateway" and body["horse"] == 20
+           and body["cup"] is None and body["sent"] is False and body["names_rev"] == 2, str(body))
+    _check("no state line went down (no cup to flag)", port.lines() == [], str(port.lines()))
+    m = client.get("/api/quiniela").get_json()
+    h20 = m["horses"]["20"]
+    _check("the model: 20 scratched, out of the field, no cup, 0 tokens", h20["scratched"] is True and h20["in_field"] is False
+           and h20["cup"] is None and h20["tokens"] == 0, str(h20))
+    _check("scratches carries {was 20, now null}", m["scratches"] == [{"was": {"number": 20, "name": "SOCIETY MAN"}, "now": None}], str(m["scratches"]))
+    _check("pot unchanged, no events", m["pot"] == 3.0 and m["events"] == [], str((m["pot"], m["events"])))
+    _check("persisted: {20: None} on the bridge's database", HorseStore(b.db).scratches() == {20: None})
+    r = client.post("/api/quiniela/scratch", json={"horse": 20})
+    _check("scratching it again -> 400 already scratched", r.status_code == 400 and r.get_json()["error"] == "horse 20 is already scratched", str(r.get_json()))
+    r = client.post("/api/quiniela/scratch", json={"horse": 20, "replacement": {"number": 21, "name": "Great White"}})
+    _check("a replacement for it now -> 400 already scratched", r.status_code == 400 and r.get_json()["error"] == "horse 20 is already scratched", str(r.get_json()))
+    r = client.post("/api/quiniela/scratch", json={"horse": 8, "replacement": {"number": 20, "name": "x"}})
+    _check("20 as somebody's replacement -> 400 in use", r.status_code == 400 and r.get_json()["error"] == "20 is in use", str(r.get_json()))
+    # A cup assigned to it later draws its X: the horse command sets the flag in the same state line.
+    port.written.clear()
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 2 20"})
+    body = r.get_json()
+    _check("horse 2 20: 200, cup 2 flagged, with a note", r.status_code == 200 and body["scratched"] is True and body["cup"] == 2
+           and "flagged" in body.get("note", ""), str(body))
+    cups12 = [7 if c == 1 else 20 if c == 2 else 0 for c in range(1, 21)]
+    scr2 = [c == 2 for c in range(1, 21)]
+    _check("one state line: cup 2 carries 20 with the scratched flag, byte-exact", port.lines() == [state_line(2, 1, cups12, scr2)], str(port.lines()))
+    b.handle_raw_line(telem(1, MAC_B, count=4))                # wire 1 -> cup 2 -> horse 20: four tokens, to be refunded
+    get_board().refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("20 on cup 2, scratched, its 4 tokens out of the pot: pot 3, total 7",
+           m["horses"]["20"]["cup"] == 2 and m["horses"]["20"]["scratched"] is True and m["horses"]["20"]["tokens"] == 4
+           and m["pot"] == 3.0 and m["total_tokens"] == 7, str((m["horses"]["20"], m["pot"], m["total_tokens"])))
+    # dev/state (or anything else on the bridge) clearing the flag: the board's refresh puts it back.
+    port.written.clear()
+    b.set_state(1, cups12, NO_SCR)                             # the raw bridge path: flag cleared, record untouched
+    _check("the raw path cleared the flag on the bridge", b.scratched[2] is False)
+    get_board().refresh()
+    _check("refresh() pushed the flag back: a state line with cup 2 scratched",
+           port.lines()[-1] == state_line(4, 1, cups12, scr2) and b.scratched[2] is True, str(port.lines()))
+    _check("...and the model shows it", client.get("/api/quiniela").get_json()["horses"]["20"]["scratched"] is True)
+    # Unscratch mirrors it: record gone, flag cleared, back in the field with its tokens in the pot.
+    port.written.clear()
+    r = client.post("/api/quiniela/unscratch", json={"horse": 20})
+    body = r.get_json()
+    _check("unscratch 20: 200, kind gateway, cup 2, cleared, names_rev 3", r.status_code == 200 and body["kind"] == "gateway"
+           and body["cup"] == 2 and body["cleared"] is True and body["names_rev"] == 3, str(body))
+    _check("one state line: cup 2 unflagged", port.lines() == [state_line(5, 1, cups12, NO_SCR_B)], str(port.lines()))
+    m = client.get("/api/quiniela").get_json()
+    _check("20 back in the field, its 4 tokens in the pot: 7, no scratches", m["horses"]["20"]["in_field"] is True
+           and m["horses"]["20"]["scratched"] is False and m["pot"] == 7.0 and m["scratches"] == [], str((m["horses"]["20"], m["pot"])))
+    _check("the record is gone", HorseStore(b.db).scratches() == {})
+    r = client.post("/api/quiniela/unscratch", json={"horse": 20})
+    _check("unscratching again -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 20 is not scratched", str(r.get_json()))
+    # The scratch command keeps the record in step with the flag.
+    r = client.post("/api/quiniela/cmd", json={"cmd": "scratch 2 1"})
+    _check("scratch 2 1 records 20, the horse on cup 2", r.status_code == 200 and get_board().store.scratches() == {20: None}
+           and r.get_json()["horse"] == 20, str(r.get_json()))
+    m = client.get("/api/quiniela").get_json()
+    _check("...and the model agrees", m["horses"]["20"]["scratched"] is True and m["horses"]["20"]["in_field"] is False)
+    r = client.post("/api/quiniela/cmd", json={"cmd": "scratch 2 0"})
+    _check("scratch 2 0 removes it", r.status_code == 200 and get_board().store.scratches() == {}
+           and client.get("/api/quiniela").get_json()["horses"]["20"]["in_field"] is True)
+    # A reset keeps the record; the flag comes back with the re-assignment.
+    client.post("/api/quiniela/scratch", json={"horse": 20})
+    b.reset_link("test")
+    get_board().refresh()
+    _check("after a reset the record stands and no cup carries 20", HorseStore(b.db).scratches() == {20: None} and b.horses[2] == 0)
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 2 20"})
+    _check("re-assigned after the reset: flagged again", r.status_code == 200 and b.scratched[2] is True and b.horses[2] == 20, str(r.get_json()))
+    # A horse given any other horse loses a flag it carried.
+    r = client.post("/api/quiniela/cmd", json={"cmd": "horse 2 8"})
+    _check("cup 2 given 8: unflagged", r.status_code == 200 and b.scratched[2] is False and b.horses[2] == 8, str(r.get_json()))
+
+
+def test_lq_scratches_migration():
+    """lq_scratches from c70d894 has `now INTEGER NOT NULL` and is live on
+    DevPi; a no-replacement scratch is a row with now NULL, so init_schema()
+    rebuilds the table, rows kept."""
+    path = str(tmpdir() / "devpi_scratches.db")
+    db = LqDb(path)
+    db.conn.executescript("""
+        CREATE TABLE lq_scratches (
+            was INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
+            now INTEGER NOT NULL CHECK (now BETWEEN 1 AND 24)
+        );
+        INSERT INTO lq_scratches VALUES (9, 22);
+    """)
+    try:
+        db.conn.execute("INSERT INTO lq_scratches (was, now) VALUES (20, NULL)")
+        _check("the old table refuses now NULL", False)
+    except sqlite3.IntegrityError:
+        _check("the old table refuses now NULL", True)
+    _check("check_shape() passes on the old table", db.check_shape() is None)
+    db.init_schema()
+    sql = db.query_one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lq_scratches'")["sql"]
+    _check("init_schema() rebuilt lq_scratches with a nullable now", "NOT NULL" not in sql and "IS NULL" in sql, sql)
+    _check("...the row kept", db.load_scratches() == {9: 22})
+    _check("...no lq_scratches_new left behind", db.query_one("SELECT name FROM sqlite_master WHERE name = 'lq_scratches_new'") is None)
+    db.save_scratch(20, None)
+    _check("a no-replacement scratch fits now", db.load_scratches() == {9: 22, 20: None})
+    _check("the store reads both kinds back", HorseStore(db).scratches() == {9: 22, 20: None}
+           and HorseStore(db).record(20) == ("gateway", None) and HorseStore(db).record(9) == ("replacement", 22)
+           and HorseStore(db).gateway_scratches() == {20})
+    _check("a second init_schema() finds nothing to migrate", db._migrate_lq_scratches() is False and db.load_scratches() == {9: 22, 20: None})
+    _check("check_shape() still passes", db.check_shape() is None)
+    db.close()
 
 
 def test_reset_clears_closes_at_and_keeps_names():
@@ -1935,32 +2065,48 @@ def test_routes_scratch_and_unscratch():
            str(m["events"]))
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     _check("neither kind applies -> 400", r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9 is not scratched"})
-    # The gateway kind, exactly as before.
+    # The no-replacement kind: recorded in pi5 (was 9, now None) and, since a
+    # cup carries 9, the cup's flag goes to the gateway. A repeat is a 400.
     port.written.clear()
-    for body in ({"horse": 9}, {"horse": 9, "replacement": None}, {"horse": "9"}):
+    r = client.post("/api/quiniela/scratch", json={"horse": 9})
+    got = r.get_json()
+    _check("{'horse': 9} -> kind gateway on cup 9, sent, names_rev 4", r.status_code == 200 and got["ok"] is True and got["kind"] == "gateway"
+           and got["cup"] == 9 and got["horse"] == 9 and got["scratched"] is True and got["sent"] is True and got["gateway_online"] is True
+           and got["names_rev"] == 4 and got["was"] == {"number": 9, "name": "Encino"}, str(got))
+    for body in ({"horse": 9, "replacement": None}, {"horse": "9"}):
         r = client.post("/api/quiniela/scratch", json=body)
-        got = r.get_json()
-        _check(f"{body!r:.45} -> kind gateway on cup 9", r.status_code == 200 and got["ok"] is True and got["kind"] == "gateway"
-               and got["cup"] == 9 and got["horse"] == 9 and got["scratched"] is True and got["gateway_online"] is True, str(got))
+        _check(f"{body!r:.45} again -> 400 already scratched", r.status_code == 400 and r.get_json()["error"] == "horse 9 is already scratched", str(r.get_json()))
     scr = [False] * 20
     scr[8] = True
-    _check("one state line went down (the repeats were no-ops), byte-exact",
+    _check("one state line went down, byte-exact",
            port.lines() == [state_line(4, 1, HORSES_1_TO_20, scr)], str(port.lines()))
+    _check("persisted as a record with no replacement", HorseStore(b.db).scratches() == {9: None})
     m = client.get("/api/quiniela").get_json()
     _check("the model: scratched, out of the field, tokens out of the pot, a no-replacement entry in scratches",
            m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["in_field"] is False and m["horses"]["9"]["tokens"] == 13
            and m["total_tokens"] == 18 and m["pot"] == 5.0 and m["prizes"] == {"win": 3, "place": 1, "show": 1}
            and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": None}], str((m["pot"], m["scratches"])))
-    _check("names_rev untouched by the gateway kind, no events", m["names_rev"] == 3 and m["events"] == events_before)
+    _check("names_rev bumped by the record, no events", m["names_rev"] == 4 and m["events"] == events_before)
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     got = r.get_json()
-    _check("unscratch clears the gateway flag", r.status_code == 200 and got["kind"] == "gateway" and got["scratched"] is False
-           and got["rev"] == 5 and port.lines()[-1] == state_line(5, 1, HORSES_1_TO_20, [False] * 20), str(got))
+    _check("unscratch clears the gateway flag and the record", r.status_code == 200 and got["kind"] == "gateway" and got["scratched"] is False
+           and got["cleared"] is True and got["rev"] == 5 and port.lines()[-1] == state_line(5, 1, HORSES_1_TO_20, [False] * 20)
+           and HorseStore(b.db).scratches() == {}, str(got))
     m = client.get("/api/quiniela").get_json()
     _check("the pot is back, 9 in the field, no scratches", m["pot"] == 18.0 and m["horses"]["9"]["in_field"] is True and m["scratches"] == [])
     b.set_state(1, [0 if h == 15 else h for h in HORSES_1_TO_20], NO_SCR)
+    port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 15})
-    _check("the gateway kind on a horse on no cup -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 15 is not on any cup")
+    got = r.get_json()
+    _check("the no-replacement kind on a horse on no cup: recorded, cup null, nothing sent (bench, 2026-09-26)",
+           r.status_code == 200 and got["kind"] == "gateway" and got["cup"] is None and got["sent"] is False and port.written == [], str(got))
+    m = client.get("/api/quiniela").get_json()
+    _check("...15 scratched and out of the field with no cup, in scratches with now null",
+           m["horses"]["15"]["scratched"] is True and m["horses"]["15"]["in_field"] is False and m["horses"]["15"]["cup"] is None
+           and m["scratches"] == [{"was": {"number": 15, "name": "DOMESTIC PRODUCT"}, "now": None}], str(m["scratches"]))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 15})
+    _check("...and undone with nothing to clear", r.status_code == 200 and r.get_json()["kind"] == "gateway"
+           and r.get_json()["cleared"] is False and r.get_json()["cup"] is None, str(r.get_json()))
     port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 15, "replacement": {"number": 21}})
     _check("...but a replacement scratch needs no cup: recorded with cup null, nothing sent", r.status_code == 200
@@ -1975,7 +2121,10 @@ def test_routes_scratch_and_unscratch():
             _check(f"POST {path[14:]} {bad!r:.30} -> 400", r.status_code == 400 and r.get_json()["ok"] is False, f"{r.status_code} {r.get_json()}")
     get_board().bridge = None
     r = client.post("/api/quiniela/scratch", json={"horse": 9})
-    _check("gateway kind without a bridge -> 503", r.status_code == 503 and r.get_json()["error"] == "bridge not initialised")
+    _check("the no-replacement kind without a bridge: recorded, cup null", r.status_code == 200 and r.get_json()["kind"] == "gateway"
+           and r.get_json()["cup"] is None and r.get_json()["sent"] is False, str(r.get_json()))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("...and undone without one", r.status_code == 200 and r.get_json()["kind"] == "gateway" and r.get_json()["cleared"] is False)
     r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
     _check("a replacement scratch needs no bridge: recorded, cup null", r.status_code == 200 and r.get_json()["kind"] == "replacement"
            and r.get_json()["cup"] is None, str(r.get_json()))
@@ -2128,6 +2277,8 @@ def main():
     _run("renumber — the lq_horses migration and the lq_scratches table", test_lq_horses_migration_and_scratches_table)
     _run("payout — GET/PUT /api/quiniela/horses", test_routes_horses_get_and_put)
     _run("renumber — POST /api/quiniela/scratch and /unscratch on a real bridge", test_routes_scratch_and_unscratch)
+    _run("scratch — a no-replacement scratch is about the horse, not the cup", test_no_replacement_scratch_is_about_the_horse)
+    _run("scratch — the lq_scratches migration (now nullable)", test_lq_scratches_migration)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
     _run("settings — the payout keys", test_settings_new_keys)

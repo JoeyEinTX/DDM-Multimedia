@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from flask import Blueprint, Response, jsonify, render_template, request
 
 from la_quiniela import protocol as P
-from la_quiniela.betting import BettingBoard, load_board_settings, sse_events, validate_cmd
+from la_quiniela.betting import BettingBoard, load_board_settings, sse_events, state_lists, validate_cmd
 from la_quiniela.horses import FIELD_SIZE, NAME_MAX_LEN, in_field, parse_names_text
 
 logger = logging.getLogger(__name__)
@@ -167,17 +167,9 @@ def _parse(text: str) -> Tuple[str, Any]:
 
 
 def _state_lists(snap: Dict[str, Any]) -> Tuple[int, List[int], List[bool]]:
-    """(phase, horses[20], scratched[20]) as set_state wants them, from a
-    get_snapshot() dict: position 0 = cup 1, horse None -> 0."""
-    cups = snap.get("cups") or []
-    by_cup: Dict[int, Dict[str, Any]] = {}
-    for entry in cups:
-        if isinstance(entry, dict) and isinstance(entry.get("cup"), int):
-            by_cup[entry["cup"]] = entry
-    horses = [int(by_cup.get(cup, {}).get("horse") or 0) for cup in P.CUP_NUMBERS]
-    scratched = [bool(by_cup.get(cup, {}).get("scratched")) for cup in P.CUP_NUMBERS]
-    phase = int((snap.get("devpi") or {}).get("phase") or 0)
-    return phase, horses, scratched
+    """(phase, horses[20], scratched[20]) as set_state wants them; see
+    betting.state_lists (the board's refresh() uses the same)."""
+    return state_lists(snap)
 
 
 @quiniela_board_bp.route("/api/quiniela/cmd", methods=["POST"])
@@ -239,7 +231,14 @@ def api_quiniela_cmd():
         if horse > FIELD_SIZE and store.replaced_by(horse) is None:
             return _bad(f"{horse} is not in the field; scratch a horse with {horse} as the replacement first")
         horses = [horse if c == cup else h for c, h in zip(P.CUP_NUMBERS, horses)]
-        extra.update({"cup": cup, "horse": horse})
+        # The scratched flag follows the horse, not the cup: a cup given a
+        # horse pi5 has scratched with no replacement draws its X at once,
+        # and a cup given any other horse (or none) loses a flag it carried.
+        flag = bool(horse) and store.record(horse) == ("gateway", None)
+        scratched = [flag if c == cup else s for c, s in zip(P.CUP_NUMBERS, scratched)]
+        if flag:
+            extra["note"] = extra.get("note", f"{horse} is scratched") + "; cup flagged scratched at the gateway"
+        extra.update({"cup": cup, "horse": horse, "scratched": flag})
     elif word == "scratch":
         cup, flag = args
         scratched = [flag if c == cup else s for c, s in zip(P.CUP_NUMBERS, scratched)]
@@ -248,6 +247,22 @@ def api_quiniela_cmd():
         rev = bridge.set_state(phase, horses, scratched)
     except ValueError as exc:
         return _bad(str(exc))
+    if word == "scratch":
+        # Keep pi5's record in step with the flag, so the admin page's Undo,
+        # the model's in_field and a reset (which clears the flags but keeps
+        # the records) all agree with what the cup shows.
+        store = get_board().store
+        carried = horses[cup - 1]
+        if carried:
+            try:
+                if flag:
+                    store.scratch_gateway(carried)
+                else:
+                    store.unscratch_gateway(carried)
+            except ValueError:
+                pass                                        # already recorded either way
+            extra["horse"] = carried
+        get_board().refresh()
     online = bool(bridge.get_snapshot()["link"]["gateway_online"])
     return jsonify({"ok": True, "rev": rev, "phase": phase, "gateway_online": online, **extra})
 
@@ -337,24 +352,25 @@ def _renumber_cup(bridge: Any, snap: Dict[str, Any], cup: int, horse: int) -> Op
     return None
 
 
-def _set_scratched(bridge: Any, horse: int, flag: bool):
-    """The gateway kind of scratch: flip the scratched flag on the cup that
-    carries the horse, through set_state(). Returns (payload, None) or
-    (None, (error, status))."""
+def _push_flag(bridge: Any, horse: int, flag: bool) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    """Set or clear the gateway's scratched flag on the cup that carries the
+    horse, through set_state(). Returns (cup, rev, None); (None, None, None)
+    when no cup carries the horse (nothing to push: the record alone does
+    the job until one does); (None, None, error) when the bridge refused."""
     snap = bridge.get_snapshot()
     entry = _cup_carrying(snap, horse)
     if entry is None:
-        return None, (f"horse {horse} is not on any cup", 400)
+        return None, None, None
     cup = int(entry["cup"])
+    if bool(entry.get("scratched")) == flag:
+        return cup, None, None                          # already as wanted
     phase, horses, scratched = _state_lists(snap)
     scratched = [flag if c == cup else s for c, s in zip(P.CUP_NUMBERS, scratched)]
     try:
         rev = bridge.set_state(phase, horses, scratched)
     except ValueError as exc:
-        return None, (str(exc), 400)
-    online = bool(bridge.get_snapshot()["link"]["gateway_online"])
-    return {"ok": True, "kind": "gateway", "horse": horse, "cup": cup, "scratched": flag,
-            "rev": rev, "gateway_online": online}, None
+        return None, None, str(exc)
+    return cup, rev, None
 
 
 @quiniela_board_bp.route("/api/quiniela/horses", methods=["GET"])
@@ -406,23 +422,44 @@ def api_quiniela_scratch():
     "cup": <cup or null>, "names_rev": N}, names as typed. A bare string
     replacement is a 400 that says the shape.
 
-    {"horse": 9} (replacement absent or null): the gateway kind, the cup's
-    scratched flag through set_state(), its tokens leave the pot; 400 when no
-    cup carries 9."""
+    {"horse": 9} (replacement absent or null): the no-replacement kind. It
+    is about the horse, not the cup: pi5 records it (was 9, now None), so 9
+    is out of the field and its tokens out of the pot whether or not a cup
+    carries it yet; if one does, the cup's scratched flag goes to the gateway
+    through set_state() so it draws its X, and a cup given 9 later gets the
+    flag then (the horse command, or the board's refresh() for dev/state and
+    for a re-assignment after a reset, which keeps the record). Reply
+    {"ok": true, "kind": "gateway", "horse": 9, "cup": <cup or null>,
+    "sent": <the flag went to the gateway>, "names_rev": N}. 400 "horse 9 is
+    not in the field" or "horse 9 is already scratched"."""
     body = request.get_json(silent=True)
     horse, error = _horse_arg(body)
     if error:
         return _bad(error)
     replacement = body.get("replacement")
     if replacement is None:
-        bridge = get_board().bridge
-        if bridge is None:
-            return _bad("bridge not initialised", 503)
-        payload, failure = _set_scratched(bridge, horse, True)
-        if failure:
-            return _bad(*failure)
-        get_board().refresh()
-        return jsonify(payload)
+        board = get_board()
+        snap, on_cups, gateway = _field_view(board)
+        records = board.store.scratches()
+        if horse in records or horse in gateway:
+            return _bad(f"horse {horse} is already scratched")
+        if not in_field(horse, records, gateway):
+            return _bad(f"horse {horse} is not in the field")
+        cup, rev, error = None, None, None
+        if board.bridge is not None:
+            cup, rev, error = _push_flag(board.bridge, horse, True)
+            if error:
+                return _bad(error)
+        try:
+            done = board.store.scratch_gateway(horse)
+        except ValueError as exc:
+            return _bad(str(exc))
+        board.refresh()
+        link = snap.get("link") if isinstance(snap, dict) else None
+        online = bool(link.get("gateway_online")) if isinstance(link, dict) else False
+        return jsonify({"ok": True, "kind": "gateway", "horse": horse, "cup": cup, "sent": cup is not None,
+                        "scratched": True, "rev": rev, "gateway_online": online,
+                        "names_rev": board.store.names_rev, **done})
     parsed, error = _replacement_arg(replacement)
     if error:
         return _bad(error)
@@ -430,6 +467,8 @@ def api_quiniela_scratch():
     board = get_board()
     snap, on_cups, gateway = _field_view(board)
     records = board.store.scratches()
+    if horse in records or horse in gateway:
+        return _bad(f"horse {horse} is already scratched")
     if not in_field(horse, records, gateway):
         return _bad(f"horse {horse} is not in the field")
     if (number == horse or number in on_cups or in_field(number, records, gateway)
@@ -482,16 +521,31 @@ def api_quiniela_unscratch():
                         "names_rev": board.store.names_rev,
                         "was": {"number": horse, "name": board.store.name_of(horse)},
                         "now": {"number": now, "name": board.store.name_of(now)}})
+    # The no-replacement kind: the record goes, and the flag on the cup
+    # carrying the horse (if any, and if set) is cleared. A cup flagged at
+    # the gateway with no record (dev/state) is cleared the same way.
     bridge = board.bridge
+    recorded = board.store.record(horse) == ("gateway", None)
+    flagged = False
+    cup = None
     if bridge is not None:
         entry = _cup_carrying(bridge.get_snapshot(), horse)
-        if entry is not None and entry.get("scratched"):
-            payload, failure = _set_scratched(bridge, horse, False)
-            if failure:
-                return _bad(*failure)
-            board.refresh()
-            return jsonify(payload)
-    return _bad(f"horse {horse} is not scratched")
+        if entry is not None:
+            cup = int(entry["cup"])
+            flagged = bool(entry.get("scratched"))
+    if not recorded and not flagged:
+        return _bad(f"horse {horse} is not scratched")
+    rev = None
+    if flagged:
+        _, rev, error = _push_flag(bridge, horse, False)
+        if error:
+            return _bad(error)
+    board.store.unscratch_gateway(horse)
+    board.refresh()
+    online = bool(bridge.get_snapshot()["link"]["gateway_online"]) if bridge is not None else False
+    return jsonify({"ok": True, "kind": "gateway", "horse": horse, "cup": cup, "scratched": False,
+                    "cleared": flagged, "rev": rev, "gateway_online": online,
+                    "names_rev": board.store.names_rev})
 
 
 @quiniela_board_bp.route("/api/quiniela/closes_at", methods=["PUT"])

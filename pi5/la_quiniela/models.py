@@ -89,12 +89,14 @@ CREATE TABLE IF NOT EXISTS lq_horses (
     replaced TEXT
 );
 
--- One row per replacement scratch: horse `was` left the field and its cup
--- now carries horse `now`. A no-replacement (gateway) scratch is the
--- bridge's scratched flag and is never stored here.
+-- One row per scratch: horse `was` left the field and its cup now carries
+-- horse `now`, or, with now NULL, `was` was scratched with no replacement
+-- (its tokens refunded; the cup's gateway flag follows from the record). A
+-- table created with now NOT NULL (c70d894, live on DevPi) is rebuilt by
+-- init_schema() (see _migrate_lq_scratches).
 CREATE TABLE IF NOT EXISTS lq_scratches (
     was INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
-    now INTEGER NOT NULL CHECK (now BETWEEN 1 AND 24)
+    now INTEGER CHECK (now IS NULL OR now BETWEEN 1 AND 24)
 );
 
 CREATE TABLE IF NOT EXISTS lq_board (
@@ -122,6 +124,11 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
 # The CHECK the first lq_horses carried (horses 1..20). A table whose CREATE
 # statement still says so is rebuilt with the 1..24 CHECK.
 _OLD_HORSE_CHECK = re.compile(r"BETWEEN\s+1\s+AND\s+20\b", re.I)
+
+
+# lq_scratches as c70d894 created it: `now INTEGER NOT NULL ...`; a
+# no-replacement scratch needs now NULL, so that shape is rebuilt.
+_OLD_SCRATCH_NOW = re.compile(r"\bnow\s+INTEGER\s+NOT\s+NULL", re.I)
 
 
 class LqDb:
@@ -160,6 +167,7 @@ class LqDb:
         changed shape. Idempotent."""
         with self.lock:
             self._migrate_lq_horses()
+            self._migrate_lq_scratches()
             self.conn.executescript(SCHEMA_SQL)
 
     def _migrate_lq_horses(self) -> bool:
@@ -185,6 +193,28 @@ class LqDb:
                          "SELECT horse, name, replaced FROM lq_horses")
             conn.execute("DROP TABLE lq_horses")
             conn.execute("ALTER TABLE lq_horses_new RENAME TO lq_horses")
+        return True
+
+    def _migrate_lq_scratches(self) -> bool:
+        """lq_scratches was created with `now INTEGER NOT NULL` (c70d894) and
+        is live on DevPi that way; a no-replacement scratch is a row with now
+        NULL. SQLite cannot drop a NOT NULL, so a table whose CREATE statement
+        still has it is rebuilt (new shape, copy the rows, drop, rename) in
+        one transaction. Returns whether it did; idempotent."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lq_scratches'").fetchone()
+        if row is None or not _OLD_SCRATCH_NOW.search(row["sql"] or ""):
+            return False
+        with self.txn() as conn:
+            conn.execute("DROP TABLE IF EXISTS lq_scratches_new")
+            conn.execute(
+                "CREATE TABLE lq_scratches_new ("
+                "    was INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),"
+                "    now INTEGER CHECK (now IS NULL OR now BETWEEN 1 AND 24)"
+                ")")
+            conn.execute("INSERT INTO lq_scratches_new (was, now) SELECT was, now FROM lq_scratches")
+            conn.execute("DROP TABLE lq_scratches")
+            conn.execute("ALTER TABLE lq_scratches_new RENAME TO lq_scratches")
         return True
 
     def close(self) -> None:
@@ -329,17 +359,18 @@ class LqDb:
                 "ON CONFLICT(horse) DO UPDATE SET name = excluded.name, replaced = NULL",
                 (int(horse), name or ""))
 
-    def load_scratches(self) -> Dict[int, int]:
-        """{was: now} for every replacement scratch on record."""
-        return {int(r["was"]): int(r["now"])
+    def load_scratches(self) -> Dict[int, Optional[int]]:
+        """{was: now} for every scratch on record; now is None for a
+        no-replacement scratch."""
+        return {int(r["was"]): (int(r["now"]) if r["now"] is not None else None)
                 for r in self.query("SELECT was, now FROM lq_scratches")}
 
-    def save_scratch(self, was: int, now: int) -> None:
+    def save_scratch(self, was: int, now: Optional[int]) -> None:
         with self.txn() as conn:
             conn.execute(
                 "INSERT INTO lq_scratches (was, now) VALUES (?, ?) "
                 "ON CONFLICT(was) DO UPDATE SET now = excluded.now",
-                (int(was), int(now)))
+                (int(was), int(now) if now is not None else None))
 
     def delete_scratch(self, was: int) -> None:
         with self.txn() as conn:

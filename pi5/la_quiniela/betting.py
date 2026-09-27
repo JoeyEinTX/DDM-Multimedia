@@ -276,6 +276,20 @@ def prizes_for(pot: Any, split: Dict[str, Any]) -> Dict[str, int]:
 # The model
 # -----------------------------------------------------------------------------
 
+def state_lists(snap: Any) -> Tuple[int, List[int], List[bool]]:
+    """(phase, horses[20], scratched[20]) as LqBridge.set_state() wants
+    them, from a get_snapshot() dict: position 0 = cup 1, horse None -> 0."""
+    snap = snap if isinstance(snap, dict) else {}
+    by_cup: Dict[int, Dict[str, Any]] = {}
+    for entry in snap.get("cups") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("cup"), int) and not isinstance(entry.get("cup"), bool):
+            by_cup[entry["cup"]] = entry
+    horses = [int(by_cup.get(cup, {}).get("horse") or 0) for cup in P.CUP_NUMBERS]
+    scratched = [bool(by_cup.get(cup, {}).get("scratched")) for cup in P.CUP_NUMBERS]
+    phase = int((snap.get("devpi") or {}).get("phase") or 0)
+    return phase, horses, scratched
+
+
 def _unassigned() -> Dict[str, Any]:
     """A horse no cup carries. name / replaced / in_field are filled in by
     _name_horses(): in_field is true for 1..20 unless scratched, so an
@@ -432,12 +446,22 @@ class BettingBoard:
         record whose "now" is n), else None. scratches: one entry per
         scratch ordered by was.number, {"was": {"number", "name"}, "now":
         {"number", "name"}} for a replacement record and {"was": {...},
-        "now": None} for a cup scratched at the gateway with no record;
-        names upper-cased, "" when unnamed."""
+        "now": None} for a no-replacement scratch (recorded here, or a cup
+        flagged at the gateway with no record); names upper-cased, "" when
+        unnamed.
+
+        A no-replacement scratch is about the horse, not the cup: a record
+        with now None marks the horse scratched whether or not a cup carries
+        it yet, so it is out of the field and its tokens (if any) out of the
+        pot from the moment it is recorded; the cup's own flag follows when
+        one carries it (refresh() pushes it)."""
         names = self.store.horses()
         records = self.store.scratches()
+        for was, now in records.items():
+            if now is None:
+                horses[str(was)]["scratched"] = True
         gateway = {n for n in range(1, HORSE_COUNT + 1) if horses[str(n)]["scratched"]}
-        by_now = {now: was for was, now in records.items()}
+        by_now = {now: was for was, now in records.items() if now is not None}
 
         def named(n: int) -> Dict[str, Any]:
             return {"number": n, "name": ((names.get(n) or {}).get("name") or "").upper()}
@@ -698,7 +722,37 @@ class BettingBoard:
         # waits on the bridge.
         with self._refresh_lock:
             snap = bridge.get_snapshot()
-            return self.apply_snapshot(snap)
+            changed = self.apply_snapshot(snap)
+            self._push_recorded_scratches(bridge, snap)
+            return changed
+
+    def _push_recorded_scratches(self, bridge: Any, snap: Any) -> bool:
+        """A no-replacement scratch is a record in the store; the cup that
+        carries that horse must carry the gateway's scratched flag so it
+        draws its X. A cup found carrying a recorded horse without the flag
+        (the horse assigned after the scratch by the horse command, by
+        dev/state, or again after a reset) gets it here through set_state(),
+        one line for all such cups. The bridge notifies, the board refreshes
+        once more and finds nothing to do. Returns whether a line went down;
+        never raises."""
+        recorded = self.store.gateway_scratches()
+        if not recorded or not isinstance(snap, dict):
+            return False
+        cups = [c for c in snap.get("cups") or [] if isinstance(c, dict)]
+        missing = [c["cup"] for c in cups
+                   if c.get("horse") in recorded and not c.get("scratched")
+                   and isinstance(c.get("cup"), int) and not isinstance(c.get("cup"), bool)]
+        if not missing:
+            return False
+        phase, horses, scratched = state_lists(snap)
+        scratched = [True if c in missing else s for c, s in zip(P.CUP_NUMBERS, scratched)]
+        try:
+            bridge.set_state(phase, horses, scratched)
+        except ValueError as exc:
+            log.warning("La Quiniela board: cannot flag cup(s) %s scratched at the gateway: %s", missing, exc)
+            return False
+        log.info("La Quiniela board: cup(s) %s flagged scratched at the gateway (recorded scratch)", missing)
+        return True
 
     def _set_locked(self, model: Dict[str, Any]) -> None:
         self._model = model

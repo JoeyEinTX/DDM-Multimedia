@@ -84,7 +84,7 @@ then refuses to start. Timestamps are UTC ISO 8601 with a `Z`.
 | `events` | audit log: `ts`, `type`, `cup_id` (nullable), `detail` (JSON) |
 | `lq_link_state` | one row: `state_rev`, `state_json`, `roster_rev`, `roster_json`; how the bridge answers a `hello` after a restart |
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
-| `lq_scratches` | one row per replacement scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup). A no-replacement (gateway) scratch is the bridge's scratched flag and is never stored here |
+| `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
 
 `lq_horses` was first created with `CHECK (horse BETWEEN 1 AND 20)` and is
@@ -404,14 +404,29 @@ keyed `"1"`..`"24"` and every entry carries `in_field`.
    scratch before adoption) only the record is made, and a later `horse
    <cup> 9` assigns 22. The name-swap of 726d4c2 (same number, new name) is
    gone: a bare string `replacement` is a 400 that says the shape.
-2. **No replacement** (`{"horse": 9}` alone, or `"replacement": null`): the
-   bridge's existing scratch, `set_state()` with the scratched flag on the
-   cup carrying horse 9, so the cup shows SCRATCHED and `horses["9"].scratched`
-   is true as before. **Its tokens are excluded from the pot and the
-   prizes**; Joey refunds them by hand. `total_tokens` still counts every
-   cup. This pot rule is an assumption about how a no-replacement scratch is
-   settled; if the tokens should stay in the pot instead, it is the one `if
-   not h["scratched"]` in `apply_snapshot()`.
+2. **No replacement** (`{"horse": 9}` alone, or `"replacement": null`): a
+   scratch is about the horse, not the cup (bench, 2026-09-26: with one cup
+   online, scratching 20 answered "not on any cup"). pi5 records it in
+   `lq_scratches` (`was` 9, `now` NULL) whether or not a cup carries 9, so
+   `horses["9"].scratched` is true, `in_field` false and the entry `{"was":
+   {...}, "now": null}` is in `scratches` at once; `names_rev` bumps. If a
+   cup carries 9 the bridge's scratched flag goes to the gateway through
+   `set_state()` too, so the cup shows SCRATCHED; the reply says `"cup": 9`
+   and `"sent": true` (`"cup": null, "sent": false` when no cup does). **A
+   cup assigned to an already-scratched horse gets the flag at that moment**:
+   the `horse <cup> <n>` command sets it in the same state line (and clears
+   it from a cup given any other horse), and the board's `refresh()` pushes
+   it for any cup found carrying a recorded horse without the flag (the
+   dev/state route, a re-assignment after a reset: the reset clears the
+   bridge's flags but the record stays). The assignment is never refused.
+   `unscratch` mirrors it: the record goes and the flag on the horse's cup,
+   if set, is cleared. The `scratch <cup> 0|1` command keeps the record in
+   step for the horse on that cup, so every path agrees. A repeat scratch is
+   a 400 `horse 9 is already scratched`. **Its tokens are excluded from the
+   pot and the prizes**; Joey refunds them by hand. `total_tokens` still
+   counts every cup. This pot rule is an assumption about how a
+   no-replacement scratch is settled; if the tokens should stay in the pot
+   instead, it is the one `if not h["scratched"]` in `apply_snapshot()`.
 
 **`in_field`**, per horse, computed by pi5: 1..20 true unless scratched
 (either kind); 21..24 true only while standing in for a scratched horse. A
@@ -487,8 +502,8 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see the translation table. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
-| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}, "cup": 9, "names_rev": N}` (names as typed; `cup` null when no cup carried 9). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2 through `set_state()`, `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9, "scratched": true, "rev": R, "gateway_online": bool}`; 400 `horse 9 is not on any cup`, 503 `bridge not initialised`. |
-| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the cup carrying the record's `now` (if any does) goes back to 9 through `set_state()`, the record is removed (22's name stays stored) and `names_rev` bumps, `{"ok": true, "kind": "replacement", "was": {...}, "now": {...}, "cup": 9 or null, "names_rev": N}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the gateway flag on the horse's cup is cleared, the kind 2 reply; 400 `horse 9 is not scratched` when neither applies. |
+| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}, "cup": 9, "names_rev": N}` (names as typed; `cup` null when no cup carried 9). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup carries 9, and the cup's flag through `set_state()` when one does: `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9 or null, "sent": bool, "scratched": true, "rev": R or null, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`; 400 `horse 9 is already scratched`, `horse 9 is not in the field`. Works without a bridge (recorded, `cup` null). |
+| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the cup carrying the record's `now` (if any does) goes back to 9 through `set_state()`, the record is removed (22's name stays stored) and `names_rev` bumps, `{"ok": true, "kind": "replacement", "was": {...}, "now": {...}, "cup": 9 or null, "names_rev": N}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the no-replacement record goes and the flag on the horse's cup, if any and if set, is cleared, `{"ok": true, "kind": "gateway", "horse": 9, "cup": 9 or null, "cleared": bool, "scratched": false, "rev": R or null, "gateway_online": bool, "names_rev": N}` (a cup flagged at the gateway with no record, from dev/state, is cleared the same way); 400 `horse 9 is not scratched` when neither applies. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
 | `GET /quiniela/admin` | The admin page above. |
 
@@ -593,11 +608,12 @@ and the store as follows:
   rule above. `split`: the three fractions from config.
 - `chyron`: `LQ_CHYRON_LINES` from config, for the crawl along the bottom.
 - `names_rev`: the names store's revision, bumped by any name change, any
-  replacement scratch and its undo, persisted in `lq_board`; a change
-  publishes a model (it differs) but yields no events. A gateway
-  (no-replacement) scratch or unscratch is the bridge's state, versioned by
-  its state rev, and leaves `names_rev` alone (the model still publishes:
-  `scratched`, `pot` and `prizes` moved).
+  scratch of either kind and its undo, persisted in `lq_board`; a change
+  publishes a model (it differs) but yields no events. A scratched flag set
+  at the gateway with no record (dev/state, `scratch <cup> 1` on a cup with
+  no horse) is the bridge's state, versioned by its state rev, and leaves
+  `names_rev` alone (the model still publishes: `scratched`, `pot` and
+  `prizes` moved).
 - `horses[n].name`: the store's name **upper-cased** (`""` when unset).
   `horses[n].in_field`: the rule above. `horses[n].replaced`: the
   upper-cased name of the horse n stands in for (the `was` of the record
@@ -606,7 +622,8 @@ and the store as follows:
   upper-cased and `""` when unnamed: a replacement record `{"was":
   {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}`,
   a gateway (no-replacement) scratch `{"was": {"number": 20, "name":
-  "SOCIETY MAN"}, "now": null}`. A gateway-scratched cup whose horse is also
+  "SOCIETY MAN"}, "now": null}` (a record with `now` NULL, or a cup flagged
+  at the gateway with no record). A gateway-scratched cup whose horse is also
   the `was` of a record appears once, as the record. A renumber never
   changes `pot` (the cup keeps counting under its new number); a gateway
   scratch still takes its cup's tokens out of it.

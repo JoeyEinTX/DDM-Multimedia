@@ -28,7 +28,7 @@ import logging
 import re
 import sqlite3
 import threading
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple
 
 from la_quiniela import protocol as P
 
@@ -109,18 +109,26 @@ def parse_names_text(text: Any) -> Dict[int, str]:
     return names
 
 
-def in_field(horse: int, records: Dict[int, int], gateway_scratched: Iterable[int] = ()) -> bool:
+def in_field(horse: int, records: Dict[int, Optional[int]], gateway_scratched: Iterable[int] = ()) -> bool:
     """The one rule, pure: 1..20 are in the field unless scratched (either
     kind); 21..24 only while standing in for a scratched horse. The "now" of
-    a replacement record is in the field; the "was" of one, or a horse whose
-    cup carries the gateway's scratched flag, is not, whatever its number."""
+    a replacement record is in the field; the "was" of any record (a
+    replacement, or a no-replacement scratch recorded as was -> None), or a
+    horse whose cup carries the gateway's scratched flag, is not, whatever
+    its number."""
     if horse in records or horse in gateway_scratched:
         return False
     return horse <= FIELD_SIZE or horse in records.values()
 
 
 class HorseStore:
-    """Names for horses 1..24, the replacement records and closes_at.
+    """Names for horses 1..24, the scratch records and closes_at.
+
+    A record is was -> now: a replacement scratch (the cup that was `was`
+    now carries `now`) or, with now None, a no-replacement scratch (the
+    horse is out, its tokens refunded; the cup carrying it, if any, gets the
+    gateway's scratched flag from board.py / BettingBoard.refresh()). Both
+    kinds live in lq_scratches and survive a reset.
 
     db is an LqDb (models.py) or None for a memory-only store. on_change is a
     no-argument callable invoked after every write, outside the lock."""
@@ -131,7 +139,7 @@ class HorseStore:
         self._lock = threading.Lock()
         self._horses: Dict[int, Dict[str, str]] = {
             n: {"name": ""} for n in range(1, HORSE_COUNT + 1)}
-        self._scratches: Dict[int, int] = {}      # was -> now
+        self._scratches: Dict[int, Optional[int]] = {}      # was -> now, or None: no replacement
         self._names_rev = 0
         self._closes_at: Optional[float] = None
         if db is not None:
@@ -151,7 +159,7 @@ class HorseStore:
                         log.warning("La Quiniela horses: legacy name-swap replacement on horse %d "
                                     "ignored; scratch it again with a number", horse)
             for was, now in self._db.load_scratches().items():
-                if 1 <= was <= HORSE_COUNT and 1 <= now <= HORSE_COUNT and was != now:
+                if 1 <= was <= HORSE_COUNT and (now is None or (1 <= now <= HORSE_COUNT and was != now)):
                     self._scratches[was] = now
             board = self._db.load_board()
             self._names_rev = int(board.get("names_rev") or 0)
@@ -198,15 +206,31 @@ class HorseStore:
         with self._lock:
             return self._horses[horse]["name"]
 
-    def scratches(self) -> Dict[int, int]:
-        """{was: now} for every replacement record, a copy."""
+    def scratches(self) -> Dict[int, Optional[int]]:
+        """{was: now} for every record, a copy; now is None for a
+        no-replacement scratch."""
         with self._lock:
             return dict(self._scratches)
 
     def replacement_of(self, was: int) -> Optional[int]:
-        """The "now" of the record whose "was" is this horse, or None."""
+        """The "now" of the replacement record whose "was" is this horse;
+        None when there is no record or it is a no-replacement scratch."""
         with self._lock:
             return self._scratches.get(was)
+
+    def record(self, was: int) -> Optional[Tuple[str, Optional[int]]]:
+        """("replacement", now) or ("gateway", None) for the record whose
+        "was" is this horse; None when it has none."""
+        with self._lock:
+            if was not in self._scratches:
+                return None
+            now = self._scratches[was]
+            return ("gateway", None) if now is None else ("replacement", now)
+
+    def gateway_scratches(self) -> Set[int]:
+        """The horses scratched with no replacement (records with now None)."""
+        with self._lock:
+            return {was for was, now in self._scratches.items() if now is None}
 
     def replaced_by(self, now: int) -> Optional[int]:
         """The "was" of the record whose "now" is this horse, or None."""
@@ -222,7 +246,7 @@ class HorseStore:
         turn). A horse with no record is its own answer."""
         with self._lock:
             seen = set()
-            while horse in self._scratches and horse not in seen:
+            while self._scratches.get(horse) is not None and horse not in seen:
                 seen.add(horse)
                 horse = self._scratches[horse]
             return horse
@@ -285,6 +309,8 @@ class HorseStore:
         if was == now:
             raise ValueError(f"{now} is in use")
         with self._lock:
+            if self._scratches.get(was, 0) is None:
+                raise ValueError(f"horse {was} is already scratched")
             if was in self._scratches:
                 raise ValueError(f"horse {was} is not in the field")
             if now in self._scratches or now in self._scratches.values():
@@ -302,19 +328,55 @@ class HorseStore:
         return result
 
     def unscratch_replace(self, was: Any) -> Optional[int]:
-        """Remove the record whose "was" is this horse. Returns its "now"
-        (whose name stays stored), or None when there is no such record.
-        Bumps names_rev once when it did something."""
+        """Remove the replacement record whose "was" is this horse. Returns
+        its "now" (whose name stays stored), or None when there is no such
+        record (a no-replacement record is left alone: see
+        unscratch_gateway). Bumps names_rev once when it did something."""
         was = _horse_number(was)
         with self._lock:
-            now = self._scratches.pop(was, None)
-            if now is None:
+            if self._scratches.get(was) is None:
                 return None
+            now = self._scratches.pop(was)
             self._names_rev += 1
             self._save_scratch(was)
             self._save_board()
         self._changed()
         return now
+
+    # -- no-replacement scratches -----------------------------------------------
+
+    def scratch_gateway(self, was: Any) -> Dict[str, Any]:
+        """Record that horse `was` is scratched with no replacement: out of
+        the field, tokens refunded. The cup carrying it, if any, gets the
+        gateway's scratched flag from the caller (board.py) or from the
+        board's refresh() when a cup is assigned later. Bumps names_rev once.
+        Returns {"was": {"number", "name"}}. ValueError when the horse is
+        already scratched either way."""
+        was = _horse_number(was)
+        with self._lock:
+            if was in self._scratches:
+                raise ValueError(f"horse {was} is already scratched")
+            self._scratches[was] = None
+            self._names_rev += 1
+            self._save_scratch(was)
+            self._save_board()
+            result = {"was": {"number": was, "name": self._horses[was]["name"]}}
+        self._changed()
+        return result
+
+    def unscratch_gateway(self, was: Any) -> bool:
+        """Remove the no-replacement record of this horse. Returns whether
+        there was one. Bumps names_rev once when it did something."""
+        was = _horse_number(was)
+        with self._lock:
+            if was not in self._scratches or self._scratches[was] is not None:
+                return False
+            del self._scratches[was]
+            self._names_rev += 1
+            self._save_scratch(was)
+            self._save_board()
+        self._changed()
+        return True
 
     # -- closing time ---------------------------------------------------------
 

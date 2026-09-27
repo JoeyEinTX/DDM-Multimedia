@@ -27,7 +27,8 @@
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .row > * { flex: 1 1 auto; }
   .status { color: var(--dim); font-size: 15px; margin-top: 8px; min-height: 1.3em; }
-  .status.ok { color: var(--ok); } .status.err { color: var(--rose); }
+  .status.ok { color: var(--ok); } .status.err { color: var(--rose); font-weight: 600; }
+  .rowstatus { grid-column: 1 / -1; margin-top: 0; }   /* under the buttons of that very row, where the finger is */
   .horse { display: grid; grid-template-columns: 44px 1fr; gap: 6px 10px; align-items: center;
            padding: 10px 0; border-top: 1px solid var(--line); }
   .horse:first-of-type { border-top: 0; }
@@ -117,12 +118,12 @@
         return r.text().then(function (t) {
           var j;
           try { j = JSON.parse(t); } catch (e) { j = null; }
-          if (!j || typeof j !== "object") { j = { ok: false, error: "HTTP " + r.status }; }
+          if (!j || typeof j !== "object") { j = { ok: false, error: "non-JSON reply (HTTP " + r.status + ")" }; }
           return { ok: r.ok, status: r.status, body: j };
         });
       });
   }
-  function fail(id) { return function () { say(id, "cannot reach pi5", "err"); }; }
+  function fail(id) { return function () { say(id, "cannot reach pi5 (network error)", "err"); }; }
   function money(n) { return "$" + Math.round(Number(n) || 0); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -162,14 +163,14 @@
     });
   }
   $("names-reload").onclick = function () {
-    loadHorses().then(function () { say("names-status", "reloaded"); }).catch(fail("names-status"));
+    loadHorses().then(function () { say("names-status", "Reloaded", "ok"); }).catch(fail("names-status"));
   };
   $("names-save").onclick = function () {
     say("names-status", "saving…");
     api("PUT", "/api/quiniela/horses", { text: $("names-text").value }).then(function (r) {
       if (!r.ok) { say("names-status", r.body.error || "error " + r.status, "err"); return; }
       horses = r.body.horses; $("names-text").value = namesText(); renderScratches(true);
-      say("names-status", "saved (rev " + r.body.names_rev + ")", "ok"); loadModel(true);
+      say("names-status", "Saved", "ok"); loadModel(true);
     }).catch(fail("names-status"));
   };
 
@@ -250,6 +251,7 @@
           '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">' +
           '<button class="danger" data-scratch>Scratch</button>' +
           '<label><input type="checkbox" data-norepl> No replacement (scratch the cup at the gateway)</label>' +
+          '<div class="status rowstatus" data-rowstatus></div>' +
         "</div></div>";
     }
     list.innerHTML = html || '<div class="empty">nobody in the field</div>';
@@ -267,18 +269,38 @@
                                             (chained ? " · undo #" + now.number + " first" : "")
                                           : "no replacement: cup scratched at the gateway, tokens out of the pot") + "</div></div>" +
         '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
+        '<div class="status rowstatus" data-rowstatus></div>' +
         "</div>";
     });
     done.innerHTML = html || '<div class="empty">no scratches</div>';
+    applyRowNotes();
   }
   $("scratch-list").addEventListener("change", function (ev) {
     var sel = ev.target.closest("[data-repl-num]"); if (!sel) { return; }
     sel.closest(".horse").querySelector("[data-repl-name]").value = storedName(Number(sel.value));
   });
+  // Every outcome of a Scratch or Undo is written into the row that was
+  // pressed (and into the section's status line): the server's error text
+  // verbatim in red, a short confirmation in green, a network failure or a
+  // non-JSON reply as such. It stays until the next action. The rows are
+  // rebuilt after a success (and by the 5 s refresh when something changed),
+  // so the notes live in a map and are re-applied to the new rows.
+  var rowNotes = {};
+  function applyRowNotes() {
+    Array.prototype.forEach.call(document.querySelectorAll("#scratch-list .horse, #scratched-list .horse"), function (row) {
+      var el = row.querySelector("[data-rowstatus]"), note = rowNotes[row.getAttribute("data-horse")];
+      if (!el) { return; }
+      el.textContent = note ? note.text : "";
+      el.className = "status rowstatus" + (note && note.cls ? " " + note.cls : "");
+    });
+  }
+  function noteRow(horse, text, cls) { rowNotes[horse] = { text: text, cls: cls }; applyRowNotes(); }
+  function clearRowNotes() { rowNotes = {}; applyRowNotes(); }
   function onScratchClick(ev) {
     var btn = ev.target.closest("button"); if (!btn) { return; }
     var row = btn.closest(".horse"), horse = Number(row.getAttribute("data-horse"));
     var body = { horse: horse }, path, what;
+    var report = function (text, cls) { noteRow(horse, text, cls); say("scratch-status", text, cls); };
     if (btn.hasAttribute("data-undo")) {
       path = "/api/quiniela/unscratch";
     } else {
@@ -286,23 +308,23 @@
       var num = row.querySelector("[data-repl-num]").value;
       var name = row.querySelector("[data-repl-name]").value.trim();
       var norepl = row.querySelector("[data-norepl]").checked;
-      if (!norepl && !num) { say("scratch-status", "no free number: tick No replacement", "err"); return; }
+      if (!norepl && !num) { clearRowNotes(); report("no free number: tick No replacement", "err"); return; }
       if (!norepl) { body.replacement = { number: Number(num), name: name }; }
     }
-    say("scratch-status", "working…");
+    clearRowNotes();
+    report("working\u2026");
     api("POST", path, body).then(function (r) {
-      if (!r.ok) { say("scratch-status", r.body.error || "error " + r.status, "err"); return; }
-      if (r.body.kind === "gateway") {
-        what = "horse " + horse + ": gateway scratch " + (r.body.scratched ? "set" : "cleared");
-      } else if (path.indexOf("unscratch") >= 0) {
-        what = "horse " + horse + " is back; #" + r.body.now.number + " out of the field";
+      if (!r.ok) { report(r.body.error || ("error " + r.status), "err"); return; }
+      if (path.indexOf("unscratch") >= 0) {
+        what = "Undone " + horse;
+      } else if (r.body.kind === "gateway") {
+        what = "Scratched " + horse + (r.body.cup == null ? " (no cup yet; the flag follows when one is assigned)" : "");
       } else {
-        what = "#" + horse + " scratched; " + (r.body.cup == null ? "no cup yet" : "cup " + r.body.cup) +
-               " is now #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
+        what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
       }
-      say("scratch-status", what, "ok");
+      report(what, "ok");
       return loadHorses().then(function () { return loadModel(true); });
-    }).catch(fail("scratch-status"));
+    }).catch(function () { report("cannot reach pi5 (network error)", "err"); });
   }
   $("scratch-list").addEventListener("click", onScratchClick);
   $("scratched-list").addEventListener("click", onScratchClick);
@@ -324,7 +346,7 @@
     say("closes-status", "saving…");
     api("PUT", "/api/quiniela/closes_at", body).then(function (r) {
       if (!r.ok) { say("closes-status", r.body.error || "error " + r.status, "err"); return; }
-      say("closes-status", r.body.closes_at == null ? "cleared" : "set", "ok"); loadModel();
+      say("closes-status", r.body.closes_at == null ? "Cleared" : "Set", "ok"); loadModel();
     }).catch(fail("closes-status"));
   }
   $("closes-set").onclick = function () {
@@ -337,6 +359,8 @@
   });
 
   loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
+  // The names, Set/Clear and Scratch/Undo buttons each report into their
+  // own status line; nothing on this page fails silently.
   setInterval(function () { loadModel(false); }, 5000);
 })();
 </script>
