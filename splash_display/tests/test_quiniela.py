@@ -17,6 +17,7 @@ Flask's test client; none of its servers is started.
 from __future__ import annotations
 
 import contextlib
+import html
 import importlib.util
 import io
 import json
@@ -24,9 +25,12 @@ import logging
 import os
 import queue
 import re
+import shutil
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -76,10 +80,11 @@ CONTRACT_KEYS = {
     "total_tokens", "horses", "leader", "events", "updated", "board_states",
 }
 # What pi5 serves (pi5/la_quiniela/test_betting.py MODEL_KEYS): the contract,
-# the keys added with the payout model, and those added with protocol v2.
+# the keys added with the payout model, those added with protocol v2, and the
+# figures at the post (closing).
 PI5_MODEL_KEYS = CONTRACT_KEYS | {
     "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
-    "cups_online", "cups_no_horse", "results",
+    "cups_online", "cups_no_horse", "results", "closing",
 }
 PI5_HORSE_KEYS = {"tokens", "share", "scratched", "online", "cup", "conflict", "cups",
                   "name", "replaced", "in_field"}
@@ -308,6 +313,17 @@ class RelayTests(RelayCase):
         self.assertFalse(self.board.apply_model(pi5_model(race_state=5, results=dict(results))))
         self.assertTrue(self.board.apply_model(pi5_model(race_state=6, results=None)), "pi5's reset clears them")
         self.assertIsNone(self.board.model()["results"])
+
+    def test_the_figures_at_the_post_pass_through_as_received(self) -> None:
+        closing = {"pot": 154.0, "prizes": {"win": 92, "place": 39, "show": 23}, "total_tokens": 158,
+                   "horses": {str(n): {"tokens": 4 if n == 19 else 0} for n in range(1, 25)}, "at": 1_700_000_000.0}
+        self.assertTrue(self.board.apply_model(pi5_model(race_state=5, tokens={19: 0}, closing=closing)))
+        served = self.board.model()
+        self.assertEqual(served["closing"], closing, "the relay serves pi5's closing untouched")
+        self.assertEqual((served["pot"], served["horses"]["19"]["tokens"]), (0.0, 0), "...beside the live fields")
+        self.assertIn('"closing":{"pot":154.0', self.board.model_json())
+        self.assertTrue(self.board.apply_model(pi5_model(race_state=1, closing=None)), "dropped when betting reopens")
+        self.assertIsNone(self.board.model()["closing"])
 
     def test_apply_model_ignores_junk(self) -> None:
         before = self.board.model_json()
@@ -1024,6 +1040,186 @@ class LookTests(RouteCase):
             self.assertIn(needle, js)
 
 
+def find_chrome() -> Optional[str]:
+    """A Chrome or Chromium to run the board's script in, headless: DDM_CHROME
+    if set, else the usual names on PATH (DevPi's chromium), else the usual
+    Windows and macOS places. None when there is none."""
+    env = os.environ.get("DDM_CHROME")
+    if env:
+        return env if (Path(env).exists() or shutil.which(env)) else None
+    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+        path = shutil.which(name)
+        if path:
+            return path
+    for path in (r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+        if Path(path).exists():
+            return path
+    return None
+
+
+CHROME = find_chrome()
+
+# Stands in for the page's network (the board fetches /api/quiniela once and
+# listens to /api/quiniela/stream): every model arrives as a stream message,
+# one after another, and after each the board's figures are read off the
+# DOM, past the 500 ms count tween. The readings end up in #probe as JSON.
+BOARD_PROBE_JS = r"""
+(() => {
+    const MODELS = __MODELS__;
+    const WAIT_MS = 700;
+    const out = [];
+    const text = (sel) => { const el = document.querySelector(sel); return el ? el.textContent.trim() : null; };
+    function read() {
+        const board = document.getElementById('quiniela-board');
+        const rows = {};
+        for (const el of document.querySelectorAll('.qb-rows [data-horse]')) {
+            rows[el.dataset.horse] = el.querySelector('.qb-bets').textContent.trim();
+        }
+        const results = {};
+        for (const p of ['win', 'place', 'show']) {
+            results[p] = { horse: document.getElementById('qb-result-' + p).dataset.horse,
+                           bets: text('#qb-result-' + p + ' .qb-result-count'),
+                           prize: text('#qb-result-' + p + ' .qb-result-prize') };
+        }
+        return { state: board.dataset.state, view: board.dataset.view || 'rows',
+                 visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
+                 pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
+                 rows: rows, results: results };
+    }
+    let stream = null;
+    window.fetch = () => new Promise(() => {});
+    window.ddmSlideshow = { hold() {}, release() {} };
+    window.EventSource = class {
+        constructor() { stream = this; setTimeout(feed, 0); }
+        addEventListener() {}
+        close() {}
+    };
+    async function feed() {
+        for (const m of MODELS) {
+            stream.onmessage({ data: JSON.stringify(m) });
+            await new Promise((resolve) => setTimeout(resolve, WAIT_MS));
+            out.push(read());
+        }
+        document.getElementById('probe').textContent = JSON.stringify(out);
+    }
+})();
+"""
+
+
+def run_board(models: List[dict]) -> List[dict]:
+    """The board's real template and script in a page of their own, fed
+    `models` in turn; what the board showed after each."""
+    with server.app.test_request_context("/"):
+        board_html = server.render_template("splash/quiniela_live.html", quiniela_look="impact")
+    script = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+    probe = BOARD_PROBE_JS.replace("__MODELS__", json.dumps(models))
+    page = ('<!doctype html><html><head><meta charset="utf-8"></head><body>\n' + board_html
+            + '\n<pre id="probe"></pre>\n<script>' + probe + '</script>\n<script>' + script
+            + '</script>\n</body></html>\n')
+    tmp = Path(tempfile.mkdtemp(prefix="qb_page_"))
+    try:
+        path = tmp / "board.html"
+        path.write_text(page, encoding="utf-8")
+        cmd = [CHROME, "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+               "--user-data-dir=" + str((tmp / "profile").resolve()),
+               "--virtual-time-budget=" + str(1000 + 900 * len(models)), "--dump-dom", path.resolve().as_uri()]
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd.insert(1, "--no-sandbox")
+        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        found = re.search(r'<pre id="probe">(.*?)</pre>', done.stdout, re.S)
+        if not found or not found.group(1).strip():
+            raise AssertionError(f"no reading from the page (exit {done.returncode}): {done.stderr[-2000:]}")
+        return json.loads(html.unescape(found.group(1)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class BoardPageTests(unittest.TestCase):
+    """The TV page itself (static/js/quiniela_board.js) in headless Chrome:
+    once betting has closed it shows pi5's closing, the figures at the post,
+    whatever the live fields say, so a TV loaded after the winners' cups were
+    emptied for the draw pays what they held."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # The 2026 field's race as the harness plays it (pi5's closing rule):
+        # WIN 19 / PLACE 1 / SHOW 22 held 4 / 11 / 7 of 158 tokens, pot $154
+        # (20's 4 are out), WIN $92 / PLACE $39 / SHOW $23.
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS, names_rev=2)
+        snap = lambda: json.loads(fake.model_json())       # noqa: E731
+        cls.open = snap()
+        fake.set_phase(fake_pi5.PHASES["closed"])
+        cls.closed = snap()
+        fake.bump(7)                                         # a token after the post
+        fake.set_phase(fake_pi5.PHASES["running"])
+        cls.running = snap()
+        for horse in fake_pi5.RESULTS_WPS:                   # the winners' cups emptied for the draw
+            fake.empty(horse)
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        cls.coming = snap()
+        fake.set_results(*fake_pi5.RESULTS_WPS)
+        cls.results = snap()
+        fake.set_phase(fake_pi5.PHASES["after"])
+        cls.after = snap()
+        fake.reset({}, fake_pi5.PHASES["open"])
+        cls.reopened = snap()
+
+    WINNERS = {"win": {"horse": "19", "bets": "4", "prize": "$92"},
+               "place": {"horse": "1", "bets": "11", "prize": "$39"},
+               "show": {"horse": "22", "bets": "7", "prize": "$23"}}
+
+    def test_the_models_are_what_the_test_says(self) -> None:
+        self.assertEqual((self.results["pot"], self.results["prizes"]), (133.0, {"win": 80, "place": 33, "show": 20}),
+                         "the live pot has fallen: the winners' cups are empty, one late token")
+        self.assertEqual((self.results["closing"]["pot"], self.results["closing"]["prizes"]),
+                         (154.0, {"win": 92, "place": 39, "show": 23}))
+        self.assertIsNone(self.reopened["closing"])
+
+    def test_a_page_loaded_after_the_draw_shows_the_figures_at_the_post(self) -> None:
+        [seen] = run_board([self.results])
+        self.assertEqual((seen["view"], seen["banner"], seen["visible"]), ("results", "Official results", True))
+        self.assertEqual(seen["results"], self.WINNERS, "closing's bets and prizes, not the live model's")
+        self.assertEqual((seen["pot"], seen["prizes"]), ("$154", ["$92", "$39", "$23"]))
+
+    def test_the_frozen_board_and_official_results_coming_read_closing_too(self) -> None:
+        seen = run_board([self.running])
+        self.assertEqual((seen[0]["banner"], seen[0]["pot"]), ("Betting closed", "$154"))
+        self.assertEqual(seen[0]["rows"]["7"], "23", "the token after the post is not on the board")
+        seen = run_board([self.coming])
+        self.assertEqual((seen[0]["banner"], seen[0]["view"], seen[0]["pot"]), ("Official results coming", "rows", "$154"))
+        self.assertEqual([seen[0]["rows"][n] for n in ("19", "1", "22")], ["4", "11", "7"], "the emptied cups as they were")
+
+    def test_a_page_open_through_the_whole_race(self) -> None:
+        seen = run_board([self.open, self.closed, self.running, self.coming, self.results, self.after, self.reopened])
+        opened, closed, running, coming, results, after, reopened = seen
+        self.assertEqual((opened["banner"], opened["pot"], opened["rows"]["7"]), ("Betting open", "$154", "23"))
+        self.assertEqual((closed["banner"], closed["pot"]), ("Betting closed", "$154"))
+        self.assertEqual((running["pot"], running["rows"]["7"]), ("$154", "23"))
+        self.assertEqual((coming["banner"], coming["pot"], coming["rows"]["19"]), ("Official results coming", "$154", "4"))
+        self.assertEqual((results["view"], results["results"], results["pot"]), ("results", self.WINNERS, "$154"))
+        self.assertFalse(after["visible"], "AFTER_PARTY hands the TV back")
+        self.assertEqual((reopened["visible"], reopened["banner"], reopened["pot"], reopened["rows"]["7"]),
+                         (True, "Betting open", "$0", "No bets"), "betting open again: live, from nothing")
+
+    def test_without_closing_the_page_keeps_its_own_freeze(self) -> None:
+        # An older pi5 serves no closing: a page open through the close keeps
+        # what it showed when betting closed, and a page loaded after the
+        # draw can only show the live model. The second is what closing fixes.
+        old = [dict(m) for m in (self.open, self.closed, self.results)]
+        for m in old:
+            m.pop("closing")
+        seen = run_board(old)
+        self.assertEqual((seen[-1]["results"], seen[-1]["pot"]), (self.WINNERS, "$154"))
+        [seen] = run_board([old[-1]])
+        self.assertEqual(seen["results"]["win"], {"horse": "19", "bets": "0", "prize": "$80"})
+        self.assertEqual(seen["pot"], "$133")
+
+
 def _sfnt(data: bytes) -> Dict[str, Any]:
     """The table directory of a TrueType file: tag -> (checksum, offset, length)."""
     version, count = struct.unpack(">IH", data[:6])
@@ -1202,6 +1398,44 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(m["prizes"], {"win": 92, "place": 39, "show": 23})
         self.assertEqual([m["horses"][n]["tokens"] for n in ("19", "1", "22")], [4, 11, 7])
         self.assertEqual([m["horses"][n]["name"] for n in ("19", "1", "22")], ["GOLDEN TEMPO", "RENEGADE", "OCELLI"])
+        c = m["closing"]
+        self.assertEqual((c["pot"], c["prizes"], c["total_tokens"]), (154.0, {"win": 92, "place": 39, "show": 23}, 158),
+                         "WINNER from the start: the figures at the post are these")
+        self.assertEqual([c["horses"][n]["tokens"] for n in ("19", "1", "22")], [4, 11, 7])
+        self.assertEqual(set(c), {"pot", "prizes", "total_tokens", "horses", "at"})
+        self.assertEqual(sorted(c["horses"], key=int), [str(n) for n in range(1, 25)])
+
+    def test_the_figures_at_the_post_follow_pis_rule(self) -> None:
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS, names_rev=2)
+        model = lambda: json.loads(fake.model_json())       # noqa: E731
+        self.assertIsNone(model()["closing"], "betting open: none")
+        fake.set_phase(fake_pi5.PHASES["final"])
+        self.assertIsNone(model()["closing"], "final call: none")
+        fake.set_phase(fake_pi5.PHASES["closed"])
+        c = model()["closing"]
+        self.assertEqual((c["pot"], c["prizes"]), (154.0, {"win": 92, "place": 39, "show": 23}), "taken at the post")
+        fake.bump(7)
+        fake.set_phase(fake_pi5.PHASES["running"])
+        for horse in fake_pi5.RESULTS_WPS:
+            fake.empty(horse)
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        self.assertTrue(fake.set_results(*fake_pi5.RESULTS_WPS))
+        m = model()
+        self.assertEqual(m["closing"], c, "a late token and the emptied cups move the live fields only")
+        self.assertEqual((m["pot"], m["horses"]["19"]["tokens"]), (133.0, 0))
+        fake.set_phase(fake_pi5.PHASES["final"])
+        fake.set_phase(fake_pi5.PHASES["after"])
+        self.assertEqual(model()["closing"], c, "2 and 6 leave them")
+        fake.set_phase(fake_pi5.PHASES["open"])
+        self.assertIsNone(model()["closing"], "state 1 drops them")
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        self.assertEqual(model()["closing"]["pot"], 133.0, "WINNER straight from betting takes them, from the cups as they are")
+        fake.reset(fake_pi5.RESULTS_TOKENS, fake_pi5.PHASES["idle"])
+        self.assertIsNone(model()["closing"], "a reset drops them")
+        fake.reset(fake_pi5.RESULTS_TOKENS, fake_pi5.PHASES["running"])
+        self.assertEqual(model()["closing"]["pot"], 154.0, "the results cycle's reset into RUNNING takes them again")
 
     def test_results_are_three_different_horses_or_nothing(self) -> None:
         fake = self.derby()

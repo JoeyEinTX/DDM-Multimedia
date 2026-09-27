@@ -303,7 +303,8 @@ Or unlock all:
 ### Results Endpoints
 
 #### `GET /api/results`
-**Description:** Get current race results.
+**Description:** Get current race results (kept across a restart of pi5,
+until Reset betting or `/api/results/clear`).
 
 **Response (with results):**
 ```json
@@ -349,14 +350,33 @@ Or unlock all:
     "place": 12,
     "show": 8
   },
-  "response": "OK",
+  "leds": "ok",
+  "response": "OK:RESULTS:FINALIZE",
   "race": {"rev": 42, "state": 5, "state_name": "WINNER", "mode": "RESULTS",
            "source": "dashboard", "gateway_online": true}
 }
 ```
 
-`race` is the race state La Quiniela was given (below); `null` when the
-results were not saved or La Quiniela is not running.
+The results are facts about the race, not about the LEDs: they are saved
+first, always, and `success` is true once they are. `leds` is what the LED
+controller did with them afterwards: `"ok"`, or `"unreachable"` when it did
+not answer (`response` then carries the client's `ERROR:...`, and the
+dashboard's notification ends `· LEDs unreachable`, in red). The results
+stand either way.
+
+`race` is the race state La Quiniela was given (below); `null` when La
+Quiniela is not running.
+
+**Response (the file could not be written), 500:**
+```json
+{
+  "success": false,
+  "error": "results not saved: pi5 could not write results.json (its console says why)",
+  "results": {"win": 5, "place": 12, "show": 8},
+  "race": null
+}
+```
+Nothing else happens then: no state line, no LED command, no broadcast.
 
 `win`, `place` and `show` are **horse numbers** (program numbers, 1-24): a
 horse standing in for a scratched one is sent under its own number (22, not
@@ -367,16 +387,21 @@ from the saved file for the cups and the TV board.
 - Win, Place, and Show must be different numbers
 - Returns 400 error if validation fails
 
-**Side Effects:**
-- Sends results to ESP32. Everything below happens only if the LED
-  controller accepted them (`success` true)
-- Saves results to `pi5/data/results.json`
+**Side Effects, in this order:**
+- Saves results to `pi5/data/results.json` (a temporary file flushed to the
+  card and renamed over it). The file is kept when pi5 starts: the results
+  live until Reset betting (`POST /api/quiniela/reset`) or the dashboard's
+  RESET (`/api/results/clear`), so a restart in WINNER comes back with them
 - Sets La Quiniela's race state to WINNER, mode `RESULTS`, in one state line
   with the results: the three cups show WIN / PLACE / SHOW and the TV board
   flips from `OFFICIAL RESULTS COMING` to its results screen (the model's
-  `results`, see "The results board" in `pi5/LQ_BRIDGE.md`)
+  `results`, with the figures at the post, the model's `closing`: see "The
+  results board" in `pi5/LQ_BRIDGE.md`)
 - Broadcasts to all connected SSE clients
-- Triggers results display animation
+- Tells the LED controller: `RESULTS:FINALIZE`, the winners' chase settling
+  into the heartbeat (the three cups were locked as they were picked). The
+  dashboard used to send it itself through `/api/results/finalize`, which is
+  still there; `leds` in the reply says whether the controller answered
 
 ---
 

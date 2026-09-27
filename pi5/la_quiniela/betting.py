@@ -20,10 +20,18 @@
 # horses[n].cup holds: since protocol v2 it is the MAC of the cup claiming
 # that horse (null when none does), never a cup number. The board only tests
 # it for null. Additive keys: conflict and cups per horse, cups_online,
-# cups_no_horse and results on the model. results is {"win", "place",
-# "show"} (horse numbers) once the dashboard has them, null until then: in
-# WINNER the TV board shows its results screen from them, and the frozen
-# betting board under OFFICIAL RESULTS COMING while it is null.
+# cups_no_horse, results and closing on the model. results is {"win",
+# "place", "show"} (horse numbers) once the dashboard has them, null until
+# then: in WINNER the TV board shows its results screen from them, and the
+# frozen betting board under OFFICIAL RESULTS COMING while it is null.
+# closing is the figures as they were at the post (pot, prizes, total_tokens
+# and every horse's tokens, the live fields' shapes, plus "at"): taken when
+# the race state first reaches AT_THE_POST (or RUNNING or WINNER when that
+# was skipped), persisted, and dropped only by the between-races reset or a
+# state that reopens betting (PRE_RACE, BETTING_OPEN); null while there are
+# none. The TV board shows them in 3, 4 and 5, so a page loaded after the
+# cups were emptied for the draw, a second screen or a restart of pi5 all
+# show the numbers at the post. The live fields keep following the cups.
 #
 # How La Quiniela pays, which is what the additive keys carry: a token is one
 # dollar and one raffle ticket. After the race one token is drawn from the WIN
@@ -75,6 +83,13 @@ REFRESH_S = 1.0                      # the board thread's timeout between wake-u
 UNDO_RENUM_S = 60.0                  # an undone renumber is sent back (to -> was) this long, or until a cup reports was
 
 CMD_WHITELIST = frozenset({"state", "demo", "json"})
+
+# Betting is closed from AT_THE_POST on: the closing figures are taken the
+# first time the race state is one of these with none held, and dropped when
+# it is one of the reopening states (or by the between-races reset).
+# FINAL_CALL and AFTER_PARTY leave them as they are.
+CLOSED_STATES = frozenset({int(P.Phase.AT_THE_POST), int(P.Phase.RUNNING), int(P.Phase.WINNER)})
+REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN)})
 
 # One race state. The dashboard's modes (its thirteen buttons, which drive
 # the LEDs) are the source of truth, and La Quiniela's race state (the cups,
@@ -381,6 +396,25 @@ def _results_dict(results: Any) -> Optional[Dict[str, Optional[int]]]:
     return out
 
 
+def _closing_figures(pot: float, prizes: Dict[str, int], total: int,
+                     horses: Dict[str, Dict[str, Any]], at: float) -> Dict[str, Any]:
+    """The model's closing: the live fields as they are now, in the same
+    shapes (pot, prizes, total_tokens, and horses "1".."24" each with its
+    tokens), plus "at", the wall time they were taken."""
+    return {"pot": pot, "prizes": dict(prizes), "total_tokens": total,
+            "horses": {key: {"tokens": h["tokens"]} for key, h in horses.items()},
+            "at": round(at, 3)}
+
+
+def _closing_note(closing: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """What the log records of the closing figures: the pot, the prizes and
+    the token count (each horse's count is in the log already), or None
+    when they were dropped."""
+    if closing is None:
+        return None
+    return {"pot": closing["pot"], "prizes": closing["prizes"], "total_tokens": closing["total_tokens"]}
+
+
 class BettingBoard:
     """The betting model, its event log, its SSE subscribers and the thread
     that keeps it current.
@@ -440,6 +474,8 @@ class BettingBoard:
         self.store: HorseStore = store if store is not None else HorseStore(getattr(bridge, "db", None))
         if self.store.on_change is None:
             self.store.on_change = self.wake
+        self._closing: Optional[Dict[str, Any]] = self.store.closing   # survives a restart (lq_closing)
+        self._closing_warned = False
         self._model: Dict[str, Any] = self._empty_model()
         self._json: str = _dumps(self._model)
 
@@ -499,6 +535,7 @@ class BettingBoard:
             "cups_online": 0,
             "cups_no_horse": 0,
             "results": _results_dict(None),
+            "closing": self._closing,
         }
 
     def _name_horses(self, horses: Dict[str, Dict[str, Any]], state_scratched: Iterable[int] = ()
@@ -580,7 +617,9 @@ class BettingBoard:
         another took its horse (a spare swapped in) is not a conflict.
         extras: cups_online (every online cup, horse or not), cups_no_horse
         (online cups reporting horse 0), the state's scratched list and
-        results. Missing or odd fields never raise."""
+        results, and phase_known (the snapshot carried a phase at all: an
+        empty one, a board with no bridge, reads as state 0 without saying
+        so). Missing or odd fields never raise."""
         if not isinstance(snap, dict):
             snap = {}
         devpi = snap.get("devpi")
@@ -649,6 +688,7 @@ class BettingBoard:
             "cups_no_horse": cups_no_horse,
             "scratched": devpi.get("scratched") if isinstance(devpi.get("scratched"), list) else [],
             "results": devpi.get("results") if isinstance(devpi.get("results"), list) else [],
+            "phase_known": _as_int(devpi.get("phase")) is not None,
         }
         return horses, st, total, link_ok, extras
 
@@ -670,7 +710,16 @@ class BettingBoard:
 
         The log tells the two apart from bets: a baseline is written as such
         even when nothing else moved, and a count that came with a cup move
-        carries the move ("cup": [from, to], the MACs) in its change."""
+        carries the move ("cup": [from, to], the MACs) in its change.
+
+        The closing figures (the model's closing) are taken here, from this
+        snapshot's pot, prizes and counts, the first time the race state is
+        3, 4 or 5 with none held; after that no count moves them. The
+        between-races reset (baseline=True) and a state of 0 or 1 drop them;
+        2 and 6 leave them, and so does a snapshot with no phase. Taking or
+        dropping them is saved (lq_closing) before the model is published,
+        and logged as a change ({"closing": {pot, prizes, total_tokens}} or
+        {"closing": null})."""
         now_w = self._wall()
         horses, race_state, total, link_ok, extras = self._digest(snap)
 
@@ -737,6 +786,24 @@ class BettingBoard:
             live = sum(h["tokens"] for h in horses.values() if not h["scratched"])
             pot = round(live * token_value, 2)
             split = self._split()
+            prizes = prizes_for(pot, split)
+
+            # The figures at the post: taken once when betting closes, then
+            # held through the race, the draw (the cups being emptied) and a
+            # restart, until betting starts over.
+            closing = self._closing
+            if baseline:
+                closing = None
+            elif extras["phase_known"]:
+                if race_state in REOPEN_STATES:
+                    closing = None
+                elif race_state in CLOSED_STATES and closing is None:
+                    closing = _closing_figures(pot, prizes, total, horses, now_w)
+            if closing != self._closing:
+                changes.append({"closing": _closing_note(closing)})
+                self._closing = closing
+                self._save_closing(closing)
+
             model = {
                 "link_ok": bool(link_ok),
                 "race_state": race_state,
@@ -750,7 +817,7 @@ class BettingBoard:
                 "updated": old["updated"],
                 "board_states": self._board_states(),
                 "closes_at": self.store.closes_at,
-                "prizes": prizes_for(pot, split),
+                "prizes": prizes,
                 "split": split,
                 "chyron": self._chyron(),
                 "names_rev": self.store.names_rev,
@@ -758,6 +825,7 @@ class BettingBoard:
                 "cups_online": extras["cups_online"],
                 "cups_no_horse": extras["cups_no_horse"],
                 "results": _results_dict(extras["results"]),
+                "closing": closing,
             }
             changed = model != old
             if changed:
@@ -777,6 +845,18 @@ class BettingBoard:
         if record is not None:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed
+
+    def _save_closing(self, closing: Optional[Dict[str, Any]]) -> None:
+        """Persist the closing figures (board lock held; twice a race at
+        most). A database error is logged once and costs only the copy on
+        disk: the model carries the figures either way."""
+        try:
+            self.store.set_closing(closing)
+        except Exception as exc:
+            if not self._closing_warned:
+                self._closing_warned = True
+                log.warning("La Quiniela board: cannot save the closing figures (%s); "
+                            "they will not survive a restart", exc)
 
     def refresh(self) -> bool:
         """Take the bridge's snapshot, apply it, and keep the gateway's state
@@ -943,13 +1023,14 @@ class BettingBoard:
 
     def reset_betting(self) -> Dict[str, Any]:
         """The between-races reset: betting starts over. PRE_RACE, the
-        results cleared (the dashboard's file too), the closing time cleared,
-        and the bridge's picture applied as a fresh baseline: the events are
-        cleared and no count is diffed, so what sits in a cup right now is
-        the starting point, not a bet. Tokens still in a cup are not an
-        error, the pot simply reads them, and the reply names those horses
-        so the admin page can say so. Names and both kinds of scratch are not
-        touched; the cups keep their numbers, which are theirs.
+        results cleared (the dashboard's file too), the closing time and the
+        closing figures cleared, and the bridge's picture applied as a fresh
+        baseline: the events are cleared and no count is diffed, so what
+        sits in a cup right now is the starting point, not a bet. Tokens
+        still in a cup are not an error, the pot simply reads them, and the
+        reply names those horses so the admin page can say so. Names and
+        both kinds of scratch are not touched; the cups keep their numbers,
+        which are theirs.
 
         Serialised with refresh() under the same lock, so the board thread
         (woken by set_state()) applies its snapshot after this one and finds

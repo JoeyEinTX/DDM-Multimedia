@@ -23,7 +23,8 @@ Nothing leaves loopback: no serial port, no dashboard poller.
                                                    # results (OFFICIAL RESULTS COMING) -> the results arrive (19 Golden
                                                    # Tempo, 1 Renegade, 22 Ocelli: the results screen, WIN $92 / PLACE $39 /
                                                    # SHOW $23), the three cups are emptied for the draw 3 s later (the
-                                                   # screen keeps 4 / 11 / 7 bets) -> AFTER_PARTY (the playlist); repeats
+                                                   # screen keeps 4 / 11 / 7 bets: the model's closing, as on pi5; a page
+                                                   # loaded now shows them too) -> AFTER_PARTY (the playlist); repeats
     python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving (screenshots)
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
@@ -92,8 +93,12 @@ in for a scratched horse), each with ``in_field``, ``name``, ``replaced``,
 win the remainder), ``split``, ``chyron``, ``names_rev``, ``scratches`` (one
 record per scratch: ``{"was": {"number", "name"}, "now": {"number",
 "name"}}`` for a replacement, ``"now": null`` for a gateway scratch, ordered
-by was.number), ``cups_online``, ``cups_no_horse`` and ``results`` (``{"win",
-"place", "show"}`` horse numbers, or ``null`` until they are named). A
+by was.number), ``cups_online``, ``cups_no_horse``, ``results`` (``{"win",
+"place", "show"}`` horse numbers, or ``null`` until they are named) and
+``closing`` (the figures at the post: ``pot``, ``prizes``, ``total_tokens``,
+``horses`` ``{"1": {"tokens"}, ...}`` and ``at``, taken as pi5 takes them, the
+first time the state is 3, 4 or 5 with none held, and dropped by a reset or by
+state 0 or 1; ``null`` while there are none). A
 horse's ``cup`` is what pi5 has served since protocol v2: the MAC of the cup
 claiming that horse (``"A0:B7:65:00:00:07"`` for the fake's cup 7), ``null``
 when none does; never a cup number. A gateway scratch keeps its tokens in
@@ -254,6 +259,7 @@ def build_model(
     names_rev: int = 0,
     chyron: Optional[List[str]] = None,
     results: Optional[Iterable[int]] = None,
+    closing: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The contract's model: horses "1".."24"; share 4 dp, pot 2 dp, leader =
     strictly most tokens (lowest horse on a tie, None when nothing is bet;
@@ -263,7 +269,8 @@ def build_model(
     cup None, cups [] and is offline; the fake never has two cups on one
     horse, so conflict is always False); events newest first, at most 8.
     `results` is (win, place, show), served as {"win", "place", "show"}, or
-    None: no results, served as null.
+    None: no results, served as null. `closing` is served as given (the
+    FakePi5 decides when to take it: closing_of()), null by default.
 
     `replacements` is now -> was, one entry per replacement scratch (9 -> 22
     is {22: 9}). `in_field`: 1-20 unless scratched either way, 21-24 only
@@ -343,7 +350,20 @@ def build_model(
         "cups_online": sum(1 for h in horses.values() if h["online"]),
         "cups_no_horse": 0,
         "results": dict(zip(("win", "place", "show"), wps)) if len(wps) == 3 else None,
+        "closing": closing,
     }
+
+
+CLOSED_STATES = (3, 4, 5)       # pi5 takes the closing figures the first time it sees one of these
+REOPEN_STATES = (0, 1)          # ... and drops them in these (and on a reset)
+
+
+def closing_of(model: Dict[str, Any]) -> Dict[str, Any]:
+    """pi5's closing, taken from a built model: the pot, the prizes, the
+    token count and every horse's tokens as they are now, and when."""
+    return {"pot": model["pot"], "prizes": dict(model["prizes"]), "total_tokens": model["total_tokens"],
+            "horses": {n: {"tokens": h["tokens"]} for n, h in model["horses"].items()},
+            "at": round(time.time(), 3)}
 
 
 def seed_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -385,6 +405,7 @@ class FakePi5:
         self.results: Optional[Tuple[int, int, int]] = None      # (win, place, show)
         if results is not None and not self._set_results_locked(results):
             raise ValueError(f"results must be three different horses 1-{MAX_HORSE}: {results!r}")
+        self.closing: Optional[Dict[str, Any]] = None             # the figures at the post, as pi5 holds them
         self.stopped = False
         for was, now in renumbers:
             self._renumber_locked(was, now)
@@ -393,9 +414,19 @@ class FakePi5:
 
     # -- scenario ------------------------------------------------------------
     def _build(self) -> Dict[str, Any]:
-        return build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
-                           names=self.names, cup_of=self.cup_of, replacements=self.replacements,
-                           closes_at=self.closes_at, names_rev=self.names_rev, results=self.results)
+        """The model as pi5 would serve it now. The closing figures follow
+        pi5's rule on the way: taken the first time the phase is 3, 4 or 5
+        with none held, dropped in 0 and 1 (and by reset()), otherwise kept
+        whatever the counts do."""
+        model = build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
+                            names=self.names, cup_of=self.cup_of, replacements=self.replacements,
+                            closes_at=self.closes_at, names_rev=self.names_rev, results=self.results)
+        if self.phase in REOPEN_STATES:
+            self.closing = None
+        elif self.phase in CLOSED_STATES and self.closing is None:
+            self.closing = closing_of(model)
+        model["closing"] = self.closing
+        return model
 
     def _publish_locked(self) -> None:
         self._json = _dumps(self._build())
@@ -420,14 +451,16 @@ class FakePi5:
 
     def reset(self, tokens: Dict[int, int], phase: Optional[int] = None,
               events: Optional[List[Dict[str, Any]]] = None) -> None:
-        """A fresh token table, no results and, unless given, no events:
-        what pi5's model serves after its reset (a reset is a baseline,
-        never a list of removals, and it clears the results) or at the
-        start of a cycle."""
+        """A fresh token table, no results, no closing figures and, unless
+        given, no events: what pi5's model serves after its reset (a reset
+        is a baseline, never a list of removals, and it clears the results
+        and the closing figures) or at the start of a cycle. A phase of 3, 4
+        or 5 takes the closing figures again, from the new table."""
         with self._lock:
             self.tokens = dict(tokens)
             self.events = [] if events is None else list(events)
             self.results = None
+            self.closing = None
             if phase is not None:
                 self.phase = int(phase)
             self._publish_locked()
@@ -774,13 +807,14 @@ def run_redesign(fake: FakePi5) -> None:
 
 def run_results(fake: FakePi5, period: float) -> None:
     """How the race ends, forever: RUNNING for `period` s (BETTING CLOSED,
-    the board frozen); WINNER with no results for `period` s (OFFICIAL
-    RESULTS COMING over the same frozen board); then the results arrive
-    (the results screen) and, RESULTS_EMPTY_AFTER_S later, the three
-    winners' cups are emptied for the draw, which the screen must not show
-    (it keeps the bets each cup held); `period` s after the results
-    AFTER_PARTY (the board hands the TV back) for `period` s; then the
-    tokens are back and the race runs again."""
+    the board frozen: the model's closing is taken as the race starts);
+    WINNER with no results for `period` s (OFFICIAL RESULTS COMING over the
+    same frozen board); then the results arrive (the results screen) and,
+    RESULTS_EMPTY_AFTER_S later, the three winners' cups are emptied for the
+    draw, which the screen must not show (it keeps the bets each cup held,
+    the closing figures, and so does a page loaded after it); `period` s
+    after the results AFTER_PARTY (the board hands the TV back) for `period`
+    s; then the tokens are back and the race runs again."""
     def wait(seconds: float) -> bool:
         end = time.time() + seconds
         while time.time() < end:

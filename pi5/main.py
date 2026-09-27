@@ -49,10 +49,10 @@ RESULTS_FILE = os.path.join(DATA_DIR, 'results.json')
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Clear any previous results on startup
-if os.path.exists(RESULTS_FILE):
-    os.remove(RESULTS_FILE)
-    print("Cleared previous results on startup")
+# The results are kept when pi5 starts: they are facts about the race, and a
+# restart during the draw must come back to them (La Quiniela's TV board and
+# cups read this file). They go with Reset betting (La Quiniela's admin page)
+# and with the dashboard's RESET (/api/results/clear), nothing else.
 
 # Weather cache
 weather_cache = {
@@ -335,16 +335,22 @@ def quiniela_mode(mode):
 
 
 def save_results(win, place, show):
-    """Save results to file"""
+    """Save results to file. The file outlives a restart, so it is written
+    whole or not at all (a temporary file, flushed to the card, renamed over
+    it): a power cut mid-write leaves the old file, never half a new one."""
     results = {
         'win': win,
         'place': place,
         'show': show,
         'timestamp': datetime.now().isoformat()
     }
+    tmp = RESULTS_FILE + '.tmp'
     try:
-        with open(RESULTS_FILE, 'w') as f:
+        with open(tmp, 'w') as f:
             json.dump(results, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, RESULTS_FILE)
         return True
     except Exception as e:
         print(f"Error saving results: {e}")
@@ -468,12 +474,14 @@ def api_results():
             })
     
     else:
-        # POST - set new results
+        # POST - set new results. They are facts about the race, not about
+        # the LEDs: saved first, always, and La Quiniela goes to WINNER with
+        # them; the LED controller is told after, and whether it answered is
+        # reported ('leds'), never a reason to drop the results.
         data = request.get_json()
         win = data.get('win', 1)
         place = data.get('place', 2)
         show = data.get('show', 3)
-        race = None
 
         # Validate unique cups
         if len(set([win, place, show])) != 3:
@@ -481,35 +489,45 @@ def api_results():
                 'success': False,
                 'error': 'Win, Place, and Show must be different cups'
             }), 400
-        
-        # Send to ESP32
-        response = esp32.set_results(win, place, show)
-        success = not response.startswith('ERROR')
-        
-        if success:
-            # Save to file
-            save_results(win, place, show)
 
-            # SET WINNERS, results applied: La Quiniela goes to WINNER with them
-            race = quiniela_mode('RESULTS')
+        # Save to file, first
+        if not save_results(win, place, show):
+            return jsonify({
+                'success': False,
+                'error': 'results not saved: pi5 could not write results.json (its console says why)',
+                'results': {'win': win, 'place': place, 'show': show},
+                'race': None
+            }), 500
 
-            # Send official results to tote board
-            tote_send('official', win, place, show)
-            
-            # Broadcast to all connected clients via SSE
-            broadcast_sse('results', {
-                'win': win,
-                'place': place,
-                'show': show
-            })
-        
+        # SET WINNERS, results applied: La Quiniela goes to WINNER with them
+        race = quiniela_mode('RESULTS')
+
+        # Send official results to tote board
+        tote_send('official', win, place, show)
+
+        # Broadcast to all connected clients via SSE
+        broadcast_sse('results', {
+            'win': win,
+            'place': place,
+            'show': show
+        })
+
+        # Then the LED controller. The three cups were locked as they were
+        # picked (CUP:LOCK); what is left of the results on the LEDs is
+        # RESULTS:FINALIZE, the winners' chase settling into the heartbeat,
+        # which the page used to send itself (/api/results/finalize). The
+        # results stand whatever it answers.
+        response = esp32.send_command('RESULTS:FINALIZE')
+        leds = 'unreachable' if response.startswith('ERROR') else 'ok'
+
         return jsonify({
-            'success': success,
+            'success': True,
             'results': {
                 'win': win,
                 'place': place,
                 'show': show
             },
+            'leds': leds,
             'response': response,
             'race': race
         })

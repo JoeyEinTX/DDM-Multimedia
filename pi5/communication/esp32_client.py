@@ -118,13 +118,6 @@ class ESP32Client:
         """
         return self.send_command(f"ANIM:{anim_name.upper()}")
     
-    def set_results(self, win_cup, place_cup, show_cup):
-        """
-        Record race results — cup locks and animation are already
-        handled by RESULTS_ENTRY + CUP:LOCK flow. No ESP32 command needed.
-        """
-        return f"OK:RESULTS:{win_cup}:{place_cup}:{show_cup}"
-    
     def is_connected(self):
         """Check if ESP32 is reachable"""
         return self.connected

@@ -35,13 +35,20 @@
    or ping), or as soon as the model itself reports link_ok false.
 
    Freeze rule: once betting is closed (3 AT_THE_POST, 4 RUNNING, 5
-   WINNER) the rows (the set and the counts), pot and prizes keep the
-   values shown when betting closed and the CLOSES IN line is hidden; the
-   banner stays live, and so do the names and the chyron (a late name
-   correction still shows). Back in 1 or 2 the live model renders again.
-   The freeze only holds while the board is up: a hidden board always
-   takes the live model, so a page that loads mid-race, or a board coming
-   back after the server restarted, shows the field rather than an earlier
+   WINNER) the rows (the set and the counts), pot and prizes show the
+   figures at the post and the CLOSES IN line is hidden; the banner stays
+   live, and so do the names and the chyron (a late name correction still
+   shows). pi5 holds those figures (the model's closing: taken when
+   betting closed, kept through the draw and a restart of pi5), so every
+   screen shows the same numbers whenever it was loaded: a TV reloaded
+   after the cups were emptied for the draw, a second screen, a phone.
+   They are painted when they arrive and again only if pi5 takes them
+   again; the live counts underneath (the cups being emptied) change
+   nothing here. A model without closing (an older pi5) keeps the page's
+   own freeze: the values it showed when betting closed. Back in 1 or 2
+   the live model renders again. Either freeze only holds while the board
+   is up: a hidden board always paints, so a page that loads mid-race, or
+   a board coming back after the server restarted, never shows an earlier
    hidden paint of an empty model.
 
    Results: in WINNER the banner reads OFFICIAL RESULTS COMING over the
@@ -50,15 +57,17 @@
    has them). The moment it does, the stage crossfades to the results
    screen, the banner reads OFFICIAL RESULTS, and the three rows show the
    horse's cloth and name, the bets its cup held and its prize. The bets
-   and the prizes are the frozen ones: by then the cups are being emptied
-   for the draw, and what counts is what they held when betting closed.
+   and the prizes are the figures at the post: by then the cups are being
+   emptied for the draw, and what counts is what they held when betting
+   closed.
 
    The model (GET /api/quiniela, relayed from pi5 untouched). The board
    reads: race_state, board_states, link_ok, token_value, pot, horses[n]
    {tokens, in_field, scratched, online, cup, name}, events[{horse, delta,
    ts}], and the additive keys now, closes_at, prizes{win,place,show},
    chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
-   names_rev, results{win,place,show}|null. cup is only tested for null
+   names_rev, results{win,place,show}|null, closing{pot, prizes,
+   total_tokens, horses{n: {tokens}}, at}|null. cup is only tested for null
    (it is the MAC of the cup claiming the horse, never a number). Every
    new key is optional: before pi5 has been heard the
    model carries none of them and the board renders without errors
@@ -245,9 +254,10 @@
 
     // ---- State -------------------------------------------------------
     let model = null;          // latest model from the server
-    let shown = null;          // the model the rows, pot and prizes show (the frozen one while frozen)
+    let shown = null;          // the model the rows, pot and prizes show (the figures at the post while frozen)
     let visible = false;       // board layer shown
-    let frozen = false;        // rows/pot/prizes held at last values
+    let frozen = false;        // betting is closed: rows/pot/prizes are the figures at the post
+    let closingKey = null;     // the closing figures on the board (their JSON), null when they are not
     let renderedOnce = false;  // rows have been painted at least once
     let es = null;
     let reconnectTimer = null;
@@ -299,20 +309,22 @@
         renderBanner(spec);
         board.dataset.state = String(state);
 
-        // Rows, pot and prizes: live unless frozen, and the freeze only
-        // holds for updates while the board is up. A hidden board always
-        // takes the live model: otherwise the last hidden paint (the empty
-        // model a restarted server hands out before the gateway reports,
-        // or a page loading mid-race) would become the frozen picture.
+        // Rows, pot and prizes: live while betting is open. Once it has
+        // closed, the figures at the post: pi5's closing, painted when they
+        // arrive (or pi5 takes them again), else the page's own freeze.
+        // Either way a hidden board always paints: otherwise the last
+        // hidden paint (the empty model a restarted server hands out before
+        // the gateway reports, or a page loading mid-race) would become the
+        // frozen picture.
         frozen = !!spec.frozen;
-        if (!frozen || !renderedOnce || !visible) {
-            const animate = visible && renderedOnce;
-            renderPot(m);
-            renderPrizes(m);
-            renderRows(m, animate);
-            shown = m;
-            renderedOnce = true;
+        const closing = frozen ? closingOf(m) : null;
+        const key = closing ? JSON.stringify(closing) : null;
+        if (closing) {
+            if (key !== closingKey || !renderedOnce || !visible) paint(atTheClose(m, closing));
+        } else if (!frozen || !renderedOnce || !visible) {
+            paint(m);
         }
+        closingKey = key;
         renderNames(m);            // live in every state
         renderResults(m, results); // the results screen, or back to the rows
         renderCloses(m, state);
@@ -322,6 +334,18 @@
         renderChyron(m);           // after show/hide: a running crawl swaps at its loop boundary
         maybeToast(m, first);
         updateNoLink();
+    }
+
+    // Rows, pot and prizes from `view`: the live model, or the live model
+    // with the figures at the post in their place (atTheClose). Counts tween
+    // only on a board that is up and was painted before.
+    function paint(view) {
+        const animate = visible && renderedOnce;
+        renderPot(view);
+        renderPrizes(view);
+        renderRows(view, animate);
+        shown = view;
+        renderedOnce = true;
     }
 
     function renderBanner(spec) {
@@ -476,6 +500,31 @@
         if (crawlHtml != null) applyCrawl(crawlHtml);
     }
 
+    // ---- The figures at the post -------------------------------------
+    // The model's closing: {pot, prizes, total_tokens, horses{n: {tokens}},
+    // at}, the live fields' shapes as they were when betting closed; null
+    // while betting is open, or absent (an older pi5).
+    function closingOf(m) {
+        const c = m.closing;
+        if (!c || typeof c !== 'object' || !c.horses || typeof c.horses !== 'object') return null;
+        return c;
+    }
+
+    // The live model with the figures at the post in place of the live
+    // ones: the pot, the prizes, the token count and every horse's tokens
+    // are closing's; the field, the names and the cups stay the model's.
+    function atTheClose(m, c) {
+        const horses = {};
+        for (const k of Object.keys(m.horses)) {
+            const at = c.horses[k];
+            const tokens = at && typeof at === 'object' ? Math.max(0, parseInt(at.tokens, 10) || 0) : 0;
+            horses[k] = Object.assign({}, m.horses[k], { tokens: tokens });
+        }
+        return Object.assign({}, m, {
+            pot: c.pot, prizes: c.prizes, total_tokens: c.total_tokens, horses: horses,
+        });
+    }
+
     // ---- Results ----------------------------------------------------
     // The model's results, {win, place, show}, when all three are in: three
     // different horses 1-24. Anything else (null until the dashboard has
@@ -496,10 +545,11 @@
 
     // The results screen. Who won and the names come from the live model;
     // the bets each cup held and the prizes from the picture on the board
-    // (`shown`, frozen since betting closed): the cups are emptied for the
-    // draw while this screen is up, and the count that matters is the one
-    // they held. A horse that was never in the field still gets its row
-    // (cloth, name, 0 bets): the results say what they say.
+    // (`shown`: the figures at the post, pi5's closing, or without them the
+    // page's own freeze): the cups are emptied for the draw while this
+    // screen is up, and the count that matters is the one they held. A
+    // horse that was never in the field still gets its row (cloth, name,
+    // 0 bets): the results say what they say.
     function renderResults(m, results) {
         const on = !!results;
         const view = on ? 'results' : 'rows';

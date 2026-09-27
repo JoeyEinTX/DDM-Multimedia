@@ -270,7 +270,8 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "scratches": [ {"was": {"number": 9,  "name": "THE PUMA"},   "now": {"number": 22, "name": "OCELLI"}},
                  {"was": {"number": 20, "name": "FULLEFFORT"}, "now": null} ],
   "cups_online": 20, "cups_no_horse": 0,
-  "results": null
+  "results": null,
+  "closing": null
 }
 ```
 
@@ -328,6 +329,14 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   again after a reset. In WINNER it is what turns the frozen board into
   the results screen (below). `cups_online` and `cups_no_horse` are the
   admin page's; the board does not read them.
+- `closing` is the figures at the post: `{"pot", "prizes",
+  "total_tokens", "horses": {"1": {"tokens"}, ... "24": ...}, "at"}`, the
+  live fields' shapes as they were when betting closed, or `null`. pi5
+  takes them the first time the race state is 3 (or 4 or 5 when 3 was
+  skipped), keeps them through the race, the draw and a restart of pi5,
+  and drops them on Reset betting and in 0 or 1. The board shows them in
+  3, 4 and 5 (below); the live `pot`, `prizes` and tokens keep following
+  the cups underneath.
 - `board_states` are the race states in which the board owns the TV; pi5
   decides them (`[1, 2, 3, 4, 5]`: betting, the race and the results; the
   TV goes back to the playlist in 0 and 6). Until pi5 has been heard the
@@ -335,8 +344,8 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
   board stays hidden), and none of the additive keys (`now`, `closes_at`,
   `prizes`, `split`, `chyron`, `names_rev`, `scratches`, `results`,
-  `cups_online`, `cups_no_horse`, `name`, `replaced`, `in_field`,
-  `conflict`, `cups`); the board tolerates their absence.
+  `closing`, `cups_online`, `cups_no_horse`, `name`, `replaced`,
+  `in_field`, `conflict`, `cups`); the board tolerates their absence.
 
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -m json.tool
@@ -426,23 +435,29 @@ contains `race_state`:
 | --- | --- | --- |
 | 1 `BETTING_OPEN` | BETTING OPEN (green), CLOSES IN under it | live |
 | 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing), CLOSES IN under it | live |
-| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen** at the values shown when the state was entered (names and the chyron stay live); back in 1 or 2 they go live again |
-| 5 `WINNER`, `results` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board as it was when betting closed |
-| 5 `WINNER`, `results` in | OFFICIAL RESULTS (gold) | the **results screen** (below), from the same frozen figures |
+| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen**: the figures at the post, pi5's `closing` (names and the chyron stay live); back in 1 or 2 they go live again |
+| 5 `WINNER`, `results` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board with the figures at the post |
+| 5 `WINNER`, `results` in | OFFICIAL RESULTS (gold) | the **results screen** (below), from the same figures |
 
 In 0 `PRE_RACE` and 6 `AFTER_PARTY` the board is down and the playlist
 runs. (Should pi5's config ever add one of them to `board_states`, the
 banner reads the state's name; in 6 with the results still in, the results
 screen stays up.)
 
-The freeze only holds while the board is up. A board coming up already in
-3, 4 or 5 — a page loaded mid-race, or the server restarted during the race
-— paints the live model first, so it never shows an earlier hidden paint of
-an empty model (POT $0, every count 0). That has one consequence worth
-knowing on race night: the figures are frozen by the page, not by pi5, so a
-page loaded after the winners' cups have been emptied for the draw shows
-what the cups hold then. The runbook has the prizes written down at the
-close for that case.
+The figures on a frozen board are pi5's, not the page's: the model's
+`closing`, taken when betting closed and kept by pi5 through the draw and
+its own restarts. The page paints them when they arrive (and again only if
+pi5 takes them again), so the live counts underneath, the winners' cups
+being emptied for the draw included, change nothing on the TV, and every
+screen shows the same numbers whenever it was loaded: a TV page reloaded
+after the draw, a second screen, a phone, a restarted splash or pi5. A
+model without `closing` (an older pi5) keeps the page's own freeze, what
+it showed when betting closed, which a page loaded later cannot know.
+
+Either freeze only holds while the board is up. A board coming up already
+in 3, 4 or 5 — a page loaded mid-race, or the server restarted during the
+race — paints before it shows, so it never shows an earlier hidden paint of
+an empty model (POT $0, every count 0).
 
 **Results screen** (state 5 once `results` names all three; the stage
 between the header and the chyron crossfades from the two columns to it,
@@ -456,7 +471,7 @@ outline. The pot stays in the header above (its three prize tiles step
 aside, each prize being in its row); one line under the rows reads `ONE
 TOKEN DRAWN FROM EACH CUP · DRAWN TOKEN TAKES THE PRIZE`; the chyron keeps
 crawling. Who won and the names are live (a late name correction shows);
-the bets and the prizes are the frozen ones. A winner that was never in
+the bets and the prizes are the figures at the post (`closing`). A winner that was never in
 the field still gets its row (cloth, name, 0 bets): the board shows what
 the results say. No toast while it is up.
 
@@ -708,7 +723,8 @@ python tools/fake_pi5.py --phase cycle             # idle -> open -> final -> cl
 python tools/fake_pi5.py --phase results           # how the 2026 Derby field's race ends: RUNNING -> WINNER with no results
                                                    # (OFFICIAL RESULTS COMING) -> the results arrive (19 Golden Tempo, 1 Renegade,
                                                    # 22 Ocelli: WIN $92 / PLACE $39 / SHOW $23 of POT $154) and 3 s later the three
-                                                   # cups are emptied for the draw (the screen keeps 4 / 11 / 7 bets and the prizes)
+                                                   # cups are emptied for the draw (the screen keeps 4 / 11 / 7 bets and the prizes:
+                                                   # the model's closing, so a page reloaded now shows them too)
                                                    # -> AFTER_PARTY (the playlist) -> again; --period seconds per step
 python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving, for screenshots
 python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark (0 would stop it before the splash's first request)
@@ -727,7 +743,9 @@ The older phases carry no horse names, so the board shows `HORSE n`;
 every phase carries the full contract (horses 1-24 with `in_field`,
 `name`, `replaced`, `conflict` and `cups`, `now`, `closes_at`, `prizes`,
 `split`, `chyron`, `names_rev`, `scratches` in the record shape,
-`cups_online`, `cups_no_horse`, `results`). A horse's `cup` is a MAC
+`cups_online`, `cups_no_horse`, `results`, and `closing`, taken and dropped
+by pi5's rule: the first time the state is 3, 4 or 5 with none held, and in
+0, 1 or on `reset`). A horse's `cup` is a MAC
 string (`A0:B7:65:00:00:07` for the fake's cup 7) or `null`, as pi5 has
 served it since protocol v2; a renumbered cup keeps its MAC. In `redesign` the cups
 that were 5, 9 and 13 carry 21, 22 and 23 with their tokens (the count
@@ -798,6 +816,13 @@ Unit tests, no port and no network beyond loopback needed:
 ```bash
 cd splash_display && python -m unittest -v tests.test_quiniela
 ```
+
+`BoardPageTests` runs the board's own script (the real template and
+`quiniela_board.js`, fed models through a stand-in stream) in headless
+Chrome or Chromium and reads the figures off the page: once betting has
+closed it must show `closing`, not the live fields. It finds `chromium`,
+`chromium-browser` or Chrome by itself (`DDM_CHROME` names another) and is
+skipped where there is none.
 
 ---
 

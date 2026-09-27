@@ -46,6 +46,7 @@ from la_quiniela.betting import (  # noqa: E402
     prizes_for, read_results, round_half_up, sse_events, validate_cmd,
 )
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
+from la_quiniela.bridge import LqBridge  # noqa: E402
 from la_quiniela.board import (  # noqa: E402
     DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_STATE,
     get_board, init_board, quiniela_board_bp, start_board, stop_board,
@@ -62,7 +63,9 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive since the payout model: see "Betting board" in LQ_BRIDGE.md
               "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
               # additive since protocol v2
-              "cups_online", "cups_no_horse", "results"}
+              "cups_online", "cups_no_horse", "results",
+              # additive since pi5 holds the figures at the post
+              "closing"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
               "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False}
@@ -238,7 +241,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 21 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("exactly the 22 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -247,8 +250,8 @@ def test_empty_snapshot_model_shape():
     _check("every horse unassigned: 1-20 in the field, 21-24 not; no cup, no conflict",
            all(h == unassigned(n) for n, h in m["horses"].items()), str(m["horses"]["21"]))
     _check("leader None, events []", m["leader"] is None and m["events"] == [])
-    _check("no cups online, none without a horse, no results", m["cups_online"] == 0 and m["cups_no_horse"] == 0
-           and m["results"] == NO_RESULTS)
+    _check("no cups online, none without a horse, no results, no closing figures",
+           m["cups_online"] == 0 and m["cups_no_horse"] == 0 and m["results"] == NO_RESULTS and m["closing"] is None)
     _check("updated is the wall time of the change", m["updated"] == wall.t)
     _check("board_states from settings", m["board_states"] == list(DEFAULTS["QUINIELA_BOARD_STATES"]))
     _check("the board keeps the TV through WINNER: 1..5, released in 0 and 6",
@@ -1075,7 +1078,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 21 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 22 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -2203,6 +2206,224 @@ def test_results_from_the_dashboard_file():
     _check("clear_results on a missing file is False", clear_results(board._results_path) is False)
 
 
+# -----------------------------------------------------------------------------
+# The figures at the post (the model's closing)
+# -----------------------------------------------------------------------------
+
+POST_CUPS = [cup_entry(1, horse=19, count=4, online=True), cup_entry(2, horse=1, count=11, online=True),
+             cup_entry(3, horse=22, count=7, online=True), cup_entry(4, horse=7, count=23, online=True)]
+
+
+def post_cups(**counts):
+    """POST_CUPS with other counts: post_cups(h7=24, h19=0)."""
+    by_horse = {int(k[1:]): v for k, v in counts.items()}
+    return [dict(c, count=by_horse.get(c["horse"], c["count"])) for c in POST_CUPS]
+
+
+def tokens_of(**counts):
+    """What closing's horses must be: every horse "1".."24" with its tokens."""
+    by_horse = {int(k[1:]): v for k, v in counts.items()}
+    return {str(n): {"tokens": by_horse.get(n, 0)} for n in range(1, 25)}
+
+
+def test_closing_figures():
+    """closing: the pot, the prizes, the token count and every horse's
+    tokens as they were when betting closed. Taken the first time the race
+    state is 3, 4 or 5 with none held; no count moves them afterwards; Reset
+    betting and a return to 0 or 1 drop them; 2 and 6 leave them."""
+    b, wall, log_dir = fresh_board()
+    b.apply_snapshot(snap(phase=1, cups=POST_CUPS))
+    _check("betting open: no closing figures", b.model()["closing"] is None)
+    wall.advance(5)
+    b.apply_snapshot(snap(phase=2, cups=post_cups(h7=24)))
+    _check("final call: none yet", b.model()["closing"] is None)
+    wall.advance(5)
+    b.apply_snapshot(snap(phase=3, cups=post_cups(h7=24)))
+    m = b.model()
+    c = m["closing"]
+    _check("at the post (2 -> 3): the pot, the prizes, the token count, every horse's tokens and when",
+           c == {"pot": 46.0, "prizes": {"win": 27, "place": 12, "show": 7}, "total_tokens": 46,
+                 "horses": tokens_of(h19=4, h1=11, h22=7, h7=24), "at": round(wall.t, 3)}, str(c))
+    _check("...the live fields' own values and shapes at that moment",
+           (c["pot"], c["prizes"], c["total_tokens"]) == (m["pot"], m["prizes"], m["total_tokens"])
+           and all(c["horses"][k]["tokens"] == h["tokens"] for k, h in m["horses"].items()))
+    _check("...in the JSON the TV gets", json.loads(b.model_json())["closing"] == c)
+    _, lines = log_lines(log_dir)
+    _check("the log records them beside the state change",
+           {"closing": {"pot": 46.0, "prizes": {"win": 27, "place": 12, "show": 7}, "total_tokens": 46}} in lines[-1]["changes"]
+           and {"race_state": [2, 3]} in lines[-1]["changes"], str(lines[-1]))
+    # A late token, the race, the results, the cups emptied for the draw.
+    wall.advance(5)
+    b.apply_snapshot(snap(phase=3, cups=post_cups(h7=25)))
+    wall.advance(5)
+    b.apply_snapshot(snap(phase=4, cups=post_cups(h7=25)))
+    wall.advance(5)
+    b.apply_snapshot(snap(phase=5, cups=post_cups(h7=25, h19=0, h1=0, h22=0), results=(19, 1, 22)))
+    m = b.model()
+    _check("later token changes move the live fields, never the closing figures",
+           m["closing"] == c and m["pot"] == 25.0 and m["prizes"] == {"win": 15, "place": 6, "show": 4}
+           and m["horses"]["19"]["tokens"] == 0 and m["results"] == {"win": 19, "place": 1, "show": 22}, str(m["pot"]))
+    b.apply_snapshot(snap(phase=2, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("FINAL CALL pressed after the draw: kept", b.model()["closing"] == c)
+    b.apply_snapshot(snap(phase=5, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("...and WINNER again shows the same figures, not ones taken again from the emptied cups", b.model()["closing"] == c)
+    b.apply_snapshot(snap(phase=6, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("AFTER_PARTY keeps them", b.model()["closing"] == c)
+    b.apply_snapshot({})
+    _check("a snapshot with no phase at all (no bridge) leaves them", b.model()["closing"] == c)
+    b.apply_snapshot(snap(phase=1, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("a return to BETTING OPEN drops them", b.model()["closing"] is None)
+    _, lines = log_lines(log_dir)
+    _check("...logged as dropped", {"closing": None} in lines[-1]["changes"], str(lines[-1]))
+    b.apply_snapshot(snap(phase=3, cups=POST_CUPS))
+    _check("closed again: taken again, from the cups as they are now", b.model()["closing"]["pot"] == 45.0)
+    done = b.reset_betting()
+    _check("Reset betting drops them (here with no bridge)", b.model()["closing"] is None and done["race_state"] == 0)
+
+    b2, wall2, _ = fresh_board()
+    b2.apply_snapshot(snap(phase=0, cups=POST_CUPS))
+    b2.apply_snapshot(snap(phase=3, cups=POST_CUPS))
+    c2 = b2.model()["closing"]
+    _check("0 -> 3: taken at the post", c2 is not None and c2["pot"] == 45.0 and c2["horses"]["7"] == {"tokens": 23}, str(c2))
+    b3, wall3, _ = fresh_board()
+    b3.apply_snapshot(snap(phase=1, cups=POST_CUPS))
+    b3.apply_snapshot(snap(phase=4, cups=post_cups(h7=30)))
+    c3 = b3.model()["closing"]
+    _check("1 -> 4 (AT THE POST skipped): taken on the way into RUNNING, from that snapshot",
+           c3 is not None and c3["pot"] == 52.0 and c3["horses"]["7"] == {"tokens": 30}, str(c3))
+    b3.apply_snapshot(snap(phase=3, cups=post_cups(h7=31)))
+    _check("...and not taken again by a later AT THE POST", b3.model()["closing"] == c3)
+    b4, wall4, _ = fresh_board()
+    b4.apply_snapshot(snap(phase=1, cups=POST_CUPS))
+    b4.apply_snapshot(snap(phase=5, cups=post_cups(h7=26)))
+    _check("1 -> 5 (HEARTBEAT or SET WINNERS straight from betting): taken on the way into WINNER",
+           b4.model()["closing"] is not None and b4.model()["closing"]["pot"] == 48.0)
+    b5, wall5, _ = fresh_board()
+    b5.apply_snapshot(snap(phase=1, cups=POST_CUPS))
+    b5.apply_snapshot(snap(phase=6, cups=POST_CUPS))
+    _check("AFTER_PARTY straight from betting takes none", b5.model()["closing"] is None)
+
+    # On a real bridge: taken in the very model that first says AT_THE_POST, and saved.
+    br, port, sio, clk = _fresh_bridge()
+    br._open_port()
+    board, wall6, _ = fresh_board(bridge=br)
+    for mac, horse, count in ((MAC_A, 19, 4), (MAC_B, 1, 11), (MAC_C, 7, 23)):
+        br.handle_raw_line(telem(mac, horse=horse, count=count))
+    board.set_mode("BETTING_60")
+    q = board.subscribe()
+    board.set_mode("AT_THE_GATE")
+    first = json.loads(q.get_nowait())
+    board.unsubscribe(q)
+    c = board.model()["closing"]
+    _check("on a real bridge: the first model that says AT_THE_POST already carries them",
+           first["race_state"] == 3 and first["closing"] == c and c["pot"] == 38.0
+           and c["prizes"] == {"win": 22, "place": 10, "show": 6}, str(first.get("closing")))
+    _check("...saved in lq_closing", HorseStore(br.db).closing == c)
+    br.handle_raw_line(telem(MAC_C, horse=7, count=0))
+    board.set_mode("FINISH")
+    _check("a cup emptied during the race changes nothing there", board.model()["closing"] == c and board.model()["pot"] == 15.0)
+    board.set_mode("BETTING_30")
+    _check("60/30 MIN again (state 1) drops them, on disk too", board.model()["closing"] is None and HorseStore(br.db).closing is None)
+    board.set_mode("CHAOS")
+    _check("RUNNING straight from there takes them again", board.model()["closing"] is not None
+           and HorseStore(br.db).closing == board.model()["closing"])
+    board.reset_betting()
+    _check("Reset betting drops them, on disk too", board.model()["closing"] is None and HorseStore(br.db).closing is None)
+    # Saving is best effort: a database error costs the copy on disk, not the figures.
+    board.set_mode("BETTING_60")
+
+    def refuse(_closing):
+        raise sqlite3.OperationalError("database is locked")
+    board.store.set_closing = refuse
+    with capture_logs(LOGGER) as cap:
+        board.set_mode("AT_THE_GATE")
+        board.set_mode("BETTING_60")
+        board.set_mode("AT_THE_GATE")
+    _check("a database error: the model still carries them, one WARNING",
+           board.model()["closing"] is not None and board.model()["race_state"] == 3
+           and len(cap.messages("cannot save the closing figures")) == 1, str(cap.messages()))
+
+
+def test_lq_closing_on_an_existing_database():
+    """DevPi's database is older than lq_closing: the bridge's start adds the
+    table (no schema error, nothing else touched), and until it has, a store
+    still reads the names and only the closing figures are missing."""
+    path = str(tmpdir() / "before_lq_closing.db")
+    db = LqDb(path)
+    db.init_schema()
+    db.conn.execute("DROP TABLE lq_closing")          # the shape before this change
+    db.save_horse(9, "Encino")
+    with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
+        store = HorseStore(db)
+    _check("without lq_closing: the names are read, the closing figures are None, one ERROR naming the table",
+           store.horses()[9]["name"] == "Encino" and store.closing is None
+           and len(cap.messages("lq_closing")) == 1 and store._db is db, str(cap.messages()))
+    db.close()
+    b = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake"}, db_path=path, serial_factory=lambda p, baud, t: S.FakeSerial(),
+                 socketio=S.StubSocketIO(), clock=FakeClock(), console=S.ConsoleCapture())
+    try:
+        _check("the bridge's start adds lq_closing and passes the shape check",
+               b.schema_error is None and b.db._columns("lq_closing") == ["id", "closing"])
+        _check("...the names are where they were, no closing figures yet",
+               HorseStore(b.db).horses()[9]["name"] == "Encino" and HorseStore(b.db).closing is None)
+    finally:
+        b.close()
+
+
+def test_results_and_closing_survive_a_restart():
+    """pi5 restarted in WINNER after the cups were emptied for the draw: the
+    results (the dashboard's file) and the closing figures come back, so the
+    TV comes back to the results screen with the numbers at the post."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    board, wall, log_dir = fresh_board(bridge=b)
+    board.store.set_names({19: "Golden Tempo", 1: "Renegade", 22: "Ocelli", 7: "Danon Bourbon"})
+    for mac, horse, count in ((mac_of(19), 19, 4), (mac_of(1), 1, 11), (mac_of(22), 22, 7), (mac_of(7), 7, 23)):
+        b.handle_raw_line(telem(mac, horse=horse, count=count))
+    board.set_mode("BETTING_60")
+    board.set_mode("AT_THE_GATE")
+    board.set_mode("FINISH")
+    write_results(board, 19, 1, 22)          # what the dashboard's POST /api/results saves
+    board.set_mode("RESULTS")
+    before = board.model()
+    _check("before: WINNER, the results, the closing figures (pot $45)",
+           before["race_state"] == 5 and before["results"] == {"win": 19, "place": 1, "show": 22}
+           and before["closing"]["pot"] == 45.0 and before["closing"]["horses"]["19"] == {"tokens": 4}, str(before["closing"]))
+    for horse in (19, 1, 22):
+        b.handle_raw_line(telem(mac_of(horse), horse=horse, count=0))     # emptied for the draw
+    board.refresh()
+    _check("the winners' cups emptied: the live pot falls to $23, the closing figures stay",
+           board.model()["pot"] == 23.0 and board.model()["closing"] == before["closing"])
+    # The restart: the process goes; a new bridge and a new board come up over
+    # the same database and the same results file (main.py no longer deletes it).
+    settings = dict(b.settings)
+    b.close()
+    port2 = S.FakeSerial()
+    b2 = LqBridge(settings=settings, db_path=S._TMP_DB, serial_factory=lambda p, baud, t: port2,
+                  socketio=S.StubSocketIO(), clock=FakeClock(), console=S.ConsoleCapture())
+    S._current = b2                             # the next _fresh_bridge() closes it
+    board2 = BettingBoard(bridge=b2, clock=FakeClock(1000.0), wall=FakeClock(1_700_000_600.0),
+                          log_dir=log_dir, results_path=board._results_path)
+    _check("the new board serves them before its first snapshot", board2.model()["closing"] == before["closing"])
+    board2.refresh()
+    m = board2.model()
+    _check("after the restart: WINNER, the results and the closing figures exactly as they were",
+           m["race_state"] == 5 and m["results"] == {"win": 19, "place": 1, "show": 22}
+           and m["closing"] == before["closing"], str((m["race_state"], m["results"])))
+    _check("...the live figures are the cups as last heard: emptied", m["pot"] == 23.0 and m["horses"]["19"]["tokens"] == 0)
+    _check("...the names too", m["horses"]["19"]["name"] == "GOLDEN TEMPO")
+    _check("the results file is still there, and the gateway's state still carries them",
+           read_results(board._results_path) == [19, 1, 22] and b2.results == [19, 1, 22] and b2.phase == 5)
+    b2._open_port()
+    b2.handle_raw_line(hello())
+    _check("a gateway saying hello after the restart gets WINNER with the results",
+           port2.lines()[-1] == state_line(b2.state_rev, 5, [], [], [19, 1, 22]), str(port2.lines()))
+    board2.reset_betting()
+    _check("Reset betting clears both, the file and lq_closing included",
+           board2.model()["closing"] is None and board2.model()["results"] is None
+           and not Path(board._results_path).exists() and HorseStore(b2.db).closing is None)
+
+
 def test_admin_page():
     b, port, sio, clk = _fresh_bridge()
     client = _make_board_app(b).test_client()
@@ -2638,6 +2859,9 @@ def main():
     _run("renumber — POST /api/quiniela/scratch and /unscratch on a real bridge", test_routes_scratch_and_unscratch)
     _run("renumber — the lifecycle of the pairs in the state line", test_renum_lifecycle)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
+    _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
+    _run("closing — a database from before lq_closing gains it at start", test_lq_closing_on_an_existing_database)
+    _run("closing — the results and the closing figures survive a restart", test_results_and_closing_survive_a_restart)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
     _run("reset — POST /api/quiniela/reset", test_reset_betting_route)

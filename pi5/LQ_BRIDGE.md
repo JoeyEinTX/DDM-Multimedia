@@ -100,6 +100,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
+| `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes |
 
 **The v1 tables are migrated on start** (`_migrate_v2`, each step in its own
 transaction, only when the old shape is found, idempotent): the v1 `cups`
@@ -518,8 +519,20 @@ carries them as `results`: `{"win": 19, "place": 1, "show": 22}`, or `null`
 while none is named. (The dashboard names all three at once. A hand-made
 file naming only some gives the dict with `null` for the rest, and the
 state line's `res` a 0 there.) **Reset betting** removes the file and clears
-them, and so does the dashboard's RESET. The file is the single store: the
-dashboard writes it, La Quiniela reads it.
+them, and so does the dashboard's RESET; nothing else does. pi5 keeps the
+file when it starts (it used to delete it), so a restart in WINNER comes back
+with the results, the cups' frames and the TV's results screen. The file is
+the single store: the dashboard writes it (whole or not at all: a temporary
+file flushed to the card and renamed over it), La Quiniela reads it.
+
+**The LED rule.** The results are facts about the race, not about the LEDs.
+`POST /api/results` saves them first, always, and sets WINNER with them;
+only then does it tell the LED controller (`RESULTS:FINALIZE`, the winners'
+chase settling into the heartbeat: the three cups were already locked as
+they were picked). Its reply carries `"leds": "ok"` or `"unreachable"`, the
+dashboard's notification says `· LEDs unreachable` in red, and the results
+stand either way. `success` is false only when the file could not be written
+(500, `results not saved: ...`); then nothing moves.
 
 #### The results board
 
@@ -529,7 +542,7 @@ slideshow in 0 (PRE_RACE) and 6 (AFTER_PARTY). What it shows in WINNER
 depends on `results` alone:
 
 - `null` (HEARTBEAT, or the admin page's WINNER button, before SET WINNERS):
-  the betting board as it froze when betting closed, under the banner
+  the betting board with the figures at the post (below), under the banner
   `OFFICIAL RESULTS COMING`.
 - all three named: the results screen, `OFFICIAL RESULTS`. Three rows, WIN /
   PLACE / SHOW, each with the horse's saddle cloth and name, the bets its
@@ -539,18 +552,38 @@ depends on `results` alone:
   /api/results` saves them and sets WINNER in one state line, and the model
   that follows has both.
 
-The bets and the prizes on that screen are the ones the board froze when
-betting closed, held by the page (`splash_display/static/js/quiniela_board.js`),
-not by pi5: the model stays live, so once the cups are emptied for the draw
-its `pot`, `prizes` and counts fall while the screen keeps its figures. A TV
-page loaded after that has nothing frozen and shows the model as it is then;
-that is what the runbook's written-down amounts are for.
+#### The figures at the post (`closing`)
 
-Two things pi5 does not do: the dashboard saves the results only when its
-LED controller accepted them (`POST /api/results` answers `success: false`
-otherwise, and WINNER is not set), and pi5 deletes `results.json` when it
-starts (main.py), so a restart in WINNER comes back to `OFFICIAL RESULTS
-COMING` until SET WINNERS is confirmed again.
+The bets and the prizes on the frozen board (3 and 4), under `OFFICIAL
+RESULTS COMING` and on the results screen are the figures as they were when
+betting closed, and **pi5 holds them**, not the page: the model's `closing`.
+
+- **Taken** the first time the race state is 3 AT_THE_POST with none held,
+  or 4 or 5 when AT THE POST was skipped (from the same snapshot as the
+  model that first says so, so the TV never sees the closed state without
+  them): the pot, the prizes, `total_tokens` and every horse's tokens, in
+  the live fields' shapes, plus `at`. Logged as a change, `{"closing":
+  {"pot", "prizes", "total_tokens"}}`, and saved in `lq_closing` before the
+  model goes out.
+- **Held** whatever the cups do afterwards (a token after the post, the
+  winners' cups emptied for the draw), through FINAL CALL pressed by
+  mistake (2 neither takes nor drops them, so WINNER again shows the same
+  figures, never ones taken again from emptied cups), AFTER_PARTY, and a
+  restart of pi5 (the store loads them).
+- **Dropped** by Reset betting and by a state that reopens betting: 0
+  PRE_RACE or 1 BETTING_OPEN (the dashboard's WELCOME, TEST, STANDBY, 60 MIN,
+  30 MIN; the admin page's PRE-RACE and BETTING OPEN). Logged as
+  `{"closing": null}`. To take them again after a mistaken close, reopen
+  with 60 MIN (or BETTING OPEN) and close again.
+
+The live fields keep following the cups underneath (that is the truth about
+the cups, and what the admin page shows); nothing on the TV reads them in
+3, 4 and 5. So a TV page loaded after the cups were emptied, a second
+screen, a phone on the board or on `/api/quiniela`, and a restart of pi5 or
+of the splash all show the numbers at the post. The page falls back to its
+own freeze (what it showed when betting closed) only for a model without
+`closing`, which is an older pi5. The runbook's written-down figures are now
+a one-line backup, for a close that was reopened before the draw was paid.
 
 ### Admin page
 
@@ -649,7 +682,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name stays stored), `names_rev` bumps and the pair `[22, 9]` goes down for a minute or until a cup reports 9: `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order: the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
-| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). |
+| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time and the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). |
 | `GET /quiniela/admin` | The admin page above. |
 
 These operator routes refresh the model synchronously before answering, so a
@@ -699,7 +732,17 @@ rewrites `Cache-Control`.
  "scratches": [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}},
                {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}],
  "cups_online": 20, "cups_no_horse": 0,
- "results": null}
+ "results": null,
+ "closing": null}
+```
+
+Once betting has closed, `closing` is the figures at the post, the live
+fields' shapes plus `at`:
+
+```json
+"closing": {"pot": 33.0, "prizes": {"win": 20, "place": 8, "show": 5}, "total_tokens": 33,
+            "horses": {"1": {"tokens": 0}, "7": {"tokens": 23}, "...": "...24 entries...", "22": {"tokens": 10}},
+            "at": 1777664400.2}
 ```
 
 The first eleven keys are the original contract and are unchanged; the rest
@@ -779,6 +822,13 @@ the store and the results file as follows:
 - `results`: `{"win": 19, "place": 1, "show": 22}` from the dashboard's
   file (above), or `null` while none is named. In WINNER it is what turns
   the TV's frozen board into the results screen.
+- `closing`: the figures at the post, `{"pot", "prizes", "total_tokens",
+  "horses": {"1": {"tokens"}, ... "24": ...}, "at"}`, or `null` while there
+  are none: taken the first time the race state is 3 (or 4 or 5 when 3 was
+  skipped), held through the race, the draw and a restart, dropped by Reset
+  betting and by 0 or 1 ("The figures at the post", above). The TV reads
+  them in 3, 4 and 5; the live `pot`, `prizes`, `total_tokens` and tokens
+  keep following the cups.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -827,7 +877,9 @@ Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
   changed.
 - The race state does not wait on the LEDs: with the LED controller
   unreachable a mode button still sets it, and its notification says both
-  (`Error: ERROR:TIMEOUT · FINAL CALL`).
+  (`Error: ERROR:TIMEOUT · FINAL CALL`). Nor do the results: SET WINNERS
+  saves them and sets WINNER first, and says `· LEDs unreachable` after
+  (the LED rule, under Results).
 - The admin page's seven buttons set the same value directly (they start no
   LED animation) and light the current one from the model's `race_state`
   within its 5 s refresh; the dashboard reads the state back every 5 s and
@@ -930,6 +982,9 @@ the reset adding `"reset": "betting"` and leaving its trace even when
 nothing moved; and a count that came with a cup move (the MAC claiming the
 horse changed, or went away, or arrived) carries the move in its change,
 e.g. `{"horse":22,"tokens":[0,51],"cup":[null,"A0:B7:65:12:34:56"]}`. The
+closing figures leave their trace too: taken, `{"closing":{"pot":154.0,
+"prizes":{"win":92,"place":39,"show":23},"total_tokens":158}}` beside the
+state change that took them; dropped, `{"closing":null}`. The
 first write failure logs one WARNING and disables the log for the rest of
 the process; the model is unaffected.
 
@@ -957,11 +1012,19 @@ byte-exact lines, the cmd route and the admin page's buttons setting the
 same value, WINNER and the results in one line), the between-races
 reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
 results cleared, the ticker and `closes_at` zeroed, the tokens still in the
-cups read and their horses named), the `now` stamp, the three tables with
-the `lq_horses` and `lq_scratches` migrations and every route on a Flask
-test app, the admin page's Race section included (the seven state buttons,
-the figures, Reset betting behind a confirm, the Horses list with its four
-statuses and no cup controls), and that the v1 dev routes are gone.
+cups read and their horses named), the closing figures (taken on 2 -> 3,
+0 -> 3, 1 -> 4 and 1 -> 5, in the very model that first says the closed
+state; not moved by later counts, the emptied cups included; kept by 2, 6
+and a snapshot with no phase; dropped by 1 and by Reset betting; logged,
+saved in `lq_closing`, and a database error costing only the copy on disk),
+a database from before `lq_closing` gaining it at start, a restart in
+WINNER after the cups were emptied (a new bridge and board over the same
+database and results file: WINNER, the results and the closing figures as
+they were, the hello answered with them), the `now` stamp, the three tables
+with the `lq_horses` and `lq_scratches` migrations and every route on a
+Flask test app, the admin page's Race section included (the seven state
+buttons, the figures, Reset betting behind a confirm, the Horses list with
+its four statuses and no cup controls), and that the v1 dev routes are gone.
 `test_smoke` pins `protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h`
 and also checks that importing `main.py` starts no `lq-board` thread and
 registers the routes, the admin page included.
@@ -975,4 +1038,8 @@ files) with the LED controller stubbed and the tote board off: the menu, the
 names on the tote and in the pickers, `/api/race`, the thirteen buttons each
 carrying its mode, the LED command each one sends (unchanged), the race
 state each one sets, the results making it WINNER and RESET making it
-AFTER_PARTY.
+AFTER_PARTY; the results saved, WINNER in one line and `"leds":
+"unreachable"` with the LED controller down (RESULTS:FINALIZE tried once,
+after the save), a file that cannot be written moving nothing (500), the
+page's red `· LEDs unreachable` and its following the server's results, and
+that nothing main.py runs at start removes a file.

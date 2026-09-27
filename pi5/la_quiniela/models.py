@@ -3,7 +3,8 @@
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
 # lq_cups, telemetry, events, lq_link_state, and the betting board's
-# lq_horses, lq_scratches and lq_board. Raw sqlite3, like la_subasta/models.
+# lq_horses, lq_scratches, lq_board and lq_closing. Raw sqlite3, like
+# la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -110,6 +111,18 @@ CREATE TABLE IF NOT EXISTS lq_board (
     closes_at REAL
 );
 INSERT OR IGNORE INTO lq_board (id) VALUES (1);
+
+-- The board's figures as they were when betting closed (its `closing`: the
+-- pot, the prizes, total_tokens and every horse's tokens, as JSON), or NULL
+-- while there are none. Taken on the way into AT_THE_POST (or RUNNING or
+-- WINNER when that was skipped), dropped by Reset betting and by PRE_RACE or
+-- BETTING_OPEN, so a restart during the draw comes back with them. A table
+-- of its own, so the live lq_board keeps its shape.
+CREATE TABLE IF NOT EXISTS lq_closing (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    closing TEXT
+);
+INSERT OR IGNORE INTO lq_closing (id) VALUES (1);
 """
 
 # The shape each table must have if it already exists. A table of the same
@@ -124,6 +137,7 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_horses": ["horse", "name", "replaced"],
     "lq_scratches": ["was", "now"],
     "lq_board": ["id", "names_rev", "closes_at"],
+    "lq_closing": ["id", "closing"],
 }
 
 # Protocol v1 (cup slots), live on DevPi until the v2 flash: accepted by
@@ -451,3 +465,13 @@ class LqDb:
             conn.execute("INSERT OR IGNORE INTO lq_board (id) VALUES (1)")
             conn.execute("UPDATE lq_board SET names_rev = ?, closes_at = ? WHERE id = 1",
                          (int(names_rev), float(closes_at) if closes_at is not None else None))
+
+    def load_closing(self) -> Optional[str]:
+        """The closing figures as stored (JSON text), or None."""
+        row = self.query_one("SELECT closing FROM lq_closing WHERE id = 1")
+        return row["closing"] if row is not None else None
+
+    def save_closing(self, closing_json: Optional[str]) -> None:
+        with self.txn() as conn:
+            conn.execute("INSERT OR IGNORE INTO lq_closing (id) VALUES (1)")
+            conn.execute("UPDATE lq_closing SET closing = ? WHERE id = 1", (closing_json,))

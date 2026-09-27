@@ -328,6 +328,9 @@ def test_results_and_reset_are_modes():
     body = r.get_json()
     _check("POST /api/results: success, the results as sent", r.status_code == 200 and body["success"] is True
            and body["results"] == {"win": 19, "place": 1, "show": 22}, str(body))
+    _check("...the LED controller told after them (RESULTS:FINALIZE, which the page used to send) and it answered",
+           rig.led == ["ANIM:RESULTS_ENTRY", "RESULTS:FINALIZE"] and body["leds"] == "ok"
+           and body["response"] == "OK:RESULTS:FINALIZE", f"{rig.led} {body.get('leds')}")
     _check("...and the race state it set: WINNER, mode RESULTS",
            body["race"] == {"rev": rev + 1, "state": 5, "state_name": "WINNER", "mode": "RESULTS", "source": "dashboard",
                             "gateway_online": False}, str(body.get("race")))
@@ -375,6 +378,86 @@ def test_results_and_reset_are_modes():
 
 
 # -----------------------------------------------------------------------------
+# The results are facts about the race, not about the LEDs
+# -----------------------------------------------------------------------------
+
+def test_results_stand_without_the_leds():
+    """SET WINNERS with the LED controller down: the results are saved,
+    La Quiniela goes to WINNER with them in one state line, and the reply
+    says the LEDs were unreachable."""
+    rig = Rig(led_ok=False)
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/mode", {"mode": "FINISH"})
+    rev = rig.bridge.state_rev
+    rig.port.written.clear()
+    rig.led.clear()
+    r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
+    body = r.get_json()
+    _check("LED controller down: 200, success, the results as sent, leds unreachable",
+           r.status_code == 200 and body["success"] is True and body["results"] == {"win": 19, "place": 1, "show": 22}
+           and body["leds"] == "unreachable" and body["response"].startswith("ERROR"), str(body))
+    _check("...saved all the same, horse numbers in the file",
+           json.loads(rig.results_file.read_text()) | {"timestamp": None} == {"win": 19, "place": 1, "show": 22, "timestamp": None})
+    _check("...WINNER with the results in one state line, byte-exact",
+           body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
+    _check("...the TV's model has them", rig.model()["results"] == {"win": 19, "place": 1, "show": 22}
+           and rig.model()["race_state"] == 5)
+    _check("...the LED controller was tried once, after the results were saved", rig.led == ["RESULTS:FINALIZE"], str(rig.led))
+    r = rig.client.get("/api/results")
+    _check("GET /api/results has them (the dashboard's banner after a reload)", r.get_json()["success"] is True
+           and (r.get_json()["results"]["win"], r.get_json()["results"]["show"]) == (19, 22))
+    # A file that cannot be written: nothing moves, and the reply says why
+    saved = main.RESULTS_FILE
+    main.RESULTS_FILE = str(rig.dir / "no such dir" / "results.json")
+    try:
+        rig.port.written.clear()
+        rig.led.clear()
+        rev = rig.bridge.state_rev
+        r = rig.post("/api/results", {"win": 7, "place": 3, "show": 10})
+        body = r.get_json()
+        _check("results that cannot be saved: 500, success false, the reason, race null",
+               r.status_code == 500 and body["success"] is False and body["error"].startswith("results not saved")
+               and body["race"] is None, str(body))
+        _check("...no state line, no LED command, the race state and the saved results as they were",
+               rig.port.written == [] and rig.led == [] and rig.bridge.state_rev == rev
+               and rig.model()["results"] == {"win": 19, "place": 1, "show": 22})
+    finally:
+        main.RESULTS_FILE = saved
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    _check("the page says when the LEDs missed them, and the results stand",
+           "data.leds === 'unreachable'" in js and "LEDs unreachable" in js)
+    _check("the page no longer sends RESULTS:FINALIZE itself (the route does, once)",
+           "fetch('/api/results/finalize'" not in js)
+    _check("the page follows the server's results: Reset betting takes the tote down within 5 s",
+           "async function followServerResults()" in js and "await followServerResults();" in js
+           and "setRaceComplete(false);" in js[js.index("async function followServerResults()"):])
+
+
+def test_results_are_kept_when_pi5_starts():
+    """pi5 used to delete results.json when it started, so a restart in
+    WINNER lost the results. Nothing that runs at start may remove it: not
+    main.py's top level, not its __main__ block (the routes, which run only
+    when asked, are another matter: /api/results/clear is the dashboard's
+    RESET)."""
+    import ast
+    tree = ast.parse(Path(main.__file__).read_text(encoding="utf-8"))
+    removes = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for sub in ast.walk(node):
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr in ("remove", "unlink", "rmtree")):
+                removes.append((sub.lineno, ast.unparse(sub)))
+    _check("nothing at main.py's top level or in its __main__ block removes a file", removes == [], str(removes))
+    rig = Rig()
+    rig.results_file.write_text(json.dumps({"win": 19, "place": 1, "show": 22, "timestamp": "2027-05-01T19:02:00"}))
+    r = rig.client.get("/api/results")
+    _check("a results file from before a restart is served as it is",
+           r.get_json()["success"] is True and r.get_json()["results"]["place"] == 1)
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -386,6 +469,8 @@ def main_():
     _run("one race state — the thirteen buttons carry their mode", test_buttons_carry_their_mode)
     _run("one race state — a dashboard mode moves La Quiniela, the LEDs as before", test_dashboard_modes_move_la_quiniela)
     _run("one race state — the results make it WINNER, RESET makes it AFTER_PARTY", test_results_and_reset_are_modes)
+    _run("results — saved and WINNER with the LED controller down", test_results_stand_without_the_leds)
+    _run("results — kept when pi5 starts", test_results_are_kept_when_pi5_starts)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

@@ -716,7 +716,28 @@ async function pollRaceMode() {
     } catch (error) {
         // pi5 not answering: the ticker keeps what it had
     }
+    await followServerResults();
     return raceModeInfo;
+}
+
+// The results live on pi5 until Reset betting or RESET, a restart included,
+// so a page loaded after one shows them (the results tote, the race buttons
+// locked). While it does, it checks they are still there: Reset betting on
+// La Quiniela's admin page clears them, and the page follows within 5 s (the
+// tote goes, the race buttons come back).
+async function followServerResults() {
+    if (!bannerResults) return;
+    try {
+        const response = await fetch('/api/results', { cache: 'no-store' });
+        const data = await response.json();
+        if (data && data.success === false && !data.results) {
+            localStorage.removeItem('raceResults');
+            hideResultsBanner();
+            setRaceComplete(false);
+        }
+    } catch (error) {
+        // pi5 not answering: the page keeps what it shows
+    }
 }
 
 // "BETTING OPEN" for {state_name: "BETTING_OPEN"}; '' when pi5 has not said
@@ -1612,7 +1633,9 @@ async function closeResultsModal(keepAnimation = false) {
 }
 
 // Confirm and apply results (horse numbers: what La Quiniela's cups and the
-// TV board are told; the LED cups were lit by post as they were picked)
+// TV board are told; the LED cups were lit by post as they were picked).
+// pi5 saves them first, whatever the LED controller does, and then sends it
+// RESULTS:FINALIZE itself; data.leds says whether the controller answered.
 async function resultsConfirm() {
     const winHorse = resultsState.win;
     const placeHorse = resultsState.place;
@@ -1632,7 +1655,14 @@ async function resultsConfirm() {
         const data = await response.json();
 
         if (data.success) {
-            showNotification(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, 'success');
+            // The results stand either way; an unreachable LED controller only
+            // means the LEDs missed them
+            const set = `Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`;
+            if (data.leds === 'unreachable') {
+                showNotification(`${set} \u00b7 LEDs unreachable`, 'error');
+            } else {
+                showNotification(set, 'success');
+            }
             document.getElementById('current-mode').textContent = 'RESULTS';
             filterTuningGroups('RESULTS');
             localStorage.setItem('raceResults', JSON.stringify({
@@ -1646,8 +1676,8 @@ async function resultsConfirm() {
                 buildTicker();
             }
 
-            // Signal ESP32 to blend winner chase into heartbeat seamlessly
-            await fetch('/api/results/finalize', { method: 'POST' });
+            // The winners' chase blending into the heartbeat (RESULTS:FINALIZE)
+            // was sent by /api/results itself
 
             closeResultsModal(true);
 

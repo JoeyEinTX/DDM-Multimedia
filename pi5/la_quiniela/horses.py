@@ -15,16 +15,19 @@
 # into the horse's bit in the state line. The board's model derives
 # in_field / replaced / scratches from the records and the names.
 #
-# For the board as a whole, when betting closes. None of it comes from the
-# gateway, so none of it lives in the bridge; the board reads this store when
-# it builds its model and the admin routes write it.
+# For the board as a whole, when betting closes, and the figures as they were
+# when it did (the board's closing figures, which only the board writes).
+# None of it comes from the gateway, so none of it lives in the bridge; the
+# board reads this store when it builds its model and the admin routes write
+# it.
 #
 # Names are stored as typed. The board upper-cases them when it serves them.
-# With a database the rows are lq_horses, lq_scratches and lq_board
-# (models.py); without one (tests) the store is memory only. One lock; the
-# on_change callback is invoked after every write, outside the lock, so the
-# board's wake() (an Event set) is a safe listener.
+# With a database the rows are lq_horses, lq_scratches, lq_board and
+# lq_closing (models.py); without one (tests) the store is memory only. One
+# lock; the on_change callback is invoked after every write, outside the
+# lock, so the board's wake() (an Event set) is a safe listener.
 
+import json
 import logging
 import re
 import sqlite3
@@ -110,6 +113,22 @@ def parse_names_text(text: Any) -> Dict[int, str]:
     return names
 
 
+def _parse_closing(text: Any) -> Optional[Dict[str, Any]]:
+    """The stored closing figures, or None: nothing stored, or text that is
+    not a JSON object (warned about, never raised: a bad row must not cost
+    the names)."""
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        value = None
+    if not isinstance(value, dict):
+        log.warning("La Quiniela horses: the stored closing figures are unreadable; ignored")
+        return None
+    return value
+
+
 def in_field(horse: int, records: Dict[int, Optional[int]], gateway_scratched: Iterable[int] = ()) -> bool:
     """The one rule, pure: 1..20 are in the field unless scratched (either
     kind); 21..24 only while standing in for a scratched horse. The "now" of
@@ -153,7 +172,8 @@ def post_of(horse: int, records: Dict[int, Optional[int]]) -> Optional[int]:
 
 
 class HorseStore:
-    """Names for horses 1..24, the scratch records and closes_at.
+    """Names for horses 1..24, the scratch records, closes_at and the
+    board's closing figures.
 
     A record is was -> now: a replacement scratch (the cup that was `was`
     becomes `now`, through the renumber pair the board sends) or, with now
@@ -173,6 +193,7 @@ class HorseStore:
         self._scratches: Dict[int, Optional[int]] = {}      # was -> now, or None: no replacement
         self._names_rev = 0
         self._closes_at: Optional[float] = None
+        self._closing: Optional[Dict[str, Any]] = None
         if db is not None:
             self._load()
 
@@ -202,6 +223,14 @@ class HorseStore:
             log.error("La Quiniela horses: cannot read lq_horses / lq_scratches / lq_board (%s); "
                       "names will not persist", exc)
             self._db = None
+            return
+        try:
+            self._closing = _parse_closing(self._db.load_closing())
+        except sqlite3.Error as exc:
+            # lq_closing is newer than the rest: without it only the closing
+            # figures are lost (the board warns again if it cannot save them).
+            log.error("La Quiniela horses: cannot read lq_closing (%s); "
+                      "the closing figures will not survive a restart", exc)
 
     def _save_horse(self, horse: int) -> None:
         if self._db is not None:
@@ -295,6 +324,12 @@ class HorseStore:
     def closes_at(self) -> Optional[float]:
         with self._lock:
             return self._closes_at
+
+    @property
+    def closing(self) -> Optional[Dict[str, Any]]:
+        """The closing figures as last saved (a copy), or None."""
+        with self._lock:
+            return json.loads(json.dumps(self._closing)) if self._closing is not None else None
 
     # -- names ----------------------------------------------------------------
 
@@ -432,3 +467,16 @@ class HorseStore:
 
     def clear_closes_at(self) -> None:
         self.set_closes_at(None)
+
+    # -- the closing figures ----------------------------------------------------
+
+    def set_closing(self, closing: Optional[Dict[str, Any]]) -> None:
+        """Persist the board's closing figures; None clears them. The board
+        is their only writer and publishes them itself, so no on_change. A
+        database error is the caller's to handle (the figures are kept in
+        memory either way)."""
+        text = json.dumps(closing, separators=(",", ":")) if closing is not None else None
+        with self._lock:
+            self._closing = json.loads(text) if text is not None else None
+            if self._db is not None:
+                self._db.save_closing(text)
