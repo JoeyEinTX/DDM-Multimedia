@@ -353,8 +353,13 @@ Or unlock all:
 }
 ```
 
+`win`, `place` and `show` are **horse numbers** (program numbers, 1-24): a
+horse standing in for a scratched one is sent under its own number (22, not
+the 9 it replaced). The dashboard's pickers send them; La Quiniela reads them
+from the saved file for the cups and the TV board.
+
 **Validation:**
-- Win, Place, and Show must be different cup numbers
+- Win, Place, and Show must be different numbers
 - Returns 400 error if validation fails
 
 **Side Effects:**

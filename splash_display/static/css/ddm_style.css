@@ -1152,6 +1152,12 @@ img { -webkit-user-drag: none; user-drag: none; }
 .splash-saddle--pos-18 { background: #228B22; color: #FFCD00; }
 .splash-saddle--pos-19 { background: #00008B; color: #E31837; }
 .splash-saddle--pos-20 { background: #FF00FF; color: #FFCD00; }
+/* 21-24: the also-eligibles' placeholders, the same as the live board, the
+   dashboard and the cups show. */
+.splash-saddle--pos-21 { background: #FFDAB9; color: #000000; border: 1px solid rgba(0, 0, 0, 0.25); }
+.splash-saddle--pos-22 { background: #008080; color: #FFFFFF; }
+.splash-saddle--pos-23 { background: #808000; color: #FFFFFF; }
+.splash-saddle--pos-24 { background: #2F4F4F; color: #FFFFFF; }
 
 /* Post-race result accents — LAYER on top of the position color rather
    than replace it (so position identity stays visible at a glance).

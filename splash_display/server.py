@@ -195,15 +195,19 @@ def _build_horse_roster_context() -> Dict[str, Any] | None:
     if not horses:
         return None
 
-    # Split horses into 1-10 / 11-20 columns by post position.
-    horses_left = sorted(
-        (h for h in horses if isinstance(h.get("number"), int) and 1 <= h["number"] <= 10),
+    # Two columns of ten, as on the live board: the field in numeric order,
+    # the first ten left and the rest right. pi5 lists the field from La
+    # Quiniela's names store, so a number can be 21-24 (an also-eligible
+    # that drew in keeps its own program number) and a scratched horse is
+    # simply not there.
+    field = sorted(
+        (h for h in horses if isinstance(h.get("number"), int) and 1 <= h["number"] <= 24),
         key=lambda h: h["number"],
     )
-    horses_right = sorted(
-        (h for h in horses if isinstance(h.get("number"), int) and 11 <= h["number"] <= 20),
-        key=lambda h: h["number"],
-    )
+    if not field:
+        return None
+    horses_left = field[:10]
+    horses_right = field[10:20]
 
     # Staleness vs. dashboard's last_updated (ISO 8601, UTC).
     is_stale = False

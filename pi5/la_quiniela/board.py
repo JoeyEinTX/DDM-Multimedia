@@ -33,7 +33,7 @@ from flask import Blueprint, Response, jsonify, render_template, request
 
 from la_quiniela import protocol as P
 from la_quiniela.betting import BettingBoard, load_board_settings, sse_events, validate_cmd
-from la_quiniela.horses import NAME_MAX_LEN, in_field, parse_names_text
+from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +278,45 @@ def _replacement_arg(value: Any) -> Tuple[Optional[Tuple[int, str]], Optional[st
     if len(name) > NAME_MAX_LEN:
         return None, f"replacement name longer than {NAME_MAX_LEN} characters"
     return (n, name), None
+
+
+def field_by_post(board: BettingBoard) -> Dict[str, Any]:
+    """The field as the mantle has it: {"names_rev", "posts", "names"}.
+
+    A post is a place on the mantle, 1..20, and the LED cup there. `posts`
+    has one entry per post somebody runs from, in post order: {"post": 9,
+    "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}.
+    The horse is the post's own, or the one standing in for it (a replacement
+    scratch renumbers the cup and nothing moves, so 22 runs from post 9 and
+    "replaces" says so); a post whose horse was scratched with no replacement
+    has no entry. Names are La Quiniela's, upper-cased, "" where none is
+    stored (the label then says HORSE n). `names` carries all 24, keyed
+    "1".."24": the results tote names whatever the results say."""
+    store = board.store
+    records = store.scratches()
+    names = {n: str((entry or {}).get("name") or "").upper() for n, entry in store.horses().items()}
+    posts = []
+    for post in range(1, FIELD_SIZE + 1):
+        horse = horse_at(post, records)
+        if horse is None or not in_field(horse, records):
+            continue
+        name = names.get(horse, "")
+        entry: Dict[str, Any] = {"post": post, "horse": horse, "name": name,
+                                 "label": "%d \u00b7 %s" % (horse, name or "HORSE %d" % horse)}
+        if horse != post:
+            entry["replaces"] = post
+        posts.append(entry)
+    return {"names_rev": store.names_rev, "posts": posts,
+            "names": {str(n): names.get(n, "") for n in range(1, HORSE_COUNT + 1)}}
+
+
+@quiniela_board_bp.route("/api/quiniela/field", methods=["GET"])
+def api_quiniela_field():
+    """The field by post, for the dashboard's SET WINNERS pickers and its
+    results tote (field_by_post)."""
+    resp = jsonify(field_by_post(get_board()))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @quiniela_board_bp.route("/api/quiniela/horses", methods=["GET"])

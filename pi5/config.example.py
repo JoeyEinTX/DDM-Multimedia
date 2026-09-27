@@ -67,6 +67,13 @@ LQ_GATEWAY_OFFLINE_S = _lq_env('LQ_GATEWAY_OFFLINE_S', 12) # no line at all for 
 LQ_DEAF_REOPEN_S = _lq_env('LQ_DEAF_REOPEN_S', 20)        # port open but no valid line for this long = close it and open it again
 LQ_REOPEN_MIN_GAP_S = _lq_env('LQ_REOPEN_MIN_GAP_S', 30)  # never reopen more often than this
 
+# The splash display's board (the TV page), for the dashboard menu's "La
+# Quiniela Board" link. {host} is replaced by the host name the dashboard was
+# opened with, so the link works from the touchscreen and from a phone alike;
+# give a full URL when the splash runs on another machine. main.py falls back
+# to this same value when config.py has no such key.
+SPLASH_BOARD_URL = _lq_env('SPLASH_BOARD_URL', 'http://{host}:5001/')
+
 # The betting board the splash display's TV page renders (GET /api/quiniela,
 # see "Betting board" in pi5/LQ_BRIDGE.md). Same names as the splash used;
 # DDM_TOKEN_VALUE (float), DDM_QUINIELA_LOG (1/true/yes/on) and

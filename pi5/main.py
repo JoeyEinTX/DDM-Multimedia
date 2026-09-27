@@ -25,7 +25,9 @@ from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 from la_subasta import la_subasta_bp, init_la_subasta
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
-                         quiniela_board_bp, init_board, start_board)
+                         quiniela_board_bp, init_board, start_board, get_board)
+from la_quiniela.board import field_by_post
+import config as _config
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -91,6 +93,30 @@ def tote_send(action, *args, **kwargs):
         return None
 
 
+# The splash display's board (the TV page), for the menu's "La Quiniela
+# Board" link. {host} is replaced by the host name the dashboard was opened
+# with, so the link works from the touchscreen (localhost) and from a phone
+# (joeydevpi.local) alike. SPLASH_BOARD_URL in config.py, or
+# DDM_SPLASH_BOARD_URL in pi5/.env, replaces it (a full URL when the splash
+# runs on another machine).
+SPLASH_BOARD_URL = (os.environ.get('DDM_SPLASH_BOARD_URL')
+                    or getattr(_config, 'SPLASH_BOARD_URL', None)
+                    or 'http://{host}:5001/')
+
+
+def splash_board_url(host_header):
+    """SPLASH_BOARD_URL with {host} filled in from a request's Host header
+    (its port dropped)."""
+    from urllib.parse import urlsplit
+    try:
+        host = urlsplit('//' + (host_header or '')).hostname or 'localhost'
+    except ValueError:
+        host = 'localhost'
+    if ':' in host:                      # an IPv6 literal goes back in brackets
+        host = '[' + host + ']'
+    return SPLASH_BOARD_URL.replace('{host}', host)
+
+
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
@@ -98,7 +124,8 @@ def dashboard():
                          system_name=SYSTEM_NAME,
                          version=VERSION,
                          num_cups=NUM_CUPS,
-                         total_leds=TOTAL_LEDS)
+                         total_leds=TOTAL_LEDS,
+                         board_url=splash_board_url(request.host))
 
 
 @app.route('/spectator')
@@ -683,6 +710,13 @@ def api_params_reset():
     return jsonify({'success': success, 'response': response})
 
 
+# The Race Setup page is gone from the dashboard (horse names are La
+# Quiniela's now: /quiniela/admin), and with it the AI search that filled its
+# form. What is left of it here is the store of the post time and the odds
+# (data/race_setup.json) and the routes that write it, because two things
+# still read them: /api/race (the splash display's horse-roster slide shows
+# the post time and the odds) and the spectator page (odds_update). They
+# have no page any more; they answer curl.
 @app.route('/api/race-setup', methods=['GET'])
 def api_race_setup_get():
     """Get current race setup data."""
@@ -740,80 +774,6 @@ def _extract_json_from_text(text: str):
             except json.JSONDecodeError:
                 return None
     return None
-
-
-@app.route('/api/race-setup/ai-search', methods=['POST'])
-def api_race_setup_ai_search():
-    """Use Anthropic API with web search to find current Kentucky Derby entries."""
-    if not ANTHROPIC_API_KEY:
-        return jsonify({
-            'success': False,
-            'error': 'Anthropic API key not configured. Add ANTHROPIC_API_KEY to pi5/.env'
-        }), 503
-
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-        response = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=4096,
-            tools=[{
-                'type': 'web_search_20250305',
-                'name': 'web_search'
-            }],
-            messages=[{
-                'role': 'user',
-                'content': (
-                    'Search the web for the 2026 Kentucky Derby entries, post positions, and post time. '
-                    'After searching, respond with ONLY a JSON object and absolutely nothing else. '
-                    'No explanation, no markdown fences, no commentary before or after. '
-                    'Just raw JSON in this exact format:\n'
-                    '{"race_name":"Kentucky Derby 2026","post_time":"18:57","horses":{"1":"HorseName","2":"HorseName","3":"HorseName","4":"HorseName","5":"HorseName","6":"HorseName","7":"HorseName","8":"HorseName","9":"HorseName","10":"HorseName","11":"HorseName","12":"HorseName","13":"HorseName","14":"HorseName","15":"HorseName","16":"HorseName","17":"HorseName","18":"HorseName","19":"HorseName","20":"HorseName"}}\n'
-                    'Replace HorseName with actual horse names. Use "" for unfilled positions. Post time in 24hr HH:MM format.'
-                )
-            }]
-        )
-
-        # Extract text from ALL content blocks
-        result_text = ''
-        for block in response.content:
-            if hasattr(block, 'text') and block.text:
-                result_text += block.text
-
-        print(f"[AI Search] Raw text: {result_text[:1000]}")
-
-        parsed = _extract_json_from_text(result_text)
-        if not parsed:
-            raise ValueError('Could not extract JSON from AI response')
-
-        # Normalize the response - handle different JSON structures
-        # If the response wrapped horses in a sub-key, extract it
-        if 'horses' not in parsed:
-            # Look for horses in nested structure
-            for key, value in parsed.items():
-                if isinstance(value, dict) and 'horses' in value:
-                    parsed = value
-                    break
-                elif isinstance(value, dict) and any(k.isdigit() for k in value.keys()):
-                    # Found the horses dict directly
-                    parsed = {'race_name': 'Kentucky Derby 2026', 'post_time': '18:57', 'horses': value}
-                    break
-
-        return jsonify({'success': True, 'data': parsed})
-
-    except json.JSONDecodeError as e:
-        return jsonify({
-            'success': False,
-            'error': f'Failed to parse AI response as JSON: {str(e)}',
-            'raw': result_text if 'result_text' in locals() else ''
-        }), 500
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 
 # =====================================================================
@@ -1011,18 +971,29 @@ def api_race():
     except Exception as e:
         print(f'[/api/race] live state lookup failed: {e}')
 
-    # Persisted setup (horse names by post position, post_time, odds)
+    # Persisted setup: post_time and odds. The names are La Quiniela's.
     setup = load_race_setup() or {}
-    setup_horses = setup.get('horses', {}) or {}
     setup_odds = setup.get('odds', {}) or {}
 
-    # Convert {"1": "Sovereignty", ...} -> [{number, name, odds, finish}, ...]
+    # The field, from La Quiniela's names store: the horses in the field in
+    # numeric order, each under its own program number (a horse standing in
+    # for a scratched one keeps its number, 22 for Ocelli, and a horse
+    # scratched either way is not listed). -> [{number, name, odds, finish}]
     horses = []
-    for n in range(1, 21):
-        name = (setup_horses.get(str(n)) or '').strip()
+    try:
+        posts = field_by_post(get_board())['posts']
+        typed = get_board().store.horses()          # names as typed
+    except Exception as e:
+        print(f'[/api/race] La Quiniela field lookup failed: {e}')
+        posts, typed = [], {}
+    for entry in sorted(posts, key=lambda p: p['horse']):
+        n = entry['horse']
+        name = ((typed.get(n) or {}).get('name') or '').strip()
         if not name:
-            continue  # skip unfilled positions
-        odds_str = (setup_odds.get(str(n)) or '').strip()
+            continue  # skip unnamed horses
+        # The stored odds are keyed by post and belong to the horse that drew
+        # it: a replacement does not inherit them.
+        odds_str = (setup_odds.get(str(n)) or '').strip() if n == entry['post'] else ''
         horses.append({
             'number': n,
             'name': name,

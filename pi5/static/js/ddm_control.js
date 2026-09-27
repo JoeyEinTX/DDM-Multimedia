@@ -128,6 +128,14 @@ const dotPatterns = {
     ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     ':': [0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00],
     '|': [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+    // Punctuation a horse's name can carry (the results tote prints names)
+    "'": [0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00],
+    '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00],
+    ',': [0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x08],
+    '-': [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
+    '&': [0x08, 0x14, 0x14, 0x08, 0x15, 0x12, 0x0D],
+    '!': [0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04],
+    '/': [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
 };
 
 // Create a digit element with dot matrix (5×7 grid: 5 columns × 7 rows)
@@ -1143,7 +1151,52 @@ async function triggerFinish() {
     }, 60000);  // 60 seconds
 }
 
-// Results modal state
+// =====================================================================
+// La Quiniela's field: the horses' names
+// =====================================================================
+// The names are La Quiniela's (its admin page, /quiniela/admin); the
+// dashboard only reads them, for the results tote and the SET WINNERS
+// pickers. GET /api/quiniela/field lists the field by post. A post is a
+// place on the mantle, 1-20, and the LED cup there. A horse standing in for
+// a scratched one runs from the scratched horse's post under its own number
+// (22 Ocelli from post 9: the cup was renumbered, nothing moved), so a pick
+// has two numbers: the post (which LED cup to light) and the horse (what
+// the results say). A post whose horse was scratched with no replacement is
+// not in the list and is not offered.
+let quinielaField = null;   // {names_rev, posts: [{post, horse, name, label, replaces?}], names: {"1": "..."}}
+
+// What is shown until La Quiniela answers (or if it cannot): posts 1-20, no names.
+function defaultField() {
+    const posts = [];
+    const names = {};
+    for (let n = 1; n <= 24; n++) names[String(n)] = '';
+    for (let p = 1; p <= 20; p++) {
+        posts.push({ post: p, horse: p, name: '', label: `${p} \u00b7 HORSE ${p}` });
+    }
+    return { names_rev: null, posts: posts, names: names };
+}
+
+async function loadQuinielaField() {
+    try {
+        const response = await fetch('/api/quiniela/field', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        if (data && Array.isArray(data.posts) && data.names) quinielaField = data;
+    } catch (error) {
+        console.error('Error loading La Quiniela field:', error);
+    }
+    if (!quinielaField) quinielaField = defaultField();
+    return quinielaField;
+}
+
+// The name the tote and the pickers print for a horse: La Quiniela's, or HORSE n.
+function horseDisplayName(n) {
+    const names = (quinielaField && quinielaField.names) || {};
+    const name = String(names[String(n)] || '').trim();
+    return name ? name.toUpperCase() : `HORSE ${n}`;
+}
+
+// Results modal state (win / place / show hold HORSE numbers)
 let resultsState = {
     step: 'win',  // 'win', 'place', 'show', 'confirm'
     win: null,
@@ -1151,12 +1204,15 @@ let resultsState = {
     show: null
 };
 
+// The posts (LED cups) of the three picks
+let resultsPosts = { win: null, place: null, show: null };
+
 // Winner colors for cup locking
 const GOLD_RGB = { r: 255, g: 215, b: 0 };
 const SILVER_RGB = { r: 192, g: 192, b: 192 };
 const BRONZE_RGB = { r: 205, g: 127, b: 50 };
 
-// Show results modal with saddle cloth grid
+// Show results modal with the pickers
 async function showResultsModal() {
     if (raceControlMode === 'auto') return;
 
@@ -1165,10 +1221,10 @@ async function showResultsModal() {
         clearTimeout(finishTimer);
         finishTimer = null;
     }
-    
+
     // Stop any running animation first
     clearActiveButton();
-    
+
     // Reset state
     resultsState = {
         step: 'win',
@@ -1176,15 +1232,13 @@ async function showResultsModal() {
         place: null,
         show: null
     };
-    
+    resultsPosts = { win: null, place: null, show: null };
+
     // Clear sidebar slots
-    document.getElementById('slot-win').innerHTML = '';
-    document.getElementById('slot-win').classList.remove('filled');
-    document.getElementById('slot-place').innerHTML = '';
-    document.getElementById('slot-place').classList.remove('filled');
-    document.getElementById('slot-show').innerHTML = '';
-    document.getElementById('slot-show').classList.remove('filled');
-    
+    updateSlot('win', null);
+    updateSlot('place', null);
+    updateSlot('show', null);
+
     // Start RESULTS_ENTRY animation (clears cup locks internally)
     try {
         await fetch('/api/animation/RESULTS_ENTRY', { method: 'POST' });
@@ -1192,6 +1246,8 @@ async function showResultsModal() {
         console.error('Error starting results entry animation:', error);
     }
 
+    // The field as La Quiniela has it now: names, replacements, scratches
+    await loadQuinielaField();
     generateSaddleClothGrid();
     updateResultsModalUI();
 
@@ -1199,47 +1255,84 @@ async function showResultsModal() {
     modal.classList.add('active');
 }
 
-// Generate saddle cloth grid (4 rows × 5 columns)
+// Generate the pickers: one per post, in mantle order (4 columns x 5 rows).
+// Each shows the horse that runs from that post as "19 · GOLDEN TEMPO": the
+// number on its saddle cloth, then La Quiniela's name (HORSE n without one).
+// A post whose horse was replaced shows the replacement's number and name;
+// a post whose horse was scratched with no replacement is left blank.
 function generateSaddleClothGrid() {
     const grid = document.getElementById('saddle-cloth-grid');
     grid.innerHTML = '';
-    
-    for (let i = 1; i <= 20; i++) {
+
+    const byPost = {};
+    ((quinielaField && quinielaField.posts) || defaultField().posts).forEach(p => { byPost[p.post] = p; });
+
+    for (let post = 1; post <= 20; post++) {
+        const entry = byPost[post];
+        if (!entry) {
+            const gap = document.createElement('div');
+            gap.className = 'winner-pick-gap';
+            grid.appendChild(gap);
+            continue;
+        }
+        const horse = entry.horse;
+        const name = horseDisplayName(horse);
+
         const btn = document.createElement('button');
-        btn.className = 'saddle-cloth-btn';
-        btn.textContent = String(i).padStart(2, '0');
-        btn.dataset.cup = i;
-        
-        // Apply saddle cloth colors
-        const colors = SADDLE_CLOTHS[i] || { bg: '#808080', text: '#FFFFFF' };
-        btn.style.backgroundColor = colors.bg;
-        btn.style.color = colors.text;
-        
-        // Add click handler
-        btn.onclick = () => selectCup(i);
-        
+        btn.className = 'winner-pick-btn';
+        btn.dataset.post = post;
+        btn.dataset.horse = horse;
+        btn.title = `${horse} \u00b7 ${name}`;
+
+        // Saddle cloth colors of the horse's own number
+        const colors = SADDLE_CLOTHS[horse] || { bg: '#808080', text: '#FFFFFF' };
+        const num = document.createElement('span');
+        num.className = 'winner-pick-num';
+        num.style.backgroundColor = colors.bg;
+        num.style.color = colors.text;
+        num.textContent = String(horse);
+
+        const sep = document.createElement('span');
+        sep.className = 'winner-pick-sep';
+        sep.textContent = '\u00b7';
+
+        const label = document.createElement('span');
+        label.className = 'winner-pick-name';
+        label.textContent = name;
+
+        btn.appendChild(num);
+        btn.appendChild(sep);
+        btn.appendChild(label);
+        btn.onclick = () => selectCup(post, horse);
+
         grid.appendChild(btn);
     }
 }
 
-// Update slot with saddle cloth (animated)
+// Update slot with saddle cloth and name (animated)
 function updateSlot(slot, horseNum) {
     const slotEl = document.getElementById(`slot-${slot}`);
     if (horseNum) {
-        const colors = SADDLE_CLOTHS[horseNum];
+        const colors = SADDLE_CLOTHS[horseNum] || { bg: '#808080', text: '#FFFFFF' };
         slotEl.innerHTML = `<div class="slot-saddle" style="background:${colors.bg}; color:${colors.text}">${String(horseNum).padStart(2, '0')}</div>`;
-        slotEl.classList.add('filled');
+        const name = document.createElement('div');
+        name.className = 'slot-horse-name';
+        name.textContent = horseDisplayName(horseNum);
+        slotEl.appendChild(name);
+        slotEl.classList.add('filled', 'slot-named');
     } else {
         slotEl.innerHTML = '';
-        slotEl.classList.remove('filled');
+        slotEl.classList.remove('filled', 'slot-named');
     }
 }
 
-// Select a cup in current step
-async function selectCup(cupNumber) {
+// Select a post's horse in the current step. The horse number is what the
+// results say; the post is the LED cup that lights.
+async function selectCup(post, horse) {
     const step = resultsState.step;
-    resultsState[step] = cupNumber;
-    updateSlot(step, cupNumber);
+    resultsState[step] = horse;
+    resultsPosts[step] = post;
+    updateSlot(step, horse);
 
     // Lock cup to winner color (while heartbeat continues on others)
     const colorMap = { win: GOLD_RGB, place: SILVER_RGB, show: BRONZE_RGB };
@@ -1249,7 +1342,7 @@ async function selectCup(cupNumber) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                cup: cupNumber,
+                cup: post,
                 r: colorMap[step].r,
                 g: colorMap[step].g,
                 b: colorMap[step].b
@@ -1265,7 +1358,7 @@ async function selectCup(cupNumber) {
     } else if (step === 'place') {
         resultsState.step = 'show';
     }
-    
+
     // Update UI
     updateResultsModalUI();
 }
@@ -1275,7 +1368,7 @@ function updateResultsModalUI() {
     const header = document.getElementById('results-modal-header');
     const subtext = document.getElementById('results-modal-subtitle');
     const confirmSection = document.getElementById('results-confirm-section');
-    
+
     // Update header and subtext based on step (with null checks)
     if (header) {
         if (resultsState.step === 'win') {
@@ -1289,7 +1382,7 @@ function updateResultsModalUI() {
             header.style.color = '#CD7F32';  // Bronze
         }
     }
-    
+
     if (subtext) {
         if (resultsState.step === 'win') {
             subtext.textContent = 'Select the 1st place horse';
@@ -1299,29 +1392,29 @@ function updateResultsModalUI() {
             subtext.textContent = 'Select the 3rd place horse';
         }
     }
-    
+
     // Update button states in grid
-    const buttons = document.querySelectorAll('.saddle-cloth-btn');
+    const buttons = document.querySelectorAll('.winner-pick-btn');
     buttons.forEach(btn => {
-        const cupNum = parseInt(btn.dataset.cup);
-        
+        const horse = parseInt(btn.dataset.horse);
+
         // Remove all selection classes
         btn.classList.remove('selected-win', 'selected-place', 'selected-show');
         btn.disabled = false;
-        
-        // Mark selected cups
-        if (cupNum === resultsState.win) {
+
+        // Mark selected horses
+        if (horse === resultsState.win) {
             btn.classList.add('selected-win');
             btn.disabled = true;
-        } else if (cupNum === resultsState.place) {
+        } else if (horse === resultsState.place) {
             btn.classList.add('selected-place');
             btn.disabled = true;
-        } else if (cupNum === resultsState.show) {
+        } else if (horse === resultsState.show) {
             btn.classList.add('selected-show');
             btn.disabled = true;
         }
     });
-    
+
     // Show confirm button if all selected (with null check)
     if (confirmSection) {
         if (resultsState.win && resultsState.place && resultsState.show) {
@@ -1336,28 +1429,30 @@ function updateResultsModalUI() {
 async function resultsGoBack() {
     if (resultsState.step === 'place') {
         // Unlock win cup and go back
-        if (resultsState.win) {
+        if (resultsPosts.win) {
             await fetch('/api/cup/unlock', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cup: resultsState.win })
+                body: JSON.stringify({ cup: resultsPosts.win })
             });
         }
         resultsState.win = null;
+        resultsPosts.win = null;
         resultsState.step = 'win';
     } else if (resultsState.step === 'show') {
         // Unlock place cup and go back
-        if (resultsState.place) {
+        if (resultsPosts.place) {
             await fetch('/api/cup/unlock', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cup: resultsState.place })
+                body: JSON.stringify({ cup: resultsPosts.place })
             });
         }
         resultsState.place = null;
+        resultsPosts.place = null;
         resultsState.step = 'place';
     }
-    
+
     updateResultsModalUI();
 }
 
@@ -1373,19 +1468,20 @@ async function resultsReset() {
     } catch (error) {
         console.error('Error unlocking cups:', error);
     }
-    
+
     // Clear all slots
     updateSlot('win', null);
     updateSlot('place', null);
     updateSlot('show', null);
-    
+
     resultsState = {
         step: 'win',
         win: null,
         place: null,
         show: null
     };
-    
+    resultsPosts = { win: null, place: null, show: null };
+
     updateResultsModalUI();
 }
 
@@ -1393,7 +1489,7 @@ async function resultsReset() {
 async function closeResultsModal(keepAnimation = false) {
     const modal = document.getElementById('results-modal');
     modal.classList.remove('active');
-    
+
     // Only unlock cups and stop animation if NOT confirmed
     if (!keepAnimation) {
         try {
@@ -1413,15 +1509,16 @@ async function closeResultsModal(keepAnimation = false) {
     }
 }
 
-// Confirm and apply results
+// Confirm and apply results (horse numbers: what La Quiniela's cups and the
+// TV board are told; the LED cups were lit by post as they were picked)
 async function resultsConfirm() {
     const winHorse = resultsState.win;
     const placeHorse = resultsState.place;
     const showHorse = resultsState.show;
-    
+
     // Set flag to skip reveal popup on this device
     justSubmittedResults = true;
-    
+
     showLoader();
     try {
         const response = await fetch('/api/results', {
@@ -1459,7 +1556,8 @@ async function resultsConfirm() {
     }
 }
 
-// Saddle cloth colors and text colors for positions 1-20 (Official Racing Colors)
+// Saddle cloth colors and text colors: 1-20 the Official Racing Colors, 21-24
+// the also-eligibles' placeholders (the same as the cups and the TV board show)
 const SADDLE_CLOTHS = {
     1:  { bg: '#E31837', text: '#FFFFFF' },  // Red, white
     2:  { bg: '#FFFFFF', text: '#000000' },  // White, black
@@ -1480,7 +1578,11 @@ const SADDLE_CLOTHS = {
     17: { bg: '#000080', text: '#FFFFFF' },  // Navy, white
     18: { bg: '#228B22', text: '#FFCD00' },  // Forest green, yellow
     19: { bg: '#00008B', text: '#E31837' },  // Dark royal blue, red
-    20: { bg: '#FF00FF', text: '#FFCD00' }   // Fuchsia, yellow
+    20: { bg: '#FF00FF', text: '#FFCD00' },  // Fuchsia, yellow
+    21: { bg: '#FFDAB9', text: '#000000' },  // Peach, black
+    22: { bg: '#008080', text: '#FFFFFF' },  // Teal, white
+    23: { bg: '#808000', text: '#FFFFFF' },  // Olive, white
+    24: { bg: '#2F4F4F', text: '#FFFFFF' }   // Slate, white
 };
 
 // Create saddle cloth with flat color and bold number
@@ -1579,57 +1681,73 @@ function setRaceComplete(isComplete) {
     });
 }
 
+// The tote's name column holds 15 tiles. A longer name is drawn whole and
+// the row of tiles scaled to the same width, so a name is never cut short.
+const TOTE_NAME_TILES = 15;
+
+function createToteName(name) {
+    const text = String(name).toUpperCase();
+    if (text.length <= TOTE_NAME_TILES) {
+        return createDotMatrixText(text, 0, 0, TOTE_NAME_TILES);
+    }
+    const fit = document.createElement('div');
+    fit.className = 'results-name-fit';
+    const tiles = createDotMatrixText(text, 0, 0, text.length);
+    tiles.style.transformOrigin = 'left center';
+    tiles.style.transform = `scale(${(TOTE_NAME_TILES / text.length).toFixed(4)})`;
+    fit.appendChild(tiles);
+    return fit;
+}
+
+// What the tote shows: {win, place, show}, horse numbers, or null
+let bannerResults = null;
+
+// Paint the three rows: label, saddle cloth, the horse's name from La
+// Quiniela's names store (HORSE n where it has none)
+function renderResultsBanner(win, place, show) {
+    const rows = [
+        ['win',   '  WIN', win],     // 5 tiles total (2 spaces + WIN)
+        ['place', 'PLACE', place],   // 5 tiles total (PLACE fits exactly)
+        ['show',  ' SHOW', show]     // 5 tiles total (1 space + SHOW)
+    ];
+    rows.forEach(([key, label, horse]) => {
+        const labelEl = document.getElementById(`banner-${key}-label`);
+        labelEl.innerHTML = '';
+        labelEl.appendChild(createDotMatrixText(label, 0, 0, 5));
+
+        const numberEl = document.getElementById(`banner-${key}-number`);
+        numberEl.innerHTML = '';
+        numberEl.appendChild(createSaddleCloth(horse));
+
+        const nameEl = document.getElementById(`banner-${key}-name`);
+        nameEl.innerHTML = '';
+        nameEl.appendChild(createToteName(horseDisplayName(horse)));
+    });
+}
+
 // Show results banner with saddle cloths and dot matrix text
 function showResultsBanner(win, place, show) {
     const banner = document.getElementById('results-banner');
-    
-    // Update WIN row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
-    const winLabel = document.getElementById('banner-win-label');
-    winLabel.innerHTML = '';
-    winLabel.appendChild(createDotMatrixText('  WIN', 0, 0, 5));  // 5 tiles total (2 spaces + WIN)
-    
-    const winNumber = document.getElementById('banner-win-number');
-    winNumber.innerHTML = '';
-    winNumber.appendChild(createSaddleCloth(win));
-    
-    const winName = document.getElementById('banner-win-name');
-    winName.innerHTML = '';
-    winName.appendChild(createDotMatrixText(`HORSE ${win}`, 0, 0, 15));  // 15 tiles total
-    
-    // Update PLACE row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
-    const placeLabel = document.getElementById('banner-place-label');
-    placeLabel.innerHTML = '';
-    placeLabel.appendChild(createDotMatrixText('PLACE', 0, 0, 5));  // 5 tiles total (PLACE fits exactly)
-    
-    const placeNumber = document.getElementById('banner-place-number');
-    placeNumber.innerHTML = '';
-    placeNumber.appendChild(createSaddleCloth(place));
-    
-    const placeName = document.getElementById('banner-place-name');
-    placeName.innerHTML = '';
-    placeName.appendChild(createDotMatrixText(`HORSE ${place}`, 0, 0, 15));  // 15 tiles total
-    
-    // Update SHOW row - fixed 5 tiles for label, saddle cloth, fixed 15 tiles for horse name
-    const showLabel = document.getElementById('banner-show-label');
-    showLabel.innerHTML = '';
-    showLabel.appendChild(createDotMatrixText(' SHOW', 0, 0, 5));  // 5 tiles total (1 space + SHOW)
-    
-    const showNumber = document.getElementById('banner-show-number');
-    showNumber.innerHTML = '';
-    showNumber.appendChild(createSaddleCloth(show));
-    
-    const showName = document.getElementById('banner-show-name');
-    showName.innerHTML = '';
-    showName.appendChild(createDotMatrixText(`HORSE ${show}`, 0, 0, 15));  // 15 tiles total
-    
+
+    bannerResults = { win: win, place: place, show: show };
+    renderResultsBanner(win, place, show);      // at once, with the names on hand
     banner.style.display = 'block';
-    
+
     // Disable race-phase buttons once results are set
     setRaceComplete(true);
+
+    // ...and again with La Quiniela's names as they are now
+    loadQuinielaField().then(() => {
+        const b = bannerResults;
+        if (b && b.win === win && b.place === place && b.show === show) {
+            renderResultsBanner(win, place, show);
+        }
+    });
 }
 
 // Hide results banner
 function hideResultsBanner() {
+    bannerResults = null;
     const banner = document.getElementById('results-banner');
     banner.style.display = 'none';
 }
@@ -1754,364 +1872,6 @@ function closeDrawer() {
     if (drawer) drawer.classList.remove('open');
     if (overlay) overlay.classList.remove('active');
     document.body.style.overflow = '';
-}
-
-// =====================================================================
-// Race Setup Modal
-// =====================================================================
-
-let raceSetupData = {
-    race_name: 'Derby de Mayo 2026',
-    post_time: '',
-    horses: {}
-};
-
-// Open modal and load saved data
-async function openRaceSetupModal() {
-    document.getElementById('race-setup-modal').classList.add('active');
-    generateHorseGrid();
-    await loadRaceSetup();
-    startOddsPollingStatusWatcher();
-}
-
-function closeRaceSetupModal() {
-    document.getElementById('race-setup-modal').classList.remove('active');
-    stopOddsPollingStatusWatcher();
-}
-
-// Generate the 20-horse entry grid
-function generateHorseGrid() {
-    const grid = document.getElementById('race-setup-grid');
-    if (!grid || grid.children.length > 0) return;  // Already generated
-
-    for (let i = 1; i <= 20; i++) {
-        const row = document.createElement('div');
-        row.className = 'race-setup-horse-row';
-
-        const num = document.createElement('span');
-        num.className = 'race-setup-post-num';
-        num.textContent = String(i).padStart(2, '0');
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'race-setup-horse-input';
-        input.id = `horse-${i}`;
-        input.placeholder = `Horse ${i}`;
-        input.maxLength = 30;
-        input.addEventListener('input', () => {
-            input.classList.toggle('filled', input.value.trim().length > 0);
-        });
-
-        row.appendChild(num);
-        row.appendChild(input);
-        grid.appendChild(row);
-    }
-}
-
-// Load race setup data from Flask
-async function loadRaceSetup() {
-    try {
-        const response = await fetch('/api/race-setup');
-        const data = await response.json();
-
-        if (data.success && data.data) {
-            raceSetupData = data.data;
-            populateRaceSetupForm();
-        }
-    } catch (error) {
-        console.error('Error loading race setup:', error);
-        showNotification('Could not load race setup', 'error');
-    }
-}
-
-// Populate form fields with loaded data
-function populateRaceSetupForm() {
-    const nameInput = document.getElementById('setup-race-name');
-    const timeInput = document.getElementById('setup-post-time');
-
-    if (nameInput) nameInput.value = raceSetupData.race_name || '';
-    if (timeInput) timeInput.value = raceSetupData.post_time || '';
-
-    // Populate horse fields
-    for (let i = 1; i <= 20; i++) {
-        const input = document.getElementById(`horse-${i}`);
-        if (input) {
-            const name = (raceSetupData.horses || {})[String(i)] || '';
-            input.value = name;
-            input.classList.toggle('filled', name.length > 0);
-        }
-    }
-}
-
-// Collect form data into raceSetupData object
-function collectRaceSetupForm() {
-    const nameInput = document.getElementById('setup-race-name');
-    const timeInput = document.getElementById('setup-post-time');
-
-    raceSetupData.race_name = nameInput ? nameInput.value.trim() : '';
-    raceSetupData.post_time = timeInput ? timeInput.value : '';
-    raceSetupData.horses = {};
-
-    for (let i = 1; i <= 20; i++) {
-        const input = document.getElementById(`horse-${i}`);
-        raceSetupData.horses[String(i)] = input ? input.value.trim() : '';
-    }
-}
-
-// Save race setup to Flask
-async function raceSetupSave() {
-    collectRaceSetupForm();
-
-    try {
-        const response = await fetch('/api/race-setup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(raceSetupData)
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification('Race setup saved!', 'success');
-            // Update post time countdown if post time was set
-            if (raceSetupData.post_time) {
-                updatePostTimeCountdown();
-            }
-        } else {
-            showNotification('Save failed', 'error');
-        }
-    } catch (error) {
-        console.error('Error saving race setup:', error);
-        showNotification('Save error', 'error');
-    }
-}
-
-// Clear all horse entries
-function raceSetupClear() {
-    for (let i = 1; i <= 20; i++) {
-        const input = document.getElementById(`horse-${i}`);
-        if (input) {
-            input.value = '';
-            input.classList.remove('filled');
-        }
-    }
-    const timeInput = document.getElementById('setup-post-time');
-    if (timeInput) timeInput.value = '';
-}
-
-// AI Search — call Flask endpoint which calls Anthropic API
-async function raceSetupAISearch() {
-    const btn = document.getElementById('ai-search-btn');
-    const status = document.getElementById('ai-search-status');
-
-    if (btn) btn.disabled = true;
-    if (status) {
-        status.textContent = 'Searching...';
-        status.className = 'race-setup-ai-status loading';
-    }
-
-    try {
-        const response = await fetch('/api/race-setup/ai-search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-
-        if (data.success && data.data) {
-            // Populate form with AI results
-            const nameInput = document.getElementById('setup-race-name');
-            const timeInput = document.getElementById('setup-post-time');
-
-            if (nameInput && data.data.race_name) nameInput.value = data.data.race_name;
-            if (timeInput && data.data.post_time) timeInput.value = data.data.post_time;
-
-            if (data.data.horses) {
-                for (let i = 1; i <= 20; i++) {
-                    const input = document.getElementById(`horse-${i}`);
-                    const name = data.data.horses[String(i)] || '';
-                    if (input) {
-                        input.value = name;
-                        input.classList.toggle('filled', name.length > 0);
-                    }
-                }
-            }
-
-            // Count filled entries
-            const filled = Object.values(data.data.horses || {}).filter(n => n.trim()).length;
-            if (status) {
-                status.textContent = `Found ${filled} entries`;
-                status.className = 'race-setup-ai-status success';
-            }
-        } else {
-            if (status) {
-                status.textContent = data.error || 'Search failed';
-                status.className = 'race-setup-ai-status error';
-            }
-        }
-    } catch (error) {
-        console.error('AI search error:', error);
-        if (status) {
-            status.textContent = 'Connection error';
-            status.className = 'race-setup-ai-status error';
-        }
-    } finally {
-        if (btn) btn.disabled = false;
-    }
-}
-
-// =====================================================================
-// Auto-poll odds (Anthropic web search every N seconds, server-side)
-// =====================================================================
-let oddsPollingStatusTimer = null;
-
-async function toggleOddsPolling() {
-    const btn = document.getElementById('odds-polling-btn');
-    if (!btn) return;
-    const currentlyOn = btn.dataset.polling === 'true';
-    const endpoint = currentlyOn
-        ? '/api/race-setup/stop-odds-polling'
-        : '/api/race-setup/start-odds-polling';
-    const body = currentlyOn ? null : JSON.stringify({ interval: 300 });
-
-    btn.disabled = true;
-    try {
-        const resp = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body,
-        });
-        const data = await resp.json();
-        if (!data.success) {
-            showNotification(data.error || 'Odds polling toggle failed', 'error');
-        } else {
-            showNotification(currentlyOn ? 'Odds polling stopped' : 'Odds polling started', 'success');
-        }
-    } catch (e) {
-        console.error('Odds polling toggle error:', e);
-        showNotification('Connection error', 'error');
-    } finally {
-        btn.disabled = false;
-        await refreshOddsPollingStatus();
-    }
-}
-
-async function refreshOddsPollingStatus() {
-    try {
-        const resp = await fetch('/api/race-setup/odds-status');
-        const data = await resp.json();
-        applyOddsPollingStatus(data);
-    } catch (e) {
-        // silent — status panel just won't update
-    }
-}
-
-function applyOddsPollingStatus(data) {
-    const btn = document.getElementById('odds-polling-btn');
-    const statusEl = document.getElementById('odds-polling-status');
-    const lastEl = document.getElementById('odds-polling-last');
-    if (!btn || !statusEl) return;
-
-    const polling = !!data.polling;
-    btn.dataset.polling = polling ? 'true' : 'false';
-    btn.classList.toggle('active', polling);
-
-    if (polling) {
-        const minutes = Math.round((data.interval || 300) / 60);
-        statusEl.textContent = `Polling every ${minutes} min`;
-        statusEl.className = 'odds-polling-status active';
-    } else {
-        statusEl.textContent = 'Polling off';
-        statusEl.className = 'odds-polling-status';
-    }
-
-    if (lastEl) {
-        if (data.last_update) {
-            const d = new Date(data.last_update);
-            const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            lastEl.textContent = `Last update ${time}`;
-        } else {
-            lastEl.textContent = '';
-        }
-    }
-}
-
-// Listen for live odds updates pushed from the server poller
-if (typeof socket !== 'undefined' && socket && socket.on) {
-    socket.on('odds_update', (payload) => {
-        if (payload && payload.last_update) {
-            const lastEl = document.getElementById('odds-polling-last');
-            if (lastEl) {
-                const d = new Date(payload.last_update);
-                const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                lastEl.textContent = `Last update ${time}`;
-            }
-        }
-    });
-}
-
-// Refresh status when the race-setup modal opens, then every 30s while it's open
-function startOddsPollingStatusWatcher() {
-    refreshOddsPollingStatus();
-    if (oddsPollingStatusTimer) clearInterval(oddsPollingStatusTimer);
-    oddsPollingStatusTimer = setInterval(refreshOddsPollingStatus, 30000);
-}
-function stopOddsPollingStatusWatcher() {
-    if (oddsPollingStatusTimer) {
-        clearInterval(oddsPollingStatusTimer);
-        oddsPollingStatusTimer = null;
-    }
-}
-
-// Post time countdown — updates the "MINUTES TO RACE" display
-function updatePostTimeCountdown() {
-    const display = document.getElementById('post-time-display');
-    const countEl = document.getElementById('post-time-count');
-    if (!display || !countEl) return;
-
-    if (!raceSetupData.post_time) {
-        display.style.display = 'none';
-        return;
-    }
-
-    const now = new Date();
-    const [hours, minutes] = raceSetupData.post_time.split(':').map(Number);
-    const postTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
-
-    const diffMs = postTime - now;
-    const diffMin = Math.floor(diffMs / 60000);
-
-    if (diffMin <= 0) {
-        display.style.display = 'none';
-        return;
-    }
-
-    display.style.display = 'flex';
-    countEl.textContent = diffMin;
-
-    // Color coding
-    if (diffMin <= 5) {
-        display.className = 'post-time-display urgent';
-    } else if (diffMin <= 60) {
-        display.className = 'post-time-display warning';
-    } else {
-        display.className = 'post-time-display';
-    }
-}
-
-// Initialize post time countdown — called on page load and every minute
-function initPostTimeCountdown() {
-    // Load saved data silently to check for post time
-    fetch('/api/race-setup')
-        .then(r => r.json())
-        .then(data => {
-            if (data.success && data.data) {
-                raceSetupData = data.data;
-                updatePostTimeCountdown();
-            }
-        })
-        .catch(() => {});
-
-    // Update every 30 seconds
-    setInterval(updatePostTimeCountdown, 30000);
 }
 
 // =====================================================================
@@ -2930,7 +2690,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initTicker();
 
     initTuningSliders();
-    initPostTimeCountdown();
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
@@ -2953,6 +2712,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Connect to SSE stream for real-time results
     connectResultsStream();
     
+    // La Quiniela's names, for the results tote and the pickers
+    loadQuinielaField();
+
     // Load initial results from server
     loadResultsFromServer();
     

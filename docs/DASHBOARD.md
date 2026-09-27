@@ -218,32 +218,39 @@ const SADDLE_CLOTHS = {
 
 **Layout:**
 ```
-┌─────────────────────────────────────────────────────┐
-│  CHOOSE WINNER                              [X]     │
-│  Select the 1st place horse                         │
-│                                                      │
-│  ┌────────────────────┐  ┌──────────────┐          │
-│  │ [01][02][03][04][05]│  │  WIN:  [--] │          │
-│  │ [06][07][08][09][10]│  │ PLACE: [--] │          │
-│  │ [11][12][13][14][15]│  │  SHOW: [--] │          │
-│  │ [16][17][18][19][20]│  └──────────────┘          │
-│  └────────────────────┘                             │
-│                                                      │
-│  [← BACK]  [RESET]                   [CONFIRM ✓]   │
-└─────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│  CHOOSE WINNER                                             [X]    │
+│  Select the 1st place horse                                       │
+│                                                                   │
+│  [ 1 · DORNOCH ] [ 2 · SIERRA LEONE ] [ 3 · ... ] [ 4 · ... ]   ┌──────────┐
+│  [ 5 · ...     ] [ 6 · ...          ] [ 7 · ... ] [ 8 · ... ]   │ WIN  [--]│
+│  [22 · OCELLI  ] [10 · ...          ] [11 · ... ] [12 · ... ]   │ PLACE[--]│
+│  [13 · ...     ] [14 · ...          ] [15 · ... ] [16 · ... ]   │ SHOW [--]│
+│  [17 · ...     ] [18 · ...          ] [19 · ... ] [         ]   └──────────┘
+│                                                                   │
+│                  [RESET]  [CANCEL]            [CONFIRM RESULTS]   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 **Features:**
 - **Step-by-step selection:** WIN → PLACE → SHOW
-- **Saddle cloth grid:** 4 rows × 5 columns of color-coded buttons
-- **Sidebar preview:** Shows selections with saddle cloth badges
+- **Pickers with names:** one per post in mantle order, 4 across and 5 down,
+  each showing the horse that runs from that post as `19 · GOLDEN TEMPO`: the
+  number on its saddle cloth, then the name from La Quiniela's names store
+  (`HORSE n` where it has none). The list comes from `GET /api/quiniela/field`
+  every time the modal opens
+- **Scratches:** a horse scratched with a replacement shows the replacement's
+  number and name in its place (post 9 offers `22 · OCELLI`); a horse scratched
+  with no replacement is not offered (its place in the grid stays empty)
+- **Post and horse:** a pick lights the LED cup of the **post** (9) and records
+  the **horse** (22); the results carry horse numbers
+- **Sidebar preview:** Shows selections with saddle cloth badges and names
 - **Live LED preview:** Selected cups light up immediately
   - Win: Gold (#FFD700)
   - Place: Silver (#C0C0C0)
   - Show: Bronze (#CD7F32)
 - **Heartbeat animation:** Non-selected cups pulse while selecting
 - **Navigation:**
-  - BACK - Return to previous step (unlocks last selection)
   - RESET - Clear all and start over
   - CONFIRM - Apply results and close modal
 

@@ -122,6 +122,36 @@ def in_field(horse: int, records: Dict[int, Optional[int]], gateway_scratched: I
     return horse <= FIELD_SIZE or horse in records.values()
 
 
+def horse_at(post: int, records: Dict[int, Optional[int]]) -> Optional[int]:
+    """The horse that runs from post `post`. A post is a place on the mantle,
+    1..20, and the LED cup there: the post's own number, followed through the
+    replacement records to the end of the chain (after 9 -> 22 it is 22 that
+    runs from post 9; after 9 -> 22 -> 23 it is 23), because a replacement
+    scratch renumbers the cup and nothing moves. None when the chain ends in
+    a no-replacement scratch: nobody runs from that post."""
+    horse, seen = int(post), set()
+    while horse in records and horse not in seen:
+        seen.add(horse)
+        now = records[horse]
+        if now is None:
+            return None
+        horse = now
+    return horse
+
+
+def post_of(horse: int, records: Dict[int, Optional[int]]) -> Optional[int]:
+    """The post horse `horse` runs from: its own number for 1..20, and for a
+    horse standing in for a scratched one the post of the horse it replaced
+    (22 standing in for 9 runs from post 9, where its cup sits). None for an
+    also-eligible standing in for nobody."""
+    by_now = {now: was for was, now in records.items() if now is not None}
+    horse, seen = int(horse), set()
+    while horse in by_now and horse not in seen:
+        seen.add(horse)
+        horse = by_now[horse]
+    return horse if 1 <= horse <= FIELD_SIZE else None
+
+
 class HorseStore:
     """Names for horses 1..24, the scratch records and closes_at.
 

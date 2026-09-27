@@ -819,6 +819,51 @@ class StreamTests(RouteCase):
         self.assertEqual(self.board.subscriber_count(), 0, "closing the response unsubscribes")
 
 
+class RosterTests(unittest.TestCase):
+    """The horse-roster slide takes the field as pi5's /api/race lists it:
+    La Quiniela's names, program numbers 1-24, scratched horses absent."""
+
+    def setUp(self) -> None:
+        self._saved = race_poller.get_race_data
+
+    def tearDown(self) -> None:
+        race_poller.get_race_data = self._saved
+
+    def feed(self, numbers) -> None:
+        horses = [{"number": n, "name": f"Horse {n}", "odds": None, "finish": None} for n in numbers]
+        race_poller.get_race_data = lambda: {"race_state": "pre-race", "post_time": "6:57 PM ET",
+                                             "post_time_iso": "", "last_updated": "", "horses": horses,
+                                             "winner": None}
+
+    def test_two_columns_of_ten_in_numeric_order(self) -> None:
+        self.feed(range(1, 21))
+        ctx = server._build_horse_roster_context()
+        self.assertEqual([h["number"] for h in ctx["horses_left"]], list(range(1, 11)))
+        self.assertEqual([h["number"] for h in ctx["horses_right"]], list(range(11, 21)))
+
+    def test_an_also_eligible_that_drew_in_is_listed_where_its_number_sorts(self) -> None:
+        field = [n for n in range(1, 20) if n != 9] + [22]      # 9 -> 22, 20 scratched
+        self.feed(reversed(field))
+        ctx = server._build_horse_roster_context()
+        self.assertEqual([h["number"] for h in ctx["horses_left"]], [1, 2, 3, 4, 5, 6, 7, 8, 10, 11])
+        self.assertEqual([h["number"] for h in ctx["horses_right"]], [12, 13, 14, 15, 16, 17, 18, 19, 22])
+
+    def test_no_horses_drops_the_slide(self) -> None:
+        self.feed([])
+        self.assertIsNone(server._build_horse_roster_context())
+        self.feed([0, 25])
+        self.assertIsNone(server._build_horse_roster_context())
+
+    def test_the_slide_renders_a_cloth_for_22(self) -> None:
+        self.feed([1, 22])
+        with server.app.test_request_context("/"):
+            html = server.render_template("splash/horse_roster.html", **server._build_horse_roster_context())
+        self.assertIn("splash-saddle--pos-22", html)
+        css = (HERE / "static" / "css" / "ddm_style.css").read_text(encoding="utf-8")
+        for n in (21, 22, 23, 24):
+            self.assertIn(f".splash-saddle--pos-{n} ", css)
+
+
 class ServerStartupTests(unittest.TestCase):
     def test_link_starts_only_in_the_serving_process(self) -> None:
         saved_debug = config.DEBUG

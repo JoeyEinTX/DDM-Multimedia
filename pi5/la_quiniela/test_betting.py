@@ -49,7 +49,7 @@ from la_quiniela.board import (  # noqa: E402
     DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_STATE,
     get_board, init_board, quiniela_board_bp, start_board, stop_board,
 )
-from la_quiniela.horses import HorseStore, in_field, parse_names_text  # noqa: E402
+from la_quiniela.horses import HorseStore, horse_at, in_field, parse_names_text, post_of  # noqa: E402
 from la_quiniela.models import LqDb  # noqa: E402
 from la_quiniela.test_smoke import (  # noqa: E402
     GW_MAC, MAC_A, MAC_B, MAC_C, FakeClock, _fresh_bridge, drain, hello, status, telem,
@@ -2387,6 +2387,60 @@ def test_settings_new_keys():
                 os.environ[k] = v
 
 
+def test_field_by_post():
+    """GET /api/quiniela/field: what the dashboard's SET WINNERS pickers and
+    results tote show. A post is a place on the mantle (and its LED cup); the
+    horse that runs from it is the post's own or the one standing in for it."""
+    records = {9: 22, 22: 23, 20: None, 3: 21}
+    _check("horse_at follows the records to the end of the chain",
+           [horse_at(p, records) for p in (1, 3, 9, 20)] == [1, 21, 23, None])
+    _check("horse_at with no records is the post itself", [horse_at(p, {}) for p in (1, 20)] == [1, 20])
+    _check("post_of walks back: 23 runs from post 9, 21 from 3, 22 stood in for 9",
+           [post_of(h, records) for h in (23, 21, 22, 7)] == [9, 3, 9, 7])
+    _check("post_of an also-eligible standing in for nobody is None", post_of(24, records) is None and post_of(21, {}) is None)
+    _check("a record that loops never hangs", horse_at(9, {9: 22, 22: 9}) in (9, 22) and post_of(22, {9: 22, 22: 9}) in (9, None))
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    r = client.get("/api/quiniela/field")
+    body = r.get_json()
+    _check("GET /api/quiniela/field 200, no-store", r.status_code == 200 and r.headers.get("Cache-Control") == "no-store")
+    _check("exactly names_rev, posts, names", set(body) == {"names_rev", "posts", "names"}, str(sorted(body)))
+    _check("no names yet: posts 1..20 in order, each its own horse, the label says HORSE n",
+           [p["post"] for p in body["posts"]] == list(range(1, 21))
+           and body["posts"][6] == {"post": 7, "horse": 7, "name": "", "label": "7 \u00b7 HORSE 7"}, str(body["posts"][6]))
+    _check("names carries all 24, empty", body["names"] == {str(n): "" for n in range(1, 25)} and body["names_rev"] == 0)
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    body = client.get("/api/quiniela/field").get_json()
+    _check("names upper-cased, the label is 'number \u00b7 NAME'",
+           body["posts"][18] == {"post": 19, "horse": 19, "name": "RESILIENCE", "label": "19 \u00b7 RESILIENCE"}
+           and body["names"]["22"] == "OCELLI" and body["names_rev"] == 1, str(body["posts"][18]))
+    client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    client.post("/api/quiniela/scratch", json={"horse": 20})
+    body = client.get("/api/quiniela/field").get_json()
+    _check("a replaced post shows the replacement's number and name, and what it replaces",
+           body["posts"][8] == {"post": 9, "horse": 22, "name": "OCELLI", "label": "22 \u00b7 OCELLI", "replaces": 9},
+           str(body["posts"][8]))
+    _check("a post scratched with no replacement is not offered: 19 posts, no post 20",
+           [p["post"] for p in body["posts"]] == list(range(1, 20)), str([p["post"] for p in body["posts"]]))
+    _check("the horses offered are exactly the model's field",
+           sorted(p["horse"] for p in body["posts"])
+           == sorted(int(n) for n, h in client.get("/api/quiniela").get_json()["horses"].items() if h["in_field"]))
+    client.post("/api/quiniela/scratch", json={"horse": 22, "replacement": {"number": 23}})
+    body = client.get("/api/quiniela/field").get_json()
+    _check("a chain: post 9 now offers 23", body["posts"][8]["horse"] == 23 and body["posts"][8]["replaces"] == 9
+           and body["posts"][8]["label"] == "23 \u00b7 EPIC RIDE", str(body["posts"][8]))
+    client.post("/api/quiniela/unscratch", json={"horse": 22})
+    client.post("/api/quiniela/unscratch", json={"horse": 9})
+    client.post("/api/quiniela/unscratch", json={"horse": 20})
+    body = client.get("/api/quiniela/field").get_json()
+    _check("all undone: the twenty posts, each its own horse again",
+           [(p["post"], p["horse"]) for p in body["posts"]] == [(n, n) for n in range(1, 21)]
+           and not any("replaces" in p for p in body["posts"]))
+    get_board().bridge = None
+    _check("the field needs no bridge", client.get("/api/quiniela/field").status_code == 200)
+
+
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
@@ -2448,6 +2502,7 @@ def main():
     _run("reset — POST /api/quiniela/reset", test_reset_betting_route)
     _run("v2 — the removed routes are gone; a conflict and a horse-0 cup on a real bridge", test_removed_routes_and_conflict_on_a_real_bridge)
     _run("settings — the payout keys", test_settings_new_keys)
+    _run("names — the field by post (GET /api/quiniela/field)", test_field_by_post)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

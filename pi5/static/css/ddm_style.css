@@ -2994,3 +2994,148 @@ body {
     padding-left: 2px;
     font-style: italic;
 }
+
+/* =====================================================================
+   La Quiniela on the dashboard. Additions only: nothing above this line
+   is restyled, and none of the tote's own classes is touched.
+   ===================================================================== */
+
+/* The drawer's two links (La Quiniela Admin, La Quiniela Board): a
+   .drawer-item as the buttons have it, on an <a>. */
+a.drawer-link {
+    text-decoration: none;
+    box-sizing: border-box;
+    /* what a <button> gets from the browser, so the links read like the
+       buttons under them */
+    font-family: Arial, sans-serif;
+    font-size: 13.3333px;
+}
+
+/* SET WINNERS pickers with names. One per post in mantle order, four
+   across and five down, each the horse that runs from that post as
+   "19 · GOLDEN TEMPO": the number on its saddle cloth, the name beside it
+   (two lines at most). The modal is wider to make room for the names. */
+.results-modal-content.results-modal-named {
+    max-width: 900px;
+}
+
+.saddle-cloth-grid.winner-pick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.winner-pick-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 52px;
+    padding: 3px 8px 3px 3px;
+    border: 3px solid #333;
+    border-radius: 6px;
+    background: #101010;
+    color: #ffffff;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.winner-pick-num {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-size: 1.35em;
+    font-weight: 900;
+    font-family: 'Arial Black', 'Helvetica Inserat', 'Bitstream Vera Sans Bold', Arial, sans-serif;
+    letter-spacing: -1px;
+}
+
+.winner-pick-sep {
+    flex: 0 0 auto;
+    color: #777777;
+    font-weight: 700;
+}
+
+.winner-pick-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-height: 2.4em;
+    overflow: hidden;
+    font-size: 0.82em;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+
+.winner-pick-btn:hover:not(:disabled) {
+    transform: scale(1.04);
+    box-shadow: 0 0 15px rgba(255,255,255,0.4);
+}
+
+.winner-pick-btn:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.winner-pick-btn.selected-win {
+    opacity: 1;
+    box-shadow: 0 0 20px #FFD700, inset 0 0 10px rgba(255,215,0,0.3) !important;
+    border-color: #FFD700;
+}
+
+.winner-pick-btn.selected-place {
+    opacity: 1;
+    box-shadow: 0 0 20px #C0C0C0, inset 0 0 10px rgba(192,192,192,0.3) !important;
+    border-color: #C0C0C0;
+}
+
+.winner-pick-btn.selected-show {
+    opacity: 1;
+    box-shadow: 0 0 20px #CD7F32, inset 0 0 10px rgba(205,127,50,0.3) !important;
+    border-color: #CD7F32;
+}
+
+/* A post whose horse was scratched with no replacement: nothing to pick,
+   the place in the grid stays empty so the others keep theirs. */
+.winner-pick-gap {
+    min-height: 52px;
+}
+
+/* The three slots beside the pickers: the saddle cloth, the name under it. */
+.slot-value.slot-named {
+    height: auto;
+    min-height: 65px;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.slot-horse-name {
+    max-width: 115px;
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    line-height: 1.15;
+    color: #dddddd;
+    text-align: center;
+    text-transform: uppercase;
+    overflow-wrap: anywhere;
+}
+
+/* The results tote's name column is 15 tiles wide. A longer name is drawn
+   whole and its row of tiles scaled to that width (the scale is set inline
+   by the JS); this box keeps the unscaled row from widening the tote. */
+.results-name-fit {
+    width: 645px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+}
