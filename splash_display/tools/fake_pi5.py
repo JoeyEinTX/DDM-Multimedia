@@ -26,11 +26,11 @@ Nothing leaves loopback: no serial port, no dashboard poller.
                                                    # screen keeps 4 / 11 / 7 bets: the model's closing, as on pi5; a page
                                                    # loaded now shows them too) -> AFTER_PARTY (the playlist); repeats
     python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving (screenshots)
-    python tools/fake_pi5.py --phase strip         # the tote look's rows (open /display?look=dots): twenty names, ten of them
-                                                   # too long for their row at 1920 px (GRAND MO THE FIRST, CATCHING FREEDOM at
-                                                   # 104 bets...) and scrolling, counts of 0 (a dim 0), 7, 23 and 104; a bet on
-                                                   # GRAND MO THE FIRST every 4 s takes it 7 -> 12, crossing 9 -> 10 (its name
-                                                   # area gives up a tile mid-scroll), then back to 7; repeats
+    python tools/fake_pi5.py --phase strip         # the tote look's rows (open /display?look=dots): twenty names, three of
+                                                   # them too long for their row at 1920 px and scrolling (eleven at 1680 px),
+                                                   # counts of 0 (a dim 0), 7, 23 and 104; a bet on GRAND MO THE FIRST every
+                                                   # 4 s takes it 7 -> 12, crossing 9 -> 10 (its name area gives up a tile and
+                                                   # at 1920 px it starts to scroll), then back to 7; repeats
     python tools/fake_pi5.py --phase strip-static  # the same picture, nothing moving (screenshots)
     python tools/fake_pi5.py --phase open --stop-feed-after 3   # board up, then pi5 gone: NO LINK mark
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
@@ -221,15 +221,17 @@ RESULTS_WPS = (19, 1, 22)
 RESULTS_EMPTY_AFTER_S = 3.0       # the winners' cups are emptied for the draw this long after the results
 
 # --phase strip: the tote look's rows. At 1920 x 1080 a row's strip is
-# nineteen tiles, and a name has 19 - digits - 1 of them (17, 16 or 15), so
+# twenty tiles, and a name has 20 - digits - 1 of them (18, 17 or 16), so
 # a name scrolls when it is longer than that. Three real names (Grand Mo
 # the First and Catching Freedom from the 2024 field, Emerging Market from
-# the 2026 one) and made-up ones fill the field: ten rows scroll, ten sit
-# still (Emerging Market fits here even at three digits; on a narrower
-# screen it scrolls too). Counts of 0 (a dim 0), 7, 23 and 104 give every
-# bet width. A bet on 2 every 4 s takes Grand Mo the First 7 -> 12, crossing
-# 9 -> 10 (its name area gives up a tile mid-scroll), then its cup goes
-# back to 7 and it climbs again. No closing time: nothing on the board ticks.
+# the 2026 one) and made-up ones fill the field: three rows scroll there,
+# the made-up eighteen-letter names with two digits of bets; at 1680 px
+# (seventeen tiles) eleven do, Emerging Market with its 12 among them.
+# Counts of 0 (a dim 0), 7, 23 and 104 give every bet width. A bet on 2
+# every 4 s takes Grand Mo the First 7 -> 12, crossing 9 -> 10 (its name
+# area gives up a tile, and at 1920 px it starts to scroll), then its cup
+# goes back to 7 and it climbs again. No closing time: nothing on the
+# board ticks.
 STRIP_NAMES = {
     1: "Renegade", 2: "Grand Mo the First", 3: "So Happy", 4: "Catching Freedom", 5: "Emerging Market",
     6: "Whiskey in the Jar", 7: "Potente", 8: "Bluegrass Thunder", 9: "Albus", 10: "Twin Spires Dancer",

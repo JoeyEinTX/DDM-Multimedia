@@ -589,11 +589,11 @@ and on `/display` alike (the redirect keeps the query). A value that names
 no look is the default, and a `QUINIELA_LOOK` that names none is `dots`,
 logged once. The page carries the look in the board's `data-look`.
 
-*A row in `dots`* is one strip of tiles from just right of the cloth to the row's right edge:
-- every row the same: the pitch from the row's height (7, a 56 px tile in the 64 px row at 1080 lines), the tiles from its width (19 at 1920 px; the pixels left over go to the padding);
+*A row in `dots`* is one strip of tiles that fills the row from just right of the cloth to its right padding, the same 22 px as the gap after the cloth:
+- every row the same: the pitch from the row's height (7, a 56 px tile in the 64 px row at 1080 lines); N from its width, as many 6-pitch tiles as fit, or one more when each is still 94 % of 6 pitches, every tile then the room / N (20 of 40.25 px at 1920 px, 17 of 40.29 px at 1680 px), its bulbs and a character's dots at the pitch, centred;
 - the bets in the strip's last tiles, one a digit, a dim `0` for an empty cup; the name left in the rest but one dark tile (`tiles - digits - 1`);
 - a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at the crawl's 120 px/s until its last character is in the area's last tile, held 1 s, back to the start;
-- whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again.
+- whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again, as are the strips when the window is resized.
 
 - **Dotted** in `dots`: the pot, the three prizes, every row's name and
   bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
@@ -646,7 +646,7 @@ pitches, which keeps every dot on the pixel grid:
 | --- | --- | --- |
 | Pot | 104 px | pitch 12 (96 px) |
 | Header prizes | 40 px | pitch 5 |
-| Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles to the row's edge (19 at 1920 px); a long name scrolls; a dim `0` |
+| Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles filling the row (20 of 40.25 px at 1920 px); a long name scrolls; a dim `0` |
 | Row bets (`numbers`) | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
 | Crawl | 26 px | pitch 4 |
 | Results name | 100 px, down to 44 | pitch 12, down to 4 |
@@ -659,22 +659,25 @@ wraps and never gets an ellipsis, and the strip behind it is always a
 whole number of tiles, the ones past the name unlit. A row's name in
 `dots` never shrinks: it scrolls.
 
-Which names scroll depends on the screen: at 1920 px a row has 19 tiles,
-so a name scrolls past 17, 16 or 15 characters (one, two or three digits
-of bets), which only the longest names reach (`GRAND MO THE FIRST`, 18;
-`CATCHING FREEDOM`, 16, once it has 100 bets). A narrower screen has
-fewer tiles at the same pitch: at 1680 px, 16, and `EMERGING MARKET` and
-`CATCHING FREEDOM` scroll too. `tools/fake_pi5.py --phase strip` puts ten
-scrolling rows on a 1920 px board.
+Which names scroll depends on the screen: at 1920 px a row has 20 tiles,
+so a name scrolls past 18, 17 or 16 characters (one, two or three digits
+of bets): `GRAND MO THE FIRST` (18) once it has 10 bets, and
+`CATCHING FREEDOM` (16) fits even at 104. A narrower screen has fewer
+tiles at the same pitch: at 1680 px, 17, where `EMERGING MARKET` (15)
+fits with one digit of bets and scrolls with two (in 3d5e844's 16 tiles
+it scrolled with one). `tools/fake_pi5.py --phase strip` scrolls three
+rows on a 1920 px board, a fourth from 10 bets, and eleven at 1680 px.
 
-With ten rows scrolling, the crawl running and a bet every 4 s (`--phase
-strip`, headless Chrome at 1920x1080, 12 s, CPU 6x slower, measured as the
-table below): worst frame 11.2 ms in four runs of five and 27.8 ms in one,
-none over 34 ms, no long task; 16.8 ms with software raster, as before
-the scroll (the rows as they were, same feed: 11.1 ms, 16.8). Each scroll is one Web
-Animation on the name's transform, run by the compositor (the trace shows
-no compositing failure); they pause while the board is hidden or the
-results screen covers the rows.
+With the crawl running and a bet every 4 s (`--phase strip`, headless
+Chrome at 1920x1080, 12 s, CPU 6x slower, measured as the table below):
+worst frame 11.2, 16.7 and 22.3 ms in three runs, none over 34 ms, no
+long task, 16.8 ms with software raster (3d5e844's rows, same feed: 16.8
+and 16.7 ms); with ten rows scrolling (seven of the feed's names made
+longer with its `name` command) 11.2, 16.7 and 16.7 ms, 16.8 with
+software raster. Each scroll is one Web Animation on the name's
+transform, run by the compositor (the trace shows no compositing
+failure); they pause while the board is hidden or the results screen
+covers the rows.
 
 *Why not DOM dots.* The dashboard, the countdown slide and the roster
 slide each draw their dots as elements, 35 to a character, from three
@@ -758,10 +761,11 @@ python tools/fake_pi5.py --phase redesign                  # the 2026 Derby fiel
                                                            # at the gateway: 19 rows, POT $150 = WIN $89 / PLACE $38 / SHOW $23, closes in 15 min,
                                                            # a bet on horse 7 every 4 s (the toast fires)
 python tools/fake_pi5.py --phase redesign-static           # the same picture with nothing moving, for side-by-side screenshots
-python tools/fake_pi5.py --phase strip                     # the tote look's rows: twenty names, ten too long for a 1920 px row
-                                                           # (they scroll), counts of 0, 7, 23 and 104; a bet on 2 Grand Mo the
-                                                           # First every 4 s takes it 7 -> 12 (9 -> 10: its name area gives up a
-                                                           # tile mid-scroll), then back to 7; no closing time, nothing else ticks
+python tools/fake_pi5.py --phase strip                     # the tote look's rows: twenty names, three too long for a 1920 px row
+                                                           # (they scroll; eleven at 1680 px), counts of 0, 7, 23 and 104; a bet on
+                                                           # 2 Grand Mo the First every 4 s takes it 7 -> 12 (9 -> 10: its name area
+                                                           # gives up a tile and it starts to scroll), then back to 7; no closing
+                                                           # time, nothing else ticks
 python tools/fake_pi5.py --phase strip-static              # the same picture with nothing moving
 # --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset or results step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)

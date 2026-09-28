@@ -867,25 +867,34 @@
     font-size: 40px;
 }
 
-/* Rows in "dots": one strip of tiles, from just right of the cloth to the
-   row's right edge, as many whole tiles as the room holds (the pixels left
-   over go to the padding). Every row has the same pitch and the same
-   number of tiles: the JS measures one row's room (.qb-strip-cell) and
-   sets them on the board, --qb-strip-pitch from its height (the tile
-   clears it by 2 px above and below, whole pitches, 7 at most: a 56 px
-   tile in the 64 px row of the 1080-line board, the dotted names' size at
-   their largest) and --qb-strip-tiles from its width. The bets sit in the
-   strip's last tiles, as many as they have digits (the row's
-   --qb-digits), a dim 0 when the cup is empty; one dark tile at least
-   between them and the name, whose area is the rest (tiles - digits - 1),
-   the name left in it. A name longer than its area scrolls inside it (the
-   JS moves .qb-name a tile at a time; .qb-namebox clips it at the area's
-   edges). The tiles are the strip's, so they never move. The row's one
-   track is its own height whatever the strip's (minmax), so the room the
-   JS measures is the row's, never the strip's. */
+/* Rows in "dots": one strip of tiles that fills the room from just right
+   of the cloth to the row's right padding, which is the gap after the
+   cloth again (--qb-strip-gap), so the strip sits in the middle of what
+   the cloth leaves. Every row has the same pitch and the same tiles: the
+   JS measures one row's room (.qb-strip-cell) and sets them on the board,
+   --qb-strip-pitch from its height (the tile clears it by 2 px above and
+   below, whole pitches, 7 at most: a 56 px tile in the 64 px row of the
+   1080-line board, the dotted names' size at their largest),
+   --qb-strip-tiles and --qb-strip-tile-w from its width: as many tiles as
+   fill it edge to edge, each a little wider or narrower than 6 pitches
+   (twenty of 40.25 px at 1920 x 1080). What a tile gains or loses is its
+   own: the tile image stretches the tile and keeps its bulbs at the
+   pitch, centred, and the name and the bets are letter-spaced by the
+   difference and set in by half of it, so a character's dots sit on a
+   tile's bulbs. The bets sit in the strip's last tiles, as many as they
+   have digits (the row's --qb-digits), a dim 0 when the cup is empty; one
+   dark tile at least between them and the name, whose area is the rest
+   (tiles - digits - 1), the name left in it. A name longer than its area
+   scrolls inside it (the JS moves .qb-name a tile at a time; .qb-namebox
+   clips it at the area's edges). The tiles are the strip's, so they never
+   move. The row's one track is its own height whatever the strip's
+   (minmax), so the room the JS measures is the row's, never the strip's. */
 .qb[data-look="dots"] .qb-row {
-    grid-template-columns: 62px 1fr;
+    --qb-strip-gap: 22px;
+    grid-template-columns: 56px 1fr;        /* the cloth's own width */
     grid-template-rows: minmax(0, 1fr);
+    column-gap: var(--qb-strip-gap);
+    padding-right: var(--qb-strip-gap);
 }
 
 .qb[data-look="dots"] .qb-strip-cell {
@@ -895,15 +904,19 @@
     min-width: 0;
 }
 
+/* The tile here is --qb-tote-tile made to stretch: the tile itself drawn
+   to the image's width (viewBox 6 x 8, no aspect), the 35 bulbs in a
+   viewBox of their own that keeps its aspect and is centred, so they stay
+   at the pitch in a tile a few pixels wider or narrower. */
 .qb[data-look="dots"] .qb-strip {
     display: block;
     position: relative;
     flex: none;
     font-size: calc(var(--qb-strip-pitch, 7px) * 8);
-    width: calc(var(--qb-strip-tiles, 19) * 0.75em);
+    width: calc(var(--qb-strip-tiles, 20) * var(--qb-strip-tile-w, 0.75em));
     height: 1em;
-    background-image: var(--qb-tote-tile);
-    background-size: 0.75em 1em;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='d' x='.5' y='.5' width='1' height='1' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='.5' cy='.5' r='.36' fill='%232a2a2a'/%3E%3C/pattern%3E%3C/defs%3E%3Csvg width='100%25' height='100%25' viewBox='0 0 6 8' preserveAspectRatio='none'%3E%3Crect x='.07' y='.07' width='5.86' height='7.86' rx='.3' fill='%231a1a1a' stroke='%23333' stroke-width='.08'/%3E%3C/svg%3E%3Csvg width='100%25' height='100%25' viewBox='.5 0 5 8'%3E%3Crect x='.5' y='.5' width='5' height='7' fill='url(%23d)'/%3E%3C/svg%3E%3C/svg%3E");
+    background-size: var(--qb-strip-tile-w, 0.75em) 1em;
     background-repeat: repeat-x;
     background-position: left top;
 }
@@ -913,15 +926,20 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: calc((var(--qb-strip-tiles, 19) - var(--qb-digits, 1) - 1) * 0.75em);
+    width: calc((var(--qb-strip-tiles, 20) - var(--qb-digits, 1) - 1) * var(--qb-strip-tile-w, 0.75em));
     height: 1em;
     overflow: hidden;
 }
 
+/* Letter-spaced to the tile's width and set in by half the difference
+   (the name by its margin, so its box is its tiles; the bets by their
+   indent, so their box is theirs). */
 .qb[data-look="dots"] .qb-row .qb-name {
     width: max-content;
+    margin-left: calc((var(--qb-strip-tile-w, 0.75em) - 0.75em) / 2);
     font-size: inherit;
     line-height: 1;
+    letter-spacing: calc(var(--qb-strip-tile-w, 0.75em) - 0.75em);
     overflow: visible;
     background: none;
 }
@@ -930,10 +948,13 @@
     position: absolute;
     top: 0;
     right: 0;
-    width: calc(var(--qb-digits, 1) * 0.75em);
+    width: calc(var(--qb-digits, 1) * var(--qb-strip-tile-w, 0.75em));
     height: 1em;
     font-size: inherit;
     line-height: 1;
+    letter-spacing: calc(var(--qb-strip-tile-w, 0.75em) - 0.75em);
+    text-align: left;
+    text-indent: calc((var(--qb-strip-tile-w, 0.75em) - 0.75em) / 2);
     background: none;
 }
 

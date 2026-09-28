@@ -90,11 +90,13 @@
    stepping the dot pitch down (font-size = 8 x pitch, whole pitches only,
    so the dots stay on the pixel grid) where the Impact look steps the
    font size, the strip of tiles behind it a whole number of tiles. The
-   rows of "dots" are the exception: each row is one strip of tiles from
-   the cloth to the row's right edge, the same pitch and the same number
-   of tiles in every row (layoutStrips), the bets in its last tiles and
-   the name in the rest but one; a name longer than that does not shrink,
-   it scrolls (updateScroll).
+   rows of "dots" are the exception: each row is one strip of tiles that
+   fills the room from the cloth to the row's right edge, the same pitch
+   and the same number of tiles in every row (layoutStrips: the tiles a
+   little wider or narrower than the pitch makes them, so that a whole
+   number of them fills the room), the bets in its last tiles and the
+   name in the rest but one; a name longer than that does not shrink, it
+   scrolls (updateScroll).
    ===================================================================== */
 (() => {
     'use strict';
@@ -128,13 +130,17 @@
     // comes from the row's height: the tile, 8 pitches tall, clears it by
     // STRIP_CLEAR_PX above and below, whole pitches, never more than
     // STRIP_PITCH_MAX, the dotted names' size at their largest (a 56 px tile
-    // in the 64 px row of the 1080-line board). A name longer than its area
-    // scrolls a whole tile at a time at the crawl's speed (a tile every
-    // 350 ms at pitch 7), its start held SCROLL_HOLD_START_MS, its end
+    // in the 64 px row of the 1080-line board). The tiles fill the row's
+    // room: as many as fit at the pitch's width (6 pitches), stretched to
+    // fill it, or one more, squeezed, when each is still STRIP_TILE_MIN of
+    // that width. A name longer than its area scrolls a whole tile at a
+    // time at the crawl's speed (a tile every 335 ms in the 40.25 px tiles
+    // of 1920 x 1080), its start held SCROLL_HOLD_START_MS, its end
     // SCROLL_HOLD_END_MS, then straight back to the start (updateScroll).
     const STRIP_PITCH_MAX = 7;
     const STRIP_PITCH_MIN = 3;
     const STRIP_CLEAR_PX  = 2;
+    const STRIP_TILE_MIN  = 0.94;
     const SCROLL_HOLD_START_MS = 2000;
     const SCROLL_HOLD_END_MS   = 1000;
     const TOAST_IN_MS    = 150;     // the pop, matches .qb-toast.is-shown's transition
@@ -240,7 +246,8 @@
     let field = [];        // the horses with rows, in numeric order
     let fieldKey = '';     // field.join(','): the row set is rebuilt when it changes
     let stripPitch = 0;    // "dots": every row's strip, its dot pitch in px ...
-    let stripTiles = 0;    // ... and its length in tiles (layoutStrips); 0 until measured
+    let stripTiles = 0;    // ... its length in tiles (layoutStrips); 0 until measured ...
+    let stripTile = 0;     // ... and a tile's width in px, the room / stripTiles
 
     function makeRow(n) {
         const el = rowTpl.content.firstElementChild.cloneNode(true);
@@ -448,38 +455,48 @@
     }
 
     // ---- The rows of "dots": one strip of tiles each -----------------
-    // Every row's strip has the same pitch and the same number of tiles,
-    // taken from one row's room (.qb-strip-cell: from just right of the
-    // cloth to the row's right edge, inside the padding): the pitch from
-    // its height, the tiles from its width, whole tiles, the pixels left
-    // over to the padding. They go on the board as --qb-strip-pitch and
-    // --qb-strip-tiles, which the stylesheet sizes every strip from. The
-    // room is measured without transforms (offsetWidth/Height), so a row
-    // that is pulsing measures as it stands. Returns whether they changed;
-    // then every row's name is measured again.
+    // Every row's strip has the same pitch and the same tiles, taken from
+    // one row's room (.qb-strip-cell: from just right of the cloth to the
+    // row's right padding, which is the gap after the cloth again): the
+    // pitch from its height; from its width, N = as many tiles 6 pitches
+    // wide as it holds, or N + 1 when that many are each still
+    // STRIP_TILE_MIN of 6 pitches, and the tile's width the room / N, so
+    // the tiles fill the room edge to edge. The few pixels a tile gains or
+    // loses are the tile's: its bulbs and a character's dots keep the
+    // pitch, centred in it. They go on the board as --qb-strip-pitch,
+    // --qb-strip-tiles and --qb-strip-tile-w, which the stylesheet sizes
+    // every strip from. The room is measured without transforms (computed
+    // style, offsetHeight), so a row that is pulsing measures as it stands.
+    // Returns whether they changed; then every row's name is measured again.
     function layoutStrips() {
         if (!dottedNames) return false;
         const cell = board.querySelector('.qb-rows .qb-strip-cell');
         if (!cell || !cell.offsetWidth || !cell.offsetHeight) return false;
         const pitch = Math.max(STRIP_PITCH_MIN, Math.min(STRIP_PITCH_MAX,
             Math.floor((cell.offsetHeight - 2 * STRIP_CLEAR_PX) / DOT_EM)));
-        const tiles = Math.max(3, Math.floor(cell.offsetWidth / (DOT_CELL * pitch)));
-        if (pitch === stripPitch && tiles === stripTiles) return false;
+        const room = parseFloat(getComputedStyle(cell).width) || cell.offsetWidth;
+        const nominal = DOT_CELL * pitch;
+        let tiles = Math.max(3, Math.floor(room / nominal));
+        if (room / (tiles + 1) >= STRIP_TILE_MIN * nominal) tiles++;
+        const tile = room / tiles;
+        if (pitch === stripPitch && tiles === stripTiles && tile === stripTile) return false;
         stripPitch = pitch;
         stripTiles = tiles;
+        stripTile = tile;
         board.style.setProperty('--qb-strip-pitch', pitch + 'px');
         board.style.setProperty('--qb-strip-tiles', String(tiles));
+        board.style.setProperty('--qb-strip-tile-w', tile + 'px');
         for (const n of field) if (rows[n]) measureName(rows[n]);
         return true;
     }
 
     // How many tiles a row's name needs: its width in the face, in whole
-    // tiles (the face is one tile a character; a character it lacks falls
-    // back to Impact, which the width still counts).
+    // tiles (the face is one tile a character, letter-spaced to the tile's
+    // width; a character it lacks falls back to Impact, which the width
+    // still counts).
     function measureName(r) {
         if (!stripPitch) return;
-        const tile = DOT_CELL * stripPitch;
-        r.need = r.nameText ? Math.ceil(r.name.offsetWidth / tile - 0.05) : 0;
+        r.need = r.nameText ? Math.ceil(r.name.offsetWidth / stripTile - 0.05) : 0;
         updateScroll(r);
     }
 
@@ -508,12 +525,12 @@
         if (!stripPitch) return;
         const area = Math.max(1, stripTiles - r.digits - 1);
         const over = r.need - area;
-        const key = over > 0 ? [over, stripPitch, r.nameText].join('|') : '';
+        const key = over > 0 ? [over, stripTile, r.nameText].join('|') : '';
         if (key === r.scrollKey) return;
         r.scrollKey = key;
         if (r.scroll) { r.scroll.cancel(); r.scroll = null; }
         if (over <= 0 || typeof r.name.animate !== 'function') return;
-        const tile = DOT_CELL * stripPitch;
+        const tile = stripTile;
         const stepMs = tile / CRAWL_PX_S * 1000;
         const total = SCROLL_HOLD_START_MS + (over - 1) * stepMs + SCROLL_HOLD_END_MS;
         const at = (k) => 'translateX(' + (-k * tile) + 'px)';
