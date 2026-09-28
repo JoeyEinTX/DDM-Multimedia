@@ -6,7 +6,7 @@
     <title>{% block title %}DDM Splash Display{% endblock %}</title>
 
     {# All CSS is local — no CDN. Party network is flaky. #}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/ddm_style.css') }}" />
+    <link rel="stylesheet" href="{{ static_url('css/ddm_style.css') }}" />
 
     {# Custom fonts (if any) live in static/fonts/ — declare @font-face there. #}
 

@@ -48,9 +48,11 @@ from la_quiniela.betting import (  # noqa: E402
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import LqBridge  # noqa: E402
 from la_quiniela.board import (  # noqa: E402
-    DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_STATE,
-    get_board, init_board, quiniela_board_bp, start_board, stop_board,
+    DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_ODDS, USAGE_RACE, USAGE_STATE,
+    get_board, init_board, migrate_race_setup, quiniela_board_bp, start_board, stop_board,
 )
+from la_quiniela import odds as odds_mod  # noqa: E402
+from la_quiniela import racetime  # noqa: E402
 from la_quiniela.horses import HorseStore, horse_at, in_field, parse_names_text, post_of  # noqa: E402
 from la_quiniela.models import LqDb  # noqa: E402
 from la_quiniela.test_smoke import (  # noqa: E402
@@ -65,10 +67,12 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive since protocol v2
               "cups_online", "cups_no_horse", "results",
               # additive since pi5 holds the figures at the post
-              "closing"}
+              "closing",
+              # additive since race info lives in La Quiniela (the race; each horse's odds too)
+              "race"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
-              "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False}
+              "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
 NO_RESULTS = None   # the model's results until the dashboard has them
 
 
@@ -241,7 +245,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 22 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("exactly the 23 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -275,7 +279,7 @@ def test_tokens_share_leader_online_conflict():
     h7, h3, h12 = m["horses"]["7"], m["horses"]["3"], m["horses"]["12"]
     _check("horse 7 entry: cup is the MAC, one claimer, no conflict",
            h7 == {"tokens": 23, "share": round(23 / 33, 4), "scratched": False, "online": True, "cup": MAC_A,
-                  "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": True}, str(h7))
+                  "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": True, "odds": None}, str(h7))
     _check("horse 3 tokens/share", h3["tokens"] == 10 and h3["share"] == round(10 / 33, 4))
     _check("horse 3 scratched (the state's bit) and offline, so out of the field",
            h3["scratched"] is True and h3["online"] is False and h3["in_field"] is False)
@@ -329,7 +333,7 @@ def test_odd_entries_never_raise():
            str(m["horses"]["5"]))
     _check("string fields are coerced", m["horses"]["8"] == {"tokens": 6, "share": 0.75, "scratched": False,
                                                               "online": True, "cup": mac_of(5), "conflict": False, "cups": [mac_of(5)],
-                                                              "name": "", "replaced": None, "in_field": True}, str(m["horses"]["8"]))
+                                                              "name": "", "replaced": None, "in_field": True, "odds": None}, str(m["horses"]["8"]))
     _check("negative tokens clamp to 0, cup kept", m["horses"]["10"]["tokens"] == 0 and m["horses"]["10"]["cup"] == mac_of(7)
            and m["horses"]["10"]["online"] is True)
     _check("float count", m["horses"]["14"]["tokens"] == 2 and m["horses"]["14"]["scratched"] is False)
@@ -432,7 +436,7 @@ def test_renumber_and_reset_produce_no_ghost_bets():
     _check("horse 2 now on cup 4 with that cup's count",
            m["horses"]["2"] == {"tokens": 7, "share": round(7 / 59, 4), "scratched": False, "online": True,
                                 "cup": mac_of(4), "conflict": False, "cups": [mac_of(4)], "name": "", "replaced": None,
-                                "in_field": True}, str(m["horses"]["2"]))
+                                "in_field": True, "odds": None}, str(m["horses"]["2"]))
     _check("no event for the cup change",
            len(m["events"]) == 2 and m["events"][0]["horse"] == 2 and m["events"][0]["delta"] == -1)
     _, lines = log_lines(log_dir)
@@ -782,7 +786,7 @@ def test_real_bridge_feeds_the_board():
     m = board.model()
     _check("count -> tokens on the horse the cup reports",
            m["horses"]["7"] == {"tokens": 3, "share": 1.0, "scratched": True, "online": True, "cup": MAC_A,
-                                "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": False},
+                                "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": False, "odds": None},
            str(m["horses"]["7"]))
     _check("any line puts the gateway online -> link_ok", m["link_ok"] is True)
     _check("leader, pot (horse 7 is scratched: its 3 tokens count but are out of the pot)",
@@ -1078,7 +1082,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 22 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 23 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -1287,7 +1291,7 @@ def test_names_and_replacement_scratch_in_the_model():
     _check("horse 22: the cup and its 12 tokens, OCELLI replacing ENCINO, in the field, not scratched",
            m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True,
                                  "cup": mac_of(1), "conflict": False, "cups": [mac_of(1)], "name": "OCELLI",
-                                 "replaced": "ENCINO", "in_field": True}, str(m["horses"]["22"]))
+                                 "replaced": "ENCINO", "in_field": True, "odds": None}, str(m["horses"]["22"]))
     _check("horse 9: no cup, no tokens, out of the field, its name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
     _check("scratches lists the record, upper-cased",
@@ -1992,7 +1996,7 @@ def test_routes_scratch_and_unscratch():
     m = client.get("/api/quiniela").get_json()
     _check("the model: 22 on the cup with the 12 tokens, in the field, OCELLI replacing ENCINO",
            m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True, "cup": MAC_A,
-                                 "conflict": False, "cups": [MAC_A], "name": "OCELLI", "replaced": "ENCINO", "in_field": True},
+                                 "conflict": False, "cups": [MAC_A], "name": "OCELLI", "replaced": "ENCINO", "in_field": True, "odds": None},
            str(m["horses"]["22"]))
     _check("9 left the field: no cup, 0 tokens, name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
@@ -2463,6 +2467,12 @@ def test_admin_page():
            "function loadModel(" in html and "loadModel(true)" in html and "setInterval(function () { loadModel(false); }, 5000)" in html
            and html.count("loadModel(") >= 6, str(html.count("loadModel(")))
     _check("no gateway-flag wording", "at the gateway" not in html)
+    _check("Race info at the top of the setup area: after the Race section, before the names",
+           html.index('id="race"') < html.index('id="race-info"') < html.index('id="names"'))
+    _check("...a name, a date, a post time, Save and its reply line, talking to /api/quiniela/race",
+           all(s in html for s in ('id="race-name"', 'type="date"', 'id="race-date"', 'type="time"', 'id="race-time"',
+                                   'id="race-save"', 'id="race-status"', '"/api/quiniela/race"', '"PUT", "/api/quiniela/race"'))
+           and "KENTUCKY DERBY" in html)
     _check("well under 600 lines", html.count("\n") < 600, str(html.count("\n")))
 
 
@@ -2804,6 +2814,242 @@ def test_field_by_post():
 
 
 # -----------------------------------------------------------------------------
+# One home for race info: the race, the track's odds, the old Race Setup file
+# -----------------------------------------------------------------------------
+
+# The 2027 Derby's post as the tests enter it: 5:57 PM on a Central clock
+# (daylight time in May), 22:57 UTC. And the same time of day in January
+# (standard time, 23:57 UTC).
+POST_2027 = 1_809_212_220.0             # 2027-05-01 17:57 CDT
+POST_JAN = 1_800_057_420.0              # 2027-01-15 17:57 CST
+
+
+def test_race_info_round_trip():
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    m = client.get("/api/quiniela").get_json()
+    _check("nothing set: KENTUCKY DERBY, no year, no post time, the race's clock",
+           m["race"] == {"name": "KENTUCKY DERBY", "year": None, "post_at": None, "post_local": None,
+                         "tz": "America/Chicago"}, str(m["race"]))
+    r = client.get("/api/quiniela/race")
+    _check("GET /api/quiniela/race: the same, the typed name empty, no date or time, no-store",
+           r.status_code == 200 and r.headers.get("Cache-Control") == "no-store"
+           and r.get_json() == {"ok": True, "race": m["race"], "name": "", "date": None, "time": None}, str(r.get_json()))
+    r = client.put("/api/quiniela/race", json={"name": "Kentucky Derby", "date": "2027-05-01", "time": "17:57"})
+    body = r.get_json()
+    want = {"name": "KENTUCKY DERBY", "year": 2027, "post_at": POST_2027, "post_local": "5:57 PM CDT",
+            "tz": "America/Chicago"}
+    _check("PUT name, date and time on the race's clock: 5:57 PM CDT is 22:57 UTC, the year from the date",
+           r.status_code == 200 and body == {"ok": True, "race": want, "name": "Kentucky Derby",
+                                              "date": "2027-05-01", "time": "17:57"}, str(body))
+    _check("the model carries it", client.get("/api/quiniela").get_json()["race"] == want)
+    _check("persisted as typed: a second store on the same database",
+           HorseStore(b.db).race() == {"name": "Kentucky Derby", "year": 2027, "post_at": POST_2027})
+    _check("GET gives the form back what was entered", client.get("/api/quiniela/race").get_json()
+           == {"ok": True, "race": want, "name": "Kentucky Derby", "date": "2027-05-01", "time": "17:57"})
+    r = client.put("/api/quiniela/race", json={"date": "2027-01-15", "time": "17:57"})
+    _check("a January date is standard time: 5:57 PM CST, 23:57 UTC; the name left alone",
+           r.get_json()["race"]["post_at"] == POST_JAN and r.get_json()["race"]["post_local"] == "5:57 PM CST"
+           and r.get_json()["race"]["name"] == "KENTUCKY DERBY", str(r.get_json()))
+    r = client.put("/api/quiniela/race", json={"post_at": POST_2027})
+    _check("or a unix time: the year follows it", r.get_json()["race"] == want, str(r.get_json()))
+    board = get_board()
+    board.reset_betting()
+    _check("Reset betting does not touch it", client.get("/api/quiniela").get_json()["race"] == want)
+    r = client.put("/api/quiniela/race", json={"name": "Preakness"})
+    _check("a name alone: the post time stays", r.get_json()["race"]["name"] == "PREAKNESS"
+           and r.get_json()["race"]["post_at"] == POST_2027)
+    r = client.put("/api/quiniela/race", json={"name": "", "date": "", "time": ""})
+    _check("empty name, date and time: the default name, no post time, no year",
+           r.get_json()["race"] == {"name": "KENTUCKY DERBY", "year": None, "post_at": None, "post_local": None,
+                                    "tz": "America/Chicago"} and r.get_json()["date"] is None, str(r.get_json()))
+    for bad, why in (({}, "usage"), ({"date": "2027-05-01"}, "go together"), ({"time": "17:57"}, "go together"),
+                     ({"date": "May 1", "time": "17:57"}, "YYYY-MM-DD"), ({"date": "2027-05-01", "time": "5:57 PM"}, "HH:MM"),
+                     ({"date": "2027-05-01", "time": "25:00"}, "HH:MM"), ({"post_at": "soon"}, "usage"),
+                     ({"post_at": True}, "usage"), ({"name": "x" * 81}, "longer"), ({"date": 5, "time": "17:57"}, "usage")):
+        r = client.put("/api/quiniela/race", json=bad)
+        _check(f"PUT {bad!r:.40} -> 400 ({why})", r.status_code == 400 and why in r.get_json()["error"]
+               and r.get_json()["ok"] is False, f"{r.status_code} {r.get_json()}")
+    r = client.put("/api/quiniela/race", data="5", content_type="application/json")
+    _check("a non-object body -> 400 usage", r.status_code == 400 and r.get_json()["error"] == USAGE_RACE)
+    _check("nothing was changed by the refused ones", HorseStore(b.db).race() == {"name": "", "year": None, "post_at": None})
+
+
+def test_race_clock_and_the_store():
+    # Another zone in config: the same instant on another clock.
+    board, wall, _ = fresh_board(LQ_RACE_TZ="America/New_York")
+    board.store.set_race(post_at=POST_2027)
+    _check("LQ_RACE_TZ America/New_York: the same post reads 6:57 PM EDT",
+           board.race_view()["post_local"] == "6:57 PM EDT" and board.race_view()["tz"] == "America/New_York")
+    _check("the race's clock: May is CDT, January CST, and both round-trip",
+           racetime.describe(POST_2027)["label"] == "5:57 PM CDT" and racetime.describe(POST_JAN)["label"] == "5:57 PM CST"
+           and racetime.local_to_epoch("2027-05-01", "17:57") == POST_2027
+           and racetime.local_to_epoch("2027-01-15", "17:57") == POST_JAN
+           and racetime.describe(POST_2027)["iso"] == "2027-05-01T17:57:00-05:00")
+    _check("the daylight-time change: 1:59 CST, then 3:00 CDT a minute later (14 March 2027)",
+           racetime.describe(racetime.local_to_epoch("2027-03-14", "01:59"))["label"] == "1:59 AM CST"
+           and racetime.describe(racetime.local_to_epoch("2027-03-14", "01:59") + 60)["label"] == "3:00 AM CDT")
+    store = HorseStore()
+    for bad in ({"year": 1800}, {"year": "twenty"}, {"year": True}, {"post_at": float("inf")}, {"post_at": "x"},
+                {"name": 5}):
+        try:
+            store.set_race(**bad)
+            ok = False
+        except ValueError:
+            ok = True
+        _check(f"set_race({bad!r}) refused", ok and store.race() == {"name": "", "year": None, "post_at": None})
+    changes = []
+    store.on_change = lambda: changes.append(1)
+    store.set_race(name="Kentucky Derby", year=2027)
+    store.set_race(name="Kentucky Derby")
+    _check("a change calls on_change once, a write that changes nothing does not", changes == [1])
+    # A database from before lq_race: the bridge's start adds it; until then a
+    # store reads everything else and keeps the race in memory.
+    path = str(tmpdir() / "before_lq_race.db")
+    db = LqDb(path)
+    db.init_schema()
+    db.conn.execute("DROP TABLE lq_race")
+    db.save_horse(9, "Encino")
+    with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
+        old = HorseStore(db)
+    _check("without lq_race: the names are read, the race is empty, one ERROR naming the table",
+           old.horses()[9]["name"] == "Encino" and old.race_empty and len(cap.messages("lq_race")) == 1, str(cap.messages()))
+    db.close()
+    b = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake"}, db_path=path, serial_factory=lambda p, baud, t: S.FakeSerial(),
+                 socketio=S.StubSocketIO(), clock=FakeClock(), console=S.ConsoleCapture())
+    try:
+        _check("the bridge's start adds lq_race and passes the shape check",
+               b.schema_error is None and b.db._columns("lq_race") == ["id", "name", "year", "post_at", "migrated"])
+        s = HorseStore(b.db)
+        s.set_race(name="Kentucky Derby", post_at=POST_2027, year=2027)
+        _check("...and it keeps the race from then on", HorseStore(b.db).race()["post_at"] == POST_2027)
+    finally:
+        b.close()
+
+
+def test_odds_in_the_model():
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    board = get_board()
+    _check("no odds: every horse's odds null", all(h["odds"] is None for h in client.get("/api/quiniela").get_json()["horses"].values()))
+    kept = board.set_odds({"1": "5-2", 22: "30-1", "9": "", "25": "9-1", "x": "1-1", "3": "  8-1 ", "4": None,
+                           "5": "NOT ODDS AT ALL", "6": True, " 7 ": "even"})
+    _check("kept by program number: 1..24, non-empty, short, upper-cased; the rest dropped",
+           kept == {1: "5-2", 22: "30-1", 3: "8-1", 7: "EVEN"}, str(kept))
+    board.refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("the model: horses[n].odds, null where there are none",
+           [m["horses"][str(n)]["odds"] for n in (1, 2, 3, 7, 9, 22, 24)] == ["5-2", None, "8-1", "EVEN", None, "30-1", None])
+    board.store.set_names({9: "Encino", 22: "Ocelli"})
+    client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22}})
+    board.set_odds({9: "8-1", 22: "30-1"})
+    board.refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("keyed by program number: 22 standing in for 9 has 22's odds, never post 9's",
+           m["horses"]["22"]["odds"] == "30-1" and m["horses"]["22"]["in_field"] and m["horses"]["9"]["odds"] == "8-1")
+    r = client.put("/api/quiniela/odds", json={"odds": {"7": "9-2", "21": "20-1"}})
+    _check("PUT /api/quiniela/odds replaces them all (the morning line by hand)",
+           r.status_code == 200 and r.get_json() == {"ok": True, "odds": {"21": "20-1", "7": "9-2"}}
+           and client.get("/api/quiniela").get_json()["horses"]["22"]["odds"] is None, str(r.get_json()))
+    odds_mod.set_odds_poller(None)
+    r = client.get("/api/quiniela/odds")
+    _check("GET /api/quiniela/odds: the odds, no poller running", r.status_code == 200 and r.get_json()["odds"] == {"21": "20-1", "7": "9-2"}
+           and r.get_json()["polling"] is False)
+    _check("no poller initialised: start and stop say so (503)",
+           client.post("/api/quiniela/odds/start").status_code == 503 and client.post("/api/quiniela/odds/stop").status_code == 503)
+    for bad in ({}, {"odds": 5}, {"odds": ["5-2"]}):
+        r = client.put("/api/quiniela/odds", json=bad)
+        _check(f"PUT odds {bad!r} -> 400 usage", r.status_code == 400 and r.get_json()["error"] == USAGE_ODDS)
+    r = client.put("/api/quiniela/odds", json={"odds": None})
+    _check("{odds: null} clears them", r.get_json() == {"ok": True, "odds": {}}
+           and all(h["odds"] is None for h in client.get("/api/quiniela").get_json()["horses"].values()))
+
+    # The poller, with a fetch of its own: it asks about the store's race and
+    # hands what comes back to the board; nothing back leaves the odds alone.
+    asked, emitted, replies = [], [], [{"1": "6-1", "22": "12-1"}, None]
+    board.store.set_race(name="Kentucky Derby", post_at=POST_2027)
+
+    def fetch(race):
+        asked.append((race["name"], race["year"]))
+        return replies.pop(0)
+    poller = odds_mod.OddsPoller(fetch, board.set_odds, board.race_view, emit=emitted.append)
+    _check("a round with odds: the board has them, keyed by number, and odds_update is emitted",
+           poller.poll_once() is True and board.odds() == {1: "6-1", 22: "12-1"} and asked == [("KENTUCKY DERBY", 2027)]
+           and emitted[0]["odds"] == {"1": "6-1", "22": "12-1"} and poller.last_update is not None)
+    _check("a round with nothing (no internet): the odds stay as they were",
+           poller.poll_once() is False and board.odds() == {1: "6-1", 22: "12-1"} and len(emitted) == 1)
+    no_key = odds_mod.OddsPoller(fetch, board.set_odds, board.race_view, enabled=False)
+    _check("without an API key it does not start", no_key.start() == {"ok": False, "error": "ANTHROPIC_API_KEY not configured",
+                                                                       "status": 503} and not no_key.polling())
+    replies[:] = [{"2": "3-1"}] * 5
+    odds_mod.set_odds_poller(poller)
+    try:
+        r = client.post("/api/quiniela/odds/start", json={"interval": 5})
+        _check("POST start: at least 60 s between rounds, running", r.status_code == 200
+               and r.get_json() == {"ok": True, "interval": 60} and poller.polling())
+        _check("a second start is refused (409)", client.post("/api/quiniela/odds/start").status_code == 409)
+        deadline = time.time() + 5
+        while board.odds() != {2: "3-1"} and time.time() < deadline:
+            time.sleep(0.02)
+        _check("the thread's first round lands in the model", board.odds() == {2: "3-1"})
+        r = client.post("/api/quiniela/odds/stop")
+        poller._thread.join(5)
+        _check("POST stop: it stops", r.get_json() == {"ok": True, "stopped": True} and not poller.polling())
+    finally:
+        poller.stop()
+        odds_mod.set_odds_poller(None)
+    _check("reading a reply: fenced JSON, prose around it, a bare object, {odds: {...}}",
+           odds_mod.odds_from_reply(odds_mod.extract_json('```json\n{"odds": {"1": "5-2"}}\n```')) == {"1": "5-2"}
+           and odds_mod.odds_from_reply(odds_mod.extract_json('Here: {"3": "8-1", "22": null} as asked')) == {"3": "8-1", "22": ""}
+           and odds_mod.odds_from_reply(odds_mod.extract_json("no json here")) is None
+           and odds_mod.odds_from_reply(["5-2"]) is None)
+
+
+def test_migrate_race_setup_once():
+    board, wall, _ = fresh_board()
+    d = tmpdir()
+    path = d / "race_setup.json"
+    _check("no file: nothing to do, nothing remembered",
+           migrate_race_setup(path, board) == {"file": False, "copied_post_at": None, "copied_names": 0, "before": False}
+           and not board.store.race_migrated)
+    path.write_text(json.dumps({"race_name": "Derby de Mayo 2026", "post_time": "18:57",
+                                "horses": {"1": "Sovereignty", "2": "Journalism", "3": "", "21": "Not a post"},
+                                "odds": {"1": "5-2"}}), encoding="utf-8")
+    with capture_logs("la_quiniela.board", logging.INFO) as cap:
+        out = migrate_race_setup(path, board)
+    old_post = racetime.local_to_epoch("2026-05-02", "18:57", "America/New_York")
+    _check("the first start: the old post time (6:57 PM ET on Derby day 2026) and the two names copied",
+           out == {"file": True, "copied_post_at": old_post, "copied_names": 2, "before": False}
+           and board.store.race() == {"name": "", "year": 2026, "post_at": old_post}
+           and board.store.name_of(1) == "Sovereignty" and board.store.name_of(3) == "", str(out))
+    _check("...on the race's clock that is 5:57 PM CDT", board.race_view()["post_local"] == "5:57 PM CDT")
+    _check("...the file is left where it is, and the log says it is obsolete",
+           path.exists() and any("obsolete" in msg for msg in cap.messages()), str(cap.messages()))
+    board.store.set_race(post_at=None, year=None)
+    board.store.set_names({1: ""})
+    _check("once: a later start copies nothing again, even with the race and the names emptied",
+           migrate_race_setup(path, board) == {"file": True, "copied_post_at": None, "copied_names": 0, "before": True}
+           and board.store.race_empty and board.store.name_of(1) == "")
+    # A store that already has race info and names: neither is overwritten.
+    other, _, _ = fresh_board()
+    other.store.set_race(post_at=POST_2027)
+    other.store.set_names({5: "Great White"})
+    out = migrate_race_setup(path, other)
+    _check("race info and names already set: nothing copied, the file looked at",
+           out["copied_post_at"] is None and out["copied_names"] == 0 and other.store.race()["post_at"] == POST_2027
+           and other.store.name_of(1) == "" and other.store.race_migrated, str(out))
+    third, _, _ = fresh_board()
+    path.write_text("{not json", encoding="utf-8")
+    with capture_logs("la_quiniela.board", logging.WARNING) as cap:
+        out = migrate_race_setup(path, third)
+    _check("an unreadable file: a warning, nothing copied, looked at once",
+           out["copied_post_at"] is None and third.store.race_empty and third.store.race_migrated
+           and any("cannot read" in msg for msg in cap.messages()), str(cap.messages()))
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -2869,6 +3115,10 @@ def main():
     _run("settings — the payout keys", test_settings_new_keys)
     _run("names — the field by post (GET /api/quiniela/field)", test_field_by_post)
     _run("one race state — each mode, the cmd route and the admin page agree", test_modes_set_the_race_state)
+    _run("race info — the routes, the model, the database, Reset betting keeps it", test_race_info_round_trip)
+    _run("race info — the race's clock, the store's checks, lq_race on an old database", test_race_clock_and_the_store)
+    _run("odds — by program number, null when missing; the poller and its routes", test_odds_in_the_model)
+    _run("race info — the old Race Setup file, once", test_migrate_race_setup_once)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

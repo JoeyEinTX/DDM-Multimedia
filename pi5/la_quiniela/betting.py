@@ -32,6 +32,12 @@
 # none. The TV board shows them in 3, 4 and 5, so a page loaded after the
 # cups were emptied for the draw, a second screen or a restart of pi5 all
 # show the numbers at the post. The live fields keep following the cups.
+# race is the race itself from the store (name, year, post time as unix
+# seconds and as it reads on the race's clock, and that clock's zone): the
+# one home of race information, which the TV's countdown and roster slides
+# read. horses[n].odds is the real track's odds for that program number, a
+# string, from the odds poller (odds.py) when it runs, else null: they are
+# for the slideshow, never for La Quiniela, which pays no odds.
 #
 # How La Quiniela pays, which is what the additive keys carry: a token is one
 # dollar and one raffle ticket. After the race one token is drawn from the WIN
@@ -63,6 +69,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from la_quiniela import protocol as P
+from la_quiniela import racetime
 from la_quiniela.horses import HorseStore, in_field
 
 log = logging.getLogger("la_quiniela.betting")
@@ -130,7 +137,10 @@ DEFAULTS: Dict[str, Any] = {
         "TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
         "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS",
     ],
+    "LQ_RACE_TZ": racetime.DEFAULT_TZ,        # the race's clock: the post time is entered and shown in it
 }
+DEFAULT_RACE_NAME = "KENTUCKY DERBY"          # the race's name while none is stored
+ODDS_MAX_LEN = 7                              # "50-1", "5-2", "EVEN": anything longer is not odds
 SPLIT_KEYS = ("LQ_SPLIT_WIN", "LQ_SPLIT_PLACE", "LQ_SPLIT_SHOW")
 SPLIT_SUM_TOLERANCE = 0.001
 
@@ -227,6 +237,10 @@ def _coerce_setting(key: str, value: Any, source: str) -> Tuple[bool, Any]:
                 if text in ("0", "false", "no", "off"):
                     return True, False
             raise ValueError("expected 1/true/yes/on or 0/false/no/off")
+        if key == "LQ_RACE_TZ":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError('expected a time zone name such as "America/Chicago"')
+            return True, value.strip()
         if key == "QUINIELA_BOARD_STATES":
             if isinstance(value, str):
                 parts = [p.strip() for p in value.split(",")]
@@ -370,7 +384,25 @@ def _unassigned() -> Dict[str, Any]:
     in the field with no cup yet still reads in_field true; 21..24 read
     false until they stand in for someone."""
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None,
-            "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False}
+            "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
+
+
+def clean_odds(odds: Any) -> Dict[int, str]:
+    """{program number: odds} from whatever an odds source hands over: keys
+    that are numbers 1..24 (ints or strings), values non-empty strings of at
+    most ODDS_MAX_LEN characters ("5-2", "50-1"), upper-cased. Anything else
+    is dropped, so a horse with no odds simply has none."""
+    out: Dict[int, str] = {}
+    if not isinstance(odds, dict):
+        return out
+    for key, value in odds.items():
+        n = _as_int(key)
+        if n is None or not 1 <= n <= HORSE_COUNT or value is None or isinstance(value, bool):
+            continue
+        text = " ".join(str(value).split()).upper()
+        if text and len(text) <= ODDS_MAX_LEN:
+            out[n] = text
+    return out
 
 
 def _with_now(text: str, now: float) -> str:
@@ -476,6 +508,7 @@ class BettingBoard:
             self.store.on_change = self.wake
         self._closing: Optional[Dict[str, Any]] = self.store.closing   # survives a restart (lq_closing)
         self._closing_warned = False
+        self._odds: Dict[int, str] = {}           # program number -> the track's odds (set_odds)
         self._model: Dict[str, Any] = self._empty_model()
         self._json: str = _dumps(self._model)
 
@@ -506,9 +539,64 @@ class BettingBoard:
                                     "settings")
         return list(value) if ok else list(DEFAULTS["LQ_CHYRON_LINES"])
 
+    def _race_tz(self) -> str:
+        ok, value = _coerce_setting("LQ_RACE_TZ", self.settings.get("LQ_RACE_TZ", DEFAULTS["LQ_RACE_TZ"]),
+                                    "settings")
+        return value if ok else DEFAULTS["LQ_RACE_TZ"]
+
     def now(self) -> float:
         """The server's clock, as stamped into every serialised model."""
         return self._wall()
+
+    # -- the race ------------------------------------------------------------
+    def race_view(self) -> Dict[str, Any]:
+        """The model's race: {"name", "year", "post_at", "post_local", "tz"}.
+        name is the store's, upper-cased, DEFAULT_RACE_NAME while none is
+        stored; year the stored one, else the post time's; post_at unix
+        seconds or None; post_local the post time on the race's clock ("5:57
+        PM CDT") or None; tz that clock's zone, for the pages that show the
+        time of day or a date."""
+        info = self.store.race()
+        tz = self._race_tz()
+        post_at = info.get("post_at")
+        local = racetime.describe(post_at, tz) if post_at is not None else None
+        year = info.get("year")
+        if year is None and local is not None:
+            year = local["year"]
+        return {
+            "name": (info.get("name") or DEFAULT_RACE_NAME).upper(),
+            "year": year,
+            "post_at": post_at,
+            "post_local": local["label"] if local is not None else None,
+            "tz": tz,
+        }
+
+    def race_form(self) -> Dict[str, Any]:
+        """What the admin page's Race info form shows: {"race": race_view(),
+        "name": the name as typed ("" for the default), "date": "2027-05-01"
+        and "time": "17:57" on the race's clock, both None while no post time
+        is set}."""
+        race = self.race_view()
+        local = racetime.describe(race["post_at"], race["tz"]) if race["post_at"] is not None else None
+        return {"race": race, "name": self.store.race().get("name") or "",
+                "date": local["date"] if local else None, "time": local["time"] if local else None}
+
+    # -- the track's odds -------------------------------------------------------
+    def set_odds(self, odds: Any) -> Dict[int, str]:
+        """The track's odds by program number (clean_odds() decides what
+        counts); None or {} clears them. A change wakes the board thread, so
+        the model carries them within a second. Returns what was kept."""
+        clean = clean_odds(odds)
+        with self._lock:
+            changed = clean != self._odds
+            self._odds = clean
+        if changed:
+            self.wake()
+        return dict(clean)
+
+    def odds(self) -> Dict[int, str]:
+        with self._lock:
+            return dict(self._odds)
 
     # -- model ---------------------------------------------------------------
     def _empty_model(self) -> Dict[str, Any]:
@@ -536,6 +624,7 @@ class BettingBoard:
             "cups_no_horse": 0,
             "results": _results_dict(None),
             "closing": self._closing,
+            "race": self.race_view(),
         }
 
     def _name_horses(self, horses: Dict[str, Dict[str, Any]], state_scratched: Iterable[int] = ()
@@ -548,6 +637,7 @@ class BettingBoard:
         unless scratched either kind, 21..24 true only while standing in for
         a scratched horse. replaced: the upper-cased name of the horse n
         stands in for (the "was" of the record whose "now" is n), else None.
+        odds: the track's odds for program number n (set_odds()), else None.
         scratches: one entry per scratch ordered by was.number, {"was":
         {"number", "name"}, "now": {"number", "name"}} for a replacement
         record and {"was": {...}, "now": None} for a no-replacement scratch;
@@ -575,11 +665,13 @@ class BettingBoard:
         def named(n: int) -> Dict[str, Any]:
             return {"number": n, "name": ((names.get(n) or {}).get("name") or "").upper()}
 
+        odds = self._odds
         for n in range(1, HORSE_COUNT + 1):
             entry = horses[str(n)]
             entry["name"] = named(n)["name"]
             entry["replaced"] = named(by_now[n])["name"] if n in by_now else None
             entry["in_field"] = in_field(n, records, gateway)
+            entry["odds"] = odds.get(n)
         scratches: List[Dict[str, Any]] = []
         for was in sorted(set(records) | gateway):
             now = records.get(was)
@@ -826,6 +918,7 @@ class BettingBoard:
                 "cups_no_horse": extras["cups_no_horse"],
                 "results": _results_dict(extras["results"]),
                 "closing": closing,
+                "race": self.race_view(),
             }
             changed = model != old
             if changed:

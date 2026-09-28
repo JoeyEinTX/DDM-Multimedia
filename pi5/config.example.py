@@ -98,3 +98,9 @@ LQ_CHYRON_LINES = [  # what crawls along the bottom of the TV board
     "TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
     "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS",
 ]
+# The race's clock (DDM_LQ_RACE_TZ): the post time on the admin page's Race
+# info is entered and shown in it ("5:57 PM CDT"), and the TV shows the time
+# of day in it. The race's name and post time themselves live in La
+# Quiniela's store, not here (the old Race Setup file, RACE_SETUP_FILE, is read
+# once at start for what it held and otherwise left alone).
+LQ_RACE_TZ = "America/Chicago"

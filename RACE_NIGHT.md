@@ -71,8 +71,14 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
 
 ## 1. Derby week — the field
 
-- [ ] Tuesday after the draw: `ADMIN` → Horse names → paste the twenty names in post
-      order, one per line, plus the also-eligibles on lines 21–24 → Save names.
+- [ ] Tuesday after the draw: `ADMIN` → Race info → the race's name (leave it empty for
+      KENTUCKY DERBY), the date and the post time on a Central clock (5:57 PM for
+      Churchill's 6:57 PM ET) → Save race info. The line under it reads back
+      `KENTUCKY DERBY 2027 · post 2027-05-01 5:57 PM CDT`. The TV's countdown slide
+      counts down to it (it stays out of the slideshow while no post time is set), the
+      roster slide prints it, and Reset betting never clears it.
+- [ ] Same visit: `ADMIN` → Horse names → paste the twenty names in post order, one per
+      line, plus the also-eligibles on lines 21–24 → Save names.
 - [ ] Each scratch before Friday 9 a.m. ET: `ADMIN` → Scratches → In the field → that
       horse's row → pick the replacement number (the list offers the unused
       also-eligibles, 21 first) and its name → Scratch. The board lists the new number at
@@ -285,4 +291,15 @@ curl -s localhost:5000/api/lq/snapshot | python3 -c "import sys,json;[print(c['m
 The splash's view of the board (must say `link True`):
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'])"
+```
+
+The race's name and post time, what `ADMIN` → Race info → Save does (date and time on a Central clock; both `""` clear the post time):
+```bash
+curl -s -X PUT localhost:5000/api/quiniela/race -H 'Content-Type: application/json' -d '{"name":"Kentucky Derby","date":"2027-05-01","time":"17:57"}'
+```
+
+The track's odds for the roster slide (optional; La Quiniela pays no odds). Fetched every 5 minutes while this runs (needs `ANTHROPIC_API_KEY` and internet), or typed from the program:
+```bash
+curl -s -X POST localhost:5000/api/quiniela/odds/start
+curl -s -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/json' -d '{"odds":{"1":"5-2","2":"8-1","21":"30-1"}}'
 ```

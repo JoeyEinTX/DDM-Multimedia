@@ -849,6 +849,18 @@ class ApiTests(RouteCase):
             self.assertIn(needle, js)
         self.assertNotIn("[1, 2, 3, 4", js, "the page never hard-codes pi5's board states")
 
+    def test_the_page_asks_for_the_css_and_js_it_has(self) -> None:
+        # A pull and a restart serve the new code without a hard reload: every
+        # stylesheet and script URL carries its file's modification time.
+        html = self.client.get("/display").get_data(as_text=True)
+        for path in ("css/ddm_style.css", "css/quiniela_board.css", "js/quiniela_board.js"):
+            mtime = int((HERE / "static" / path).stat().st_mtime)
+            self.assertIn(f'/static/{path}?v={mtime}"', html, path)
+            r = self.client.get(f"/static/{path}?v={mtime}")
+            self.assertEqual(r.status_code, 200, path)
+            r.close()
+        self.assertNotIn("url_for('static'", (HERE / "templates" / "base.html").read_text(encoding="utf-8"))
+
 
 class StreamTests(RouteCase):
     def test_generator_initial_then_ping_then_update(self) -> None:

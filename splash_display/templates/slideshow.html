@@ -4,7 +4,7 @@
 
 {% block head %}
 {# La Quiniela live board (Phase 1.22) — static/css/quiniela_board.css #}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/quiniela_board.css') }}" />
+<link rel="stylesheet" href="{{ static_url('css/quiniela_board.css') }}" />
 {% endblock %}
 
 {% block body %}
@@ -704,5 +704,5 @@
 })();
 </script>
 {# La Quiniela live board driver — after the slideshow script so its hook exists first. #}
-<script src="{{ url_for('static', filename='js/quiniela_board.js') }}"></script>
+<script src="{{ static_url('js/quiniela_board.js') }}"></script>
 {% endblock %}

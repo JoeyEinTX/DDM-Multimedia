@@ -15,7 +15,7 @@
   h3 { font-size: 16px; margin: 18px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
             padding: 14px; margin-bottom: 14px; }
-  textarea, input[type=text], input[type=datetime-local], select {
+  textarea, input[type=text], input[type=datetime-local], input[type=date], input[type=time], select {
     width: 100%; font: inherit; color: var(--fg); background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 48px; }
   textarea { min-height: 500px; font-family: ui-monospace, Consolas, monospace; font-size: 16px; }
@@ -72,6 +72,10 @@
          margin-left: 6px; vertical-align: middle; }
   .tag.win { background: var(--gold); color: #14140f; } .tag.place { background: #c0c0c8; color: #14140f; }
   .tag.show { background: #cd7f32; color: #14140f; } .tag.scr { background: var(--rose); color: #fff; }
+  /* Race info: a name, then the date and the post time side by side, labelled above. */
+  .field { display: block; color: var(--dim); font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
+  .field input { margin-top: 4px; }
+  .row > .field { flex: 1 1 140px; }
 </style>
 </head>
 <body>
@@ -98,6 +102,23 @@
      a cup online, a cup that has gone quiet, no cup at all, or two cups claiming one number.</p>
   <div id="horses-line" class="note">loading…</div>
   <div id="horses"></div>
+</section>
+
+<section id="race-info">
+  <h2>Race info</h2>
+  <p class="note">The race the TV counts down to and lists: its name, and the date and post time
+     on <b id="race-tz">Central</b> time. The countdown slide needs the post time (without one it
+     is left out of the slideshow). Reset betting keeps all of it.</p>
+  <label class="field">Race name <input id="race-name" type="text" placeholder="KENTUCKY DERBY" spellcheck="false"></label>
+  <div class="row">
+    <label class="field">Date <input id="race-date" type="date"></label>
+    <label class="field">Post time <input id="race-time" type="time" step="60"></label>
+  </div>
+  <div id="race-current" class="note">loading…</div>
+  <div class="row">
+    <button id="race-save" class="primary">Save race info</button>
+  </div>
+  <div id="race-status" class="status"></div>
 </section>
 
 <section id="names">
@@ -274,6 +295,38 @@
     $("horses").innerHTML = html;
     $("horses-line").textContent = (model.cups_online || 0) + " cups online \u00b7 " + (model.cups_no_horse || 0) + " with no horse";
   }
+
+  // ---- race info -------------------------------------------------------------
+  // GET /api/quiniela/race has the race as the model does plus the name as
+  // typed and the post time's date and time on the race's clock, which is
+  // what the form shows. Save sends the three fields; the server reads the
+  // date and time on the race's clock, and both empty clear the post time.
+  function renderRaceForm(f) {
+    var race = (f && f.race) || {};
+    $("race-tz").textContent = race.tz || "Central";
+    $("race-name").value = (f && f.name) || "";
+    $("race-date").value = (f && f.date) || "";
+    $("race-time").value = (f && f.time) || "";
+    $("race-current").textContent = race.post_at == null
+      ? (race.name || "KENTUCKY DERBY") + " · no post time set"
+      : race.name + (race.year ? " " + race.year : "") + " · post " + f.date + " " + race.post_local;
+  }
+  function loadRace() {
+    return api("GET", "/api/quiniela/race").then(function (r) {
+      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
+      renderRaceForm(r.body);
+    });
+  }
+  $("race-save").onclick = function () {
+    say("race-status", "saving…");
+    api("PUT", "/api/quiniela/race", { name: $("race-name").value, date: $("race-date").value,
+                                       time: $("race-time").value }).then(function (r) {
+      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
+      renderRaceForm(r.body);
+      say("race-status", r.body.race.post_at == null ? "Saved · no post time" : "Saved · post " + r.body.race.post_local, "ok");
+      loadModel();
+    }).catch(fail("race-status"));
+  };
 
   // ---- names -----------------------------------------------------------------
   function namesText() {
@@ -483,8 +536,10 @@
   });
 
   loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
-  // The state buttons, Reset betting, the names, Set/Clear and Scratch/Undo
-  // each report into their own status line; nothing on this page fails silently.
+  loadRace().catch(fail("race-status"));
+  // The state buttons, Reset betting, the race info, the names, Set/Clear and
+  // Scratch/Undo each report into their own status line; nothing on this page
+  // fails silently.
   setInterval(function () { loadModel(false); }, 5000);
 })();
 </script>

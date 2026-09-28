@@ -138,6 +138,14 @@ Edit `content/trivia.json` or `content/splash_pages.json`, then:
 To tune the rotation mix (category weights, timing defaults, target playlist
 length, transition speed), edit `config.py` and restart the service.
 
+**No hard reload after a pull.** The page asks for every stylesheet and
+script with its file's modification time as a query string
+(`/static/js/quiniela_board.js?v=1790000000`, `static_url()` in
+`server.py`). Flask serves static files with `Last-Modified` and no
+`max-age`, and Chromium then keeps a file for a tenth of its age without
+asking; a changed file is a new URL, so a restart of the page (or the
+kiosk) always loads the new code. pi5's dashboard does the same.
+
 ---
 
 ## SSH workflow for remote tweaks

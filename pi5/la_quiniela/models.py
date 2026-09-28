@@ -3,8 +3,8 @@
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
 # lq_cups, telemetry, events, lq_link_state, and the betting board's
-# lq_horses, lq_scratches, lq_board and lq_closing. Raw sqlite3, like
-# la_subasta/models.
+# lq_horses, lq_scratches, lq_board, lq_closing and lq_race. Raw sqlite3,
+# like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -123,6 +123,22 @@ CREATE TABLE IF NOT EXISTS lq_closing (
     closing TEXT
 );
 INSERT OR IGNORE INTO lq_closing (id) VALUES (1);
+
+-- The race: its name as typed ('' for the default, KENTUCKY DERBY), its
+-- year, and the post time as unix seconds (entered and shown in the race's
+-- time zone, LQ_RACE_TZ), each NULL while unset. The one store of race
+-- information: the TV's countdown and roster slides and /api/race read it.
+-- Reset betting leaves it alone. migrated is 1 once pi5 has looked at the
+-- old Race Setup file (data/race_setup.json) and copied what it could, so
+-- that happens once.
+CREATE TABLE IF NOT EXISTS lq_race (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    name     TEXT    NOT NULL DEFAULT '',
+    year     INTEGER,
+    post_at  REAL,
+    migrated INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO lq_race (id) VALUES (1);
 """
 
 # The shape each table must have if it already exists. A table of the same
@@ -138,6 +154,7 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_scratches": ["was", "now"],
     "lq_board": ["id", "names_rev", "closes_at"],
     "lq_closing": ["id", "closing"],
+    "lq_race": ["id", "name", "year", "post_at", "migrated"],
 }
 
 # Protocol v1 (cup slots), live on DevPi until the v2 flash: accepted by
@@ -475,3 +492,21 @@ class LqDb:
         with self.txn() as conn:
             conn.execute("INSERT OR IGNORE INTO lq_closing (id) VALUES (1)")
             conn.execute("UPDATE lq_closing SET closing = ? WHERE id = 1", (closing_json,))
+
+    def load_race(self) -> Dict[str, Any]:
+        """{"name": str, "year": int | None, "post_at": float | None,
+        "migrated": bool}."""
+        row = self.query_one("SELECT name, year, post_at, migrated FROM lq_race WHERE id = 1")
+        if row is None:
+            return {"name": "", "year": None, "post_at": None, "migrated": False}
+        return {"name": row["name"] or "",
+                "year": int(row["year"]) if row["year"] is not None else None,
+                "post_at": float(row["post_at"]) if row["post_at"] is not None else None,
+                "migrated": bool(row["migrated"])}
+
+    def save_race(self, name: str, year: Optional[int], post_at: Optional[float], migrated: bool) -> None:
+        with self.txn() as conn:
+            conn.execute("INSERT OR IGNORE INTO lq_race (id) VALUES (1)")
+            conn.execute("UPDATE lq_race SET name = ?, year = ?, post_at = ?, migrated = ? WHERE id = 1",
+                         (name or "", int(year) if year is not None else None,
+                          float(post_at) if post_at is not None else None, 1 if migrated else 0))

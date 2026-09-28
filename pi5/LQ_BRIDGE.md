@@ -101,6 +101,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
 | `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes |
+| `lq_race` | one row, the race: `name` (as typed, `''` for the default KENTUCKY DERBY), `year`, `post_at` (unix time; NULL while unset), `migrated` (1 once the old Race Setup file has been looked at). Reset betting never touches it. Added at start like `lq_closing` |
 
 **The v1 tables are migrated on start** (`_migrate_v2`, each step in its own
 transaction, only when the old shape is found, idempotent): the v1 `cups`
@@ -611,6 +612,13 @@ Top to bottom:
   showing `NO HORSE` is counted there and appears in no row). There is no
   cups table, no picker, nothing to adopt and nothing to forget: a cup's
   number is set on the cup.
+- **Race info**, first of the setup sections: the race's name (empty for
+  KENTUCKY DERBY), the date and the post time as they read on the race's
+  clock (`LQ_RACE_TZ`, Central), **Save race info** with its reply line
+  (`Saved · post 5:57 PM CDT`, the server's error verbatim in red), and the
+  line above it showing what is stored. Both date and time empty clear the
+  post time (the TV's countdown slide then leaves the slideshow). Read from
+  `GET /api/quiniela/race` at load and after a save; `PUT` to save.
 - **Horse names**: the 24 names in a textarea (`1. NAME` lines, 21..24
   labelled as the also-eligibles in the caption, Save puts them back as text).
 - **Scratches**: a row per horse **in the field** with a picker of the unused
@@ -648,12 +656,61 @@ the field by post (`GET /api/quiniela/field`), each as `19 · GOLDEN TEMPO`:
 post 9 offers `22 · OCELLI` after The Puma's scratch, a horse scratched with
 no replacement is not offered. A pick lights the LED cup of the post and
 records the horse, so `pi5/data/results.json` holds horse numbers, which is
-what the cups and the TV board are told. `GET /api/race`, the roster the
-splash's horse-roster slide shows, lists the same field under the same
-names; what is left of Race Setup is its store of the post time and the odds
-(`data/race_setup.json`, `GET`/`POST /api/race-setup` and the three
-odds-polling routes), which that slide and the spectator page still read and
-which no page edits any more.
+what the cups and the TV board are told. Race Setup is gone altogether: its
+store (`data/race_setup.json`), `GET`/`POST /api/race-setup` and its three
+odds-polling routes were a second copy of race information that La Quiniela
+never fed (the TV's countdown slide counted down to last year's race, its
+roster slide showed that store's field). The race's name and post time live
+in La Quiniela's store and the odds poller is La Quiniela's (next section);
+`GET /api/race` is built from them.
+
+### The race and the track's odds
+
+La Quiniela's store is the one home of race information:
+
+- **The race** (`lq_race`): its name (typed on the admin page; KENTUCKY
+  DERBY while none is), its year and its post time, stored as unix seconds
+  and entered and shown on the race's clock, `LQ_RACE_TZ`
+  (`America/Chicago`): the admin page sends `2027-05-01` and `17:57`, the
+  model says `5:57 PM CDT` and carries the instant, so the TV counts down to
+  it whatever its own clock's zone. The year follows the post time. Reset
+  betting never touches any of it. `racetime.py` does the arithmetic with
+  `zoneinfo`; a machine without a time zone database (Windows without
+  `tzdata`) gets the US zones' rules written out (daylight time from the
+  second Sunday in March to the first Sunday in November), anything else
+  UTC with a warning.
+- **The track's odds** (`odds.py`), for the slideshow's roster slide only (La
+  Quiniela pays no odds): the poller that used to live in `main.py`, started
+  and stopped by hand as before (`POST /api/quiniela/odds/start`, `/stop`),
+  asks Claude with web search for the current odds of the race the store
+  names, keyed by **program number** (21..24 included: an also-eligible that
+  draws in keeps its number, and its odds). They reach the model as
+  `horses[n].odds`, a string, or null for a horse with none; they are kept
+  in memory only, so a round that fails, a machine without
+  `ANTHROPIC_API_KEY` or a party with no internet leaves them as they were
+  or null, and nothing errors. `PUT /api/quiniela/odds` sets them by hand
+  (the program's morning line). Each successful round is also emitted as
+  the spectator page's `odds_update`.
+- **The old file, once**: when pi5 starts (`main.py`'s `__main__`,
+  `migrate_race_setup()`), if `data/race_setup.json` exists the log says it
+  is obsolete, and the first time only (`lq_race.migrated`) its post time is
+  copied into the race info when that is empty (a time of day, which Race
+  Setup took as on Derby day 2026 on Churchill's clock: `18:57` is 6:57 PM
+  EDT, 5:57 PM CDT) and its names when the store has none at all. The file
+  is left where it is.
+
+`GET /api/race`, for anything that wants a race roster (the splash's slides
+read La Quiniela's model itself), keeps the shape it always had, every field
+now La Quiniela's:
+
+| Field | From |
+| --- | --- |
+| `race_state` | La Quiniela's race state: 0-3 `pre-race`, 4 `running`, 5-6 `post-race`; `unknown` while no horse in the field has a name (the mock racing service is not consulted any more) |
+| `post_time` | the race's `post_local`, `5:57 PM CDT`; `""` while no post time is set |
+| `post_time_iso` | the same instant in ISO 8601 with the race clock's offset, `2027-05-01T17:57:00-05:00`; `""` likewise |
+| `horses` | the field (`in_field`), in numeric order, each under its own program number: `number`, `name` as typed (a horse with no name is left out), `odds` (`horses[n].odds`, by program number, or null), `finish` (1 / 2 / 3 from the results, else null) |
+| `winner` | the WIN horse's number from the results, or null |
+| `last_updated` | now, UTC |
 
 ### Ports
 
@@ -682,6 +739,12 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name stays stored), `names_rev` bumps and the pair `[22, 9]` goes down for a minute or until a cup reports 9: `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order: the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
+| `GET /api/quiniela/race` | `{"ok": true, "race": {...the model's race...}, "name": "Kentucky Derby", "date": "2027-05-01", "time": "17:57"}`: the name as typed, the post time's date and time on the race's clock (null while unset), what the admin page's form shows. `Cache-Control: no-store`. |
+| `PUT /api/quiniela/race` | `{"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}`, any part left out left alone; date and time on the race's clock and together (400 `date and time go together ...`), both `""` clear the post time and the year. Or `{"post_at": <unix time> or null}`. 400 for a date or time that does not parse, a name over 80 characters. Returns what GET does. |
+| `GET /api/quiniela/odds` | `{"ok": true, "odds": {"1": "5-2", "22": "30-1"}, "polling": bool, "interval": 300, "last_update": "...Z", "next_update": "...Z"}`: the odds the model carries, by program number, and the poller's state. |
+| `PUT /api/quiniela/odds` | `{"odds": {"1": "5-2", ...}}` replaces them all (by hand: the morning line), `{"odds": null}` clears them. Numbers 1..24, non-empty values of at most 7 characters, upper-cased; the rest dropped. |
+| `POST /api/quiniela/odds/start` | `{"interval": 300}` (optional; 60 at least): the poller runs. 503 `ANTHROPIC_API_KEY not configured`, 409 when it already runs. |
+| `POST /api/quiniela/odds/stop` | `{"ok": true, "stopped": bool}`. |
 | `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time and the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). |
 | `GET /quiniela/admin` | The admin page above. |
 
@@ -733,8 +796,13 @@ rewrites `Cache-Control`.
                {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}],
  "cups_online": 20, "cups_no_horse": 0,
  "results": null,
- "closing": null}
+ "closing": null,
+ "race": {"name": "KENTUCKY DERBY", "year": 2027, "post_at": 1809212220.0, "post_local": "5:57 PM CDT",
+          "tz": "America/Chicago"}}
 ```
+
+Every horse also carries `"odds"`: the track's odds for that program number
+(`"5-2"`), or null.
 
 Once betting has closed, `closing` is the figures at the post, the live
 fields' shapes plus `at`:
@@ -829,6 +897,15 @@ the store and the results file as follows:
   betting and by 0 or 1 ("The figures at the post", above). The TV reads
   them in 3, 4 and 5; the live `pot`, `prizes`, `total_tokens` and tokens
   keep following the cups.
+- `race`: the race from the store ("The race and the track's odds",
+  above): `name` upper-cased (KENTUCKY DERBY while none is stored), `year`
+  (the stored one, else the post time's; null), `post_at` (unix seconds or
+  null), `post_local` (the post time on the race's clock, `5:57 PM CDT`, or
+  null), `tz` (that clock's zone, `LQ_RACE_TZ`, for a page that shows a
+  date or the time of day). The TV's countdown and roster slides read it.
+- `horses[n].odds`: the track's odds for program number n, a string, or
+  null (no poller, no internet, no odds for that horse). For the roster
+  slide only; nothing about La Quiniela's payouts reads it.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -919,8 +996,9 @@ with the message from `validate_phase` if the bridge rejects the state; 503
 
 ### Configuration
 
-Three more keys in `pi5/config.py`, with the names the splash display used,
-each overridable by `DDM_<KEY>` in the environment or `pi5/.env`:
+More keys in `pi5/config.py` (the first ones with the names the splash
+display used), each overridable by `DDM_<KEY>` in the environment or
+`pi5/.env`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -931,6 +1009,7 @@ each overridable by `DDM_<KEY>` in the environment or `pi5/.env`:
 | `LQ_SPLIT_PLACE` | `0.25` | The PLACE prize's share, rounded half up to whole dollars (`DDM_LQ_SPLIT_PLACE`) |
 | `LQ_SPLIT_SHOW` | `0.15` | The SHOW prize's share, likewise (`DDM_LQ_SPLIT_SHOW`) |
 | `LQ_CHYRON_LINES` | two lines | What crawls along the bottom of the board (`DDM_LQ_CHYRON_LINES`, lines separated by `\|`) |
+| `LQ_RACE_TZ` | `"America/Chicago"` | The race's clock: the post time is entered and shown in it, and the TV shows the time of day in it (`DDM_LQ_RACE_TZ`, a zone name) |
 
 A value that does not parse is logged and the default kept; a `config.py`
 without these keys works unchanged. `load_board_settings()` in `betting.py`
@@ -963,7 +1042,9 @@ order is always bridge then board and nothing can deadlock against the reader
 thread. `main.py` calls `init_board()` at import and `start_board()` from its
 `__main__` block only, after `start_la_quiniela()`; the thread runs even when
 the bridge has no port, so the routes answer with `link_ok` false rather than
-a stale picture.
+a stale picture. It creates the odds poller at import too (no thread until
+`POST /api/quiniela/odds/start`) and, in `__main__`, runs
+`migrate_race_setup()` between the bridge's start and the board's.
 
 ### The log
 
@@ -1024,7 +1105,20 @@ they were, the hello answered with them), the `now` stamp, the three tables
 with the `lq_horses` and `lq_scratches` migrations and every route on a
 Flask test app, the admin page's Race section included (the seven state
 buttons, the figures, Reset betting behind a confirm, the Horses list with
-its four statuses and no cup controls), and that the v1 dev routes are gone.
+its four statuses and no cup controls, and the Race info section), that the
+v1 dev routes are gone, and the race and the odds: the race info through
+its routes, the model and the database (5:57 PM CDT in May and CST in
+January, a unix time instead, the refusals, Reset betting keeping it, the
+year following the post time, another `LQ_RACE_TZ`, the daylight-time
+change, `lq_race` added to an older database); the odds by program number
+(22 standing in for 9 with 22's own), null where there are none, what
+`clean_odds()` drops, the PUT and GET routes, and the poller with a fetch of
+its own (a round with odds lands in the model and is emitted, a round with
+nothing leaves them, no key no start, the thread started and stopped
+through the routes); and the old Race Setup file copied once and left in
+place (its post time and names into an empty store, nothing a second time,
+nothing over race info or names already set, an unreadable file warned
+about).
 `test_smoke` pins `protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h`
 and also checks that importing `main.py` starts no `lq-board` thread and
 registers the routes, the admin page included.
@@ -1035,7 +1129,11 @@ python -m la_quiniela.test_dashboard
 
 The dashboard's side, on the real app (`main.py`, its templates and static
 files) with the LED controller stubbed and the tote board off: the menu, the
-names on the tote and in the pickers, `/api/race`, the thirteen buttons each
+names on the tote and in the pickers, Race Setup gone (its routes 404, its
+CSS removed), the page's CSS and JS asked for with `?v=<mtime>`, `/api/race`
+built from La Quiniela (the field and names, the odds by program number,
+the post time on the race's clock, the race state and the results), the
+thirteen buttons each
 carrying its mode, the LED command each one sends (unchanged), the race
 state each one sets, the results making it WINNER and RESET making it
 AFTER_PARTY; the results saved, WINNER in one line and `"leds":

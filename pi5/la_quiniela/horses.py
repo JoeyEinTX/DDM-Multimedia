@@ -17,13 +17,15 @@
 #
 # For the board as a whole, when betting closes, and the figures as they were
 # when it did (the board's closing figures, which only the board writes).
-# None of it comes from the gateway, so none of it lives in the bridge; the
-# board reads this store when it builds its model and the admin routes write
-# it.
+# And the race itself: its name, its year and its post time, the one store
+# of race information (the TV's countdown and roster slides and /api/race
+# read it through the board's model; Reset betting leaves it alone). None of
+# it comes from the gateway, so none of it lives in the bridge; the board
+# reads this store when it builds its model and the admin routes write it.
 #
 # Names are stored as typed. The board upper-cases them when it serves them.
-# With a database the rows are lq_horses, lq_scratches, lq_board and
-# lq_closing (models.py); without one (tests) the store is memory only. One
+# With a database the rows are lq_horses, lq_scratches, lq_board, lq_closing
+# and lq_race (models.py); without one (tests) the store is memory only. One
 # lock; the on_change callback is invoked after every write, outside the
 # lock, so the board's wake() (an Event set) is a safe listener.
 
@@ -41,6 +43,8 @@ log = logging.getLogger("la_quiniela.horses")
 HORSE_COUNT = P.MAX_HORSE            # 24: every number a horse can have
 FIELD_SIZE = 20                      # 1..20 start in the field; 21..24 are the also-eligibles
 NAME_MAX_LEN = 80                    # a sanity cap for the tile; nothing on the board is longer
+YEAR_RANGE = (1900, 2999)            # a race's year, if one is given
+_KEEP = object()                     # set_race(): leave this field as it is
 
 # "7. Name", "#7 Name", "7) Name", "7: Name", or a bare "7" (clears the name)
 # always name horse 7. "7 Name" (a number, whitespace, then the name) does so
@@ -171,9 +175,25 @@ def post_of(horse: int, records: Dict[int, Optional[int]]) -> Optional[int]:
     return horse if 1 <= horse <= FIELD_SIZE else None
 
 
+def _finite_time(value: Any, what: str) -> Optional[float]:
+    """A unix time as a float, or None. ValueError for a bool, a non-number
+    or an infinite / NaN value."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{what} must be a unix time or null")
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be a unix time or null") from None
+    if out != out or out in (float("inf"), float("-inf")):
+        raise ValueError(f"{what} must be a finite unix time")
+    return out
+
+
 class HorseStore:
-    """Names for horses 1..24, the scratch records, closes_at and the
-    board's closing figures.
+    """Names for horses 1..24, the scratch records, closes_at, the board's
+    closing figures and the race (name, year, post time).
 
     A record is was -> now: a replacement scratch (the cup that was `was`
     becomes `now`, through the renumber pair the board sends) or, with now
@@ -194,6 +214,8 @@ class HorseStore:
         self._names_rev = 0
         self._closes_at: Optional[float] = None
         self._closing: Optional[Dict[str, Any]] = None
+        self._race: Dict[str, Any] = {"name": "", "year": None, "post_at": None}
+        self._race_migrated = False
         if db is not None:
             self._load()
 
@@ -231,6 +253,15 @@ class HorseStore:
             # figures are lost (the board warns again if it cannot save them).
             log.error("La Quiniela horses: cannot read lq_closing (%s); "
                       "the closing figures will not survive a restart", exc)
+        try:
+            race = self._db.load_race()
+            self._race = {"name": race["name"], "year": race["year"], "post_at": race["post_at"]}
+            self._race_migrated = race["migrated"]
+        except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
+            # lq_race is the newest table: without it the race info is kept
+            # in memory only (a write says so again).
+            log.error("La Quiniela horses: cannot read lq_race (%s); "
+                      "the race name and post time will not survive a restart", exc)
 
     def _save_horse(self, horse: int) -> None:
         if self._db is not None:
@@ -246,6 +277,15 @@ class HorseStore:
     def _save_board(self) -> None:
         if self._db is not None:
             self._db.save_board(self._names_rev, self._closes_at)
+
+    def _save_race(self) -> None:
+        if self._db is not None:
+            try:
+                self._db.save_race(self._race["name"], self._race["year"], self._race["post_at"],
+                                   self._race_migrated)
+            except sqlite3.Error as exc:
+                log.error("La Quiniela horses: cannot save the race info (%s); "
+                          "it is kept until pi5 restarts", exc)
 
     def _changed(self) -> None:
         fn = self.on_change
@@ -330,6 +370,24 @@ class HorseStore:
         """The closing figures as last saved (a copy), or None."""
         with self._lock:
             return json.loads(json.dumps(self._closing)) if self._closing is not None else None
+
+    def race(self) -> Dict[str, Any]:
+        """{"name": as typed ("" while unset), "year": int or None,
+        "post_at": unix time or None}, a copy."""
+        with self._lock:
+            return dict(self._race)
+
+    @property
+    def race_empty(self) -> bool:
+        """Nothing about the race has been set: no name, no year, no post time."""
+        with self._lock:
+            return not self._race["name"] and self._race["year"] is None and self._race["post_at"] is None
+
+    @property
+    def race_migrated(self) -> bool:
+        """The old Race Setup file has been looked at once (see board.py)."""
+        with self._lock:
+            return self._race_migrated
 
     # -- names ----------------------------------------------------------------
 
@@ -467,6 +525,48 @@ class HorseStore:
 
     def clear_closes_at(self) -> None:
         self.set_closes_at(None)
+
+    # -- the race -----------------------------------------------------------------
+
+    def set_race(self, name: Any = _KEEP, year: Any = _KEEP, post_at: Any = _KEEP) -> Dict[str, Any]:
+        """Set what is given of the race: its name (stored as typed, "" for
+        the default), its year (an int, or None) and its post time (a unix
+        time, or None to clear it). Validates everything before it writes
+        anything; persisted; no names_rev bump. Returns race()."""
+        clean: Dict[str, Any] = {}
+        if name is not _KEEP:
+            clean["name"] = _clean_name(name, "race name")
+        if year is not _KEEP:
+            if year is not None:
+                if isinstance(year, bool):
+                    raise ValueError("year must be a number")
+                try:
+                    year = int(str(year).strip(), 10)
+                except (TypeError, ValueError):
+                    raise ValueError("year must be a number") from None
+                if not YEAR_RANGE[0] <= year <= YEAR_RANGE[1]:
+                    raise ValueError(f"year {year} is not in {YEAR_RANGE[0]}-{YEAR_RANGE[1]}")
+            clean["year"] = year
+        if post_at is not _KEEP:
+            clean["post_at"] = _finite_time(post_at, "post time")
+        with self._lock:
+            before = dict(self._race)
+            self._race.update(clean)
+            changed = self._race != before
+            if changed:
+                self._save_race()
+            result = dict(self._race)
+        if changed:
+            self._changed()
+        return result
+
+    def mark_race_migrated(self) -> None:
+        """Remember that the old Race Setup file has been looked at."""
+        with self._lock:
+            if self._race_migrated:
+                return
+            self._race_migrated = True
+            self._save_race()
 
     # -- the closing figures ----------------------------------------------------
 

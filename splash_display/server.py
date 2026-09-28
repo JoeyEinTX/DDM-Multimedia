@@ -64,6 +64,22 @@ logging.basicConfig(
 log = logging.getLogger("splash_display")
 
 
+def static_url(filename: str) -> str:
+    """url_for('static') with ?v=<the file's modification time>. Flask sends
+    Last-Modified and no max-age, and Chromium then keeps a file for a tenth
+    of its age without asking, so after a pull the kiosk could keep running
+    the old script. A changed file is a new URL: a pull and a restart always
+    serve the new code, no hard reload."""
+    try:
+        version = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+    except OSError:
+        version = 0
+    return url_for("static", filename=filename, v=version)
+
+
+app.jinja_env.globals["static_url"] = static_url
+
+
 # ---------------------------------------------------------------------------
 # Content loading
 # ---------------------------------------------------------------------------

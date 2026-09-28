@@ -1,6 +1,6 @@
 # main.py - Flask app entry point for DDM Horse Dashboard
 
-from flask import Flask, render_template, jsonify, request, Response, make_response
+from flask import Flask, render_template, jsonify, request, Response, make_response, url_for
 from flask_socketio import SocketIO, emit
 import sys
 import os
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, NUM_CUPS, TOTAL_LEDS,
                    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_CACHE_MINUTES,
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED,
-                   PARAMS_FILE, ANTHROPIC_API_KEY, RACE_SETUP_FILE,
+                   PARAMS_FILE, ANTHROPIC_API_KEY,
                    ANIMATION_REGISTRY_FILE, ANIMATION_ASSIGNMENTS_FILE)
 from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
@@ -26,7 +26,9 @@ from routes.guest import guest_ui
 from la_subasta import la_subasta_bp, init_la_subasta
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
                          quiniela_board_bp, init_board, start_board, get_board)
-from la_quiniela.board import field_by_post
+from la_quiniela import racetime
+from la_quiniela.board import migrate_race_setup
+from la_quiniela.odds import init_odds
 import config as _config
 
 # Initialize Flask app
@@ -45,6 +47,26 @@ if TOTE_ENABLED:
 # Data directory for persistence
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 RESULTS_FILE = os.path.join(DATA_DIR, 'results.json')
+# The old Race Setup store. Race information is La Quiniela's now: pi5 copies
+# what it can from this file once, at start (migrate_race_setup), and leaves
+# the file where it is.
+RACE_SETUP_FILE = getattr(_config, 'RACE_SETUP_FILE', None) or os.path.join(DATA_DIR, 'race_setup.json')
+
+
+def static_url(filename):
+    """url_for('static') with ?v=<the file's modification time>. Flask sends
+    Last-Modified and no max-age, and a browser then keeps a file for a
+    tenth of its age without asking: after a pull the touchscreen kept the
+    dashboard's old JavaScript. A changed file is a new URL, so a pull and a
+    restart always serve the new code without a hard reload."""
+    try:
+        version = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+    except OSError:
+        version = 0
+    return url_for('static', filename=filename, v=version)
+
+
+app.jinja_env.globals['static_url'] = static_url
 
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -366,32 +388,6 @@ def load_results():
     except Exception as e:
         print(f"Error loading results: {e}")
     return None
-
-
-def load_race_setup():
-    """Load race setup data from JSON file."""
-    try:
-        if os.path.exists(RACE_SETUP_FILE):
-            with open(RACE_SETUP_FILE, 'r') as f:
-                return json.load(f)
-    except Exception as e:
-        print(f'[RACE SETUP] Error loading: {e}')
-    return {
-        'race_name': 'Derby de Mayo 2026',
-        'post_time': '',
-        'horses': {str(i): '' for i in range(1, 21)}
-    }
-
-def save_race_setup(data: dict):
-    """Save race setup data to JSON file."""
-    try:
-        os.makedirs(os.path.dirname(RACE_SETUP_FILE), exist_ok=True)
-        with open(RACE_SETUP_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        return True
-    except Exception as e:
-        print(f'[RACE SETUP] Error saving: {e}')
-        return False
 
 
 def load_animation_registry():
@@ -751,212 +747,6 @@ def api_params_reset():
     return jsonify({'success': success, 'response': response})
 
 
-# The Race Setup page is gone from the dashboard (horse names are La
-# Quiniela's now: /quiniela/admin), and with it the AI search that filled its
-# form. What is left of it here is the store of the post time and the odds
-# (data/race_setup.json) and the routes that write it, because two things
-# still read them: /api/race (the splash display's horse-roster slide shows
-# the post time and the odds) and the spectator page (odds_update). They
-# have no page any more; they answer curl.
-@app.route('/api/race-setup', methods=['GET'])
-def api_race_setup_get():
-    """Get current race setup data."""
-    data = load_race_setup()
-    return jsonify({'success': True, 'data': data})
-
-
-@app.route('/api/race-setup', methods=['POST'])
-def api_race_setup_save():
-    """Save race setup data."""
-    data = request.get_json()
-    if not data:
-        return jsonify({'success': False, 'error': 'No data provided'}), 400
-
-    success = save_race_setup(data)
-    return jsonify({'success': success})
-
-
-def _extract_json_from_text(text: str):
-    """Robustly extract a JSON object from text returned by Claude.
-
-    Handles markdown fences (```json ... ``` or plain ``` ... ```), prose
-    surrounding the object, and falls back to the outermost {...} span if a
-    direct json.loads fails. Returns the parsed dict or None on failure.
-    """
-    if not text:
-        return None
-    cleaned = text.strip()
-
-    # Strip markdown fences if present
-    if '```json' in cleaned:
-        try:
-            start = cleaned.index('```json') + 7
-            end = cleaned.index('```', start)
-            cleaned = cleaned[start:end].strip()
-        except ValueError:
-            pass
-    elif '```' in cleaned:
-        try:
-            start = cleaned.index('```') + 3
-            end = cleaned.index('```', start)
-            cleaned = cleaned[start:end].strip()
-        except ValueError:
-            pass
-
-    # Try direct parse, then fall back to outermost-brace span
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        brace_start = cleaned.find('{')
-        brace_end = cleaned.rfind('}')
-        if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-            try:
-                return json.loads(cleaned[brace_start:brace_end + 1])
-            except json.JSONDecodeError:
-                return None
-    return None
-
-
-# =====================================================================
-# Odds polling — background thread fetches Kentucky Derby odds via
-# Anthropic web search at a configurable interval, persists into the
-# race-setup file, and broadcasts via Socket.IO.
-# =====================================================================
-odds_polling_thread = None
-odds_polling_stop_event = Event()
-odds_polling_interval = 300
-odds_last_update = None
-
-
-def _fetch_odds_from_anthropic():
-    """One-shot odds fetch. Returns dict {"1": "5-2", ...} or None."""
-    if not ANTHROPIC_API_KEY:
-        return None
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=2048,
-            tools=[{'type': 'web_search_20250305', 'name': 'web_search'}],
-            messages=[{
-                'role': 'user',
-                'content': (
-                    'Search for the latest 2026 Kentucky Derby odds. '
-                    'Return ONLY a JSON object with no other text. '
-                    'Format: {"odds": {"1": "5-2", "2": "8-1", "3": "15-1", ...}} '
-                    'where keys are post positions 1-20 and values are the '
-                    'current odds as a string. Use "" for scratched or '
-                    'unknown horses.'
-                )
-            }]
-        )
-        result_text = ''
-        for block in response.content:
-            if hasattr(block, 'text') and block.text:
-                result_text += block.text
-        parsed = _extract_json_from_text(result_text)
-        if not parsed:
-            return None
-        # Accept either {"odds": {...}} or a bare {"1": "...", ...}
-        odds = parsed.get('odds') if isinstance(parsed, dict) and 'odds' in parsed else parsed
-        if not isinstance(odds, dict):
-            return None
-        # Coerce keys to strings, values to strings, and clamp to 1-20
-        cleaned = {}
-        for k, v in odds.items():
-            try:
-                n = int(str(k).strip())
-            except (TypeError, ValueError):
-                continue
-            if 1 <= n <= 20:
-                cleaned[str(n)] = str(v).strip() if v is not None else ''
-        return cleaned
-    except Exception as e:
-        print(f'[Odds Poll] Anthropic call failed: {e}')
-        return None
-
-
-def poll_odds():
-    """Daemon target — polls every `odds_polling_interval` seconds until the
-    stop event is set. Each successful poll merges new odds into race_setup
-    JSON and emits a Socket.IO `odds_update` event.
-    """
-    global odds_last_update
-    print('[Odds Poll] thread started')
-    while not odds_polling_stop_event.is_set():
-        odds = _fetch_odds_from_anthropic()
-        if odds:
-            try:
-                setup = load_race_setup() or {}
-                setup['odds'] = odds
-                save_race_setup(setup)
-                odds_last_update = datetime.utcnow().isoformat() + 'Z'
-                socketio.emit('odds_update', {'odds': odds, 'last_update': odds_last_update})
-                print(f'[Odds Poll] Updated odds at {odds_last_update}')
-            except Exception as e:
-                print(f'[Odds Poll] Persist/emit failed: {e}')
-        else:
-            print('[Odds Poll] No odds returned this cycle')
-        # Responsive shutdown: tick once per second up to the interval
-        for _ in range(int(odds_polling_interval)):
-            if odds_polling_stop_event.is_set():
-                break
-            time.sleep(1)
-    print('[Odds Poll] thread exiting')
-
-
-@app.route('/api/race-setup/start-odds-polling', methods=['POST'])
-def api_start_odds_polling():
-    global odds_polling_thread, odds_polling_interval
-    if not ANTHROPIC_API_KEY:
-        return jsonify({'success': False, 'error': 'ANTHROPIC_API_KEY not configured'}), 503
-    if odds_polling_thread is not None and odds_polling_thread.is_alive():
-        return jsonify({'success': False, 'error': 'Odds polling already running'}), 409
-    body = request.get_json(silent=True) or {}
-    try:
-        interval = int(body.get('interval', 300))
-    except (TypeError, ValueError):
-        interval = 300
-    odds_polling_interval = max(60, interval)  # floor at 60s to avoid hammering
-    odds_polling_stop_event.clear()
-    odds_polling_thread = Thread(target=poll_odds, name='odds-poller', daemon=True)
-    odds_polling_thread.start()
-    return jsonify({'success': True, 'interval': odds_polling_interval})
-
-
-@app.route('/api/race-setup/stop-odds-polling', methods=['POST'])
-def api_stop_odds_polling():
-    global odds_polling_thread
-    if odds_polling_thread is None or not odds_polling_thread.is_alive():
-        return jsonify({'success': True, 'message': 'Polling not running'})
-    odds_polling_stop_event.set()
-    return jsonify({'success': True})
-
-
-@app.route('/api/race-setup/odds-status', methods=['GET'])
-def api_odds_status():
-    polling = odds_polling_thread is not None and odds_polling_thread.is_alive()
-    next_update = None
-    if polling and odds_last_update:
-        try:
-            last_dt = datetime.strptime(odds_last_update, '%Y-%m-%dT%H:%M:%S.%fZ')
-        except ValueError:
-            try:
-                last_dt = datetime.strptime(odds_last_update, '%Y-%m-%dT%H:%M:%SZ')
-            except ValueError:
-                last_dt = None
-        if last_dt is not None:
-            from datetime import timedelta
-            next_update = (last_dt + timedelta(seconds=odds_polling_interval)).isoformat() + 'Z'
-    return jsonify({
-        'polling': polling,
-        'interval': odds_polling_interval,
-        'last_update': odds_last_update,
-        'next_update': next_update,
-    })
-
-
 @app.route('/api/animations/registry', methods=['GET'])
 def api_animations_registry():
     """Return animation registry and current assignments."""
@@ -979,92 +769,52 @@ def api_animations_assignments_save():
     return jsonify({'success': success})
 
 
+# The race roster for displays elsewhere (the splash display read it for its
+# roster slide; anything else may): La Quiniela's store is the one home of
+# race information, so this is built from it, in the shape it always had.
 @app.route('/api/race', methods=['GET'])
 def api_race():
-    """Read-only race roster for external displays (splash Pi).
+    """Read-only race roster, from La Quiniela. Always 200, with CORS.
 
-    Combines the persisted race-setup file (horse names, post time) with the
-    live RacingDataService state (race phase, winners). Always returns HTTP 200
-    with CORS headers — empty horses array if the AI pull never ran.
-    """
+    race_state: La Quiniela's race state as the four words this route always
+    spoke (0-3 "pre-race", 4 "running", 5-6 "post-race"; "unknown" while no
+    horse in the field has a name). post_time: the post time on the race's
+    clock ("5:57 PM CDT"), post_time_iso: the same instant in ISO 8601 with
+    that clock's offset ("" both while no post time is set). horses: the
+    field in numeric order, each under its own program number (22 for Ocelli
+    standing in for 9; a horse scratched either way is not listed), the name
+    as typed (a horse with no name is left out), the track's odds for that
+    number or null, finish 1/2/3 from the results or null. winner: the WIN
+    horse's number or null. last_updated: now, UTC."""
     from datetime import datetime, timezone
 
-    # Live race state -> 4-value API contract
-    state_str = 'pre-race'
-    winner = None
-    finish_map = {}  # post position -> finish (1=win, 2=place, 3=show)
+    state_str, winner, horses = 'unknown', None, []
+    post_time_human, post_time_iso = '', ''
     try:
-        live = racing_service.get_state()
-        live_state = (live or {}).get('state', '')
-        if live_state == 'RUNNING':
-            state_str = 'running'
-        elif live_state in ('FINISHED', 'OFFICIAL'):
-            state_str = 'post-race'
-            winner = live.get('win')
-            if live.get('win'):   finish_map[int(live['win'])]   = 1
-            if live.get('place'): finish_map[int(live['place'])] = 2
-            if live.get('show'):  finish_map[int(live['show'])]  = 3
-        elif live_state in ('DORMANT', 'ENTRIES_LOADED', 'BETTING_OPEN',
-                            'BETTING_CLOSING', 'AT_THE_POST'):
-            state_str = 'pre-race'
-        else:
-            state_str = 'unknown'
+        board = get_board()
+        model = board.model()
+        typed = board.store.horses()                      # names as typed
+        results = model.get('results') or {}
+        finish = {horse: place for place, horse in ((1, results.get('win')), (2, results.get('place')),
+                                                    (3, results.get('show'))) if horse}
+        for n in range(1, 25):
+            h = model['horses'].get(str(n)) or {}
+            name = ((typed.get(n) or {}).get('name') or '').strip()
+            if not h.get('in_field') or not name:
+                continue
+            horses.append({'number': n, 'name': name, 'odds': h.get('odds'), 'finish': finish.get(n)})
+        state = int(model.get('race_state') or 0)
+        state_str = 'running' if state == 4 else ('post-race' if state >= 5 else 'pre-race')
+        winner = results.get('win')
+        race = model.get('race') or {}
+        if race.get('post_at') is not None:
+            post_time_human = race.get('post_local') or ''
+            post_time_iso = racetime.describe(race['post_at'], race.get('tz'))['iso']
     except Exception as e:
-        print(f'[/api/race] live state lookup failed: {e}')
-
-    # Persisted setup: post_time and odds. The names are La Quiniela's.
-    setup = load_race_setup() or {}
-    setup_odds = setup.get('odds', {}) or {}
-
-    # The field, from La Quiniela's names store: the horses in the field in
-    # numeric order, each under its own program number (a horse standing in
-    # for a scratched one keeps its number, 22 for Ocelli, and a horse
-    # scratched either way is not listed). -> [{number, name, odds, finish}]
-    horses = []
-    try:
-        posts = field_by_post(get_board())['posts']
-        typed = get_board().store.horses()          # names as typed
-    except Exception as e:
-        print(f'[/api/race] La Quiniela field lookup failed: {e}')
-        posts, typed = [], {}
-    for entry in sorted(posts, key=lambda p: p['horse']):
-        n = entry['horse']
-        name = ((typed.get(n) or {}).get('name') or '').strip()
-        if not name:
-            continue  # skip unnamed horses
-        # The stored odds are keyed by post and belong to the horse that drew
-        # it: a replacement does not inherit them.
-        odds_str = (setup_odds.get(str(n)) or '').strip() if n == entry['post'] else ''
-        horses.append({
-            'number': n,
-            'name': name,
-            'odds': odds_str or None,
-            'finish': finish_map.get(n),
-        })
+        print(f'[/api/race] La Quiniela lookup failed: {e}')
 
     if not horses:
         state_str = 'unknown'
-
-    # Format post_time HH:MM (24h) -> "6:57 PM ET" for splash display.
-    # Phase 1.19: also emit post_time_iso (RFC 3339 with -04:00 EDT offset
-    # for DDM 2026 race day) so the splash side can convert to viewer's
-    # local timezone. Existing post_time string field stays for fallback.
-    pt_raw = (setup.get('post_time') or '').strip()
-    post_time_human = ''
-    post_time_iso = ''
-    if pt_raw:
-        try:
-            hh, mm = pt_raw.split(':')
-            h = int(hh); m = int(mm)
-            suffix = 'AM' if h < 12 else 'PM'
-            h12 = h % 12 or 12
-            post_time_human = f'{h12}:{m:02d} {suffix} ET'
-            # DDM 2026 race day = Saturday May 2, 2026, EDT (-04:00).
-            # Hardcoded for now; future enhancement is to pull the date
-            # from race-setup config alongside the time-of-day.
-            post_time_iso = f'2026-05-02T{h:02d}:{m:02d}:00-04:00'
-        except Exception:
-            post_time_human = pt_raw  # fall back to raw string
 
     payload = {
         'race_state': state_str,
@@ -1350,6 +1100,13 @@ print("La Quiniela bridge initialised (/api/lq)")
 init_board()
 app.register_blueprint(quiniela_board_bp)
 print("La Quiniela board initialised (/api/quiniela)")
+# The real track's odds, for the TV's roster slide: fetched only while
+# POST /api/quiniela/odds/start has it running, keyed by program number and
+# served in La Quiniela's model as horses[n].odds (null without them).
+init_odds(api_key=ANTHROPIC_API_KEY,
+          sink=lambda odds: get_board().set_odds(odds),
+          race=lambda: get_board().race_view(),
+          emit=lambda payload: socketio.emit('odds_update', payload))
 
 
 # ---------------------------------------------------------------------------
@@ -1403,6 +1160,10 @@ if __name__ == '__main__':
     # requests has WERKZEUG_RUN_MAIN set, and only it may open the port.
     if not FLASK_DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         start_la_quiniela()
+        try:
+            migrate_race_setup(RACE_SETUP_FILE)      # the old Race Setup file, once; left in place
+        except Exception as e:
+            print(f"[La Quiniela] Race Setup migration skipped: {e}")
         start_board()
     
     socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)

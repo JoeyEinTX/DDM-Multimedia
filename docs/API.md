@@ -492,6 +492,41 @@ data: {"win": 5, "place": 12, "show": 8}
 
 ---
 
+### Race Endpoint
+
+#### `GET /api/race`
+**Description:** The race roster, read-only, for any display that wants one.
+Built from La Quiniela's store, the one home of race information (the Race
+Setup page, its `data/race_setup.json` and `/api/race-setup` are gone; the race
+and its post time are set on La Quiniela's admin page, `/quiniela/admin`).
+Always HTTP 200, with `Access-Control-Allow-Origin: *`.
+
+**Response:**
+```json
+{
+  "race_state": "pre-race",
+  "post_time": "5:57 PM CDT",
+  "post_time_iso": "2027-05-01T17:57:00-05:00",
+  "last_updated": "2027-05-01T20:14:07Z",
+  "horses": [
+    {"number": 1, "name": "Sovereignty", "odds": "5-2", "finish": null},
+    {"number": 21, "name": "Great White", "odds": null, "finish": null}
+  ],
+  "winner": null
+}
+```
+
+| Field | Where it comes from |
+| --- | --- |
+| `race_state` | La Quiniela's race state (the dashboard's modes set it): 0-3 `pre-race`, 4 `running`, 5-6 `post-race`; `unknown` while no horse in the field has a name |
+| `post_time` | La Quiniela's race info: the post time on the race's clock (`LQ_RACE_TZ`, Central by default); `""` while none is set |
+| `post_time_iso` | the same instant, ISO 8601 with that clock's offset; `""` while none is set |
+| `last_updated` | the time of the request, UTC |
+| `horses` | La Quiniela's field in numeric order, each under its own program number (an also-eligible that drew in keeps its number; a scratched horse is not listed): `name` as typed on the admin page (a horse with no name is left out), `odds` the track's odds for that program number from La Quiniela's odds poller or null, `finish` 1 / 2 / 3 from the results or null |
+| `winner` | the WIN horse's program number from the results, or null |
+
+---
+
 ### Reset Endpoint
 
 #### `POST /api/reset`

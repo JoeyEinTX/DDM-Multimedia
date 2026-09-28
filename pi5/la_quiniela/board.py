@@ -9,9 +9,13 @@
 # Then the operator's side: horse names (1..24; 21..24 the also-eligibles),
 # the two kinds of scratch, the closing time (GET/PUT /api/quiniela/horses,
 # POST /api/quiniela/scratch and /unscratch, PUT /api/quiniela/closes_at),
-# the between-races reset (POST /api/quiniela/reset) and the phone-sized
-# admin page at GET /quiniela/admin that drives them. Race state stays on
-# /api/quiniela/cmd.
+# the race itself (GET/PUT /api/quiniela/race: its name and post time, the
+# one store of race information), the real track's odds for the slideshow
+# (GET/PUT /api/quiniela/odds, POST /api/quiniela/odds/start and /stop), the
+# between-races reset (POST /api/quiniela/reset) and the phone-sized admin
+# page at GET /quiniela/admin that drives them. Race state stays on
+# /api/quiniela/cmd. migrate_race_setup() copies what the old Race Setup
+# file held, once, when pi5 starts.
 #
 # Protocol v2: the cup owns its horse number, so nothing here addresses a
 # cup. A replacement scratch of horse 9 by 22 (Churchill's rule: an
@@ -26,12 +30,15 @@
 # an accessor, and a start called from main.py's __main__ block only, so
 # importing the app starts no thread.
 
+import json
 import logging
+import os
 from typing import Any, Dict, Optional, Set, Tuple
 
 from flask import Blueprint, Response, jsonify, render_template, request
 
 from la_quiniela import protocol as P
+from la_quiniela import racetime
 from la_quiniela.betting import (
     MODE_STATES, BettingBoard, load_board_settings, sse_events, validate_cmd,
 )
@@ -56,6 +63,15 @@ JSON_REFUSED = ("json is not routed through pi5: the bridge already reads the ga
 USAGE_STATE = "usage: state 0-6"
 USAGE_CLOSES_AT = 'usage: {"at": <unix time>} | {"in_minutes": N} | {"at": null}'
 REPLACEMENT_SHAPE = 'replacement must be {"number": N, "name": "..."}'
+USAGE_RACE = ('usage: {"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"} (the race\'s clock; '
+              '"" for both clears the post time) | {"post_at": <unix time> | null}')
+USAGE_ODDS = 'usage: {"odds": {"1": "5-2", "22": "30-1", ...}} | {"odds": null}'
+
+# The Race Setup page kept a post time as a time of day, which it treated as
+# on this date and on Churchill's clock (it printed "6:57 PM ET"): what
+# migrate_race_setup() makes of one.
+LEGACY_RACE_DATE = "2026-05-02"
+LEGACY_RACE_TZ = "America/New_York"
 
 
 def init_board(bridge: Any = None, settings: Optional[Dict[str, Any]] = None,
@@ -113,6 +129,64 @@ def start_board() -> bool:
 def stop_board() -> None:
     if _board is not None:
         _board.stop()
+
+
+def migrate_race_setup(path: Any, board: Optional[BettingBoard] = None) -> Dict[str, Any]:
+    """The old Race Setup store (data/race_setup.json: a post time as a time
+    of day, twenty names, the odds) is obsolete: race information lives in La
+    Quiniela's store. Called when pi5 starts. If the file exists it is said so
+    in the log, and the first time only (the store remembers) its post time
+    is copied into the race info when that is empty, and its names when the
+    store has no names at all. The file itself is left where it is. Returns
+    what happened, for the log and the tests: {"file", "copied_post_at",
+    "copied_names", "before"} ("before": done on an earlier start)."""
+    board = board or get_board()
+    out: Dict[str, Any] = {"file": False, "copied_post_at": None, "copied_names": 0, "before": False}
+    path = str(path)
+    if not os.path.exists(path):
+        return out
+    out["file"] = True
+    logger.info("La Quiniela: %s is obsolete (race info and names are La Quiniela's: /quiniela/admin); "
+                "left as it is", path)
+    store = board.store
+    if store.race_migrated:
+        out["before"] = True
+        return out
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        logger.warning("La Quiniela: cannot read %s (%s); nothing copied from it", path, exc)
+        data = None
+    if isinstance(data, dict):
+        post_time = str(data.get("post_time") or "").strip()
+        if post_time and store.race_empty:
+            try:
+                when = racetime.local_to_epoch(LEGACY_RACE_DATE, post_time, LEGACY_RACE_TZ)
+                store.set_race(post_at=when, year=int(LEGACY_RACE_DATE[:4]))
+                out["copied_post_at"] = when
+            except ValueError as exc:
+                logger.warning("La Quiniela: the old post time %r is not HH:MM (%s); not copied", post_time, exc)
+        horses = data.get("horses")
+        if isinstance(horses, dict) and not any(entry["name"] for entry in store.horses().values()):
+            names = {}
+            for key, name in horses.items():
+                try:
+                    n = int(str(key).strip())
+                except ValueError:
+                    continue
+                if 1 <= n <= FIELD_SIZE and isinstance(name, str) and name.strip():
+                    names[n] = name
+            if names:
+                try:
+                    store.set_names(names)
+                    out["copied_names"] = len(names)
+                except ValueError as exc:
+                    logger.warning("La Quiniela: the old names were not copied (%s)", exc)
+    store.mark_race_migrated()
+    logger.info("La Quiniela: from %s, copied %s and %d names", path,
+                "the post time" if out["copied_post_at"] is not None else "no post time", out["copied_names"])
+    return out
 
 
 # -----------------------------------------------------------------------------
@@ -518,8 +592,119 @@ def api_quiniela_closes_at():
     return jsonify({"ok": True, "closes_at": board.store.closes_at})
 
 
+@quiniela_board_bp.route("/api/quiniela/race", methods=["GET"])
+def api_quiniela_race():
+    """The race as the model has it, plus the post time's date and time on
+    the race's clock (what the admin page's form shows)."""
+    resp = jsonify({"ok": True, **get_board().race_form()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@quiniela_board_bp.route("/api/quiniela/race", methods=["PUT"])
+def api_quiniela_race_put():
+    """{"name": ..., "date": "2027-05-01", "time": "17:57"} on the race's
+    clock (LQ_RACE_TZ), any part left out left alone; "date" and "time" go
+    together, both "" (or null) clear the post time. Or {"post_at": <unix
+    time> | null}. The year follows the post time. Reset betting never
+    touches any of it."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not any(k in body for k in ("name", "date", "time", "post_at", "year")):
+        return _bad(USAGE_RACE)
+    board = get_board()
+    tz = board.race_view()["tz"]
+    change: Dict[str, Any] = {}
+    try:
+        if "name" in body:
+            change["name"] = body["name"] if body["name"] is not None else ""
+        if "date" in body or "time" in body:
+            day = body.get("date") if body.get("date") is not None else ""
+            hhmm = body.get("time") if body.get("time") is not None else ""
+            if not isinstance(day, str) or not isinstance(hhmm, str):
+                return _bad(USAGE_RACE)
+            if not day.strip() and not hhmm.strip():
+                change["post_at"], change["year"] = None, None          # both empty: no post time
+            elif not day.strip() or not hhmm.strip():
+                return _bad('date and time go together: "YYYY-MM-DD" and "HH:MM", or both "" to clear')
+            else:
+                change["post_at"] = racetime.local_to_epoch(day, hhmm, tz)
+        elif "post_at" in body:
+            when = body["post_at"]
+            if when is not None and (isinstance(when, bool) or not isinstance(when, (int, float))):
+                return _bad(USAGE_RACE)
+            change["post_at"] = when
+            if when is None:
+                change["year"] = None
+        if change.get("post_at") is not None:
+            change["year"] = racetime.describe(change["post_at"], tz)["year"]
+        if "year" in body and "post_at" not in change:
+            change["year"] = body["year"]
+        board.store.set_race(**change)
+    except ValueError as exc:
+        return _bad(str(exc))
+    board.refresh()
+    return jsonify({"ok": True, **board.race_form()})
+
+
+def _odds_poller():
+    try:
+        from la_quiniela.odds import get_odds_poller
+        return get_odds_poller()
+    except RuntimeError:
+        return None
+
+
+@quiniela_board_bp.route("/api/quiniela/odds", methods=["GET"])
+def api_quiniela_odds():
+    """The track's odds the model carries, by program number, and the
+    poller's state."""
+    poller = _odds_poller()
+    status = poller.status() if poller is not None else {"polling": False, "interval": None,
+                                                         "last_update": None, "next_update": None}
+    resp = jsonify({"ok": True, **status,
+                    "odds": {str(n): v for n, v in sorted(get_board().odds().items())}})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@quiniela_board_bp.route("/api/quiniela/odds", methods=["PUT"])
+def api_quiniela_odds_put():
+    """By hand, when there is no poller or no internet (the morning line from
+    the program): {"odds": {"1": "5-2", "22": "30-1"}} replaces them all,
+    {"odds": null} clears them."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "odds" not in body or not (body["odds"] is None or isinstance(body["odds"], dict)):
+        return _bad(USAGE_ODDS)
+    board = get_board()
+    kept = board.set_odds(body["odds"] or {})
+    board.refresh()
+    return jsonify({"ok": True, "odds": {str(n): v for n, v in sorted(kept.items())}})
+
+
+@quiniela_board_bp.route("/api/quiniela/odds/start", methods=["POST"])
+def api_quiniela_odds_start():
+    """{"interval": seconds} (optional, 300 by default, 60 at least)."""
+    poller = _odds_poller()
+    if poller is None:
+        return _bad("odds poller not initialised", 503)
+    body = request.get_json(silent=True)
+    result = poller.start((body or {}).get("interval") if isinstance(body, dict) else None)
+    if not result.get("ok"):
+        return _bad(result.get("error", "cannot start"), result.get("status", 400))
+    return jsonify(result)
+
+
+@quiniela_board_bp.route("/api/quiniela/odds/stop", methods=["POST"])
+def api_quiniela_odds_stop():
+    poller = _odds_poller()
+    if poller is None:
+        return _bad("odds poller not initialised", 503)
+    return jsonify(poller.stop())
+
+
 @quiniela_board_bp.route("/quiniela/admin", methods=["GET"])
 def quiniela_admin_page():
     """The phone page: the Race section (state buttons, the figures, Reset
-    betting, the Horses list), then names, scratches and the closing time."""
+    betting, the Horses list), then the race's name and post time, names,
+    scratches and the closing time."""
     return render_template("quiniela_admin.html")

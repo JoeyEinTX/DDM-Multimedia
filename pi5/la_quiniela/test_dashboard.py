@@ -11,9 +11,10 @@
 #
 # What is checked here is what the dashboard and La Quiniela share: the
 # menu, the horses' names on the results tote and in the SET WINNERS
-# pickers, the race roster the splash display reads (/api/race), and the one
-# race state (the dashboard's modes set La Quiniela's state; the results
-# make it 5, RESET makes it 6).
+# pickers, the race roster /api/race builds from La Quiniela (Race Setup is
+# gone), the page's versioned CSS and JS, and the one race state (the
+# dashboard's modes set La Quiniela's state; the results make it 5, RESET
+# makes it 6).
 
 import io
 import json
@@ -174,48 +175,73 @@ def test_menu_and_page():
            "selectCup(post, horse)" in js and "cup: post" in js and "win: winHorse" in js)
     css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True)
     _check("the new CSS is there", all(s in css for s in (".winner-pick-btn", ".drawer-link", ".results-name-fit", ".slot-horse-name")))
+    _check("...and nothing of Race Setup's modal or its odds toggle", "race-setup" not in css and "odds-polling" not in css)
     rules = {rule.rule for rule in main.app.url_map.iter_rules()}
     _check("the AI search route is gone", "/api/race-setup/ai-search" not in rules
            and rig.post("/api/race-setup/ai-search", {}).status_code == 404)
-    _check("the store of post time and odds and its routes stay (the splash's roster slide and the spectator page read them)",
-           {"/api/race-setup", "/api/race-setup/start-odds-polling", "/api/race-setup/stop-odds-polling",
-            "/api/race-setup/odds-status", "/api/race"} <= rules)
+    _check("Race Setup is gone: its store's routes and its three odds routes are no routes",
+           not any(r.startswith("/api/race-setup") for r in rules)
+           and rig.client.get("/api/race-setup").status_code == 404 and rig.post("/api/race-setup", {"post_time": "18:57"}).status_code == 404
+           and rig.post("/api/race-setup/start-odds-polling").status_code == 404, str(sorted(r for r in rules if "race" in r)))
+    _check("race info and the odds are La Quiniela's routes now; /api/race stays",
+           {"/api/quiniela/race", "/api/quiniela/odds", "/api/quiniela/odds/start", "/api/quiniela/odds/stop", "/api/race"} <= rules)
+    _check("main.py keeps nothing of the old store", not any(hasattr(main, f) for f in ("load_race_setup", "save_race_setup", "poll_odds")))
     _check("/api/quiniela/field is registered", "/api/quiniela/field" in rules)
+    # A pull and a restart must serve the new CSS and JS: every link carries its file's modification time.
+    import re
+    for path in ("css/ddm_style.css", "js/ddm_control.js"):
+        mtime = int(os.path.getmtime(os.path.join(main.app.static_folder, path)))
+        _check(f"the page asks for /static/{path}?v=<its mtime>", f'/static/{path}?v={mtime}"' in html,
+               str(re.findall(r'/static/[^"]*' + re.escape(path.split("/")[-1]) + r'[^"]*', html)))
+        _check(f"...and the versioned URL serves it", rig.client.get(f"/static/{path}?v={mtime}").status_code == 200)
 
 
-def test_race_roster_uses_la_quiniela_names():
+def test_race_roster_is_la_quinielas():
+    """/api/race, in the shape it always had, built from La Quiniela: its
+    field and names, its race info, the odds by program number, its race
+    state and results."""
     rig = Rig()
-    saved = main.load_race_setup
-    main.load_race_setup = lambda: {"race_name": "x", "post_time": "18:57",
-                                    "horses": {"1": "An Old Name", "9": "Another"},
-                                    "odds": {"1": "5-2", "9": "8-1", "20": "30-1", "22": "99-1"}}
-    try:
-        r = rig.client.get("/api/race")
-        body = r.get_json()
-        _check("no names in La Quiniela: no horses, state unknown, CORS header kept",
-               r.status_code == 200 and body["horses"] == [] and body["race_state"] == "unknown"
-               and r.headers.get("Access-Control-Allow-Origin") == "*", str(body))
-        rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
-        body = rig.client.get("/api/race").get_json()
-        _check("20 horses, La Quiniela's names as typed, the old Race Setup names ignored",
-               [h["number"] for h in body["horses"]] == list(range(1, 21))
-               and body["horses"][0] == {"number": 1, "name": "Dornoch", "odds": "5-2", "finish": None}
-               and body["horses"][8]["name"] == "Encino", str(body["horses"][:2]))
-        _check("the stored post time still comes through", body["post_time"] == "6:57 PM ET" and body["post_time_iso"].startswith("2026-05-02T18:57"))
-        rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
-        rig.post("/api/quiniela/scratch", {"horse": 20})
-        body = rig.client.get("/api/race").get_json()
-        numbers = [h["number"] for h in body["horses"]]
-        _check("9 replaced by 22 and 20 scratched: the field in numeric order, 22 last, neither 9 nor 20",
-               numbers == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22], str(numbers))
-        h22 = body["horses"][-1]
-        _check("22 under its own number and name, without the odds of the post it took",
-               h22 == {"number": 22, "name": "Ocelli", "odds": None, "finish": None}, str(h22))
-        rig.client.put("/api/quiniela/horses", json={"3": {"name": ""}})
-        body = rig.client.get("/api/race").get_json()
-        _check("a horse with no name is not listed", 3 not in [h["number"] for h in body["horses"]])
-    finally:
-        main.load_race_setup = saved
+    r = rig.client.get("/api/race")
+    body = r.get_json()
+    _check("no names in La Quiniela: no horses, state unknown, no post time, CORS header kept",
+           r.status_code == 200 and body["horses"] == [] and body["race_state"] == "unknown"
+           and body["post_time"] == "" and body["post_time_iso"] == "" and body["winner"] is None
+           and r.headers.get("Access-Control-Allow-Origin") == "*", str(body))
+    _check("the same keys as ever", set(body) == {"race_state", "post_time", "post_time_iso", "last_updated", "horses", "winner"})
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.client.put("/api/quiniela/odds", json={"odds": {"1": "5-2", "9": "8-1", "20": "30-1", "22": "12-1"}})
+    rig.client.put("/api/quiniela/race", json={"date": "2027-05-01", "time": "17:57"})
+    body = rig.client.get("/api/race").get_json()
+    _check("20 horses, La Quiniela's names as typed, the odds by program number",
+           [h["number"] for h in body["horses"]] == list(range(1, 21))
+           and body["horses"][0] == {"number": 1, "name": "Dornoch", "odds": "5-2", "finish": None}
+           and body["horses"][1]["odds"] is None and body["horses"][8] == {"number": 9, "name": "Encino", "odds": "8-1", "finish": None},
+           str(body["horses"][:2]))
+    _check("the post time from La Quiniela's race info, on the race's clock",
+           body["post_time"] == "5:57 PM CDT" and body["post_time_iso"] == "2027-05-01T17:57:00-05:00", str(body))
+    _check("race state from La Quiniela's: PRE_RACE is pre-race", body["race_state"] == "pre-race")
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    rig.post("/api/quiniela/scratch", {"horse": 20})
+    body = rig.client.get("/api/race").get_json()
+    numbers = [h["number"] for h in body["horses"]]
+    _check("9 replaced by 22 and 20 scratched: the field in numeric order, 22 last, neither 9 nor 20",
+           numbers == [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22], str(numbers))
+    _check("22 under its own number and name, with 22's odds", body["horses"][-1] == {"number": 22, "name": "Ocelli", "odds": "12-1",
+                                                                                      "finish": None}, str(body["horses"][-1]))
+    rig.client.put("/api/quiniela/horses", json={"3": {"name": ""}})
+    body = rig.client.get("/api/race").get_json()
+    _check("a horse with no name is not listed", 3 not in [h["number"] for h in body["horses"]])
+    for mode, word in (("BETTING_60", "pre-race"), ("AT_THE_GATE", "pre-race"), ("GATES_BURST", "running"),
+                       ("HEARTBEAT_COOLDOWN", "post-race")):
+        rig.post("/api/quiniela/mode", {"mode": mode})
+        _check(f"{mode}: {word}", rig.client.get("/api/race").get_json()["race_state"] == word)
+    rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
+    body = rig.client.get("/api/race").get_json()
+    finish = {h["number"]: h["finish"] for h in body["horses"] if h["finish"]}
+    _check("the results: post-race, the winner, finish 1 / 2 / 3", body["race_state"] == "post-race" and body["winner"] == 19
+           and finish == {19: 1, 1: 2, 22: 3}, str(finish))
+    rig.post("/api/results/clear")
+    _check("RESET: post-race still (AFTER_PARTY), no winner", rig.client.get("/api/race").get_json()["winner"] is None)
 
 
 def test_field_route_on_the_real_app():
@@ -464,7 +490,7 @@ def test_results_are_kept_when_pi5_starts():
 def main_():
     print(f"La Quiniela dashboard test\n  DB: {S._TMP_DB}")
     _run("menu — Race Setup out, the two La Quiniela links in", test_menu_and_page)
-    _run("names — /api/race lists La Quiniela's field", test_race_roster_uses_la_quiniela_names)
+    _run("race info — /api/race is built from La Quiniela", test_race_roster_is_la_quinielas)
     _run("names — the field route on the real app", test_field_route_on_the_real_app)
     _run("one race state — the thirteen buttons carry their mode", test_buttons_carry_their_mode)
     _run("one race state — a dashboard mode moves La Quiniela, the LEDs as before", test_dashboard_modes_move_la_quiniela)
