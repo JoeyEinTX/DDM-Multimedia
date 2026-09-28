@@ -41,7 +41,7 @@ from la_quiniela import betting  # noqa: E402
 from la_quiniela import board as board_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
-    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, UNDO_RENUM_S, BettingBoard, clear_results,
+    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, UNDO_RENUM_S, BettingBoard, clean_weather, clear_results,
     load_board_settings,
     prizes_for, read_results, round_half_up, sse_events, validate_cmd,
 )
@@ -69,7 +69,9 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive since pi5 holds the figures at the post
               "closing",
               # additive since race info lives in La Quiniela (the race; each horse's odds too)
-              "race"}
+              "race",
+              # additive with the crawl's live items: pi5's weather
+              "weather"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
               "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
@@ -245,7 +247,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 23 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("exactly the 24 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -1082,7 +1084,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 23 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 24 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -3049,6 +3051,23 @@ def test_migrate_race_setup_once():
            and any("cannot read" in msg for msg in cap.messages()), str(cap.messages()))
 
 
+def test_weather_in_the_model():
+    board, wall, _ = fresh_board()
+    _check("no weather: null", board.model()["weather"] is None)
+    kept = board.set_weather({"location": " Dallas ", "temp_f": 87.6, "condition": "Partly  cloudy"})
+    board.refresh()
+    _check("pi5's weather in the model: the place, a whole number of degrees, the sky",
+           kept == {"location": "Dallas", "temp_f": 88, "condition": "Partly cloudy"} and board.model()["weather"] == kept,
+           str(board.model()["weather"]))
+    _check("what counts", clean_weather({"temp_f": "x", "condition": None, "location": 5}) is None
+           and clean_weather({"temp_f": True}) is None and clean_weather("88F") is None
+           and clean_weather({"temp_f": 90}) == {"location": None, "temp_f": 90, "condition": None}
+           and clean_weather({"location": "x" * 50, "temp_f": None, "condition": "Sunny"})["location"] == "x" * 40)
+    board.set_weather(None)
+    board.refresh()
+    _check("None clears it", board.model()["weather"] is None)
+
+
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
@@ -3119,6 +3138,7 @@ def main():
     _run("race info — the race's clock, the store's checks, lq_race on an old database", test_race_clock_and_the_store)
     _run("odds — by program number, null when missing; the poller and its routes", test_odds_in_the_model)
     _run("race info — the old Race Setup file, once", test_migrate_race_setup_once)
+    _run("crawl — pi5's weather in the model", test_weather_in_the_model)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

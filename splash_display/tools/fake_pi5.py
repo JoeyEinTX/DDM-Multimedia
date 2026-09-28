@@ -122,6 +122,7 @@ import random
 import sys
 import threading
 import time
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
@@ -246,6 +247,41 @@ STRIP_BUMP_HORSE = 2
 STRIP_BUMP_EVERY_S = 4.0
 STRIP_BUMP_FROM, STRIP_BUMP_TO = 7, 12
 
+# The race, the track's odds and the weather, as pi5's model carries them
+# since La Quiniela's store is the one home of race information (every
+# phase): a post time a day off unless told otherwise (--post-in MINUTES,
+# negative for one already past; --no-post; the `post` command), the odds
+# of most of the 2026 field by program number (21 and 22, drawn in, under
+# their own numbers; 23 Robusta and a few others have none, which the roster
+# slide shows as a dim dash; --no-odds, `odds`), and Dallas' weather
+# (--no-weather, `weather`). post_local is the post time on this machine's
+# clock (the fake has no time zone database of its own); tz is Central.
+RACE_NAME = "Kentucky Derby"
+RACE_TZ = "America/Chicago"
+DEFAULT_POST_IN_S = 24 * 3600
+REDESIGN_ODDS = {
+    1: "8-1", 2: "5-2", 3: "15-1", 4: "30-1", 6: "12-1", 7: "4-1", 8: "20-1", 10: "50-1",
+    11: "6-1", 12: "10-1", 14: "30-1", 15: "20-1", 16: "12-1", 17: "5-1", 18: "30-1", 19: "15-1",
+    21: "50-1", 22: "20-1",
+}
+DEFAULT_WEATHER = {"location": "Dallas", "temp_f": 88, "condition": "Sunny"}
+_DEFAULT = object()
+
+
+def race_for(post_at: Optional[float], name: str = RACE_NAME) -> Dict[str, Any]:
+    """The model's race: {"name", "year", "post_at", "post_local", "tz"},
+    post_local on this machine's clock ("5:57 PM CDT"); no post time: the
+    year and post_local are None too."""
+    if post_at is None:
+        return {"name": name.upper(), "year": None, "post_at": None, "post_local": None, "tz": RACE_TZ}
+    local = datetime.fromtimestamp(post_at).astimezone()
+    zone = local.tzname() or ""
+    if " " in zone:                                   # Windows: "Central Daylight Time"
+        zone = "".join(w[0] for w in zone.split() if w)
+    label = f"{local.hour % 12 or 12}:{local.minute:02d} {'PM' if local.hour >= 12 else 'AM'} {zone}".strip()
+    return {"name": name.upper(), "year": local.year, "post_at": round(float(post_at), 3),
+            "post_local": label, "tz": RACE_TZ}
+
 
 def mac_of(cup: int) -> str:
     """The fake's cup n as pi5 names a cup: by its MAC."""
@@ -292,6 +328,9 @@ def build_model(
     chyron: Optional[List[str]] = None,
     results: Optional[Iterable[int]] = None,
     closing: Optional[Dict[str, Any]] = None,
+    race: Optional[Dict[str, Any]] = None,
+    weather: Optional[Dict[str, Any]] = None,
+    odds: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Any]:
     """The contract's model: horses "1".."24"; share 4 dp, pot 2 dp, leader =
     strictly most tokens (lowest horse on a tie, None when nothing is bet;
@@ -350,6 +389,7 @@ def build_model(
             "cups": [mac_of(cup)] if cup is not None else [],
             "name": name_of(n),
             "replaced": name_of(was) if was is not None else None,
+            "odds": (odds or {}).get(n),
         }
         if was is not None:
             scratches.append({"was": {"number": was, "name": name_of(was)},
@@ -383,6 +423,8 @@ def build_model(
         "cups_no_horse": 0,
         "results": dict(zip(("win", "place", "show"), wps)) if len(wps) == 3 else None,
         "closing": closing,
+        "race": race if race is not None else race_for(None),
+        "weather": weather,
     }
 
 
@@ -421,7 +463,8 @@ class FakePi5:
                  names: Optional[Dict[int, str]] = None,
                  renumbers: Iterable[Tuple[int, int]] = (),
                  closes_at: Optional[float] = None, names_rev: int = 0,
-                 results: Optional[Iterable[int]] = None) -> None:
+                 results: Optional[Iterable[int]] = None, post_at: Any = _DEFAULT,
+                 weather: Any = _DEFAULT, odds: Any = _DEFAULT) -> None:
         self._lock = threading.Lock()
         self._subs: List["queue.Queue[Optional[str]]"] = []
         self.phase = phase
@@ -438,6 +481,9 @@ class FakePi5:
         if results is not None and not self._set_results_locked(results):
             raise ValueError(f"results must be three different horses 1-{MAX_HORSE}: {results!r}")
         self.closing: Optional[Dict[str, Any]] = None             # the figures at the post, as pi5 holds them
+        self.post_at: Optional[float] = (time.time() + DEFAULT_POST_IN_S) if post_at is _DEFAULT else post_at
+        self.weather: Optional[Dict[str, Any]] = dict(DEFAULT_WEATHER) if weather is _DEFAULT else weather
+        self.odds: Dict[int, str] = dict(REDESIGN_ODDS) if odds is _DEFAULT else dict(odds or {})
         self.stopped = False
         for was, now in renumbers:
             self._renumber_locked(was, now)
@@ -452,7 +498,8 @@ class FakePi5:
         whatever the counts do."""
         model = build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
                             names=self.names, cup_of=self.cup_of, replacements=self.replacements,
-                            closes_at=self.closes_at, names_rev=self.names_rev, results=self.results)
+                            closes_at=self.closes_at, names_rev=self.names_rev, results=self.results,
+                            race=race_for(self.post_at), weather=self.weather, odds=self.odds)
         if self.phase in REOPEN_STATES:
             self.closing = None
         elif self.phase in CLOSED_STATES and self.closing is None:
@@ -623,6 +670,24 @@ class FakePi5:
             self.names_rev += 1
             self._publish_locked()
 
+    def set_post(self, post_at: Optional[float]) -> None:
+        """The race's post time (pi5: the admin page's Race info), None for none."""
+        with self._lock:
+            self.post_at = post_at
+            self._publish_locked()
+
+    def set_weather(self, weather: Optional[Dict[str, Any]]) -> None:
+        """pi5's weather for the crawl, None for none."""
+        with self._lock:
+            self.weather = weather
+            self._publish_locked()
+
+    def set_odds(self, odds: Optional[Dict[int, str]]) -> None:
+        """The track's odds by program number, None or {} for none."""
+        with self._lock:
+            self.odds = dict(odds or {})
+            self._publish_locked()
+
     def stop_feed(self) -> None:
         """Stop answering: every open stream ends, GET/POST answer 503."""
         with self._lock:
@@ -729,6 +794,29 @@ class FakePi5:
                 if not fake.renumber(int(words[1]), int(words[2])):
                     return jsonify({"ok": False, "error": f"cannot renumber {words[1]} -> {words[2]}: "
                                                           "A needs a cup and B must have none"}), 400
+            elif words[0] == "post" and len(words) == 2:
+                # Not a pi5 command (there it is PUT /api/quiniela/race): the
+                # post time N minutes from now (negative: already past), or none.
+                if words[1] == "none":
+                    fake.set_post(None)
+                else:
+                    try:
+                        fake.set_post(time.time() + float(words[1]) * 60.0)
+                    except ValueError:
+                        return jsonify({"ok": False, "error": "usage: post MINUTES (negative: past) | post none"}), 400
+            elif words[0] == "weather" and len(words) >= 2:
+                # Not a pi5 command (there main.py feeds it): `weather none`,
+                # or `weather 88 Partly cloudy` (the place stays Dallas).
+                if words[1] == "none":
+                    fake.set_weather(None)
+                elif words[1].lstrip("-").isdigit():
+                    fake.set_weather({"location": "Dallas", "temp_f": int(words[1]),
+                                      "condition": " ".join(words[2:]) or None})
+                else:
+                    return jsonify({"ok": False, "error": "usage: weather TEMP_F [CONDITION...] | weather none"}), 400
+            elif words[0] == "odds" and len(words) == 2 and words[1] in ("none", "on"):
+                # Not a pi5 command (there: the odds poller, or PUT /api/quiniela/odds).
+                fake.set_odds(None if words[1] == "none" else REDESIGN_ODDS)
             elif words[0] == "name" and len(words) >= 2 and words[1].isdigit() and 1 <= int(words[1]) <= MAX_HORSE:
                 # Not a pi5 command (there it is PUT /api/quiniela/horses); here
                 # it renames horse N (the rest of the line, empty clears) so a
@@ -926,6 +1014,11 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=5077, help="the real splash app (default 5077)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-splash", action="store_true", help="serve only the fake pi5")
+    ap.add_argument("--post-in", type=float, default=DEFAULT_POST_IN_S / 60, metavar="MINUTES",
+                    help="the race's post time this many minutes from now (default a day; negative: already past)")
+    ap.add_argument("--no-post", action="store_true", help="no post time (the countdown slide leaves the slideshow)")
+    ap.add_argument("--no-weather", action="store_true", help="no weather (the crawl leaves the item out)")
+    ap.add_argument("--no-odds", action="store_true", help="no odds (the roster slide shows dim dashes)")
     args = ap.parse_args()
 
     if args.phase == "cycle":
@@ -947,6 +1040,11 @@ def main() -> None:
                        names=STRIP_NAMES, names_rev=1)
     else:
         fake = FakePi5(PHASES[args.phase])
+    fake.set_post(None if args.no_post else time.time() + args.post_in * 60.0)
+    if args.no_weather:
+        fake.set_weather(None)
+    if args.no_odds:
+        fake.set_odds(None)
     pi5_httpd = make_server(args.host, args.pi5_port, fake.app, threaded=True)
     threading.Thread(target=pi5_httpd.serve_forever, name="fake-pi5", daemon=True).start()
     pi5_url = f"http://{_client_host(args.host)}:{args.pi5_port}"
@@ -980,8 +1078,6 @@ def main() -> None:
     # (quiniela's module-level link reads config.PI5_URL when it is built).
     config.PI5_URL = pi5_url
     import quiniela  # noqa: E402
-    import race_poller  # noqa: E402
-    race_poller._started = True      # never poll joeydevpi.local from here
     import server  # noqa: E402
     quiniela.start_link()            # idempotent: server's import already did it
 

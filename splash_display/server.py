@@ -38,7 +38,6 @@ from werkzeug.exceptions import HTTPException
 
 import config
 import quiniela
-import race_poller
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -196,110 +195,41 @@ def _trivia_card_to_slide(category: str, card: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
-def _build_horse_roster_context() -> Dict[str, Any] | None:
-    """Pull the latest race poller snapshot and shape it for the template.
-
-    Returns None when no fetch has succeeded yet or the roster is empty —
-    callers should drop the slide from the playlist in that case.
-    """
-    from datetime import datetime, timezone
-
-    data = race_poller.get_race_data()
-    if not data:
+# The slides built from the race: both read La Quiniela's model as the splash
+# relays it (quiniela.board), the one home of race information on pi5. The
+# countdown needs its post time; the roster ("field and odds") needs a field
+# with at least one name. Each is left out of the playlist without, and the
+# page fills them from the live model (static/js/quiniela_board.js's
+# window.ddmQuiniela), so a post time or a name set on the admin page shows
+# the next time the slide comes round.
+def race_post_at(model: Dict[str, Any] | None = None) -> float | None:
+    """The race's post time (unix seconds) from the relayed model, or None."""
+    m = model if model is not None else quiniela.board.model()
+    race = m.get("race") if isinstance(m, dict) else None
+    at = race.get("post_at") if isinstance(race, dict) else None
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
         return None
-    horses = data.get("horses") or []
-    if not horses:
-        return None
+    return float(at)
 
-    # Two columns of ten, as on the live board: the field in numeric order,
-    # the first ten left and the rest right. pi5 lists the field from La
-    # Quiniela's names store, so a number can be 21-24 (an also-eligible
-    # that drew in keeps its own program number) and a scratched horse is
-    # simply not there.
-    field = sorted(
-        (h for h in horses if isinstance(h.get("number"), int) and 1 <= h["number"] <= 24),
-        key=lambda h: h["number"],
-    )
-    if not field:
-        return None
-    horses_left = field[:10]
-    horses_right = field[10:20]
 
-    # Staleness vs. dashboard's last_updated (ISO 8601, UTC).
-    is_stale = False
-    minutes_ago = 0
-    try:
-        last_updated = data.get("last_updated", "")
-        if last_updated:
-            ts = datetime.strptime(last_updated, "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=timezone.utc
-            )
-            age_s = (datetime.now(timezone.utc) - ts).total_seconds()
-            if age_s > config.RACE_DATA_STALENESS_S:
-                is_stale = True
-                minutes_ago = int(age_s // 60)
-    except Exception as e:  # noqa: BLE001
-        log.debug("staleness calc failed: %s", e)
-
-    # Phase 1.19: convert post_time_iso (RFC 3339 with TZ offset) to the
-    # splash Pi's local timezone, e.g. "5:57 PM CDT" for a Central kiosk.
-    # Falls back silently to whatever the dashboard sent in post_time if
-    # the ISO field is missing or unparseable.
-    post_time_display = (data.get("post_time") or "").strip()
-    iso = (data.get("post_time_iso") or "").strip()
-    if iso:
-        try:
-            dt = datetime.fromisoformat(iso)
-            local_dt = dt.astimezone()  # system local TZ, DST-aware
-            hour = local_dt.hour % 12 or 12
-            ampm = "PM" if local_dt.hour >= 12 else "AM"
-            # strftime('%Z') returns short abbreviations on Linux ('CDT')
-            # but full names on Windows ('Central Daylight Time'). Squeeze
-            # multi-word names to their initial letters so the splash UI
-            # stays compact regardless of host platform.
-            tz = local_dt.strftime("%Z") or ""
-            if " " in tz:
-                tz = "".join(w[0] for w in tz.split() if w and w[0].isalpha())
-            post_time_display = f"{hour}:{local_dt.minute:02d} {ampm} {tz}".strip()
-        except (ValueError, TypeError) as e:
-            log.debug("post_time_iso parse failed: %s", e)
-
-    return {
-        "horses_left": horses_left,
-        "horses_right": horses_right,
-        "post_time": post_time_display,
-        "race_state": data.get("race_state") or "unknown",
-        "winner": data.get("winner"),
-        "is_stale": is_stale,
-        "minutes_ago": minutes_ago,
-    }
+def roster_ready(model: Dict[str, Any] | None = None) -> bool:
+    """A field to list: some horse in the field (in_field) has a name."""
+    m = model if model is not None else quiniela.board.model()
+    horses = m.get("horses") if isinstance(m, dict) else None
+    if not isinstance(horses, dict):
+        return False
+    return any(isinstance(h, dict) and h.get("in_field") and str(h.get("name") or "").strip()
+               for h in horses.values())
 
 
 def _splash_page_to_slide(page: Dict[str, Any]) -> Dict[str, Any] | None:
-    """Build a playlist entry for a splash page.
-
-    Returns None for the special-case horse_roster slide when there is no
-    race data to render — callers must filter Nones out of the playlist.
-    """
-    if page["id"] == "horse_roster":
-        ctx = _build_horse_roster_context()
-        if ctx is None:
-            return None  # caller will skip
-        slide = {
-            "id": "splash:horse_roster",
-            "type": "splash",
-            "template": page["template"],
-            "splash_id": "horse_roster",
-            "duration_ms": int(page.get("duration_ms", config.DEFAULT_SPLASH_DURATION_MS)),
-            # Pre-rendered HTML so the slideshow JS can use it directly,
-            # bypassing the static splash-template-cache (which is built once
-            # at /display load and would go stale between race polls).
-            "html": render_template(page["template"], **ctx),
-        }
-        if "force_transition" in page:
-            slide["force_transition"] = page["force_transition"]
-        return slide
-
+    """Build a playlist entry for a splash page, or None for a race slide
+    with nothing to show (the countdown without a post time, the roster
+    without a named field): callers leave it out of the playlist."""
+    if page["id"] == "countdown" and race_post_at() is None:
+        return None
+    if page["id"] == "horse_roster" and not roster_ready():
+        return None
     slide = {
         "id": f"splash:{page['id']}",
         "type": "splash",
@@ -421,8 +351,8 @@ def build_playlist() -> List[Dict[str, Any]]:
         sid = _weighted_choice_no_immediate_repeat(splash_weights, last_splash_id)
         slide = _splash_page_to_slide(splash_by_id[sid])
         if slide is None:
-            # horse_roster (or any future data-driven splash) returned None
-            # because no live data was available — skip silently.
+            # a race slide with nothing to show (no post time, no named
+            # field) — skip silently.
             continue
         splash_slides.append(slide)
         last_splash_id = sid
@@ -531,15 +461,8 @@ def api_slide(slide_id: str):
             page = next((p for p in splash_pages if p["id"] == rest), None)
             if page is None:
                 abort(404)
-            if page["id"] == "horse_roster":
-                ctx = _build_horse_roster_context()
-                if ctx is None:
-                    abort(404)  # no race data available
-                return render_template(page["template"], **ctx)
-            return render_template(
-                page["template"],
-                ddm_post_time_iso=config.DDM_2026_POST_TIME_ISO,
-            )
+            # The race slides are shells the page fills from the live model.
+            return render_template(page["template"])
         if kind == "trivia":
             cat, _, card_id = rest.partition(":")
             trivia = load_trivia()
@@ -612,18 +535,13 @@ def api_quiniela_cmd():
 def inject_brand_globals():
     """Make config values available in every template."""
     return {
-        "ddm_post_time_iso": config.DDM_2026_POST_TIME_ISO,
         "transition_fade_ms": config.TRANSITION_FADE_MS,
     }
 
 
 # ---------------------------------------------------------------------------
-# Background tasks (Phase 1.14)
-# Daemon thread polls dashboard /api/race every 30s. Started at module load
-# so it runs under both `python server.py` and a WSGI server (gunicorn etc.).
+# Background tasks
 # ---------------------------------------------------------------------------
-race_poller.start_poller()
-
 # La Quiniela pi5 link: a daemon thread following pi5's /api/quiniela/stream
 # (polling /api/quiniela while the stream is down) plus a 1 Hz ticker for
 # link_ok. Retries harmlessly forever when pi5 is unreachable.

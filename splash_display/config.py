@@ -174,11 +174,11 @@ TRANSITION_WEIGHTS = {
 }
 
 # ---------------------------------------------------------------------------
-# DDM 2026 race time (for live countdown calculation)
-# Kentucky Derby 2026: Saturday May 2, post time ~6:57 PM ET.
-# Stored as ISO 8601 with timezone offset; the countdown JS parses this.
+# The race (name, post time) and the field are La Quiniela's, on pi5: set on
+# its admin page (/quiniela/admin → Race info), relayed here with the betting
+# model. The countdown and roster slides read them from that model; there is
+# nothing to set here.
 # ---------------------------------------------------------------------------
-DDM_2026_POST_TIME_ISO = "2026-05-02T18:57:00-04:00"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -190,11 +190,11 @@ DEBUG = False
 
 # ---------------------------------------------------------------------------
 # pi5 dashboard (the Pi 5 app in pi5/)
-# The race data (Phase 1.14 horse roster) and the La Quiniela betting model
-# both come from it. pi5 owns the cup gateway's USB port, keeps the betting
-# model and serves /api/quiniela*; this app is an HTTP client of it
-# (quiniela.py, via PI5_URL) and re-serves the model to the TV. Nothing
-# here is needed for the slideshow.
+# La Quiniela's model comes from it: the betting board, and the race and its
+# field for the countdown and roster slides (race, horses[n].name / in_field /
+# odds), and the weather for the crawl. pi5 owns the cup gateway's USB port,
+# keeps the model and serves /api/quiniela*; this app is an HTTP client of it
+# (quiniela.py, via PI5_URL) and re-serves the model to the TV.
 # ---------------------------------------------------------------------------
 PI5_URL = "http://joeydevpi.local:5000"
 
@@ -209,9 +209,3 @@ PI5_URL = "http://joeydevpi.local:5000"
 # overrides it for that page, which is how to compare them on the TV:
 #   http://joeydevpi.local:5001/?look=impact
 QUINIELA_LOOK = "dots"
-
-# Live race roster is fetched from pi5 every POLL_INTERVAL_S (race_poller.py).
-# If unreachable, the horse_roster splash silently drops from rotation until
-# the next successful poll.
-DASHBOARD_RACE_URL = PI5_URL + "/api/race"
-RACE_DATA_STALENESS_S = 300  # 5 minutes — past this, slide shows "Last updated N min ago"

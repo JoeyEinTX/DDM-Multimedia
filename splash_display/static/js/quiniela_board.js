@@ -63,11 +63,15 @@
 
    The model (GET /api/quiniela, relayed from pi5 untouched). The board
    reads: race_state, board_states, link_ok, token_value, pot, horses[n]
-   {tokens, in_field, scratched, online, cup, name}, events[{horse, delta,
-   ts}], and the additive keys now, closes_at, prizes{win,place,show},
-   chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
+   {tokens, in_field, scratched, online, cup, name, odds}, events[{horse,
+   delta, ts}], and the additive keys now, closes_at, prizes{win,place,
+   show}, chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
    names_rev, results{win,place,show}|null, closing{pot, prizes,
-   total_tokens, horses{n: {tokens}}, at}|null. cup is only tested for null
+   total_tokens, horses{n: {tokens}}, at}|null, race{name, year, post_at,
+   post_local, tz} (La Quiniela's race info, the only copy: the crawl's
+   clock and time to post, and the slideshow's race slides) and
+   weather{location, temp_f, condition}|null (the crawl). odds is the
+   track's line for the roster slide, a string or null. cup is only tested for null
    (it is the MAC of the cup claiming the horse, never a number). Every
    new key is optional: before pi5 has been heard the
    model carries none of them and the board renders without errors
@@ -97,6 +101,13 @@
    number of them fills the room), the bets in its last tiles and the
    name in the rest but one; a name longer than that does not shrink, it
    scrolls (updateScroll).
+
+   The slideshow. slideshow.html loads this script whether the board is
+   up or not, and window.ddmQuiniela is what the rest of the page reads
+   from it: race() (the model's race, or null), now() (pi5's clock)
+   for the countdown slide, and fillRoster(root) for the roster slide,
+   which is these rows again: the field and the track's odds in the tote
+   look's strip, whatever the board's look (see The roster slide below).
    ===================================================================== */
 (() => {
     'use strict';
@@ -150,6 +161,8 @@
     const TOAST_NAME_MIN_PX = 36;   // ... down to here, then clips
     const CRAWL_PX_S     = 120;     // chyron speed
     const CLOSES_TICK_MS = 250;     // the countdown is checked 4x a second, written once a second
+    const LIVE_TICK_MS   = 1000;    // the crawl's clock and time to post, in place
+    const POST_SECONDS_UNDER_S = 600;   // under ten minutes to post: minutes and seconds
 
     // Kentucky Derby saddle-cloth colors by program number: 1-20 the
     // field's, 21-24 placeholders for the also-eligibles, the same as the
@@ -245,9 +258,9 @@
     const rows = {};
     let field = [];        // the horses with rows, in numeric order
     let fieldKey = '';     // field.join(','): the row set is rebuilt when it changes
-    let stripPitch = 0;    // "dots": every row's strip, its dot pitch in px ...
-    let stripTiles = 0;    // ... its length in tiles (layoutStrips); 0 until measured ...
-    let stripTile = 0;     // ... and a tile's width in px, the room / stripTiles
+    // "dots": every row's strip, its dot pitch, its length in tiles and a
+    // tile's width in px (the room / tiles), 0 until measured (layoutStrips)
+    const boardStrip = { root: board, pitch: 0, tiles: 0, tile: 0 };
 
     function makeRow(n) {
         const el = rowTpl.content.firstElementChild.cloneNode(true);
@@ -364,6 +377,7 @@
         renderChyron(m);           // after show/hide: a running crawl swaps at its loop boundary
         maybeToast(m, first);
         updateNoLink();
+        if (rosterPending && rosterPending.isConnected) fillRoster(rosterPending);
     }
 
     // Rows, pot and prizes from `view`: the live model, or the live model
@@ -455,38 +469,42 @@
     }
 
     // ---- The rows of "dots": one strip of tiles each -----------------
-    // Every row's strip has the same pitch and the same tiles, taken from
-    // one row's room (.qb-strip-cell: from just right of the cloth to the
-    // row's right padding, which is the gap after the cloth again): the
-    // pitch from its height; from its width, N = as many tiles 6 pitches
-    // wide as it holds, or N + 1 when that many are each still
-    // STRIP_TILE_MIN of 6 pitches, and the tile's width the room / N, so
-    // the tiles fill the room edge to edge. The few pixels a tile gains or
-    // loses are the tile's: its bulbs and a character's dots keep the
-    // pitch, centred in it. They go on the board as --qb-strip-pitch,
-    // --qb-strip-tiles and --qb-strip-tile-w, which the stylesheet sizes
-    // every strip from. The room is measured without transforms (computed
-    // style, offsetHeight), so a row that is pulsing measures as it stands.
-    // Returns whether they changed; then every row's name is measured again.
-    function layoutStrips() {
-        if (!dottedNames) return false;
-        const cell = board.querySelector('.qb-rows .qb-strip-cell');
-        if (!cell || !cell.offsetWidth || !cell.offsetHeight) return false;
+    // A set of rows shares one strip: the board's rows (boardStrip), and
+    // the slideshow's roster slide, which is these rows again (fillRoster).
+    // A set is {root, pitch, tiles, tile}. Every row's strip has the same
+    // pitch and the same tiles, taken from one row's room (.qb-strip-cell:
+    // from just right of the cloth to the row's right padding, which is the
+    // gap after the cloth again): the pitch from its height; from its
+    // width, N = as many tiles 6 pitches wide as it holds, or N + 1 when
+    // that many are each still STRIP_TILE_MIN of 6 pitches, and the tile's
+    // width the room / N, so the tiles fill the room edge to edge. The few
+    // pixels a tile gains or loses are the tile's: its bulbs and a
+    // character's dots keep the pitch, centred in it. They go on the set's
+    // root as --qb-strip-pitch, --qb-strip-tiles and --qb-strip-tile-w,
+    // which the stylesheet sizes every strip under it from. The room is
+    // measured without transforms (computed style, offsetHeight), so a row
+    // that is pulsing measures as it stands, and so does a slide mid-
+    // transition. null while there is no row to measure.
+    function stripFit(cell) {
+        if (!cell || !cell.offsetWidth || !cell.offsetHeight) return null;
         const pitch = Math.max(STRIP_PITCH_MIN, Math.min(STRIP_PITCH_MAX,
             Math.floor((cell.offsetHeight - 2 * STRIP_CLEAR_PX) / DOT_EM)));
         const room = parseFloat(getComputedStyle(cell).width) || cell.offsetWidth;
         const nominal = DOT_CELL * pitch;
         let tiles = Math.max(3, Math.floor(room / nominal));
         if (room / (tiles + 1) >= STRIP_TILE_MIN * nominal) tiles++;
-        const tile = room / tiles;
-        if (pitch === stripPitch && tiles === stripTiles && tile === stripTile) return false;
-        stripPitch = pitch;
-        stripTiles = tiles;
-        stripTile = tile;
-        board.style.setProperty('--qb-strip-pitch', pitch + 'px');
-        board.style.setProperty('--qb-strip-tiles', String(tiles));
-        board.style.setProperty('--qb-strip-tile-w', tile + 'px');
-        for (const n of field) if (rows[n]) measureName(rows[n]);
+        return { pitch, tiles, tile: room / tiles };
+    }
+
+    // Puts a fit on its set and the set's root. Returns whether it changed.
+    function applyStrip(set, fit) {
+        if (!fit || (fit.pitch === set.pitch && fit.tiles === set.tiles && fit.tile === set.tile)) return false;
+        set.pitch = fit.pitch;
+        set.tiles = fit.tiles;
+        set.tile = fit.tile;
+        set.root.style.setProperty('--qb-strip-pitch', fit.pitch + 'px');
+        set.root.style.setProperty('--qb-strip-tiles', String(fit.tiles));
+        set.root.style.setProperty('--qb-strip-tile-w', fit.tile + 'px');
         return true;
     }
 
@@ -494,9 +512,21 @@
     // tiles (the face is one tile a character, letter-spaced to the tile's
     // width; a character it lacks falls back to Impact, which the width
     // still counts).
+    function stripNeed(set, r) {
+        r.need = r.nameText ? Math.ceil(r.name.offsetWidth / set.tile - 0.05) : 0;
+    }
+
+    // The board's own set: every row of the betting board.
+    function layoutStrips() {
+        if (!dottedNames) return false;
+        if (!applyStrip(boardStrip, stripFit(board.querySelector('.qb-rows .qb-strip-cell')))) return false;
+        for (const n of field) if (rows[n]) measureName(rows[n]);
+        return true;
+    }
+
     function measureName(r) {
-        if (!stripPitch) return;
-        r.need = r.nameText ? Math.ceil(r.name.offsetWidth / stripTile - 0.05) : 0;
+        if (!boardStrip.pitch) return;
+        stripNeed(boardStrip, r);
         updateScroll(r);
     }
 
@@ -520,17 +550,17 @@
     // slide would drag the lit dots across the dark ones between them. One
     // Web Animation on the name's transform per row, run by the compositor,
     // each row on its own clock. A name that fits (again) stands still at
-    // the start of its area.
-    function updateScroll(r) {
-        if (!stripPitch) return;
-        const area = Math.max(1, stripTiles - r.digits - 1);
+    // the start of its area. running false: made paused (a board that is
+    // not showing its rows).
+    function stripScroll(set, r, running) {
+        const area = Math.max(1, set.tiles - r.digits - 1);
         const over = r.need - area;
-        const key = over > 0 ? [over, stripTile, r.nameText].join('|') : '';
+        const key = over > 0 ? [over, set.tile, r.nameText].join('|') : '';
         if (key === r.scrollKey) return;
         r.scrollKey = key;
         if (r.scroll) { r.scroll.cancel(); r.scroll = null; }
         if (over <= 0 || typeof r.name.animate !== 'function') return;
-        const tile = stripTile;
+        const tile = set.tile;
         const stepMs = tile / CRAWL_PX_S * 1000;
         const total = SCROLL_HOLD_START_MS + (over - 1) * stepMs + SCROLL_HOLD_END_MS;
         const at = (k) => 'translateX(' + (-k * tile) + 'px)';
@@ -540,7 +570,12 @@
         }
         frames.push({ offset: 1, transform: at(over) });
         r.scroll = r.name.animate(frames, { duration: total, iterations: Infinity });
-        if (!rowsShowing()) r.scroll.pause();
+        if (!running) r.scroll.pause();
+    }
+
+    function updateScroll(r) {
+        if (!boardStrip.pitch) return;
+        stripScroll(boardStrip, r, rowsShowing());
     }
 
     // The scrolls run only while the rows are on screen: not while the
@@ -557,6 +592,66 @@
             if (on) r.scroll.play(); else r.scroll.pause();
         }
     }
+
+    // ---- The roster slide ----------------------------------------------
+    // The slideshow's "field and odds" slide (templates/splash/
+    // horse_roster.html) is this board's rows again: the same row template,
+    // cloths and names, the field in the same order (every horse in_field,
+    // by number, a replacement under its own number: 21, 22...), in the tote
+    // look's strip whatever the board's look (its container is a
+    // .qb.qb--embed[data-look="dots"]), with the track's odds where the bets
+    // sit: as many tiles as the odds have characters ("5-1" three, "50-1"
+    // four), one dark tile before them, a dim dash for a horse with none.
+    // The strip is measured on the slide once the face is there (the fill
+    // rule, a long name scrolling a tile at a time), so every row of both
+    // columns fits the panel. A slide filled before the first model has
+    // arrived is filled when it does.
+    const NO_ODDS = '—';
+    let rosterPending = null;
+
+    function faceReady() {
+        return (document.fonts && document.fonts.load) ? document.fonts.load(TOTE_FACE, 'A0') : Promise.resolve();
+    }
+
+    function fillRoster(root) {
+        if (!root) return false;
+        if (!model) { rosterPending = root; return false; }
+        if (rosterPending === root) rosterPending = null;
+        const cols = root.querySelectorAll('[data-roster-col]');
+        if (cols.length < 2) return false;
+        for (const col of cols) col.textContent = '';
+        const set = { root, pitch: 0, tiles: 0, tile: 0 };
+        const recs = [];
+        fieldOf(model).forEach((n, i) => {
+            const r = makeRow(n);
+            const h = model.horses[String(n)] || {};
+            const odds = (h.odds != null && String(h.odds).trim()) ? String(h.odds).trim().toUpperCase() : null;
+            r.nameText = horseName(h, n);
+            r.name.textContent = r.nameText;
+            r.bets.textContent = odds || NO_ODDS;
+            r.digits = (odds || NO_ODDS).length;
+            r.el.style.setProperty('--qb-digits', String(r.digits));
+            r.el.classList.toggle('is-empty', !odds);
+            cols[i < SLOTS_PER_COL ? 0 : 1].appendChild(r.el);
+            recs.push(r);
+        });
+        const lay = () => {
+            if (!root.isConnected) return;
+            applyStrip(set, stripFit(root.querySelector('.qb-rows .qb-strip-cell')));
+            if (!set.pitch) return;
+            for (const r of recs) { stripNeed(set, r); stripScroll(set, r, true); }
+        };
+        faceReady().then(lay, lay);
+        return true;
+    }
+
+    // What the slideshow reads: the race (its countdown slide, the roster's
+    // post time), pi5's clock, and the roster filler.
+    window.ddmQuiniela = {
+        race: () => (model && model.race && typeof model.race === 'object') ? model.race : null,
+        now: () => serverNow(),
+        fillRoster,
+    };
 
     function fitText(el, maxPx, minPx) {
         let fs = maxPx;
@@ -995,11 +1090,22 @@
     }
 
     // ---- Chyron -----------------------------------------------------
-    // Content, in order: chyron[0]; SCRATCHED and every scratch when there
-    // are any (a replacement: the scratched horse's badge and name struck
-    // through, the arrow, the replacement's badge and name; no replacement:
-    // badge, name and a muted "· TOKENS REFUNDED"; an unnamed horse prints
-    // HORSE n); the remaining chyron lines. Gold diamonds between items.
+    // Content, in order: chyron[0]; the live items: the time of day on the
+    // race's clock (7:42 PM), the time to post (POST IN 1:14, hours and
+    // minutes; under ten minutes POST IN 9:42, minutes and seconds; gone
+    // once the post time has passed or while none is set) and pi5's weather
+    // (DALLAS 88°F SUNNY; left out when there is none); SCRATCHED and every
+    // scratch when there are any (a replacement: the scratched horse's
+    // badge and name struck through, the arrow, the replacement's badge and
+    // name; no replacement: badge, name and a muted "· TOKENS REFUNDED"; an
+    // unnamed horse prints HORSE n); the remaining chyron lines. Gold
+    // diamonds between items.
+    // The live items change in place, every second (tickLive), a text for
+    // one of the same length: in the tote look every character is a tile,
+    // so the track never changes width and the crawl never restarts. A
+    // change of shape (an item coming or going, a text of another length:
+    // 9:59 PM to 10:00 PM, new weather) is a rebuild like any other,
+    // swapped in at the loop boundary.
     // The track holds the content repeated (an even number of copies, at
     // least two, enough to cover the crawl twice) and translates 0 -> -50 %
     // so the loop is seamless; the duration comes from the track's width
@@ -1024,13 +1130,91 @@
     function renderChyron(m) {
         const lines = Array.isArray(m.chyron) ? m.chyron.map((l) => String(l)) : [];
         const scratches = Array.isArray(m.scratches) ? m.scratches : [];
-        const key = JSON.stringify([lines, scratches, m.names_rev == null ? null : m.names_rev]);
-        if (key === crawlKey) return;
+        const live = liveItems(m);
+        const shape = live.map(([k, t]) => (k === 'weather' ? k + ':' + t : k + ':' + t.length)).join('|');
+        const key = JSON.stringify([lines, scratches, m.names_rev == null ? null : m.names_rev, shape]);
+        if (key === crawlKey) { updateLive(live); return; }
         crawlKey = key;
-        const html = buildCrawl(lines, scratches);
+        const html = buildCrawl(lines, scratches, live);
         crawlHtml = html;
         if (crawlRunning && visible) crawlPending = html;   // swap at the loop boundary
         else applyCrawl(html);
+    }
+
+    // The live items as [kind, text], in the crawl's order.
+    function liveItems(m) {
+        const race = (m && m.race && typeof m.race === 'object') ? m.race : null;
+        const now = serverNow();
+        const out = [];
+        const time = clockText(race && race.tz, now);
+        if (time) out.push(['time', time]);
+        const post = postText(race, now);
+        if (post) out.push(['post', post]);
+        const weather = weatherText(m && m.weather);
+        if (weather) out.push(['weather', weather]);
+        return out;
+    }
+
+    function updateLive(live) {
+        for (const [kind, text] of live) {
+            if (kind === 'weather') continue;                 // part of the shape: never in place
+            for (const el of trackEl.querySelectorAll('[data-live="' + kind + '"]')) {
+                if (el.textContent !== text) el.textContent = text;
+            }
+        }
+    }
+
+    // "7:42 PM" on the race's clock (the zone pi5 names; this screen's own
+    // without one). Assembled from its parts: the ICU the browser carries may
+    // put a narrow no-break space before PM, which the face has no tile for.
+    const clockFormats = {};
+    function clockText(tz, epochS) {
+        if (!Number.isFinite(epochS)) return null;
+        const key = tz || '';
+        if (!(key in clockFormats)) {
+            let fmt = null;
+            for (const zone of [tz || undefined, undefined]) {
+                try { fmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: true }); break; }
+                catch (err) { fmt = null; }
+            }
+            clockFormats[key] = fmt;
+        }
+        const fmt = clockFormats[key];
+        if (!fmt) return null;
+        const parts = {};
+        for (const p of fmt.formatToParts(new Date(epochS * 1000))) parts[p.type] = p.value;
+        return (parts.hour && parts.minute) ? parts.hour + ':' + parts.minute + ' ' + String(parts.dayPeriod || '').toUpperCase() : null;
+    }
+
+    // "Post in 1:14" (hours:minutes), "Post in 9:42" under ten minutes
+    // (minutes:seconds), null once the post time has passed or while none
+    // is set. Counted on pi5's clock, like CLOSES IN.
+    function postText(race, nowS) {
+        if (!race || race.post_at == null) return null;
+        const at = Number(race.post_at);
+        if (!Number.isFinite(at) || !Number.isFinite(nowS)) return null;
+        const secs = Math.ceil(at - nowS);
+        if (secs <= 0) return null;
+        const two = (v) => (v < 10 ? '0' : '') + v;
+        if (secs < POST_SECONDS_UNDER_S) return 'Post in ' + Math.floor(secs / 60) + ':' + two(secs % 60);
+        const mins = Math.floor(secs / 60);
+        return 'Post in ' + Math.floor(mins / 60) + ':' + two(mins % 60);
+    }
+
+    // "Dallas 88°F Sunny": whatever pi5's weather has of the place, the
+    // temperature and the sky; null without a temperature or a sky.
+    function weatherText(w) {
+        if (!w || typeof w !== 'object') return null;
+        const t = Number(w.temp_f);
+        const temp = (w.temp_f != null && Number.isFinite(t)) ? Math.round(t) + '°F' : null;
+        const sky = (typeof w.condition === 'string' && w.condition.trim()) ? w.condition.trim() : null;
+        if (!temp && !sky) return null;
+        const place = (typeof w.location === 'string' && w.location.trim()) ? w.location.trim() : null;
+        return [place, temp, sky].filter(Boolean).join(' ');
+    }
+
+    function tickLive() {
+        if (model) renderChyron(model);
     }
 
     // One side of a scratch record, {number, name} -> {n, name}, or null
@@ -1047,10 +1231,13 @@
         return '<span class="qb-crawl-badge" style="background:' + c.bg + ';color:' + c.fg + '">' + n + '</span>';
     }
 
-    function buildCrawl(lines, scratches) {
+    function buildCrawl(lines, scratches, live) {
         const item = (inner) => '<span class="qb-crawl-item">' + inner + '</span>';
         const items = [];
         if (lines.length) items.push(item(crawlText(lines[0])));
+        for (const [kind, text] of (live || [])) {
+            items.push(item('<span class="qb-crawl-text qb-crawl-live" data-live="' + kind + '">' + esc(text) + '</span>'));
+        }
         const parts = [];
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
@@ -1172,6 +1359,7 @@
     connect();
     setInterval(updateNoLink, 1000);
     setInterval(tickCloses, CLOSES_TICK_MS);
+    setInterval(tickLive, LIVE_TICK_MS);
     // Anton arrives late where Impact is missing: the names' widths change.
     // So does every dotted width when the tote face arrives.
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(refitNames);

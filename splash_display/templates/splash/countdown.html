@@ -7,10 +7,16 @@
 
    The cinematic motion is driven entirely by CSS animations (see
    ddm_style.css → .countdown-cinematic). The slideshow JS picks this
-   up via <template data-splash-id="countdown"> and runs the existing
-   countdown driver against the [data-countdown="..."] hooks. Pause
-   integration: togglePause() in slideshow.html toggles `.is-paused`
-   on .countdown-cinematic to freeze both animations and the live tick. #}
+   up via <template data-splash-id="countdown"> and runs the countdown
+   driver against the [data-countdown="..."] hooks. Pause integration:
+   togglePause() in slideshow.html toggles `.is-paused` on
+   .countdown-cinematic to freeze both animations and the live tick.
+
+   The race is La Quiniela's (pi5's model, relayed): the driver counts down
+   to race.post_at and writes the two footer lines ([data-race]) from it:
+   "{name} {year}" and "{day} · {month d} · Post time {post_local}". Once
+   the post time has passed the digits give way to AND THEY'RE OFF
+   (.is-off). Without a post time the slide is not in the playlist. #}
 <div class="splash-card splash-card-dark countdown-cinematic">
     <div class="splash-serape-band splash-serape-band--top"></div>
 
@@ -79,14 +85,18 @@
             </div>
         </div>
 
-        {# Phase 1.13: footer block — "Kentucky Derby 2026" subtitle line
-           identifies the event being counted down to (replacing the
-           removed Derby de Mayo title), with the date/post-time line
-           below it as a muted detail. Both lines stay inside
-           .countdown-right-column so the cinematic Stage-2 fade-in
-           reveal still applies to the whole cluster as one unit. #}
-        <div class="countdown-footer-event">Kentucky Derby 2026</div>
-        <div class="countdown-footer-text">Saturday · May 2 · Post Time 6:57 PM ET</div>
+        {# After the post: the TV board's own dots (its face and tiles, in
+           a .qb--embed of the tote look) in the scoreboard's place. #}
+        <div class="countdown-off qb qb--embed" data-look="dots" aria-hidden="true">
+            <span class="countdown-off-text" data-tote="name">And they're off</span>
+        </div>
+
+        {# Phase 1.13: footer block — the event being counted down to and,
+           below it, the day, the date and the post time as a muted detail.
+           Both stay inside .countdown-right-column so the cinematic Stage-2
+           fade-in reveals the cluster as one unit. #}
+        <div class="countdown-footer-event" data-race="event"></div>
+        <div class="countdown-footer-text" data-race="when"></div>
     </div>
 
     <div class="splash-serape-band splash-serape-band--bottom"></div>

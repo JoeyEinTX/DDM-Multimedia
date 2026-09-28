@@ -166,7 +166,7 @@ def test_menu_and_page():
     _check("the dashboard's JS reads the field from La Quiniela", "/api/quiniela/field" in js and "horseDisplayName" in js)
     _check("the 5x7 table carries what the TV board prints besides names (its face is built from this table)",
            all(("'%s': [0x" % ch) in js for ch in "$+#%()?*=;<>@_") and "'\"': [0x" in js
-           and all(("'\\u%s': [0x" % code) in js for code in ("00B7", "25C6", "25B6")))
+           and all(("'\\u%s': [0x" % code) in js for code in ("00B7", "25C6", "25B6", "00B0")))
     _check("...and has nothing of Race Setup left",
            not any(s in js for s in ("raceSetup", "race-setup", "toggleOddsPolling", "initPostTimeCountdown")))
     _check("the tote prints the name, HORSE n without one, never cut short",
@@ -484,6 +484,45 @@ def test_results_are_kept_when_pi5_starts():
 
 
 # -----------------------------------------------------------------------------
+# The weather, for the TV's crawl
+# -----------------------------------------------------------------------------
+
+def test_weather_reaches_the_board():
+    """main.py feeds pi5's weather (the dashboard's source) into La
+    Quiniela's model for the TV's crawl; without a key or with nothing
+    fetched there is none, and nothing errors."""
+    rig = Rig()
+    payload = {"success": True, "current": {"temp_f": 88.2, "condition": {"text": "Sunny"}}, "location": "Dallas",
+               "hourly": [], "cached": False}
+    _check("the payload as the crawl wants it", main.weather_for_board(payload)
+           == {"location": "Dallas", "temp_f": 88.2, "condition": "Sunny"})
+    _check("no key, a failed fetch, no current conditions: none",
+           main.weather_for_board({"success": False, "error": "Weather API key not configured"}) is None
+           and main.weather_for_board({"success": True, "current": {}}) is None and main.weather_for_board(None) is None)
+    import threading as _t
+    import time as _time
+    saved = main.weather_data
+    main.weather_data = lambda: (payload, 200)
+    stop = _t.Event()
+    try:
+        feed = _t.Thread(target=main.feed_weather_to_board, args=(stop,), daemon=True)
+        feed.start()
+        deadline = _time.time() + 5
+        while rig.board.model().get("weather") is None and _time.time() < deadline:
+            rig.board.refresh()
+            _time.sleep(0.05)
+        _check("the feed puts it in the model", rig.board.model()["weather"] == {"location": "Dallas", "temp_f": 88,
+                                                                                  "condition": "Sunny"},
+               str(rig.board.model().get("weather")))
+    finally:
+        stop.set()
+        main.weather_data = saved
+    r = rig.client.get("/api/weather")
+    _check("GET /api/weather still answers (503 without a key, as before)", r.status_code in (200, 503)
+           and "success" in r.get_json())
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -497,6 +536,7 @@ def main_():
     _run("one race state — the results make it WINNER, RESET makes it AFTER_PARTY", test_results_and_reset_are_modes)
     _run("results — saved and WINNER with the LED controller down", test_results_stand_without_the_leds)
     _run("results — kept when pi5 starts", test_results_are_kept_when_pi5_starts)
+    _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

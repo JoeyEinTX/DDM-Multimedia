@@ -227,6 +227,12 @@ fields, post time, and three actions: fetch from the Racing API, "Ask JoeyAI", a
 `/api/race-setup`. Today the "Ask JoeyAI" button calls the Anthropic API with web search.
 The goal for DDM 2027 is for that button to call the real JoeyAI.
 
+> **2026-09-27:** Race Setup is gone (`0a050dd`): its modal, `data/race_setup.json` and
+> `/api/race-setup` were a second copy of race info. The race's name and post time are
+> entered on La Quiniela's admin page (`/quiniela/admin` → Race info) and the names in its
+> store; the odds search is `pi5/la_quiniela/odds.py` (`OddsPoller`, whose `fetch` is where
+> JoeyAI would plug in). See `pi5/LQ_BRIDGE.md`, "The race and the track's odds".
+
 ### What JoeyAI is today
 
 - Dedicated headless mini PC: GEEKOM A8 MAX, hostname JoeyAI, `10.0.0.54`. (Not the Jetson

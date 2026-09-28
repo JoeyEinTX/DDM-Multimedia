@@ -742,6 +742,37 @@ img { -webkit-user-drag: none; user-drag: none; }
     font-size: clamp(28px, 2.8vw, 50px);
 }
 
+/* After the post time: AND THEY'RE OFF in the scoreboard's place (and the
+   eyebrow's), in the TV board's own dots: a .qb--embed of the tote look,
+   its face and tiles, at the pitch of the board's rows. The slideshow's
+   countdown driver sets .is-off on the card. */
+.countdown-cinematic .countdown-off {
+    display: none;
+    align-items: center;     /* the .qb's column: the message keeps its own width, its tiles under its letters */
+    margin: 0 auto 6px;
+}
+.countdown-cinematic.is-off .countdown-off {
+    display: flex;
+}
+.countdown-cinematic.is-off .splash-matrix-row,
+.countdown-cinematic.is-off .countdown-eyebrow {
+    display: none;
+}
+.countdown-cinematic .countdown-off-text {
+    display: inline-block;
+    font-size: 72px;         /* pitch 9: 15 tiles of 54 px, 810 px in a right column of 900+ */
+}
+@media (max-width: 1500px) {
+    .countdown-cinematic .countdown-off-text {
+        font-size: 56px;     /* pitch 7, for a narrower screen's right column */
+    }
+}
+@media (max-width: 1150px) {
+    .countdown-cinematic .countdown-off-text {
+        font-size: 40px;     /* pitch 5 */
+    }
+}
+
 /* ========================================================================
    DDM 2027 PLANNED RESTORE — La Subasta cinematic primer
    Archived in Phase 1.12. To restore: uncomment this entire block AND
@@ -983,22 +1014,16 @@ img { -webkit-user-drag: none; user-drag: none; }
    accents, two-column scoreboard layout for the 20 post positions.
    ────────────────────────────────────────────────────────────────────── */
 /* ---------------------------------------------------------------------
-   HORSE ROSTER — Phase 1.17 dot-matrix tote-board rebuild
+   HORSE ROSTER — the field and the track's odds
 
-   The Phase 1.14–1.16 .horse-roster-* / .horse-name / .horse-odds /
-   .horse-finish / .horse-winner-tag rules have been REMOVED in favor
-   of an authentic LED-tote-board look modeled on the pi5 dashboard's
-   spectator results board.
-
-   Naming uses a `splash-tote-*` prefix so it never collides with the
-   protected pi5 classes (.dot-digit, .dot, .results-tote-board,
-   .saddle-cloth) — those are reserved for the dashboard. The patterns
-   are independently re-implemented here from scratch.
-
-   Sizing budget: 10 rows per column, 2 columns, fit inside one
-   .splash-card (max ~86vh / 920px tall). Cell width 3px keeps each
-   5×7 character tile to ~23×31px so names stay legible across-the-
-   room while a full 10-row column fits without clipping.
+   The slide's chrome (dark card, the DDM logo and the post time over a
+   gold-framed panel) is here; the rows inside the panel are the TV board's
+   rows in the tote look (its row template, cloths, the dots strip with its
+   fill rule and whole-tile scroll), so they are styled by
+   quiniela_board.css and filled by quiniela_board.js from La Quiniela's
+   model. The .splash-tote-* dot-matrix tiles and cells this block used to
+   draw (35 elements a character, from a glyph table of its own) and the
+   .splash-saddle--pos-* cloths are gone with it.
    --------------------------------------------------------------------- */
 
 /* Slide-level chrome — dark background, matches the spectator vibe */
@@ -1010,12 +1035,11 @@ img { -webkit-user-drag: none; user-drag: none; }
     overflow: hidden;
 }
 
-/* Phase 1.20 hero block — switched from a centered vertical stack
-   (Phase 1.19) to a horizontal "scoreboard with branding" row: bigger
-   DDM master logo on the LEFT, post time on the RIGHT, vertically
-   aligned. The post time is still rendered in the viewer's local
-   timezone by _build_horse_roster_context (so a Central kiosk sees
-   "Post Time 5:57 PM CDT" while the underlying ISO is in EDT). */
+/* Phase 1.20 hero block — a horizontal "scoreboard with branding" row:
+   the DDM master logo on the LEFT, the post time on the RIGHT, vertically
+   aligned. The post time is La Quiniela's, as it reads on the race's clock
+   ("Post Time 5:57 PM CDT"), written by the slideshow when the slide loads;
+   empty while none is set. */
 .splash-tote-hero {
     display: flex;
     flex-direction: row;
@@ -1062,183 +1086,14 @@ img { -webkit-user-drag: none; user-drag: none; }
     overflow: hidden;
 }
 
-.splash-tote-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    column-gap: 3vw;
-    row-gap: 0;
+/* The rows are the TV board's own (static/css/quiniela_board.css: .qb-row
+   and the tote look's strip; static/js/quiniela_board.js fills them): the
+   panel holds a .qb.qb--embed.qb-roster of the tote look, the board's two
+   columns of ten, which take the panel's whole inside. */
+.splash-tote-board .qb-roster {
     width: 100%;
     height: 100%;
-    align-items: stretch;
-    align-content: stretch;
 }
-
-.splash-tote-column {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 4px;
-}
-
-/* Single horse row — saddle | name (dot-matrix) | odds (dot-matrix).
-   Phase 1.20: switched from CSS Grid to Flex with a 1px gap. The 1px
-   gap matches the inter-tile gap inside .splash-tote-text, so the last
-   name tile and the first odds tile abut as if they were part of the
-   same continuous LED grid. The saddle keeps a slightly wider visual
-   breath via .splash-saddle margin-right (see below). */
-.splash-tote-row {
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    padding: 5px 2px;
-    border-bottom: 1px solid rgba(254, 198, 0, 0.10);
-    min-height: 44px;
-}
-
-.splash-tote-row:last-child {
-    border-bottom: none;
-}
-
-/* Saddle cloth square — color-coded by post position using the official
-   Kentucky Derby palette. Phase 1.19: ported the same hex values used
-   by the pi5 dashboard's spectator board (its SADDLE_CLOTHS table in
-   ddm_control.js) so the splash display stays visually consistent
-   with the dashboard. Pi5 file unchanged — the values are independently
-   re-stated here under .splash-* names.
-   Dimensions (40×34, font 20) preserved from Phase 1.18. */
-.splash-saddle {
-    width: 40px;
-    height: 34px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    font-family: 'Arial Black', 'Helvetica Inserat', Arial, sans-serif;
-    font-weight: 900;
-    font-size: 20px;
-    letter-spacing: -1px;
-    background: var(--ddm-card-2);
-    color: #1a1a1a;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
-    /* Phase 1.20: extra breathing space between the colored saddle chip
-       and the start of the LED grid. The row's 1px flex gap matches the
-       inter-tile spacing inside .splash-tote-text — so name and odds tiles
-       touch flush across the boundary, but the saddle gets its own beat. */
-    margin-right: 9px;
-    flex-shrink: 0;
-}
-
-/* Per-position color classes — official Churchill Downs saddle cloths.
-   Each rule sets background + contrasting text. White / khaki / light-blue
-   positions also carry a thin dark border so they don't disappear into
-   the cream splash background or any future light-bg variant. */
-.splash-saddle--pos-1  { background: #E31837; color: #FFFFFF; }
-.splash-saddle--pos-2  { background: #FFFFFF; color: #000000; border: 1px solid rgba(0, 0, 0, 0.35); }
-.splash-saddle--pos-3  { background: #0033A0; color: #FFFFFF; }
-.splash-saddle--pos-4  { background: #FFCD00; color: #000000; }
-.splash-saddle--pos-5  { background: #00843D; color: #FFFFFF; }
-.splash-saddle--pos-6  { background: #000000; color: #FFD700; }
-.splash-saddle--pos-7  { background: #FF6600; color: #000000; }
-.splash-saddle--pos-8  { background: #FF69B4; color: #000000; }
-.splash-saddle--pos-9  { background: #40E0D0; color: #000000; }
-.splash-saddle--pos-10 { background: #663399; color: #FFFFFF; }
-.splash-saddle--pos-11 { background: #808080; color: #E31837; }
-.splash-saddle--pos-12 { background: #32CD32; color: #000000; }
-.splash-saddle--pos-13 { background: #8B4513; color: #FFFFFF; }
-.splash-saddle--pos-14 { background: #800000; color: #FFCD00; }
-.splash-saddle--pos-15 { background: #C4B7A6; color: #000000; border: 1px solid rgba(0, 0, 0, 0.25); }
-.splash-saddle--pos-16 { background: #87CEEB; color: #E31837; border: 1px solid rgba(0, 0, 0, 0.25); }
-.splash-saddle--pos-17 { background: #000080; color: #FFFFFF; }
-.splash-saddle--pos-18 { background: #228B22; color: #FFCD00; }
-.splash-saddle--pos-19 { background: #00008B; color: #E31837; }
-.splash-saddle--pos-20 { background: #FF00FF; color: #FFCD00; }
-/* 21-24: the also-eligibles' placeholders, the same as the live board, the
-   dashboard and the cups show. */
-.splash-saddle--pos-21 { background: #FFDAB9; color: #000000; border: 1px solid rgba(0, 0, 0, 0.25); }
-.splash-saddle--pos-22 { background: #008080; color: #FFFFFF; }
-.splash-saddle--pos-23 { background: #808000; color: #FFFFFF; }
-.splash-saddle--pos-24 { background: #2F4F4F; color: #FFFFFF; }
-
-/* Post-race result accents — LAYER on top of the position color rather
-   than replace it (so position identity stays visible at a glance).
-   Outline lives outside the box so it doesn't shift layout. */
-.splash-saddle--win {
-    outline: 3px solid #FFD700;
-    outline-offset: 2px;
-    box-shadow:
-        0 2px 4px rgba(0, 0, 0, 0.4),
-        0 0 12px 4px rgba(255, 215, 0, 0.55);
-}
-.splash-saddle--place {
-    outline: 3px solid #C0C0C0;
-    outline-offset: 2px;
-}
-.splash-saddle--show {
-    outline: 3px solid #CD7F32;
-    outline-offset: 2px;
-}
-
-/* Wrapper for a sequence of dot-matrix character tiles (one "word").
-   Phase 1.18: width is set by the tote_text macro at the call site
-   (18 tiles for names, 5 for odds), so unlit space tiles fill any
-   remaining slots — gives the slide a continuous LED-grid feel. */
-.splash-tote-text {
-    display: inline-flex;
-    align-items: center;
-    gap: 1px;
-    flex-wrap: nowrap;
-    overflow: hidden;
-}
-
-/* Single 5×7 character tile. Independent of pi5's .dot-digit.
-   Phase 1.18: cell 3px → 4px (33% bump), padding 2 → 3, gap stays at
-   1px. Tile footprint grows from ~23×31 to ~30×40 — text is much
-   easier to read at TV-across-room distance and the rows now fill
-   the available vertical space. */
-.splash-tote-digit {
-    display: grid;
-    grid-template-columns: repeat(5, 4px);
-    grid-template-rows: repeat(7, 4px);
-    gap: 1px;
-    padding: 3px;
-    background: #0c0c0c;
-    border-radius: 2px;
-    flex-shrink: 0;
-}
-
-/* Individual dot — unlit socket by default. */
-.splash-tote-cell {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.06);
-}
-
-/* Lit dot — golden amber to match the LED-tote-board aesthetic. */
-.splash-tote-cell.is-on {
-    background: #D4A000;
-    box-shadow:
-        0 0 2px rgba(212, 160, 0, 0.85),
-        0 0 5px rgba(212, 160, 0, 0.5);
-}
-
-/* (Phase 1.18 .splash-tote-brand bottom-left brand mark removed in
-   Phase 1.19 — replaced by the .splash-tote-hero block at the top of
-   the slide, where the DDM logo gets full-sized hero treatment paired
-   with the post time below it.) */
-
-/* Bottom-right indicator when race_poller payload is older than
-   RACE_DATA_STALENESS_S — sits over the splash-card padding. */
-.splash-tote-staleness {
-    position: absolute;
-    bottom: 3vh;
-    right: 3vw;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.45);
-    letter-spacing: 1px;
-    font-style: italic;
-}
-
 
 /* =====================================================================
    LA SUBASTA "How It Works" mini-series (Phase 1.21) — shared chrome.

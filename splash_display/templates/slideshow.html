@@ -78,6 +78,7 @@
 <div id="splash-template-cache" hidden>
     {% for splash in [
         ('countdown',         'splash/countdown.html'),
+        ('horse_roster',      'splash/horse_roster.html'),
         ('la_subasta',        'splash/la_subasta.html'),
         ('la_quiniela',       'splash/la_quiniela.html'),
         ('derby_dash',        'splash/derby_dash.html'),
@@ -107,7 +108,6 @@
 
     // ---- Config (server-injected) -----------------------------------
     const FADE_MS = {{ transition_fade_ms|default(600) }};
-    const DDM_POST_TIME_ISO = "{{ ddm_post_time_iso }}";
     const PRELOAD_LEAD_MS = Math.max(150, FADE_MS); // start prep this far before swap
     const MIN_RETRY_MS = 1000;
     const MAX_RETRY_MS = 30000;
@@ -187,9 +187,10 @@
     // Returns the HTML string for a given slide entry from the playlist.
     function renderSlideHtml(slide) {
         if (!slide) return '';
-        // Phase 1.14 — server-rendered slides (e.g. horse_roster) ship their
-        // HTML inline in the playlist payload so live data isn't bottlenecked
-        // by the once-per-/display splash template cache.
+        // A slide may ship its HTML inline in the playlist payload. None does
+        // now: the race slides (countdown, horse_roster) are shells from the
+        // template cache that loadIntoLayer / the countdown driver fill from
+        // La Quiniela's live model (window.ddmQuiniela).
         if (slide.html) return slide.html;
         if (slide.type === 'splash') {
             const tplHtml = splashTemplates[slide.splash_id];
@@ -224,6 +225,50 @@
         layer.innerHTML = renderSlideHtml(slide);
         layer.dataset.slideId = slide.id || '';
         layer.dataset.slideType = slide.type || '';
+        if (slide.type === 'splash' && slide.splash_id === 'horse_roster') fillRoster(layer);
+    }
+
+    // ---- The race slides --------------------------------------------
+    // Both read the race from La Quiniela's live model, which the board
+    // script keeps (window.ddmQuiniela, static/js/quiniela_board.js): its
+    // name, year, post time (unix seconds, and as it reads on the race's
+    // clock, post_local) and that clock's zone.
+    function liveRace() {
+        const q = window.ddmQuiniela;
+        return (q && typeof q.race === 'function') ? q.race() : null;
+    }
+
+    function serverNowS() {
+        const q = window.ddmQuiniela;
+        return (q && typeof q.now === 'function') ? q.now() : Date.now() / 1000;
+    }
+
+    // "Saturday · May 1 · Post Time 5:57 PM CDT" (the card upper-cases it):
+    // the day and the date on the race's clock.
+    function postLine(race) {
+        const when = new Date(Number(race.post_at) * 1000);
+        let parts = {};
+        for (const zone of [race.tz || undefined, undefined]) {
+            try {
+                parts = {};
+                const fmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long', month: 'long', day: 'numeric' });
+                for (const p of fmt.formatToParts(when)) parts[p.type] = p.value;
+                break;
+            } catch (err) { /* an unknown zone: this screen's own */ }
+        }
+        return [parts.weekday, (parts.month || '') + ' ' + (parts.day || ''), 'Post Time ' + (race.post_local || '')]
+            .map((s) => String(s || '').trim()).filter(Boolean).join(' · ');
+    }
+
+    // The roster ("field and odds"): the board's rows, filled into the
+    // slide's panel, and the post time over it.
+    function fillRoster(layer) {
+        const race = liveRace();
+        const post = layer.querySelector('[data-roster="post"]');
+        if (post) post.textContent = (race && race.post_local) ? 'Post Time ' + race.post_local : '';
+        const q = window.ddmQuiniela;
+        const board = layer.querySelector('[data-roster="board"]');
+        if (q && typeof q.fillRoster === 'function' && board) q.fillRoster(board);
     }
 
     // Pick a transition type for a slide. Rules (Phase 1.5):
@@ -364,8 +409,15 @@
         }
     }
 
+    // Counts down to La Quiniela's race.post_at on pi5's clock, read afresh
+    // every second (a post time changed on the admin page shows at once),
+    // and writes the footer: "{name} {year}", "{day} · {month d} · Post
+    // Time {post_local}". Once the post time has passed the digits give way
+    // to AND THEY'RE OFF (.is-off on the card), never to a row of zeros.
     function startCountdown(layer) {
-        const target = new Date(DDM_POST_TIME_ISO).getTime();
+        const card = layer.querySelector('.countdown-cinematic');
+        const eventEl = layer.querySelector('[data-race="event"]');
+        const whenEl = layer.querySelector('[data-race="when"]');
         const daysSeg = layer.querySelector('[data-countdown="days"]');
         const hoursSeg = layer.querySelector('[data-countdown="hours"]');
         const minsSeg = layer.querySelector('[data-countdown="minutes"]');
@@ -373,8 +425,16 @@
         if (!daysSeg || !hoursSeg || !minsSeg) return;
 
         function tick() {
-            const now = Date.now();
-            let diffMs = Math.max(0, target - now);
+            const race = liveRace();
+            const post = race && race.post_at != null ? Number(race.post_at) : NaN;
+            if (!Number.isFinite(post)) return;          // no model yet: the next tick
+            const name = String(race.name || '').trim() + (race.year ? ' ' + race.year : '');
+            if (eventEl && eventEl.textContent !== name) eventEl.textContent = name;
+            const line = postLine(race);
+            if (whenEl && whenEl.textContent !== line) whenEl.textContent = line;
+            let diffMs = (post - serverNowS()) * 1000;
+            if (card) card.classList.toggle('is-off', diffMs <= 0);
+            if (diffMs <= 0) return;
             const days  = Math.floor(diffMs / (1000 * 60 * 60 * 24)); diffMs -= days * 86400000;
             const hours = Math.floor(diffMs / (1000 * 60 * 60));      diffMs -= hours * 3600000;
             const mins  = Math.floor(diffMs / (1000 * 60));           diffMs -= mins * 60000;

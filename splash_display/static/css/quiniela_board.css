@@ -78,6 +78,23 @@
         visibility 0s;
 }
 
+/* The board's rows and dots elsewhere on the page: the slideshow's roster
+   slide (the field and the track's odds) and the countdown's AND THEY'RE
+   OFF (templates/splash/horse_roster.html, countdown.html). The same
+   classes and custom properties, so the same look, but no layer of its own:
+   it sits in its slide, always shown. */
+.qb.qb--embed {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    padding: 0;
+    background: none;
+    opacity: 1;
+    visibility: visible;
+    transition: none;
+    will-change: auto;
+}
+
 /* The serape stripe, 14 px here, positioned by our own rule (the
    .splash-card rule that normally pins it only applies inside a card). */
 .qb .qb-band {
@@ -815,9 +832,12 @@
    screen a name that does not fit steps the PITCH down (the JS), never
    the dot spacing.
    ===================================================================== */
+/* ?v= is the face's version: a browser keeps a font by its URL, so after
+   tools/make_tote_font.py writes a new face (v2: the degree sign, for the
+   crawl's weather) the number goes up and the kiosk loads it. */
 @font-face {
     font-family: "DDM Tote";
-    src: url("../fonts/DDMTote.ttf") format("truetype");
+    src: url("../fonts/DDMTote.ttf?v=2") format("truetype");
     font-weight: normal;
     font-style: normal;
     font-display: block;
@@ -958,10 +978,27 @@
     background: none;
 }
 
-/* An empty cup: a 0, dim, as NO BETS was. */
+/* An empty cup: a 0, dim, as NO BETS was. On the roster slide: a horse
+   with no odds, a dim dash. */
 .qb[data-look="dots"] .qb-row.is-empty .qb-bets {
     color: var(--qb-amber);
     opacity: 0.5;
+}
+
+/* The roster slide (.qb-roster, templates/splash/horse_roster.html): the
+   same rows in a panel shorter than the board, so a smaller cloth; its
+   column is the cloth's width, the gaps on either side of the strip stay
+   22 px, and the strip, its fill rule and its scroll are the rows' own
+   (the pitch follows from the row's height). The odds stand where the bets
+   do, as many tiles as characters. */
+.qb.qb-roster[data-look="dots"] .qb-row {
+    grid-template-columns: 40px 1fr;
+}
+.qb.qb-roster[data-look="dots"] .qb-saddle {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    font-size: 28px;
 }
 
 /* Rows in "numbers": the name in Impact (the rules above this section);

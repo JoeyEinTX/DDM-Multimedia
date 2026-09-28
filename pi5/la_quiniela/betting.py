@@ -37,7 +37,9 @@
 # one home of race information, which the TV's countdown and roster slides
 # read. horses[n].odds is the real track's odds for that program number, a
 # string, from the odds poller (odds.py) when it runs, else null: they are
-# for the slideshow, never for La Quiniela, which pays no odds.
+# for the slideshow, never for La Quiniela, which pays no odds. weather is
+# pi5's weather ({"location", "temp_f", "condition"}, from the dashboard's
+# source, fed by main.py) or null, for the TV's crawl.
 #
 # How La Quiniela pays, which is what the additive keys carry: a token is one
 # dollar and one raffle ticket. After the race one token is drawn from the WIN
@@ -141,6 +143,7 @@ DEFAULTS: Dict[str, Any] = {
 }
 DEFAULT_RACE_NAME = "KENTUCKY DERBY"          # the race's name while none is stored
 ODDS_MAX_LEN = 7                              # "50-1", "5-2", "EVEN": anything longer is not odds
+WEATHER_TEXT_MAX = 40                         # a location or a condition longer than this is cut
 SPLIT_KEYS = ("LQ_SPLIT_WIN", "LQ_SPLIT_PLACE", "LQ_SPLIT_SHOW")
 SPLIT_SUM_TOLERANCE = 0.001
 
@@ -405,6 +408,30 @@ def clean_odds(odds: Any) -> Dict[int, str]:
     return out
 
 
+def clean_weather(weather: Any) -> Optional[Dict[str, Any]]:
+    """{"location": "Dallas", "temp_f": 88, "condition": "Sunny"} from what
+    main.py's weather feed hands over: strings trimmed and cut at
+    WEATHER_TEXT_MAX, the temperature a whole number; a missing or odd part
+    is None. None when nothing is left."""
+    if not isinstance(weather, dict):
+        return None
+
+    def text(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        value = " ".join(value.split())[:WEATHER_TEXT_MAX]
+        return value or None
+
+    temp = weather.get("temp_f")
+    try:
+        temp_f = None if temp is None or isinstance(temp, bool) else int(round(float(temp)))
+    except (TypeError, ValueError, OverflowError):
+        temp_f = None
+    out = {"location": text(weather.get("location")), "temp_f": temp_f,
+           "condition": text(weather.get("condition"))}
+    return out if any(v is not None for v in out.values()) else None
+
+
 def _with_now(text: str, now: float) -> str:
     """The compact model JSON with the server's clock appended. The stored
     model never holds "now" (it would make every snapshot a change), so it is
@@ -509,6 +536,7 @@ class BettingBoard:
         self._closing: Optional[Dict[str, Any]] = self.store.closing   # survives a restart (lq_closing)
         self._closing_warned = False
         self._odds: Dict[int, str] = {}           # program number -> the track's odds (set_odds)
+        self._weather: Optional[Dict[str, Any]] = None   # pi5's weather, for the TV's crawl (set_weather)
         self._model: Dict[str, Any] = self._empty_model()
         self._json: str = _dumps(self._model)
 
@@ -598,6 +626,19 @@ class BettingBoard:
         with self._lock:
             return dict(self._odds)
 
+    # -- the weather --------------------------------------------------------------
+    def set_weather(self, weather: Any) -> Optional[Dict[str, Any]]:
+        """pi5's weather for the TV's crawl (clean_weather() decides what
+        counts); None clears it. A change wakes the board thread. Returns
+        what was kept."""
+        clean = clean_weather(weather)
+        with self._lock:
+            changed = clean != self._weather
+            self._weather = clean
+        if changed:
+            self.wake()
+        return dict(clean) if clean is not None else None
+
     # -- model ---------------------------------------------------------------
     def _empty_model(self) -> Dict[str, Any]:
         horses = {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)}
@@ -625,6 +666,7 @@ class BettingBoard:
             "results": _results_dict(None),
             "closing": self._closing,
             "race": self.race_view(),
+            "weather": self._weather,
         }
 
     def _name_horses(self, horses: Dict[str, Dict[str, Any]], state_scratched: Iterable[int] = ()
@@ -919,6 +961,7 @@ class BettingBoard:
                 "results": _results_dict(extras["results"]),
                 "closing": closing,
                 "race": self.race_view(),
+                "weather": dict(self._weather) if self._weather is not None else None,
             }
             changed = model != old
             if changed:

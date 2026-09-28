@@ -650,7 +650,8 @@ may name the board's look, `http://{host}:5001/?look=dots`).
 The board's tote look draws its names and figures in the dashboard's own
 dots: its face is built from `dotPatterns` in `static/js/ddm_control.js`
 (`splash_display/tools/make_tote_font.py`), which is why that table carries
-`$` and the crawl's marks, none of which the dashboard prints itself.
+`$`, the crawl's marks and the degree sign of its weather (`88°F`), none of
+which the dashboard prints itself.
 Its results tote prints the winners' names and its SET WINNERS pickers list
 the field by post (`GET /api/quiniela/field`), each as `19 · GOLDEN TEMPO`:
 post 9 offers `22 · OCELLI` after The Puma's scratch, a horse scratched with
@@ -691,6 +692,15 @@ La Quiniela's store is the one home of race information:
   or null, and nothing errors. `PUT /api/quiniela/odds` sets them by hand
   (the program's morning line). Each successful round is also emitted as
   the spectator page's `odds_update`.
+- **The weather**, for the TV's crawl (`DALLAS 88°F SUNNY`): the
+  dashboard's own source, WeatherAPI.com through `main.py`'s cache
+  (`weather_data()`, which `GET /api/weather` answers from too, so the API
+  is asked at most once per `WEATHER_CACHE_MINUTES`). A thread started in
+  `main.py`'s `__main__` when `WEATHER_API_KEY` is set
+  (`feed_weather_to_board()`) hands the current conditions to the board
+  every `WEATHER_CACHE_MINUTES`, 5 at least; the model carries them as
+  `weather`. In memory only; a failed fetch keeps the last weather, and
+  with no key there is none and the crawl leaves the item out.
 - **The old file, once**: when pi5 starts (`main.py`'s `__main__`,
   `migrate_race_setup()`), if `data/race_setup.json` exists the log says it
   is obsolete, and the first time only (`lq_race.migrated`) its post time is
@@ -902,10 +912,15 @@ the store and the results file as follows:
   (the stored one, else the post time's; null), `post_at` (unix seconds or
   null), `post_local` (the post time on the race's clock, `5:57 PM CDT`, or
   null), `tz` (that clock's zone, `LQ_RACE_TZ`, for a page that shows a
-  date or the time of day). The TV's countdown and roster slides read it.
+  date or the time of day). The TV's countdown and roster slides read it,
+  and the crawl's time of day and time to post (`POST IN 1:14`).
 - `horses[n].odds`: the track's odds for program number n, a string, or
   null (no poller, no internet, no odds for that horse). For the roster
   slide only; nothing about La Quiniela's payouts reads it.
+- `weather`: `{"location": "Dallas", "temp_f": 88, "condition": "Sunny"}`
+  from `main.py`'s feed (above), strings trimmed and cut at 40
+  characters, the temperature a whole number, a missing part null; null
+  while there is none. The TV's crawl reads it.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -1115,10 +1130,12 @@ change, `lq_race` added to an older database); the odds by program number
 `clean_odds()` drops, the PUT and GET routes, and the poller with a fetch of
 its own (a round with odds lands in the model and is emitted, a round with
 nothing leaves them, no key no start, the thread started and stopped
-through the routes); and the old Race Setup file copied once and left in
+through the routes); the old Race Setup file copied once and left in
 place (its post time and names into an empty store, nothing a second time,
 nothing over race info or names already set, an unreadable file warned
-about).
+about); and the weather in the model (null without any, the place, a whole
+number of degrees and the sky, what `clean_weather()` drops, None
+clearing it).
 `test_smoke` pins `protocol.MAX_HORSE` to `DDM_MAX_HORSE` in `ddm_common.h`
 and also checks that importing `main.py` starts no `lq-board` thread and
 registers the routes, the admin page included.
@@ -1132,7 +1149,9 @@ files) with the LED controller stubbed and the tote board off: the menu, the
 names on the tote and in the pickers, Race Setup gone (its routes 404, its
 CSS removed), the page's CSS and JS asked for with `?v=<mtime>`, `/api/race`
 built from La Quiniela (the field and names, the odds by program number,
-the post time on the race's clock, the race state and the results), the
+the post time on the race's clock, the race state and the results), pi5's
+weather reaching the model (the feed's thread, and none without a key or
+conditions), the degree sign in the dots table, the
 thirteen buttons each
 carrying its mode, the LED command each one sends (unchanged), the race
 state each one sets, the results making it WINNER and RESET making it

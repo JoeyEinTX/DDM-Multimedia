@@ -45,7 +45,6 @@ if str(HERE) not in sys.path:
 
 import config  # noqa: E402
 import quiniela  # noqa: E402
-import race_poller  # noqa: E402
 
 # The dev harness, by path (tools/ is not a package). Importing it starts
 # nothing: its servers and the splash's own modules only come with main().
@@ -58,11 +57,9 @@ _spec = importlib.util.spec_from_file_location("make_tote_font", HERE / "tools" 
 make_tote_font = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(make_tote_font)
 
-# Keep the background threads out of the test process: the dashboard poller
-# would hit joeydevpi.local every 30 s and the link thread would try pi5
-# every few seconds. Neither is under test; start_*() are idempotent guards,
-# so marking them started makes server's module-load calls no-ops.
-race_poller._started = True
+# Keep the link thread out of the test process: it would try pi5 every few
+# seconds. start_link() is an idempotent guard, so marking it started makes
+# server's module-load call a no-op.
 quiniela._started = True
 
 import server  # noqa: E402
@@ -85,9 +82,10 @@ CONTRACT_KEYS = {
 PI5_MODEL_KEYS = CONTRACT_KEYS | {
     "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
     "cups_online", "cups_no_horse", "results", "closing",
+    "race", "weather",                      # race info lives in La Quiniela; pi5's weather for the crawl
 }
 PI5_HORSE_KEYS = {"tokens", "share", "scratched", "online", "cup", "conflict", "cups",
-                  "name", "replaced", "in_field"}
+                  "name", "replaced", "in_field", "odds"}
 UNASSIGNED = {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None}
 
 
@@ -909,49 +907,86 @@ class StreamTests(RouteCase):
         self.assertEqual(self.board.subscriber_count(), 0, "closing the response unsubscribes")
 
 
-class RosterTests(unittest.TestCase):
-    """The horse-roster slide takes the field as pi5's /api/race lists it:
-    La Quiniela's names, program numbers 1-24, scratched horses absent."""
+class RaceSlideTests(RouteCase):
+    """The countdown and the roster ("field and odds") read La Quiniela's
+    model as the splash relays it: in the playlist only with something to
+    show, shells the page fills from the live model, no copy of the race or
+    of the glyphs of their own."""
 
-    def setUp(self) -> None:
-        self._saved = race_poller.get_race_data
+    def redesign(self, **kw) -> "fake_pi5.FakePi5":
+        return fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.REDESIGN_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS,
+                                names_rev=2, **kw)
 
-    def tearDown(self) -> None:
-        race_poller.get_race_data = self._saved
+    def relay(self, fake) -> Dict[str, Any]:
+        self.assertTrue(self.board.apply_model(json.loads(fake.model_json())))
+        return self.board.model()
 
-    def feed(self, numbers) -> None:
-        horses = [{"number": n, "name": f"Horse {n}", "odds": None, "finish": None} for n in numbers]
-        race_poller.get_race_data = lambda: {"race_state": "pre-race", "post_time": "6:57 PM ET",
-                                             "post_time_iso": "", "last_updated": "", "horses": horses,
-                                             "winner": None}
+    def slides(self) -> Dict[str, Any]:
+        pages = {p["id"]: p for p in server.load_splash_pages()}
+        return {sid: server._splash_page_to_slide(pages[sid]) for sid in ("countdown", "horse_roster")}
 
-    def test_two_columns_of_ten_in_numeric_order(self) -> None:
-        self.feed(range(1, 21))
-        ctx = server._build_horse_roster_context()
-        self.assertEqual([h["number"] for h in ctx["horses_left"]], list(range(1, 11)))
-        self.assertEqual([h["number"] for h in ctx["horses_right"]], list(range(11, 21)))
+    def test_nothing_heard_from_pi5_no_race_slides(self) -> None:
+        self.assertIsNone(server.race_post_at())
+        self.assertFalse(server.roster_ready())
+        self.assertEqual(self.slides(), {"countdown": None, "horse_roster": None})
 
-    def test_an_also_eligible_that_drew_in_is_listed_where_its_number_sorts(self) -> None:
-        field = [n for n in range(1, 20) if n != 9] + [22]      # 9 -> 22, 20 scratched
-        self.feed(reversed(field))
-        ctx = server._build_horse_roster_context()
-        self.assertEqual([h["number"] for h in ctx["horses_left"]], [1, 2, 3, 4, 5, 6, 7, 8, 10, 11])
-        self.assertEqual([h["number"] for h in ctx["horses_right"]], [12, 13, 14, 15, 16, 17, 18, 19, 22])
+    def test_a_post_time_and_a_named_field_put_both_in(self) -> None:
+        fake = self.redesign(post_at=1_809_212_220.0)
+        m = self.relay(fake)
+        self.assertEqual(server.race_post_at(), 1_809_212_220.0)
+        self.assertEqual(m["race"]["post_local"] is not None, True)
+        slides = self.slides()
+        for sid in ("countdown", "horse_roster"):
+            self.assertEqual(slides[sid]["splash_id"], sid)
+            self.assertNotIn("html", slides[sid], "a shell from the template cache; the page fills it")
+        fake.set_post(None)
+        self.relay(fake)
+        self.assertIsNone(self.slides()["countdown"], "no post time: the countdown leaves the playlist")
+        self.assertIsNotNone(self.slides()["horse_roster"])
+        for _ in range(3):
+            self.assertFalse(any(s["splash_id"] == "countdown" for s in server.build_playlist() if s.get("type") == "splash"))
 
-    def test_no_horses_drops_the_slide(self) -> None:
-        self.feed([])
-        self.assertIsNone(server._build_horse_roster_context())
-        self.feed([0, 25])
-        self.assertIsNone(server._build_horse_roster_context())
+    def test_a_field_without_names_is_no_roster(self) -> None:
+        fake = self.redesign(post_at=None)
+        for n in list(fake.names):
+            fake.set_name(n, "")
+        self.relay(fake)
+        self.assertFalse(server.roster_ready())
+        self.assertIsNone(self.slides()["horse_roster"])
 
-    def test_the_slide_renders_a_cloth_for_22(self) -> None:
-        self.feed([1, 22])
+    def test_the_roster_is_a_shell_of_the_boards_rows(self) -> None:
         with server.app.test_request_context("/"):
-            html = server.render_template("splash/horse_roster.html", **server._build_horse_roster_context())
-        self.assertIn("splash-saddle--pos-22", html)
+            html = server.render_template("splash/horse_roster.html")
+        for needle in ('class="qb qb--embed qb-roster"', 'data-look="dots"', 'data-roster="board"',
+                       'data-roster-col="0"', 'data-roster-col="1"', 'data-roster="post"', ">Odds<", ">Horse<"):
+            self.assertIn(needle, html)
+        for gone in ("splash-tote-digit", "splash-tote-cell", "_DOT_PATTERNS", "splash-saddle--pos", "6:57 PM ET"):
+            self.assertNotIn(gone, html, "the roster's own dots and cloths are gone")
         css = (HERE / "static" / "css" / "ddm_style.css").read_text(encoding="utf-8")
-        for n in (21, 22, 23, 24):
-            self.assertIn(f".splash-saddle--pos-{n} ", css)
+        for gone in (".splash-tote-digit", ".splash-tote-cell", ".splash-saddle--pos-1 ", ".splash-tote-staleness"):
+            self.assertNotIn(gone, css)
+        board_css = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
+        self.assertIn(".qb.qb--embed {", board_css)
+        js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        for needle in ("window.ddmQuiniela", "function fillRoster", "makeRow(n)", "h.odds"):
+            self.assertIn(needle, js)
+
+    def test_the_countdown_reads_the_race(self) -> None:
+        with server.app.test_request_context("/"):
+            html = server.render_template("splash/countdown.html")
+        for needle in ('data-race="event"', 'data-race="when"', "countdown-off", "And they're off",
+                       'data-countdown="days"', 'data-countdown="seconds"'):
+            self.assertIn(needle, html)
+        for gone in ("Kentucky Derby 2026", "May 2", "6:57 PM ET"):
+            self.assertNotIn(gone, html, "no race of its own")
+        page = (HERE / "templates" / "slideshow.html").read_text(encoding="utf-8")
+        self.assertNotIn("DDM_POST_TIME_ISO", page)
+        self.assertIn("('horse_roster',      'splash/horse_roster.html')", page)
+        for needle in ("liveRace()", "race.post_at", "'is-off'", "postLine(race)", "q.fillRoster(board)"):
+            self.assertIn(needle, page)
+        self.assertFalse((HERE / "race_poller.py").exists(), "the race poller is gone")
 
 
 class LookTests(RouteCase):
@@ -1025,8 +1060,8 @@ class LookTests(RouteCase):
         html = self.client.get("/display?look=dots").get_data(as_text=True)
         # figures: the pot, three prizes, a row's bets (the template), the results' three counts and three prizes
         self.assertEqual(html.count('data-tote="num"'), 1 + 3 + 1 + 3 + 3)
-        # names: a row's (the template) and the results' three
-        self.assertEqual(html.count('data-tote="name"'), 1 + 3)
+        # names: a row's (the template), the results' three, and the countdown's AND THEY'RE OFF
+        self.assertEqual(html.count('data-tote="name"'), 1 + 3 + 1)
         for sign in ('class="qb-saddle"', 'class="qb-result-saddle"', 'id="qb-banner-text"', 'id="qb-toast-name"',
                      'class="qb-result-place"', 'class="qb-prize-k"'):
             tag = html[html.index(sign) - 40:html.index(">", html.index(sign))]
@@ -1035,7 +1070,7 @@ class LookTests(RouteCase):
     def test_the_stylesheet_and_the_script_know_the_looks(self) -> None:
         css = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
         self.assertIn('font-family: "DDM Tote";', css)
-        self.assertIn('url("../fonts/DDMTote.ttf")', css)
+        self.assertIn('url("../fonts/DDMTote.ttf?v=2")', css)      # the face's version (v2: the degree sign)
         self.assertIn('.qb[data-look="dots"] [data-tote="name"]', css)
         self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"]', css)
         self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text', css)
@@ -1090,7 +1125,11 @@ CHROME = find_chrome()
 # strips: each row's strip, measured in tiles (served with the stylesheet,
 # the tote look's rows); pulses: the rows that pulsed since the last reading.
 # A "model" {"__stage": [w, h]} is no model: the page's stage takes that
-# size and the window says it was resized, as a TV's would.
+# size and the window says it was resized, as a TV's would; {"__wait": ms}
+# only lets time pass. crawl: the crawl's items, one copy; the live ones
+# carry their kind. roster: the roster slide's rows when the page has one
+# (filled by window.ddmQuiniela.fillRoster after each model, as the
+# slideshow does when the slide loads).
 BOARD_PROBE_JS = r"""
 (() => {
     const MODELS = __MODELS__;
@@ -1129,6 +1168,30 @@ BOARD_PROBE_JS = r"""
             steps: frames.slice(1, -1).map((k) => [Math.round(k.offset * duration), r2(shift(k))]),
         };
     }
+    function crawl() {
+        const items = [...document.querySelectorAll('#qb-track .qb-crawl-item')].map((el) => {
+            const live = el.querySelector('[data-live]');
+            return live ? live.dataset.live + ':' + live.textContent : el.textContent.trim();
+        });
+        const again = items.indexOf(items[0], 1);
+        const marks = [...document.querySelectorAll('#qb-track [data-live="post"]')].map((el) => el.dataset.mark || '');
+        return { items: again > 0 ? items.slice(0, again) : items, marks };
+    }
+    function roster() {
+        const root = document.querySelector('[data-roster="board"]');
+        if (!root) return null;
+        const panel = root.closest('.splash-tote-board') || root;
+        const pr = panel.getBoundingClientRect();
+        const bw = parseFloat(getComputedStyle(panel).borderRightWidth) || 0;
+        return [...root.querySelectorAll('[data-roster-col]')].map((col, c) => [...col.querySelectorAll('.qb-row')].map((row) => {
+            const rr = row.getBoundingClientRect(), cr = col.getBoundingClientRect();
+            return Object.assign(strip(row), {
+                horse: Number(row.dataset.horse), col: c, name: row.querySelector('.qb-name').textContent,
+                odds: row.querySelector('.qb-bets').textContent, empty: row.classList.contains('is-empty'),
+                inside: rr.right <= cr.right + 0.5 && rr.bottom <= pr.bottom - bw + 0.5 && rr.left >= cr.left - 0.5,
+            });
+        }));
+    }
     function read() {
         const board = document.getElementById('quiniela-board');
         const rows = {};
@@ -1152,7 +1215,7 @@ BOARD_PROBE_JS = r"""
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
-                 rows: rows, strips: strips, results: results, pulses: pulses,
+                 rows: rows, strips: strips, results: results, pulses: pulses, crawl: crawl(), roster: roster(),
                  toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
     let stream = null;
@@ -1170,11 +1233,16 @@ BOARD_PROBE_JS = r"""
                 stage.style.width = m.__stage[0] + 'px';
                 stage.style.height = m.__stage[1] + 'px';
                 window.dispatchEvent(new Event('resize'));
+            } else if (m.__wait) {
+                await new Promise((resolve) => setTimeout(resolve, m.__wait));
             } else {
                 stream.onmessage({ data: JSON.stringify(m) });
+                const root = document.querySelector('[data-roster="board"]');
+                if (root && window.ddmQuiniela) window.ddmQuiniela.fillRoster(root);
             }
             await new Promise((resolve) => setTimeout(resolve, WAIT_MS));
             out.push(read());
+            for (const el of document.querySelectorAll('#qb-track [data-live="post"]')) el.dataset.mark = String(out.length);
         }
         document.getElementById('probe').textContent = JSON.stringify(out);
     }
@@ -1183,15 +1251,17 @@ BOARD_PROBE_JS = r"""
 
 
 def run_board(models: List[dict], look: str = "impact", styled: bool = False,
-              stage: Tuple[int, int] = (1920, 1080)) -> List[dict]:
+              stage: Tuple[int, int] = (1920, 1080), roster: bool = False) -> List[dict]:
     """The board's real template and script in a page of their own, fed
     `models` in turn; what the board showed after each. Styled, the page is
     served over loopback with the board's stylesheet and fonts, the board on
     a `stage` (1920x1080 unless said), which is what the tote look's rows
     need to be measured; otherwise it is a file with the template and the
-    script alone."""
+    script alone. roster: the slideshow's roster slide as well (styled),
+    in a slide layer of its own under the board, as on the TV."""
     with server.app.test_request_context("/"):
         board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
+        roster_html = server.render_template("splash/horse_roster.html") if roster else ""
     probe = BOARD_PROBE_JS.replace("__MODELS__", json.dumps(models))
     tmp = Path(tempfile.mkdtemp(prefix="qb_page_"))
     srv = thread = None
@@ -1200,9 +1270,11 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
             # The board fills a 1920x1080 stage, as it fills #slideshow-stage on
             # the TV: a headless window's viewport is its size less a frame.
             page = ('<!doctype html><html><head><meta charset="utf-8">'
-                    '<link rel="stylesheet" href="/static/css/quiniela_board.css"></head><body style="margin: 0">\n'
+                    + ('<link rel="stylesheet" href="/static/css/ddm_style.css">' if roster else '')
+                    + '<link rel="stylesheet" href="/static/css/quiniela_board.css"></head><body style="margin: 0">\n'
                     f'<div id="qb-stage" style="position: relative; width: {stage[0]}px; height: {stage[1]}px; '
-                    'overflow: hidden">' + board_html
+                    'overflow: hidden">'
+                    + ('<div class="slide is-active">' + roster_html + '</div>' if roster else '') + board_html
                     + '</div>\n<pre id="probe" style="display: none"></pre>\n<script>' + probe
                     + '</script>\n<script src="/static/js/quiniela_board.js"></script>\n</body></html>\n')
             app = Flask("board_page", static_folder=str(HERE / "static"), static_url_path="/static")
@@ -1222,7 +1294,8 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
             url = path.resolve().as_uri()
         cmd = [CHROME, "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                "--hide-scrollbars", "--window-size=1920,1080", "--user-data-dir=" + str((tmp / "profile").resolve()),
-               "--virtual-time-budget=" + str(1000 + 900 * len(models)), "--dump-dom", url]
+               "--virtual-time-budget=" + str(1000 + 900 * len(models) + sum(int(m.get("__wait", 0)) for m in models)),
+               "--dump-dom", url]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             cmd.insert(1, "--no-sandbox")
         done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -1482,6 +1555,101 @@ class DotsRowTests(unittest.TestCase):
                 self.assertEqual((s["display"], s["columns"], s["scrolls"]), ("contents", 3, 0), why)
                 self.assertEqual(seen["rows"][horse], "No bets" if fake_pi5.STRIP_TOKENS[int(horse)] == 0
                                  else str(fake_pi5.STRIP_TOKENS[int(horse)]), why)
+
+
+def redesign_model(**kw) -> dict:
+    """The 2026 field as tools/fake_pi5.py's redesign feed serves it (5 -> 21,
+    9 -> 22, 13 -> 23 drawn in, 20 scratched with no replacement), with its
+    race, odds and weather unless told otherwise."""
+    fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.REDESIGN_TOKENS,
+                            scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                            names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS, names_rev=2, **kw)
+    return json.loads(fake.model_json())
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class RosterSlideTests(unittest.TestCase):
+    """The slideshow's roster slide ("field and odds") in headless Chrome with
+    both stylesheets and the face: the TV board's own rows, filled from La
+    Quiniela's model by window.ddmQuiniela.fillRoster in the slide's panel."""
+
+    FIELD = [n for n in range(1, 20) if n not in (5, 9, 13)] + [21, 22, 23]
+
+    def test_the_2026_field_with_its_odds_in_two_columns(self) -> None:
+        # The board itself in Impact: the roster is the tote look's strip whatever the board's look.
+        [seen] = run_board([redesign_model()], look="impact", styled=True, roster=True)
+        cols = seen["roster"]
+        self.assertEqual([[r["horse"] for r in col] for col in cols], [self.FIELD[:10], self.FIELD[10:]],
+                         "the field by number, the replacements under their own numbers, 20 gone, ten a column")
+        rows = [r for col in cols for r in col]
+        for r in rows:
+            why = f"row {r['horse']}"
+            odds = fake_pi5.REDESIGN_ODDS.get(r["horse"])
+            self.assertEqual(r["name"], fake_pi5.REDESIGN_NAMES[r["horse"]].upper(), why)
+            self.assertEqual((r["odds"], r["empty"]), (odds or "—", odds is None), why + ": no odds, a dim dash")
+            self.assertEqual(r["bets"], len(odds or "—"), why + ": as many tiles as the odds have characters")
+            self.assertEqual(r["area"], r["tiles"] - r["bets"] - 1, why + ": one dark tile before the odds")
+            self.assertEqual((r["display"], r["betsRight"]), ("block", 0), why + ": the odds in the strip's last tiles")
+            self.assertLessEqual(abs(r["leftover"]), 2, why + ": the strip fills the row")
+            self.assertTrue(r["inside"], why + ": inside its column and the panel, nothing clipped")
+            self.assertEqual(r["scrolls"], 1 if len(r["name"]) > r["area"] else 0,
+                             why + ": a name longer than its area scrolls a tile at a time")
+        self.assertEqual(len({(r["tiles"], r["tile"], r["font"]) for r in rows}), 1, "every row the same strip")
+        self.assertEqual({rows[0]["odds"], rows[-1]["odds"]}, {"8-1", "—"}, "odds present (1) and absent (23)")
+
+    def test_no_odds_at_all(self) -> None:
+        [seen] = run_board([redesign_model(odds=None)], look="dots", styled=True, roster=True)
+        rows = [r for col in seen["roster"] for r in col]
+        self.assertEqual({(r["odds"], r["empty"], r["bets"]) for r in rows}, {("—", True, 1)})
+        self.assertEqual(len(rows), 19)
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class CrawlLiveTests(unittest.TestCase):
+    """The crawl's live items, after its first line: the time of day on the
+    race's clock, the time to post, the weather; in place as time passes,
+    left out when there is nothing to say."""
+
+    NOW = 1_809_218_520.0        # 2027-05-01 7:42 PM CDT (00:42 UTC on the 2nd), pi5's clock
+
+    def model(self, post_in: Optional[float], weather: bool = True) -> dict:
+        m = redesign_model(post_at=(self.NOW + post_in) if post_in is not None else None,
+                           weather=dict(fake_pi5.DEFAULT_WEATHER) if weather else None)
+        m["now"] = self.NOW
+        return m
+
+    def items(self, seen: dict) -> List[str]:
+        return seen["crawl"]["items"]
+
+    def test_time_post_and_weather_between_the_first_line_and_the_scratches(self) -> None:
+        [seen] = run_board([self.model(74 * 60)], look="dots", styled=True)
+        items = self.items(seen)
+        self.assertEqual(items[0], fake_pi5.CHYRON_LINES[0])
+        self.assertEqual(items[1:4], ["time:7:42 PM", "post:Post in 1:14", "weather:Dallas 88°F Sunny"])
+        self.assertTrue(items[4].startswith("Scratched"), items[4])
+        self.assertEqual(items[-1], fake_pi5.CHYRON_LINES[-1])
+
+    def test_under_ten_minutes_the_seconds_tick_in_place(self) -> None:
+        first, later = run_board([self.model(582), {"__wait": 2000}], look="dots", styled=True)
+        self.assertEqual(self.items(first)[2], "post:Post in 9:42")
+        post = self.items(later)[2]
+        self.assertRegex(post, r"^post:Post in 9:[34]\d$")
+        self.assertLess(post, "post:Post in 9:42", "it counted down")
+        self.assertTrue(later["crawl"]["marks"] and all(m == "1" for m in later["crawl"]["marks"]),
+                        "the same elements: changed in place, the crawl not rebuilt")
+
+    def test_after_the_post_and_without_weather_they_are_left_out(self) -> None:
+        past, no_post = run_board([self.model(-60, weather=False), self.model(None, weather=False)],
+                                  look="dots", styled=True)
+        for seen in (past, no_post):
+            items = self.items(seen)
+            self.assertEqual(items[1], "time:7:42 PM")
+            self.assertTrue(items[2].startswith("Scratched"), items)
+            self.assertFalse(any(i.startswith(("post:", "weather:")) for i in items), items)
+
+    def test_impact_too(self) -> None:
+        [seen] = run_board([self.model(74 * 60)], look="impact", styled=True)
+        self.assertEqual(self.items(seen)[1:4], ["time:7:42 PM", "post:Post in 1:14", "weather:Dallas 88°F Sunny"])
 
 
 def _sfnt(data: bytes) -> Dict[str, Any]:
@@ -1819,9 +1987,11 @@ class ServerStartupTests(unittest.TestCase):
     def test_config_points_at_pi5(self) -> None:
         self.assertEqual(config.FLASK_PORT, 5001)
         self.assertTrue(config.PI5_URL.startswith("http://"))
-        self.assertEqual(config.DASHBOARD_RACE_URL, config.PI5_URL + "/api/race")
         self.assertEqual(quiniela.link.base_url, config.PI5_URL.rstrip("/"))
-        for gone in ("GATEWAY_PORT", "TOKEN_VALUE", "QUINIELA_LOG", "QUINIELA_BOARD_STATES"):
+        # The race is La Quiniela's (the relayed model): no post time, no
+        # race poller, no roster URL of the splash's own.
+        for gone in ("GATEWAY_PORT", "TOKEN_VALUE", "QUINIELA_LOG", "QUINIELA_BOARD_STATES",
+                     "DDM_2026_POST_TIME_ISO", "DASHBOARD_RACE_URL", "RACE_DATA_STALENESS_S"):
             self.assertFalse(hasattr(config, gone), gone)
 
 

@@ -481,6 +481,11 @@ data: {"win": 5, "place": 12, "show": 8}
 - API key must be set in `config.py` (`WEATHER_API_KEY`)
 - Location set in `config.py` (`WEATHER_LOCATION`)
 - Results cached for `WEATHER_CACHE_MINUTES` (default: 15 minutes)
+- The same cache feeds La Quiniela's model (`weather`: `{"location",
+  "temp_f", "condition"}`, the TV crawl's `DALLAS 88°F SUNNY`), so the API is
+  asked at most once per `WEATHER_CACHE_MINUTES` for both
+- A failed fetch with an expired cache answers the cached `hourly`,
+  `current` and `location` with `"cached": true, "stale": true`
 
 **Error Response:**
 ```json

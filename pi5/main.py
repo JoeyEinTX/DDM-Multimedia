@@ -975,32 +975,34 @@ def api_esp32_config_set():
     })
 
 
-@app.route('/api/weather', methods=['GET'])
-def api_weather():
-    """Get weather forecast with caching - returns 12 hours starting from current hour"""
+def weather_data():
+    """The weather, from WeatherAPI.com through the cache: (payload, status).
+    payload is what GET /api/weather answers: {"success", "hourly" (12 hours
+    from the current one), "current", "location", "cached"}, plus "stale"
+    when a failed fetch fell back to an expired cache; {"success": False,
+    "error"} with 503 when there is no key or nothing to fall back to. The
+    dashboard's panel and La Quiniela's weather feed (the TV's crawl) both
+    read it, so the API is asked at most once per WEATHER_CACHE_MINUTES."""
     global weather_cache
-    
+
     # Check if API key is configured
     if not WEATHER_API_KEY:
-        return jsonify({
-            'success': False,
-            'error': 'Weather API key not configured'
-        }), 503
-    
+        return {'success': False, 'error': 'Weather API key not configured'}, 503
+
     # Check cache
     now = datetime.now()
     if weather_cache['data'] and weather_cache['timestamp']:
         cache_age = (now - weather_cache['timestamp']).total_seconds() / 60
         if cache_age < WEATHER_CACHE_MINUTES:
             cached_data = weather_cache['data']
-            return jsonify({
+            return {
                 'success': True,
                 'hourly': cached_data.get('hourly', []),
                 'current': cached_data.get('current', {}),
                 'location': cached_data.get('location', 'Dallas, TX'),
                 'cached': True
-            })
-    
+            }, 200
+
     # Fetch fresh data from WeatherAPI.com
     try:
         url = "http://api.weatherapi.com/v1/forecast.json"
@@ -1009,22 +1011,22 @@ def api_weather():
             'q': WEATHER_LOCATION,
             'days': 2  # Request 2 days to ensure we have tomorrow's hours
         }
-        
+
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        
+
         data = response.json()
-        
+
         # Get current hour from API's location time
         localtime = data.get('location', {}).get('localtime', '')  # Format: "2025-12-07 20:35"
         current_hour = int(localtime.split(' ')[1].split(':')[0]) if localtime else datetime.now().hour
-        
+
         # Get forecast days
         forecast_days = data.get('forecast', {}).get('forecastday', [])
-        
+
         # Collect hourly data starting from current hour
         all_hours = []
-        
+
         # Get today's hours (from current hour onwards)
         if len(forecast_days) > 0:
             today_hours = forecast_days[0].get('hour', [])
@@ -1033,19 +1035,19 @@ def api_weather():
                 hour = int(hour_time_str.split(' ')[1].split(':')[0]) if hour_time_str else 0
                 if hour >= current_hour:
                     all_hours.append(hour_data)
-        
+
         # Get tomorrow's hours if we need more to reach 12 hours
         if len(forecast_days) > 1 and len(all_hours) < 12:
             tomorrow_hours = forecast_days[1].get('hour', [])
             needed_hours = 12 - len(all_hours)
             all_hours.extend(tomorrow_hours[:needed_hours])
-        
+
         # Take exactly 12 hours
         hourly_data = all_hours[:12]
-        
+
         # Extract current conditions
         current_data = data.get('current', {})
-        
+
         # Cache the results
         weather_cache['data'] = {
             'hourly': hourly_data,
@@ -1053,30 +1055,70 @@ def api_weather():
             'location': data.get('location', {}).get('name', WEATHER_LOCATION)
         }
         weather_cache['timestamp'] = now
-        
-        return jsonify({
+
+        return {
             'success': True,
             'hourly': hourly_data,
             'current': current_data,
             'location': data.get('location', {}).get('name', WEATHER_LOCATION),
             'cached': False
-        })
-        
-    except requests.RequestException as e:
+        }, 200
+
+    except (requests.RequestException, ValueError) as e:
         print(f"Error fetching weather: {e}")
-        # Return cached data if available, even if expired
+        # Return cached data if available, even if expired (the cache's own
+        # fields: it used to hand back the whole cache as "hourly")
         if weather_cache['data']:
-            return jsonify({
+            cached_data = weather_cache['data']
+            return {
                 'success': True,
-                'hourly': weather_cache['data'],
+                'hourly': cached_data.get('hourly', []),
+                'current': cached_data.get('current', {}),
+                'location': cached_data.get('location', WEATHER_LOCATION),
                 'cached': True,
                 'stale': True
-            })
-        
-        return jsonify({
-            'success': False,
-            'error': 'Failed to fetch weather data'
-        }), 503
+            }, 200
+
+        return {'success': False, 'error': 'Failed to fetch weather data'}, 503
+
+
+@app.route('/api/weather', methods=['GET'])
+def api_weather():
+    """Get weather forecast with caching - returns 12 hours starting from current hour"""
+    payload, status = weather_data()
+    return jsonify(payload), status
+
+
+def weather_for_board(payload):
+    """What La Quiniela's model carries of the weather (the TV's crawl reads
+    it): {"location": "Dallas", "temp_f": 88, "condition": "Sunny"}, or
+    None when the payload has no current conditions."""
+    if not isinstance(payload, dict) or not payload.get('success'):
+        return None
+    current = payload.get('current')
+    if not isinstance(current, dict) or not current:
+        return None
+    condition = current.get('condition')
+    return {'location': payload.get('location'), 'temp_f': current.get('temp_f'),
+            'condition': condition.get('text') if isinstance(condition, dict) else None}
+
+
+def feed_weather_to_board(stop_event=None):
+    """Daemon target: the weather into La Quiniela's model every
+    WEATHER_CACHE_MINUTES (5 at least), so the TV's crawl can show it. A
+    failed fetch leaves the last weather in place; with no API key there is
+    none and the crawl leaves the item out."""
+    period = max(5, int(WEATHER_CACHE_MINUTES or 15)) * 60
+    stop_event = stop_event or Event()
+    while not stop_event.is_set():
+        try:
+            payload, _status = weather_data()
+            weather = weather_for_board(payload)
+            if weather is not None:
+                get_board().set_weather(weather)
+        except Exception as e:
+            print(f"[Weather] feed to La Quiniela failed: {e}")
+        stop_event.wait(period)
 
 
 # ---------------------------------------------------------------------------
@@ -1165,5 +1207,8 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[La Quiniela] Race Setup migration skipped: {e}")
         start_board()
+        if WEATHER_API_KEY:
+            # The weather into La Quiniela's model for the TV's crawl
+            Thread(target=feed_weather_to_board, name='weather-feed', daemon=True).start()
     
     socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)

@@ -95,6 +95,11 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       → `SET`. A `NO LINK` badge in a corner means that cup can't hear the gateway (not up
       yet, or too far).
 - [ ] Gateway plugged into DevPi.
+- [ ] Once the apps are up (section 3), watch the TV's slideshow for a lap: the countdown
+      slide counts down to today's post under `KENTUCKY DERBY 2027`, and the roster slide
+      lists the field by number, replacements under their own numbers, with the odds (a dim
+      `—` where there are none: start the odds poller or type them, appendix). When the
+      board is up its crawl carries the time, `POST IN 1:14` and the weather.
 
 ### 3. Start the apps (skip if they're services)
 
@@ -228,6 +233,9 @@ too and leaves the results and the LEDs as they are.
 | Count wrong after a bump | baseline drifted | Pull all tokens, wait for 0, put them back in one pour. |
 | Cup screen upside down / mirrored | orientation stepped (BOOT held 15 s) | Serial: `x`. Or touch menu (hold 3 s) → FLIP 180. |
 | Cup blinks / reboots | power sag | Check the bus voltage at that cup; never USB. |
+| No countdown slide, or the wrong race on it; the roster's post time blank | Race info has no post time, or last year's | `ADMIN` → Race info → the date and the post time → Save race info (section 1). A countdown on screen shows it on its next second; one left out of the slideshow comes back on the next lap (the playlist is rebuilt every ~35 slides, a few minutes). |
+| No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
+| The crawl has no weather | pi5 has no `WEATHER_API_KEY`, or no internet yet | Nothing needed: the item is left out. With a key it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
 | Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results and the figures at the post until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. |
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: the lit button is the state pi5 holds (the ticker on `DASH` says the same). Press the right one, on either page, and read what it answers. |

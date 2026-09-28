@@ -30,7 +30,7 @@ splash_display/
 ├── templates/
 │   ├── base.html
 │   ├── slideshow.html       # Master slideshow (kiosk URL target)
-│   ├── splash/{countdown,la_subasta,la_quiniela,derby_dash,ddm_brand}.html
+│   ├── splash/{countdown,horse_roster,la_subasta,la_quiniela,derby_dash,ddm_brand}.html
 │   ├── splash/quiniela_live.html   # the live board layer (not a playlist slide)
 │   └── trivia/{fact_card,qa_reveal}.html
 ├── static/
@@ -195,7 +195,9 @@ Nothing here is required for the slideshow: with pi5 unreachable the link
 keeps retrying, `/api/quiniela` reports `"link_ok": false` with an empty
 `board_states`, and the board stays hidden. pyserial is no longer needed on
 this Pi: only pi5 opens the USB port, and no serial device is ever touched
-here.
+here. The two race slides read the same model (see [The race
+slides](#the-race-slides)): without pi5 they are simply left out of the
+playlist.
 
 ### The pi5 link
 
@@ -251,18 +253,18 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "pot": 150.0, "total_tokens": 154,
   "horses": {
     "1": {"tokens": 0, "share": 0, "in_field": true, "scratched": false, "online": false, "cup": null,
-          "conflict": false, "cups": [], "name": "", "replaced": null},
+          "conflict": false, "cups": [], "name": "", "replaced": null, "odds": "8-1"},
     "7": {"tokens": 23, "share": 0.1494, "in_field": true, "scratched": false, "online": true,
           "cup": "A0:B7:65:12:34:56", "conflict": false, "cups": ["A0:B7:65:12:34:56"],
-          "name": "DANON BOURBON", "replaced": null},
+          "name": "DANON BOURBON", "replaced": null, "odds": "4-1"},
     "9": {"tokens": 0, "share": 0, "in_field": false, "scratched": false, "online": false, "cup": null,
-          "conflict": false, "cups": [], "name": "THE PUMA", "replaced": null},
+          "conflict": false, "cups": [], "name": "THE PUMA", "replaced": null, "odds": null},
     "20": {"tokens": 4, "share": 0.026, "in_field": false, "scratched": true, "online": true,
            "cup": "A0:B7:65:12:34:69", "conflict": false, "cups": ["A0:B7:65:12:34:69"],
-           "name": "FULLEFFORT", "replaced": null},
+           "name": "FULLEFFORT", "replaced": null, "odds": null},
     "22": {"tokens": 7, "share": 0.0455, "in_field": true, "scratched": false, "online": true,
            "cup": "A0:B7:65:12:34:5E", "conflict": false, "cups": ["A0:B7:65:12:34:5E"],
-           "name": "OCELLI", "replaced": "THE PUMA"}
+           "name": "OCELLI", "replaced": "THE PUMA", "odds": "20-1"}
   },
   "leader": 7,
   "events": [ {"horse": 7, "delta": 1, "ts": 1695400000.0} ],
@@ -279,7 +281,10 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
                  {"was": {"number": 20, "name": "FULLEFFORT"}, "now": null} ],
   "cups_online": 20, "cups_no_horse": 0,
   "results": null,
-  "closing": null
+  "closing": null,
+  "race": {"name": "KENTUCKY DERBY", "year": 2026, "post_at": 1777762620.0,
+           "post_local": "5:57 PM CDT", "tz": "America/Chicago"},
+  "weather": {"location": "Dallas", "temp_f": 88, "condition": "Sunny"}
 }
 ```
 
@@ -345,6 +350,16 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   and drops them on Reset betting and in 0 or 1. The board shows them in
   3, 4 and 5 (below); the live `pot`, `prizes` and tokens keep following
   the cups underneath.
+- `race` is La Quiniela's race info, the only copy (pi5's Race Setup is
+  gone): `name` upper-cased (`KENTUCKY DERBY` until one is saved),
+  `year`, `post_at` (unix seconds, or `null` while no post time is set),
+  `post_local` (the post time on the race's clock, `"5:57 PM CDT"`, or
+  `null`) and `tz` (that clock, pi5's `LQ_RACE_TZ`). The crawl's clock and
+  time to post and the two race slides read it. `weather` is pi5's weather
+  feed, `{"location", "temp_f", "condition"}` (any part `null`), or
+  `null` when there is none: the crawl leaves it out. `horses[n].odds` is
+  the track's line for that program number, a short string (`"5-2"`), or
+  `null`; only the roster slide reads it.
 - `board_states` are the race states in which the board owns the TV; pi5
   decides them (`[1, 2, 3, 4, 5]`: betting, the race and the results; the
   TV goes back to the playlist in 0 and 6). Until pi5 has been heard the
@@ -352,8 +367,9 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
   board stays hidden), and none of the additive keys (`now`, `closes_at`,
   `prizes`, `split`, `chyron`, `names_rev`, `scratches`, `results`,
-  `closing`, `cups_online`, `cups_no_horse`, `name`, `replaced`,
-  `in_field`, `conflict`, `cups`); the board tolerates their absence.
+  `closing`, `cups_online`, `cups_no_horse`, `race`, `weather`, `name`,
+  `replaced`, `odds`, `in_field`, `conflict`, `cups`); the board and the
+  race slides tolerate their absence.
 
 ```bash
 curl -s localhost:5001/api/quiniela | python3 -m json.tool
@@ -405,7 +421,7 @@ pinging the TV while pi5 is unreachable; only `link_ok` changes.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `FLASK_PORT` | `5001` | This app's port (pi5's dashboard owns 5000 on DevPi) |
-| `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`) and the race roster (`/api/race`) both come from it |
+| `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`), and in it everything the race slides and the crawl show (the race info, the field, the odds, the weather). The splash asks pi5 for nothing else |
 | `QUINIELA_LOOK` | `"dots"` | The board's look: `"dots"` (the tote look, what the TV shows), `"impact"` or `"numbers"` (the tote look's figures, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
 
 Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
@@ -548,7 +564,12 @@ the live board follows pixel for pixel where practical):
 - Chyron: a 50 px band along the bottom, a continuous right-to-left
   crawl edge to edge at ~120 px/s (one CSS transform animation over a
   track whose content is repeated; the duration is computed from the
-  track's width after layout). Content, in order: `chyron[0]`; then, when
+  track's width after layout). Content, in order: `chyron[0]`; the live
+  items: the time of day on the race's clock (`7:42 PM`), the time to post
+  (`POST IN 1:14`, hours and minutes; under ten minutes `POST IN 9:42`,
+  minutes and seconds; gone once the post time has passed or while there
+  is none) and pi5's weather (`DALLAS 88°F SUNNY`, left out when pi5 has
+  none); then, when
   `scratches` is not empty, one `SCRATCHED` item with every scratch, a gap
   between them: a replacement reads `[9] THE PUMA ▶ [22] OCELLI` (both
   badges in their cloth colours, the old name struck through, the gold
@@ -558,7 +579,12 @@ the live board follows pixel for pixel where practical):
   ignored; then the remaining `chyron` lines, gold diamonds between items.
   It is rebuilt when `chyron`, `scratches` or `names_rev` change, swapping
   the content at the loop boundary so the text never jumps (at once if
-  nothing is crawling yet).
+  nothing is crawling yet). The live items change **in place**, checked
+  every second: a text is replaced by one of the same length (in the tote
+  look every character is a tile, so the track keeps its width) and the
+  crawl is not restarted. An item coming or going, or a text of another
+  length (`9:59 PM` to `10:00 PM`, new weather), is a rebuild like any
+  other, at the loop boundary.
 
 **Motion.** A changed count ticks to the new value over ~500 ms (a
 `requestAnimationFrame` tween writing the number) and the row pulses
@@ -572,7 +598,9 @@ while the board is hidden, the names too, and under the results screen).
 **What the board reads.** Of the model: `race_state`, `board_states`,
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
 online / cup / name`, `events`, and the additive keys `now`, `closes_at`,
-`prizes`, `chyron`, `scratches`, `names_rev`, `results`. Every one of
+`prizes`, `chyron`, `scratches`, `names_rev`, `results`, `closing`,
+`race` (the crawl's clock and time to post) and `weather`; the race
+slides read `race` and `horses[n].odds` from the same script. Every one of
 the additive keys is optional: before pi5 has been heard the splash's
 empty model carries none of them and the board renders without errors
 (hidden, since `board_states` is empty; prizes read `$0`, no countdown,
@@ -638,13 +666,17 @@ python tools/make_tote_font.py --check    # is the face on disk what the table s
 python tools/make_tote_font.py --list     # the characters it covers
 ```
 
-The face covers A-Z, 0-9 and the punctuation in the table; lower case and
+The face covers A-Z, 0-9 and the punctuation in the table, the degree
+sign included (the crawl's `88°F`); lower case and
 accented letters are drawn with the plain capital (a 5x7 matrix has no
 room for an accent: `SEÑOR` prints `SENOR`), curly quotes and dashes with
 the straight ones. A character it lacks falls back to Impact. The file is
 written by hand, table by table (no font library is needed to build it),
 and is the same bytes on every run. The root `.gitignore` ignores `*.ttf`
-and excepts this one.
+and excepts this one. The page's `?v=` stamping (`static_url()`) does not
+reach the face, which `quiniela_board.css` loads by its own `url()`: a
+rebuilt face bumps the `?v=` on that `url()` (`?v=2` since the degree
+sign), or a TV that has the old one keeps it.
 
 *Pitch, not font size.* The face's cell is 6 dot pitches wide and 8 tall
 and its em is 8 pitches, so `font-size = 8 x pitch`. Sizes are whole
@@ -687,9 +719,10 @@ transform, run by the compositor (the trace shows no compositing
 failure); they pause while the board is hidden or the results screen
 covers the rows.
 
-*Why not DOM dots.* The dashboard, the countdown slide and the roster
-slide each draw their dots as elements, 35 to a character, from three
-separate copies of the glyph table. At the board's size that is 813 tiles,
+*Why not DOM dots.* The dashboard and the countdown slide's digits draw
+their dots as elements, 35 to a character, from two separate copies of the
+glyph table (the roster slide had a third until it became the board's own
+rows, below). At the board's size that is 813 tiles,
 29,268 elements more (255 elements become 29,641). Measured in headless
 Chrome at 1920x1080 over 12 s of the `redesign` feed (a bet every 4 s: the
 count ticks, pot and prizes follow, the row pulses, the toast pops; the
@@ -735,6 +768,49 @@ model says `link_ok: false` (the gateway itself has gone quiet). It hides
 as soon as either condition clears. It is only ever a mark: the board
 keeps its last data and never drops back to trivia on a hiccup.
 
+### The race slides
+
+The countdown and the roster are playlist slides
+(`templates/splash/countdown.html`, `templates/splash/horse_roster.html`)
+filled from La Quiniela's model through the board's script
+(`window.ddmQuiniela`: `race()`, `now()`, `fillRoster()`). The race info
+(`race`: `name`, `year`, `post_at`, `post_local`, `tz`) is what pi5's
+La Quiniela admin page sets, the field and the names are La Quiniela's,
+the odds are the track's (pi5's odds poller, `horses[n].odds`). There is
+no other copy: the splash's old race poller (`/api/race` every 30 s) and
+pi5's Race Setup are gone, and so are `DDM_2026_POST_TIME_ISO`,
+`DASHBOARD_RACE_URL` and `RACE_DATA_STALENESS_S`.
+
+- **Countdown.** Days, hours, minutes and seconds to `race.post_at` on
+  pi5's clock, the race read again every second, so a post time saved on
+  the admin page shows on the next tick. Under the digits
+  `{name} {year}` (`KENTUCKY DERBY 2026`) and
+  `{DAY} · {MONTH D} · POST TIME {post_local}`
+  (`SATURDAY · MAY 2 · POST TIME 5:57 PM CDT`). Once the post time has
+  passed the digits give way to **AND THEY'RE OFF** in the tote face
+  (15 tiles; pitch 9 at 1920 px, 7 from 1500 px, 5 from 1150 px), the
+  two lines kept under it. With no post time the slide is left out of
+  the playlist (`/api/slides`, asked again at the end of every lap, so
+  a post time set later brings it back on the next lap).
+- **Roster.** The board's own rows (`fillRoster`), in the tote look's
+  strip whatever the board's look: every horse `in_field` by number with
+  its La Quiniela name, a replacement under its own number (21, 22...),
+  the first ten down the left, the rest down the right. The track's odds
+  sit where the board's bets do, right-aligned, as many tiles as
+  characters (`5-1` three, `50-1` four) with one dark tile before them; a
+  horse with no odds (`null`) shows a dim `—`. The header reads
+  `POST TIME {post_local}`. The strip is measured on the slide, with the
+  board's fill rule, so every row of both columns fits the panel (1920x1080:
+  pitch 5, 22 tiles of 29.1 px, 19 rows); a name longer than its area
+  scrolls a tile at a time, as on the board. Left out of the playlist
+  until a horse in the field has a name. This retires the roster's own
+  DOM-dot copy of the glyph table and its CSS.
+
+Frame timing with the slideshow paused on the roster (headless Chrome,
+1920x1080, 12 s, CPU 6x slower, measured as the table above): worst frame
+5.7 ms with GPU raster, 16.8 ms with software raster (60 Hz), none over
+25 ms, no long task; the same with a 37-character name scrolling.
+
 ### Dev aid: fake pi5
 
 `tools/fake_pi5.py` serves a synthetic pi5 (the three `/api/quiniela`
@@ -777,13 +853,17 @@ python tools/fake_pi5.py --phase strip                     # the tote look's row
 python tools/fake_pi5.py --phase strip-static              # the same picture with nothing moving
 # --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset or results step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
+# every phase carries the race (KENTUCKY DERBY, post time a day from now on America/Chicago's clock), Dallas 88°F Sunny
+# and the track's odds by number (the redesign field's line; in redesign 23 Robusta has none: the dim dash):
+# --post-in 74 (minutes to post; negative: already past, AND THEY'RE OFF), --no-post (the countdown leaves the playlist),
+# --no-weather (the crawl leaves it out), --no-odds (every roster row a dim dash)
 ```
 
 The older phases carry no horse names, so the board shows `HORSE n`;
 every phase carries the full contract (horses 1-24 with `in_field`,
-`name`, `replaced`, `conflict` and `cups`, `now`, `closes_at`, `prizes`,
+`name`, `odds`, `replaced`, `conflict` and `cups`, `now`, `closes_at`, `prizes`,
 `split`, `chyron`, `names_rev`, `scratches` in the record shape,
-`cups_online`, `cups_no_horse`, `results`, and `closing`, taken and dropped
+`cups_online`, `cups_no_horse`, `results`, `race`, `weather`, and `closing`, taken and dropped
 by pi5's rule: the first time the state is 3, 4 or 5 with none held, and in
 0, 1 or on `reset`). A horse's `cup` is a MAC
 string (`A0:B7:65:00:00:07` for the fake's cup 7) or `null`, as pi5 has
@@ -809,10 +889,16 @@ on 7 then lands under B, since the token is the cup's; `renumber B A`
 undoes it) and
 `name N Some Long Name` renames horse N, 1-24 (`names_rev` bumps, no
 event; `name N` alone clears it), which is how to watch a long name shrink
-to fit its row (38 px down to 20 px). Post the fake-only commands
-(`reset`, `results`, `scratch`, `renumber`, `name`) to the fake itself on
-5078: the real relay forwards everything to pi5 unchecked, but pi5 would
-reject them. Through the relay, `state N` drives the takeover:
+to fit its row (38 px down to 20 px), or scroll in `dots` and on the
+roster slide. `post MINUTES` moves the post time (negative: already
+past; `post none` clears it), `weather 88 Partly cloudy` sets the
+weather (`weather none` clears it) and `odds none` / `odds on` take the
+odds away and give them back: what the admin page, pi5's weather feed and
+its odds poller do on a real pi5. Post the fake-only commands
+(`reset`, `results`, `scratch`, `renumber`, `name`, `post`, `weather`,
+`odds`) to the fake itself on 5078: the real relay forwards everything to
+pi5 unchecked, but pi5 would reject them. Through the relay, `state N`
+drives the takeover:
 
 ```bash
 curl -s -X POST localhost:5077/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'   # board up
