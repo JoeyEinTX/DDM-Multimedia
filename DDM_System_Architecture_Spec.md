@@ -1,340 +1,448 @@
 # DDM System Architecture Spec
 
-**Version:** 0.5 (draft for review)
-**Date:** 2026-09-18
+**Version:** 1.0
+**Date:** 2026-09-29
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
+**Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
 
-This spec defines how information moves between every device and display in the DDM
-system. Subsystem specs (La Subasta, La Quiniela firmware, Derby Dash) describe what each
-piece does on its own; this document describes how they share one picture of the race.
+This spec says how the pieces of the DDM system fit together and what the rules are. It
+replaces v0.5 in the repo and the v0.9 draft, which described protocol v1 (cup IDs,
+rosters, Race Setup) and no longer match the code.
 
-Items marked **[PROPOSED]** are design suggestions not yet confirmed. Items marked
-**[DECIDED]** were settled in discussion.
+Markers:
+
+- **[DECIDED]** settled by Joey. Code that disagrees is a bug.
+- **[BUILT]** in the code on `main`, not separately decided.
+- **[TO BUILD]** decided, not built yet. Listed in section 15.
+- **[PROPOSED]** a suggestion, not confirmed.
+
+### Where the details live
+
+This spec is the map. The contract documents below own the details, and **they win on any
+detail**. If one disagrees with a rule marked [DECIDED] here, that is a bug to fix.
+
+| Document | Owns |
+|---|---|
+| `firmware/quiniela/README.md` | Cup and gateway firmware, ESP-NOW protocol v2, the serial line protocol v2, scale, touch menu |
+| `pi5/LQ_BRIDGE.md` | The DevPi bridge, the betting board model, every `/api/quiniela` and `/api/lq` route, the admin page, tables |
+| `pi5/LQ_SIMULATOR.md` | The cup simulator |
+| `RACE_NIGHT.md` | The race-night runbook |
+| `splash_display/README.md` | The TV slideshow and the LQ board |
+| `DDM_La_Subasta_Spec.md` | La Subasta |
+
+`DDM_La_Quiniela_Spec.md` (v2.3, May 2026) is **superseded**. It describes one controller
+reading all 20 scales and driving LED matrices, which is not how the system was built.
 
 ---
 
 ## 1. Principles
 
-1. **DevPi is the race brain.** One state machine and one SQLite database on DevPi hold
-   everything that matters: horse field, phase, scratches, bet counts, results.
-2. **Every other device is a sensor or a renderer.** Cups sense weight and render a
-   number. Displays render pages. The LED controller renders animations. None of them
-   store anything the system cannot rebuild from DevPi.
-3. **One phase enum, one horse table.** Defined once on DevPi, mirrored everywhere else.
-4. **Everything survives a reboot.** Any single device, including DevPi, can restart
-   mid-party and the system recovers on its own.
-5. **Loose coupling.** A subsystem being absent (no HUB75, no Derby Dash) must not break
-   anything else.
+1. **pi5 on DevPi is the race brain.** It holds the race state, race info, horse names,
+   scratches, results, the figures at the post and the counted pot.
+2. **Every other device is a sensor or a renderer, with one exception: each cup owns its
+   horse number.** [DECIDED, protocol v2] The number is set on the cup, saved in the cup,
+   and sent in every packet. A cup also keeps its own scale settings (calibration,
+   orientation, brightness, and once built, its empty reading and last count). Nothing else
+   stores anything pi5 cannot rebuild.
+3. **One race state, one names list.** Everything that shows a horse reads La Quiniela's
+   store: the TV, the dashboard, the roster slide, and La Subasta (section 8, [TO BUILD]).
+4. **Everything survives a reboot.** Any single device, pi5 included, can restart mid-party
+   and the system recovers on its own.
+5. **Loose coupling.** A missing subsystem (no LED controller, no HUB75, no Derby Dash, no
+   internet) breaks nothing else.
+6. **The dashboard runs the show; the admin page holds the data.** [DECIDED 2026-09-29]
+   See section 10.
 
 ---
 
 ## 2. System map
 
 ```
-              ┌────────── DevPi: Flask + SocketIO + SQLite ──────────┐
-              │   race state machine · horse field · bets · results   │
-              └───┬───────────┬─────────────┬──────────────┬─────────┘
-        USB serial│        UDP│     SocketIO│      SocketIO│
-              Gateway      LED ESP32     Browsers        Tote Pi 4B
-           ESP-NOW│        (mantle)    splash x2 / TV /   (HUB75,
-              20 cups                  phones / admin      optional)
+  DDM Control Center        LQ admin page          Guest phones
+  (touchscreen, "DASH")     (Joey's phone)         (La Subasta)
+            \                     |                     /
+             └──── pi5 on DevPi, port 5000: Flask + SQLite ────┐
+                race state · names · scratches · results ·     │
+                figures at the post · counted pot              │
+       USB serial │          TCP :5005 │        HTTP + event stream
+            Gateway ESP32      LED controller ESP32       splash display, port 5001
+       ESP-NOW ch 6 │          (the mantle's cup LEDs)    slideshow + LQ board → TV
+         up to 24 cups
+                                          JoeyAI box (optional source of odds and names)
 ```
 
-| Device | Role | Transport to DevPi | Stores |
+| Device | Role | Link to pi5 | Stores |
 |---|---|---|---|
-| DevPi (Pi 5) | Race brain, web server | n/a | Everything (SQLite) |
-| Gateway (ESP32 WROOM-32) | Radio-to-USB bridge | USB serial | Last state packet, RAM only |
-| 20 betting cups (CYD + HX711) | Weigh tokens, show horse number | ESP-NOW via gateway | Tare + calibration in NVS |
-| LED controller (ESP32, 10.0.0.44:5005) | Mantle animations | UDP over WiFi | Nothing |
-| Splash display A (kiosk Pi) | La Quiniela status | SocketIO (browser) | Nothing |
-| Splash display B (kiosk Pi) | Rotating info | SocketIO (browser) | Nothing |
-| TV | Any display URL | SocketIO (browser) | Nothing |
-| Guest phones | La Subasta | SocketIO (browser) | Nothing |
-| Tote board (Pi 4B + HUB75) | Optional LQ renderer | SocketIO (Python client) | Nothing |
-| Derby Dash | Arcade game | Loosely coupled, see section 9 | Own scores |
-| JoeyAI (GEEKOM A8 MAX mini PC, 10.0.0.54) | Horse field lookup, see section 8A | HTTP, called by DevPi | Nothing DDM-related |
+| pi5 (Flask app on DevPi, port 5000) | Race brain; serves the dashboard, the admin page, La Subasta | n/a | Everything (SQLite, one results file) |
+| Gateway (ESP32 WROOM-32) | Radio-to-USB bridge | USB serial, JSON lines | The last state line, RAM only |
+| Betting cups (CYD + HX711), 20 plus spares | Weigh tokens, show their horse number | ESP-NOW via the gateway | Horse number and scale settings in NVS |
+| LED controller (ESP32, `10.0.0.44:5005`) | Mantle LED animations | TCP | Nothing |
+| Splash display (Flask app, port 5001) | TV slideshow and the LQ board | HTTP and the `/api/quiniela/stream` event stream from pi5 | Nothing about the race |
+| TV kiosk | Chromium on the splash's `/display` | HTTP | Nothing |
+| DDM Control Center | The touchscreen dashboard at `/` | Same server | Nothing |
+| LQ admin page | `/quiniela/admin`, on a phone | Same server | Nothing |
+| Guest phones | La Subasta at `/la-subasta` | Same server | Nothing |
+| Tote board (Pi 4B + HUB75), optional | Would show the LQ board | HTTP or the event stream | Nothing |
+| Derby Dash | Arcade game | Loosely coupled, section 9 | Its own scores |
+| JoeyAI (GEEKOM A8 MAX, `10.0.0.54`), optional | Odds and names source | HTTP, called by pi5 | Nothing DDM-related |
 
-The drink jug LED ring has been dropped from DDM 2027 and is not part of this design.
-
----
-
-## 3. Race state machine
-
-Phases, matching `ddm_common.h`:
-
-`PRE_RACE → BETTING_OPEN → FINAL_CALL → AT_THE_POST → RUNNING → WINNER → AFTER_PARTY`
-
-- DevPi owns the current phase and persists it to SQLite on every change.
-- Only the operator (admin page) advances the phase.
-- A phase change is one function on DevPi that fans out to every transport together:
-  1. Write to SQLite
-  2. Serial → gateway → ESP-NOW broadcast to cups
-  3. UDP → LED controller
-  4. SocketIO → all browsers and the tote board
-- The numeric enum values in `ddm_common.h` are the wire format. DevPi's Python enum must
-  match them. **[PROPOSED]** A smoke test asserts the Python enum against the header so
-  they cannot drift.
+The drink jug LED ring was dropped from DDM 2027.
 
 ---
 
-## 4. Data model [PROPOSED]
+## 3. Race state
 
-| Table | Purpose | Key fields |
+Seven states, from `DdmRaceState` in `firmware/quiniela/ddm_common.h`:
+
+`0 PRE_RACE → 1 BETTING_OPEN → 2 FINAL_CALL → 3 AT_THE_POST → 4 RUNNING → 5 WINNER → 6 AFTER_PARTY`
+
+The Python `Phase` enum is pinned to the header by `test_smoke`, so the two cannot drift.
+[BUILT]
+
+### The dashboard is the source [BUILT]
+
+Each of the dashboard's mode buttons starts its LED animation and also sets the race state
+(`MODE_STATES` in `pi5/la_quiniela/betting.py`, the only copy of this table):
+
+| Dashboard button | Race state |
+|---|---|
+| WELCOME, TEST, STANDBY | 0 PRE_RACE |
+| 60 MIN, 30 MIN | 1 BETTING_OPEN |
+| FINAL CALL | 2 FINAL_CALL |
+| AT THE GATE | 3 AT_THE_POST |
+| THEY'RE OFF!, CHAOS, FINISH | 4 RUNNING |
+| SET WINNERS (once confirmed), HEARTBEAT | 5 WINNER |
+| RESET | 6 AFTER_PARTY |
+
+- **One path.** Every change goes through `BettingBoard.set_race_state()`. It is persisted,
+  and one full state line goes to the gateway carrying the state together with the
+  scratches, renumber pairs and results, so a cup never shows WINNER before it knows who won.
+- **The LEDs are the button's own request**, not fanned out from the race state. The race
+  state never waits on the LEDs, and the results never wait on the LEDs.
+- **Admin page state buttons: removed.** [DECIDED 2026-09-29, TO BUILD] They changed the
+  state without the LEDs, so the cups and TV could disagree with the mantle. The admin page
+  keeps showing the current state, read-only. [PROPOSED] The `state N` command on
+  `POST /api/quiniela/cmd` stays as the runbook appendix's emergency curl. [PROPOSED]
+- Consequence: AFTER_PARTY is reached by the dashboard's RESET (which also clears the results
+  and turns the LEDs off), or by the curl.
+- The mock racing service's AUTO mode (`/api/racing/*`) is not part of any of this.
+
+---
+
+## 4. Data
+
+All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with La Subasta.
+`pi5/LQ_BRIDGE.md` has the full shapes. [BUILT]
+
+| Where | Holds |
+|---|---|
+| `lq_cups` | Every cup ever heard, by MAC: the horse it last claimed, last seen, signal, last count |
+| `telemetry` | Append-only cup readings by MAC and horse, raw weight beside the count; written on change and on a heartbeat, not every packet |
+| `events` | Audit log: cups online/offline, a cup changing horse, gateway hello/reboot/errors, state changes |
+| `lq_link_state` | The state line pi5 holds (`state_rev`, phase, scratched, renumber pairs, results); how a gateway hello is answered after a restart |
+| `lq_horses` | Names for horses 1–24 (1–20 the field, 21–24 the also-eligibles) |
+| `lq_scratches` | One row per scratch: the horse that left, and the horse standing in (or none) |
+| `lq_board` | Names revision, the betting close time |
+| `lq_closing` | The figures at the post (section 6) |
+| `lq_race` | Race name, year, post time |
+| `pi5/data/results.json` | WIN, PLACE, SHOW horse numbers. The single store: the dashboard writes it, La Quiniela reads it |
+| In memory only | Track odds, weather, the dashboard mode that set the state |
+| On each cup (NVS) | Horse number, counts per token, orientation, brightness; the saved empty reading and last count once built (section 5) |
+
+- **No per-token or per-guest data** is stored anywhere. Token numbers exist only on the
+  plastic.
+- The counted pot (section 6) is stored beside the figures at the post and cleared with
+  them. [TO BUILD]
+
+---
+
+## 5. La Quiniela data path
+
+### Identity: a cup is its MAC, a horse is the number the cup reports [DECIDED, BUILT]
+
+- The number is set on the cup: touch menu → `HORSE` → `SET`, or `n7` on its serial port.
+  It is saved in NVS, survives power and reflashing, and is sent in every packet.
+- The picker is locked in states 1–4 and free in 0, 5 and 6.
+- pi5 learns which horses have cups by listening. There are **no cup IDs, slots or rosters
+  anywhere**, and nothing on pi5 ever addresses a cup.
+- Everything sent down (scratches, renumbers, results) is keyed by horse number, and each
+  cup applies what concerns its own number.
+- **Two cups claiming one horse is a conflict**, shown on the admin page as `⚠ 2 CUPS`, not
+  resolved automatically.
+- **Spare cup:** set it to the dead cup's number, put it in that post, move the tokens.
+
+### Up: cup → TV
+
+1. Each cup sends one telemetry packet every 2 s over ESP-NOW (MAC, horse, count, raw
+   weight, signal).
+2. The gateway writes one `telem` JSON line per packet, and a `status` line every 5 s
+   carrying its whole cup table.
+3. The bridge thread in pi5 updates `lq_cups`, `telemetry` and `events`.
+4. The betting board builds one model (pot, prizes, bets per horse, names, scratches,
+   results, figures at the post, race info, weather) and serves it at `GET /api/quiniela`
+   and as an event stream at `/api/quiniela/stream`.
+5. The splash display reads that model and shows it on the TV. The admin page polls it
+   every 5 s.
+
+The bridge also emits SocketIO events (`lq_update`, `lq_link`, `lq_snapshot`) to the room
+`lq`, but **nothing consumes them today**. See open question 6.
+
+### Down: pi5 → cups
+
+1. pi5 holds one state: a revision number, the race state, scratched horses, renumber
+   pairs, and results.
+2. Any change sends one full-snapshot `state` line (never a delta).
+3. The gateway broadcasts it to every cup every 500 ms.
+4. A gateway `hello` is answered with the current line. A `status` showing a different
+   revision gets a re-send.
+
+### The serial line protocol
+
+Line protocol v2 with ESP-NOW protocol v2, specified in `firmware/quiniela/README.md`,
+which wins on any detail. In short:
+
+| Direction | Line | Purpose |
 |---|---|---|
-| `race` | One row per race/year | year, current phase, locked_at |
-| `horses` | The field, shared by La Quiniela and La Subasta | number, name, scratched, scratched_at |
-| `cups` | Hardware identity | mac, cup_id, horse number, last_seen, rssi |
-| `telemetry` | Append-only log of cup packets | cup_id, ts, raw_weight, token_count, seq, dropped |
-| `lock_snapshot` | Counts frozen at AT_THE_POST | cup_id, token_count, raw_weight |
-| `results` | Finish order, as deep as needed for payouts | position, horse number |
-| `events` | Audit log | ts, type (phase change, scratch, tare, cup swap), detail |
+| Up | `telem` | One per cup packet: `mac`, `horse`, `raw`, `count`, `seq`, `drop`, `rssi`, `up` |
+| Up | `hello` | Gateway booted; repeats every 2 s until a state line is applied |
+| Up | `status` | Every 5 s and after each applied line: state revision, gateway uptime, the cup table. The only acknowledgement |
+| Up | `err` | A rejected downlink line |
+| Up | `state` | A gateway report, only when asked by hand (`json`); never parsed by pi5 |
+| Down | `state` | `rev`, `st`, `scr` (scratched, no replacement), `renum` (up to 4 pairs), `res` (WIN, PLACE, SHOW) |
+| Down | `debug` | Turns the gateway's human-readable output on or off |
 
-Notes:
+There is no roster line. A v1 `roster` line is ignored.
 
-- **Raw weight is always logged next to token count.** Given the measured hysteresis, this
-  allows recounting after the fact.
-- **No per-token or per-guest data is stored.** See section 6.
-- `telemetry` at 20 cups is small, but **[PROPOSED]** log on change plus a periodic
-  heartbeat row rather than every packet.
+### Link rules, proven on the bench [BUILT]
 
----
-
-## 5. La Quiniela data flow
-
-### Up: cup → DevPi
-
-1. Cup unicasts `DdmTelemetryPacket` to the gateway (existing).
-2. Gateway writes one line per packet to USB serial. **[PROPOSED]** JSON lines, for
-   example `{"t":"telem","cup":7,"raw":812345,"count":14,"rssi":-64,"seq":9021,"drop":2}`.
-   Human-readable in a serial monitor, trivially parsed in Python.
-3. A bridge thread on DevPi (pyserial) parses each line, updates `cups`, appends to
-   `telemetry`, and emits a SocketIO `lq_update` event.
-4. Displays update live from that event.
-
-### Down: DevPi → cups
-
-1. On any change to phase, horse-per-cup, or scratches, DevPi sends one state line down
-   serial.
-2. Gateway stores it in RAM and rebroadcasts at 2 Hz (existing behavior).
-3. If DevPi's service restarts, the gateway keeps broadcasting the last state. Cups never
-   notice.
-4. On gateway boot with no state from DevPi yet, it sends a `hello` line up serial and
-   DevPi replies with current state.
+- **The gateway is addressed by `/dev/serial/by-id/...`** in `DDM_LQ_SERIAL_PORT`, never
+  `/dev/ttyUSB0`. With two CH340 boards on DevPi, use `/dev/serial/by-path/...`.
+- **Opening the port must not reboot the gateway.** The default `LQ_SERIAL_LINES=leave`
+  does not touch DTR or RTS. The bench test of 2026-09-19 showed that holding them low
+  *causes* the reset on the CP2102 gateway. No capacitor is needed.
+- **Silent boot.** [DECIDED] A gateway broadcasts nothing until pi5 sends a state line, and
+  never falls into demo mode on its own. Demo mode is the hand-typed `demo` command or a
+  bench build with `DDM_AUTO_DEMO 1`, never on the party gateway.
+- **Watchdog.** A port that is open but silent for 20 s is closed and reopened.
+- **A gateway restart is not packet loss.** Cups count only forward gaps in the broadcast
+  sequence.
+- **Batch `ddm_common.h` changes.** Any struct change means reflashing every device.
 
 ### Cup rules
 
-- **Tare lives in NVS and is never applied automatically at boot.** A cup that browns out
-  with tokens inside must come back with the same count. Tare changes only from the hidden
-  long-touch menu, and each tare is reported to DevPi for the `events` log.
-- **Cup identity lives on DevPi.** The `cups` table maps MAC → cup ID. Swapping in a spare
-  cup is an admin-page action, not a reflash.
-- **Standalone fallback.** With no gateway heard for N seconds, the cup keeps showing its
-  last horse number and keeps counting locally.
-- **CLOSED card.** From AT_THE_POST onward the cup display shows betting closed.
+- **The settled weight is the source of truth** for the count, and the cup's count is
+  what pi5 uses. Raw weight is logged beside it for recounting. [BUILT]
+- **Per-cup calibration** (`CAL 10` in the touch menu) with the sleeve installed. [BUILT]
+- **Handling rule:** a cup that is bumped, lifted or dumped stops counting until it is
+  flat again, then re-reads itself from the weight with no phantom bets. [BUILT]
+- **Brownout: a cup comes back with its count.** [DECIDED 2026-09-29, TO BUILD]
+  - Today a cup re-measures "empty" 30 s after every power-up. A cup that reboots with
+    tokens in it decides the pile is empty, reads zero, and the pot drops.
+  - Fix: the cup saves its empty reading in NVS. At startup, after the warm-up, it re-zeroes
+    only if it reads empty. A cup with a pile keeps its saved empty reading, so the weight
+    gives back the right count.
+  - The cup also saves its last count and reports it during the 30 s warm-up, so the board
+    does not dip to zero and back.
+  - Manual tare (3 s BOOT hold or the touch menu `TARE`) is unchanged, and saves the new
+    empty reading.
+  - No protocol change; a cup reflash only.
+  - Acceptance test: 30 tokens in, power off, wait, power on. The board never dips and the
+    count comes back 30. Then with an empty cup: power cycle, count 0. How far the empty
+    reading drifts across a power cycle decides whether the saved value is good enough
+    (open question 4).
+- **No CLOSED screen on the cups.** [DECIDED 2026-09-29] The TV shows the race state and
+  freezes at the post.
 
 ---
 
 ## 6. Betting rules
 
-### Payout: draw from the winning cup [DECIDED]
+### Money
 
-- Guests keep half of a numbered token; the other half goes in a cup.
-- After the race, halves are drawn from the winning cup; the matching half wins.
-- **Win, place, and show all pay: 60% / 25% / 15% of the pot.** [DECIDED] Three cups are
-  drawn from, so DevPi needs the full finish order, and after the race `/display/lq` and
-  the admin page show the host which three cups to draw from and what each pays.
-- One half is drawn per cup, three winners total. **[ASSUMED, not yet confirmed]**
-- **Live totals are estimates; the payout is not.** Live pot and odds come from the scales.
-  Before the draw, the host counts the BETS compartment of the cash box and enters the
-  real pot on the admin page. DevPi computes the three payouts from that number, not from
-  the scale total. **[PROPOSED]**
-- **[PROPOSED]** Payouts round down to whole dollars, with the remainder going to win.
-- **Empty cup in the money: the share rolls to the next finisher.** [DECIDED] If nobody bet
-  the show horse, the 15% goes to the cup of the 4th-place horse, and so on down until a
-  cup with tokens is found. Consequences:
-  - The `results` table stores finish order as an ordered list, not three fixed columns.
-  - At results entry, the admin page checks each paying cup against `lock_snapshot`. If
-    one is empty, it asks the host for the next finisher before showing payouts.
-  - Scratched horses do not run, so only unbet horses can trigger this.
-- **Consequence:** counts are display data, not money. They drive pot size, odds, and
-  "hot horse" displays. An off-by-one count never costs anyone a dollar.
-- Token numbers exist only on the plastic. The system never knows who bet what.
-- Winner names are not recorded. **[OPTIONAL]** A free-text "last year's winner" field for
-  a callout at the next DDM.
+- **$1 per token.** The guest keeps one half and drops the other in the cup of their horse.
+  [DECIDED]
+- **The draw.** After the race one token is drawn from the WIN cup, one from PLACE, one
+  from SHOW. The drawn token's owner takes that cup's whole prize. Three winners. [DECIDED]
+- **Split: 60% / 25% / 15%** of the pot (`LQ_SPLIT_*` in `pi5/config.py`). [DECIDED]
+- **Whole dollars, always summing to the pot:** PLACE and SHOW round half up, WIN takes the
+  rest. [BUILT]
+- **Live figures are scale estimates.** The pot and prizes during betting come from the
+  cups.
+- **The figures at the post** (pot, prizes, bets per horse) are taken when the state first
+  reaches 3 AT_THE_POST (or 4 or 5 if 3 was skipped), saved, and held through the race, the
+  draw and any restart. They are dropped by Reset betting and by any state that reopens
+  betting (0 or 1). The TV shows them in states 3–5. [BUILT]
+- **Counted pot: the payout comes from the hand count.** [DECIDED 2026-09-29, TO BUILD]
+  - After betting closes (states 3–5), the admin page shows a **Counted pot** box.
+  - The host counts the cash box's BETS compartment and enters the amount.
+  - The pot and all three prizes on the TV and the admin page recalculate from it with the
+    same split and rounding. Bets per horse stay as the scales read them.
+  - The board marks the pot as hand counted. [PROPOSED] The admin page shows the scale
+    figure beside the counted one. [PROPOSED]
+  - Saved; cleared by Reset betting and by reopening betting, the same as the figures at
+    the post.
+  - This is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
+- **An empty cup in the money: its share goes to the next finisher.** [DECIDED]
+  - The host enters **the three horses that pay**, not strictly the race's first three. If
+    a finisher's cup had no bets at the post, it is skipped and the next finisher takes its
+    place. Example: nobody bet the show horse, so 4th place is entered as SHOW.
+  - The TV, the cups and the LEDs then show those three as WIN, PLACE and SHOW.
+  - The SET WINNERS picker marks any horse whose cup had no bets at the post, from the
+    figures at the post, so the host does not have to spot it. [DECIDED 2026-09-29, TO BUILD]
 
 ### Betting lock
 
-- At AT_THE_POST, DevPi copies current counts into `lock_snapshot` and all displays freeze
-  on those numbers.
-- Tokens detected after lock are flagged in `events`, not added to displayed counts.
-- The real enforcement is physical: cups show CLOSED.
+- At AT THE GATE the TV freezes on the figures at the post. The cups keep counting
+  underneath, which is what the admin page's live figures show. [BUILT]
+- The cups' horse pickers lock in states 1–4. [BUILT]
 
-### Scratches: re-bet [DECIDED]
+### Scratches: two kinds [BUILT, one change]
 
-1. Operator marks the horse scratched on the admin page.
-2. `horses.scratched` is set; the cup shows the alternating greyed number / red X; La
-   Subasta sees the same flag from the same table.
-3. DevPi records the cup's count at scratch time in `events`.
-4. Host empties the cup; guests re-drop those tokens in other cups.
-5. The cup's count falls to zero on its own. **Nobody re-tares.**
+1. **Before the Friday deadline, with a replacement.** An also-eligible (21–24) draws in and
+   keeps its own program number, as at Churchill (2026: #22 Ocelli ran for #9 The Puma).
+   The admin page records `9 → 22`, the cup that says 9 becomes 22 on its own, and nothing
+   moves on the mantle. Normally this happens before betting opens, so the cup is empty.
+2. **Same day, no replacement: re-bet.** [DECIDED]
+   - The horse leaves the field, its cup shows the red X, and its tokens drop out of the pot
+     while they are in that cup.
+   - The host empties the cup and **hands the tokens back to the bettors**, who re-drop them
+     in other cups. The pot climbs back as they do.
+   - Anyone who takes a token back and does not re-bet is settled by the counted pot.
+   - **The `TOKENS REFUNDED` wording goes**, from the TV board, `RACE_NIGHT.md` and
+     `pi5/LQ_BRIDGE.md`. [DECIDED 2026-09-29, TO BUILD] Replacement wording on the board,
+     such as `· RE-BET YOUR TOKENS`. [PROPOSED] Every character must exist in the tote
+     look's dot font.
 
-Pot handling during a re-bet: tokens are only ever sold, so the true pot never decreases.
-**[PROPOSED]** The displayed pot holds its value while a scratched cup is being emptied
-and redistributed, rather than dipping and recovering on screen.
+- A scratch of either kind is entered once, on the admin page, and can be undone (a chain
+  undoes last record first). [BUILT]
+- La Subasta must read the same scratch. [TO BUILD, section 8]
 
 ---
 
 ## 7. Displays
 
-Each display is a URL on DevPi, not a separate app. Kiosks boot Chromium to a URL and
-subscribe to the same SocketIO feed.
-
-| URL | Content |
-|---|---|
-| `/display/lq` | Always La Quiniela: pot, odds, count per horse, phase, open/closed |
-| `/display/info` | Rotating: trivia, La Subasta status, schedule, Derby Dash scores |
-| `/admin` | Operator control (section 10) |
-
-- What a screen shows is a routing decision on DevPi. Screens can be swapped, added, or
-  pointed at the TV without touching the kiosk.
-- **Cheeky accuracy disclaimer on `/display/lq`.** [DECIDED] Live totals are real dollars
-  measured by hobby-grade scales, so the LQ screen carries a tongue-in-cheek disclaimer.
-  It rides in a scrolling ticker rather than sitting on screen permanently. Ticker lines
-  live in a config list on DevPi so they can be edited without touching the page. Example:
-  "Totals are based on cheap Chinese electronics."
-- **HUB75 tote board is optional and deferred.** It is one more subscriber to the same
-  `lq_update` feed. Nothing else depends on it. Decision on whether it adds value comes
-  after the hardware is built.
-- **[PROPOSED]** Every display page shows a small "reconnecting" indicator when its socket
-  drops, and re-requests full state on reconnect rather than waiting for the next change.
-
----
-
-## 8. La Subasta integration
-
-- La Subasta and La Quiniela read the same `horses` table. A scratch is entered once.
-- La Subasta already exists with its own horse list (spec v1.2). Migrating it onto the
-  shared table is an open item; see section 13.
-- `/display/info` shows Subasta status by subscribing to Subasta's existing events.
+- **One TV, fed by the splash display app** (port 5001, `splash_display/`). It reads pi5's
+  model over HTTP and the event stream and re-serves it. [BUILT]
+- **The slideshow** runs trivia, the La Subasta primer, the countdown to post, the roster
+  with track odds, Derby Dash and brand slides. [BUILT]
+- **The LQ board takes over the TV in states 1–5** and hands it back in 0 and 6. In WINNER
+  it is the results board: WIN, PLACE, SHOW, each with cloth, name, bets and prize, and
+  `OFFICIAL RESULTS COMING` until the results are confirmed. [BUILT]
+- **Board looks:** `dots` (tote look, the default), `impact`, `numbers`. The race state
+  shows at the top right. [BUILT]
+- **The crawl** carries the disclaimer lines from `LQ_CHYRON_LINES`, the time, time to post
+  and the weather. [BUILT; the disclaimer is DECIDED]
+  - `TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED`
+  - `NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS`
+- **Any screen can show the board** at `joeydevpi.local:5001/`: a phone, a laptop, a second
+  TV.
+- **Two screens or one?** The earlier plan had one screen always on La Quiniela and a
+  second rotating other info. What was built is one TV that switches by race state. Open
+  question 1.
+- **HUB75 tote board: optional and deferred.** If built, it reads `/api/quiniela` or the
+  event stream like the splash does.
 
 ---
 
-## 8A. Horse field ingestion
+## 8. La Subasta
 
-The dashboard already has a Race Setup modal (built for DDM 2026) with 20 post-position
-fields, post time, and three actions: fetch from the Racing API, "Ask JoeyAI", and Save to
-`/api/race-setup`. Today the "Ask JoeyAI" button calls the Anthropic API with web search.
-The goal for DDM 2027 is for that button to call the real JoeyAI.
+- **Today** [BUILT, a gap]:
+  - Names come from the dashboard's mock racing service (`use_mock=True` in `main.py`),
+    which invents test horses. **At the party the auction would show made-up names.**
+  - Scratches live in La Subasta's own `horse_state` table, entered with its own button.
+  - Horses are 1–20 only.
+- **Decision** [DECIDED 2026-09-29, TO BUILD, must-do before DDM 2027]: La Subasta reads
+  names, program numbers (1–24, `in_field`) and scratches from La Quiniela's store. A
+  scratch is entered once, on the LQ admin page.
+- **Timing makes replacements simple.** The auction runs at the party, after the Friday
+  scratch deadline, so any replacement has already happened. The auction sells the field as
+  it stands, for example #22 in place of #9.
+- A same-day scratch after the auction follows La Subasta's own rule in
+  `DDM_La_Subasta_Spec.md`.
+- Guest pages are on pi5 at `/la-subasta`, port 5000.
 
-> **2026-09-27:** Race Setup is gone (`0a050dd`): its modal, `data/race_setup.json` and
-> `/api/race-setup` were a second copy of race info. The race's name and post time are
-> entered on La Quiniela's admin page (`/quiniela/admin` → Race info) and the names in its
-> store; the odds search is `pi5/la_quiniela/odds.py` (`OddsPoller`, whose `fetch` is where
-> JoeyAI would plug in). See `pi5/LQ_BRIDGE.md`, "The race and the track's odds".
+---
 
-### What JoeyAI is today
+## 8A. Race info, names and odds
 
-- Dedicated headless mini PC: GEEKOM A8 MAX, hostname JoeyAI, `10.0.0.54`. (Not the Jetson
-  cluster; that was the earlier repo.)
-- `joeyai-web` (repo `JoeyEinTX/joeyai-web`): Flask app under gunicorn on port 5000, open
-  to the LAN subnet. SQLite conversations, profiles, and a **DuckDuckGo web search
-  feature already built in**.
-- Ollama on port 11434 with `qwen2.5:7b-instruct-q4_K_M`, firewalled to specific hosts.
+**Race Setup is gone** (`0a050dd`). La Quiniela's store is the one home of race
+information. [BUILT]
 
-### How DevPi reaches it [PROPOSED]
+- **Race info**: the race's name, date and post time, entered on the admin page on Central
+  time (`LQ_RACE_TZ`). The TV's countdown and roster slides and the crawl read it.
+- **Horse names**: 24 lines pasted into the admin page's names box.
+- **Track odds**, for the roster slide only. La Quiniela pays no odds, and the LQ board
+  shows none; a horse's line is its bets. The odds come from the odds poller
+  (`pi5/la_quiniela/odds.py`, Claude with web search every 5 min, needs `ANTHROPIC_API_KEY`
+  and internet) or are typed by hand from the program. They are kept in memory only.
+- `GET /api/race` is built from this store for anything that wants a roster.
 
-Two paths exist. Path B is recommended.
+### Where JoeyAI fits [PROPOSED]
 
-| | Path A: Ollama direct | Path B: joeyai-web endpoint |
-|---|---|---|
-| Call | DevPi → `10.0.0.54:11434` | DevPi → `10.0.0.54:5000/api/derby-field` (new) |
-| Web search | DevPi would have to build its own | Reuses the search JoeyAI already has |
-| Firewall | New ufw rule for DevPi | Already open to the LAN |
-| Where the logic lives | DDM repo | joeyai-web repo |
+JoeyAI is the GEEKOM A8 MAX mini PC (`10.0.0.54`) running `joeyai-web` (Flask under
+gunicorn, port 5000, open to the LAN) with built-in DuckDuckGo web search, and Ollama
+behind it with `qwen2.5:7b-instruct`. It can plug in at two points:
 
-Path B keeps DDM simple: DevPi makes one HTTP call and gets back field JSON. All the
-search, fetch, and parsing lives on the JoeyAI box, where it can be reused and tested on
-its own.
+1. **The odds poller's fetch** (`OddsPoller.fetch` in `odds.py`): JoeyAI first, Claude as
+   the fallback.
+2. **A "fill names" helper** that proposes the field into the admin page's names box.
 
-### Making a 7B model reliable at this
+Rules for either:
 
-- **Fetch a known page, do not rely on search snippets.** Snippets rarely contain all 20
-  horses with odds. The endpoint should fetch the full text of a field page and have the
-  model extract from it.
-- **Constrain the output.** Use Ollama's structured output (JSON schema) so the model can
-  only return the field shape.
-- **Validate in code, not in the model:** at most 20 entries, post positions unique and in
-  1..20, odds parse as a fraction. Reject and fall back on failure.
-- **Test before the field exists.** The post position draw happens about a week before the
-  Derby, which is inside the code freeze. Build and test against the 2026 field pages.
-
-Architecturally, all of these are **sources that fill the Race Setup form**. None of them
-write to the `horses` table directly.
-
-```
-Racing API ─┐
-JoeyAI      ├─→ Race Setup form → operator reviews → Save → horses table → everything
-Anthropic   │
-Manual      ┘
-```
-
-Rules:
-
-- **Operator review is mandatory.** A source proposes; only Save commits. A wrong horse
-  name on 20 cups and two screens is worse than typing the field by hand.
-- **All sources return the same JSON shape:** post position, name, morning-line odds,
-  scratched flag. The form does not care which source produced it.
-- **Sources fall back in order.** [PROPOSED] JoeyAI → Anthropic API → Racing API → manual.
-  If the JoeyAI box is down on Derby day, the button still works.
-- **A local model does not know this year's field.** It has to read it from the web; the
-  model's job is to parse what it finds into the JSON shape. That fetch path is the real
-  work in this feature, not the model.
-- Migration: Race Setup currently saves to a JSON file. It moves to the shared `horses`
-  table so La Quiniela, La Subasta, the ticker, and the results banner all read one source.
-
-### Two kinds of odds
-
-| | Source | Changes | Meaning |
-|---|---|---|---|
-| **Track odds** | Racing API / JoeyAI | Until post time | What Churchill Downs says |
-| **Party odds** | Cup counts | Until betting lock | What your guests think |
-
-- Track odds that matter on the day are live, so a scheduled Racing API refresh suits them
-  better than an LLM lookup. **[PROPOSED]** JoeyAI fills names and morning line once; the
-  Racing API, if subscribed, refreshes odds and scratches on a timer.
-- An automated scratch from any source is a **suggestion** shown on the admin page, never
-  applied on its own, because a scratch triggers a re-bet at the mantle.
+- **Operator review is mandatory.** A source proposes; only Save commits.
+- **pi5 makes one HTTP call to a new `joeyai-web` endpoint** (for example
+  `/api/derby-field`), rather than calling Ollama directly. The search, fetch and parsing
+  live on the JoeyAI box, and no firewall change is needed.
+- **Make a 7B model reliable:**
+  - Fetch a full field page rather than trusting search snippets.
+  - Constrain the output with a JSON schema.
+  - Validate in code: at most 24 entries, program numbers unique and in 1–24, odds that
+    parse.
+  - Fall back on any failure.
+- **Test against the 2026 field.** The draw lands about a week before the Derby, inside
+  the code freeze.
 
 ---
 
 ## 9. Derby Dash
 
-- Loosely coupled. The game does not need race state to run.
-- **[PROPOSED]** It posts high scores to DevPi so `/display/info` can show a leaderboard.
-- **[PROPOSED]** It listens for phase, so it can pause or show "race in progress" during
-  RUNNING.
+- Loosely coupled; the game does not need the race state to run.
+- It could post high scores to pi5 for a leaderboard slide. [PROPOSED]
+- It could pause or show "race in progress" during RUNNING. [PROPOSED]
 
 ---
 
-## 10. Operator control
+## 10. Operator control: who does what [DECIDED 2026-09-29]
 
-- One admin page drives everything: phase advance, scratches, cup-to-horse assignment, cup
-  swap, results entry.
-- Guests are on the same WiFi for La Subasta, so `/admin` requires a PIN. **[PROPOSED]**
-- Phase advance and scratch each need a confirm step; both are hard to undo mid-party.
+| DDM Control Center (touchscreen, `joeydevpi.local:5000/`) | LQ admin page (phone, `joeydevpi.local:5000/quiniela/admin`) |
+|---|---|
+| LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
+| The mode buttons: LEDs **and** race state | The current race state, read-only [PROPOSED] |
+| SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [TO BUILD] | Figures: pot, prizes, bets |
+| RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [TO BUILD] |
+| Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept |
+| | Race info, horse names, scratches and undo, the betting close time |
+
+- **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, TO BUILD]
+- **Two different resets.** RESET on the dashboard ends a race. Reset betting on the admin
+  page prepares the next one. The runbook says which to use when.
+- **No PIN.** [DECIDED 2026-09-29] The dashboard, the admin page and La Subasta's guest
+  pages share one server on port 5000. A guest who trims the La Subasta address lands on
+  the dashboard. Accepted as unlikely.
 
 ---
 
 ## 11. Network
 
-- DHCP reservations for every fixed device (DevPi, ddm-splash, second kiosk, LED
-  controller, tote Pi).
-- DevPi currently has two IPs (10.0.0.87 / 10.0.0.83). Pick one as canonical for kiosk
-  URLs, or use a hostname.
-- ESP-NOW is pinned to channel 6. For the party, the home router's 2.4 GHz band should sit
-  on channel 1 or 11.
-- Cups and gateway never touch WiFi, so guest load on the router cannot affect betting.
+- **DevPi by hostname:** `joeydevpi.local`. pi5 on port 5000, the splash on port 5001.
+  [BUILT]
+- **LED controller:** TCP to `10.0.0.44:5005` per the repo's `pi5/config.py`. DevPi's local
+  config was reported as `10.0.0.42`, so one of them is stale. Open question 5.
+- **ESP-NOW on channel 6.** Cups and gateway never touch WiFi, so guest load on the router
+  cannot affect betting.
+- For the party, the router's 2.4 GHz band sits on channel 1 or 11. [PROPOSED]
+- DHCP reservations for every fixed device. [PROPOSED]
 
 ---
 
@@ -342,72 +450,91 @@ Rules:
 
 | Failure | Behavior |
 |---|---|
-| DevPi service restarts | Gateway keeps rebroadcasting last state; on start, DevPi restores phase from SQLite and resends state |
-| DevPi full reboot | Same, plus kiosks auto-reconnect and re-request state |
-| Gateway reboots | Sends `hello` up serial, gets state back, resumes broadcast |
-| Cup reboots | Keeps tare from NVS, sends HELLO, picks up state within one broadcast |
-| Cup dies | Swap spare, reassign on admin page |
-| Kiosk drops | Reconnects, re-requests full state |
-| SD card failure | **[PROPOSED]** SQLite copied off-box on a schedule; cloned SD card on hand |
+| pi5 restarts | The gateway keeps broadcasting the last line. pi5 restores the state line from `lq_link_state`, the results from `results.json`, the figures at the post from `lq_closing`, and seeds each cup's count from `lq_cups`, so no phantom bets. Opening the port does not reboot the gateway. [BUILT] |
+| DevPi reboots | Same, and the splash finds pi5 again on its own. [BUILT] |
+| Gateway reboots | Sends `hello`, stays silent until pi5 answers, never enters demo mode. Cups keep showing their own numbers. [BUILT] |
+| Power blip takes out DevPi and the gateway | The gateway is back in a second and silent. Cups show their own numbers with a `NO LINK` badge. Everything resumes when pi5 is up. [BUILT] |
+| A cup reboots | Its horse number comes back from NVS. **Its count comes back as zero today.** [TO BUILD, section 5] |
+| A cup dies | Spare cup: set its number, put it in the post, move the tokens. [BUILT] |
+| TV or splash reloads | Fetches the model; shows the figures at the post, not emptied cups. [BUILT] |
+| LED controller unreachable | The race state and results still apply; the dashboard says `LEDs unreachable`. [BUILT] |
+| No internet | No odds and no weather; nothing else notices. [BUILT] |
+| SD card failure | SQLite copied off the box on a schedule, and a cloned SD card on hand. [PROPOSED] |
 
-DevPi is both the dev box and the production box. The existing one-week code freeze
-applies. **[PROPOSED]** Party mode runs under systemd only, never alongside a foreground
-script.
+- pi5 has no service file yet (`RACE_NIGHT.md` section 0). It should start on its own after
+  a power cycle, under systemd only, never alongside a foreground copy. [PROPOSED]
+- The one-week code freeze before DDM applies.
 
 ---
 
 ## 13. Open questions
 
-1. **Halves drawn per cup:** the spec assumes one half per cup, three winners total.
-   Confirm.
-2. **La Subasta horse list migration:** move it onto the shared `horses` table now, or
-   bridge the two until after DDM 2027?
-3. **LED-only sub-phases:** the LED animations may use states not in `ddm_common.h` (for
-   example a cooldown after WINNER). Are these real phases, or animation details inside a
-   phase?
-4. **Who counts tokens:** the cup computes `tokenCount` today. Keep the cup authoritative,
-   or have DevPi recompute from raw weight with its own calibration table?
-5. **Odds display:** true pari-mutuel style odds from counts, or just counts and
-   percentages?
-6. **Second kiosk hardware:** another Pi 5, or something already on the shelf?
-7. **Which odds go on screen:** track odds, party odds, or both side by side on
-   `/display/lq`?
-8. **JoeyAI integration path:** Path A (Ollama direct) or Path B (new `joeyai-web`
-   endpoint)? See section 8A. Also: does JoeyAI's existing web search fetch full pages, or
-   only search snippets?
-9. **Existing dashboard transport:** the DDM 2026 dashboard synced results over SSE. Move
-   everything to SocketIO, or leave working SSE paths alone?
+1. **Two screens or one?** Is the one TV that switches between the slideshow and the board
+   the plan, or is a second, always-La-Quiniela screen still wanted?
+2. **JoeyAI for 2027?** Build it as an odds and names source (section 8A), or leave the
+   Claude odds poller as is?
+3. **Same-day scratch wording** on the board, replacing `TOKENS REFUNDED`.
+4. **Scale drift across a power cycle.** The brownout bench test decides whether the saved
+   empty reading is good enough on its own.
+5. **LED controller address:** `10.0.0.44` (repo) or `10.0.0.42` (DevPi's local config)?
+6. **The bridge's SocketIO events:** keep them for a future screen (HUB75), or remove them
+   as unused?
+
+Resolved since v0.9: cup counting (the cup counts; the settled weight decides), odds on
+the board (none; bets only), LED sub-phases (the mode table), display transport (HTTP and
+an event stream), La Subasta migration (yes, section 8), admin PIN (no), cups showing
+CLOSED (no).
 
 ---
 
-## 14. Cup simulator [PROPOSED]
+## 14. Cup simulator [BUILT]
 
-A Python script that speaks the gateway's serial line protocol and fakes 20 cups.
-
-- All Flask, display, and admin work proceeds with no hardware on the bench.
-- Can replay a recorded `telemetry` log from a real party.
-- Can inject faults: cup dropout, reboot, late tokens after lock, a scratch and re-bet.
-
-This is the over-engineered option, and it is the one most likely to pay for itself,
-because it removes hardware from the critical path of every software task below.
+`pi5/la_quiniela/simulator.py`, documented in `pi5/LQ_SIMULATOR.md`. A virtual gateway,
+twenty cups and two spares speaking the real line protocol, with scripted scenarios and a
+self-check.
+Its MACs all start `02:DD:4D:`, and pi5 drops them from its cup cache as soon as a real
+gateway says hello.
 
 ---
 
-## 15. Suggested build order
+## 15. Build order
 
-Each item is sized to be one single-concern CC prompt.
+### Done
 
-1. Serial line protocol: gateway emits and accepts JSON lines
-2. DevPi serial bridge thread: parse, store, emit `lq_update`
-3. Shared `horses` and `cups` tables plus the phase state machine with fan-out
-4. Cup simulator
-5. `/display/lq` page
-6. `/admin` page: phase, scratch, cup assignment, PIN
-7. Cup firmware: NVS tare, CLOSED card, standalone fallback
-8. Betting lock and `lock_snapshot`
-9. `/display/info` page
-10. Boot-restore and reconnect behavior, tested with the simulator's fault injection
-11. La Subasta onto the shared `horses` table
-12. Race Setup saves to the `horses` table instead of JSON
-13. JoeyAI as a Race Setup source, with Anthropic fallback
-14. HUB75 renderer, if it earns its place
+- Serial line protocol and gateway (now v2)
+- The DevPi bridge
+- Protocol v2: the cup owns its number
+- One race state with the dashboard as its source
+- The cup simulator
+- The TV board and results board
+- The admin page
+- The figures at the post
+- Race info and names in La Quiniela's store; Race Setup removed
+
+### Next
+
+One single-concern Claude Code prompt each, in this order:
+
+1. **Cup brownout:** save the empty reading and the last count; re-zero at startup only
+   when empty. Reflash the four cups, then run the bench test (section 5). First, because
+   it is the only firmware change and cheapest while there are four cups.
+2. **La Subasta on La Quiniela's store:** names, program numbers 1–24, scratches. Second,
+   because fake names at the party are the most visible failure left.
+3. **Counted pot** on the admin page; pot and prizes from the hand count.
+4. **SET WINNERS no-bets marker.**
+5. **Remove the admin page's race-state buttons**; show the state read-only; update
+   `RACE_NIGHT.md`, which uses them in several places.
+6. **Re-bet wording** for a same-day scratch: the board, `RACE_NIGHT.md`, `pi5/LQ_BRIDGE.md`.
+
+### Later
+
+7. pi5 as a systemd service.
+8. JoeyAI as an odds and names source, if open question 2 says yes.
+9. HUB75 renderer, if it earns its place.
+
+### Housekeeping
+
+- Commit this file over the v0.5 copy at the repo root.
+- Mark `DDM_La_Quiniela_Spec.md` superseded, at its top.
+- Update the vault status page. The repo's `CLAUDE.md` tells Claude Code to trust the vault
+  over the repo docs, so a stale vault page misleads every session.
