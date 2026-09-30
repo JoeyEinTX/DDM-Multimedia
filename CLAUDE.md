@@ -26,6 +26,8 @@ DDM Multimedia is an active multimedia/game/event project repo. Treat current so
 5. Do not make broad rewrites without a plan.
 6. Do not commit unless Joey explicitly says to commit.
 7. After meaningful work, tell Joey what should be updated in the vault.
+8. Never schedule check-ins, routines, wakeups, or PR monitoring unless Joey asks. They cost
+   credits. Do the work, report, and stop.
 
 ## Known caution
 
