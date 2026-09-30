@@ -31,7 +31,8 @@
  * CONTROLS — BOOT button:
  *     Short press  ->  toggle the diagnostic overlay (RSSI, drops, seq, age,
  *                      tokens and net scale counts)
- *     Hold 3 s     ->  re-tare the scale: count back to 0, green LED blinks
+ *     Hold 3 s     ->  re-tare the scale: count back to 0, green LED blinks,
+ *                      the new empty reading saved in NVS
  *     Hold 15 s    ->  (keep holding well past the tare) step the display
  *                      orientation to the next of its four settings and
  *                      save it in NVS for this cup
@@ -51,7 +52,8 @@
  *                   p = print raw and mapped touch coordinates on/off,
  *                   c<N> = N tokens are on the plate: calibrate counts/token
  *                   for this cup and save it (c0 forgets it),  s = apply the
- *                   settled load to the count now,  ? = help
+ *                   settled load to the count now,  z = the saved empty reading
+ *                   and count beside a fresh reading, with the drift,  ? = help
  *
  * THE CUP OWNS ITS HORSE NUMBER (protocol v2). It is set here, on the cup,
  * saved in NVS and reported in every packet; the gateway hands out nothing.
@@ -61,12 +63,21 @@
  * was 9 becomes 22, saved), and shows WIN / PLACE / SHOW when the results
  * name it. There are no cup IDs, no MAC roster and no waiting screen.
  *
- * SCALE: an HX711 on CN1 (DT GPIO27, SCK GPIO22) weighs the tokens. Counting
- * is by steps against a slow-tracking baseline, never by absolute weight; the
- * two calibration constants in the tunables came from tools/hx711_calibrate/.
+ * SCALE: an HX711 on CN1 (DT GPIO27, SCK GPIO22) weighs the tokens. Live
+ * counting is by steps against a slow-tracking baseline; the settled weight
+ * against the empty reading has the last word, at boot as well as after every
+ * event. The two calibration constants in the tunables came from
+ * tools/hx711_calibrate/.
  * The cup never shows the count on a normal screen (the splash display does);
  * the diagnostic overlay shows TOKENS and the net counts for bench checks, and
  * telemetry carries rawWeight (reading minus tare) and tokenCount.
+ *
+ * BROWNOUT (2026-09-29): a cup comes back with its count. The empty reading
+ * (`zero`) and the settled count (`count`) live in NVS. Through the warm-up
+ * the cup reports the saved count; then, once the plate is flat, it reads it
+ * and decides: within half a token of the saved zero, or lighter, is an empty
+ * cup (re-zero); heavier is the pile, counted from the weight against the
+ * saved zero. So a power blip with thirty tokens in the cup never reads 0.
  */
 
 #include <SPI.h>
@@ -128,6 +139,13 @@
                                     // the 3 s tare so a long tare press cannot rotate a cup by accident
 #define TARE_BLINK_MS          150  // LED acknowledgement of a manual tare
 
+// Brownout: the empty reading and the settled count are kept in NVS so a cup
+// that reboots with tokens in it comes back with its count (see SCALE below).
+#define COUNT_SAVE_HOLD_MS    2000  // a settled count that has held this long is written to NVS (once per value)
+#define ZERO_REFRESH_TOKENS  0.25f  // an empty cup whose floating tare has moved this many tokens from the saved zero...
+#define ZERO_REFRESH_MS     600000  // ...saves the new empty reading, at most once per this (10 min): flash wear
+#define BOOT_WAIT_NOTE_MS    10000  // while the boot read waits for a flat plate, say so on serial this often
+
 // ---------------------------------------------------------------------------
 // Touch menu — XPT2046 on its own SPI bus (HSPI; the display owns SPI/VSPI).
 // Raw x is the panel's LONG axis (the 320 px one) and raw y the short one,
@@ -135,7 +153,7 @@
 // Verify per panel batch with serial "p". Every button is a full-width bar,
 // so only the y axis has to be right; 15% of error still lands in the band.
 // ---------------------------------------------------------------------------
-#define FW_VERSION      "0.6"   // 0.6: protocol v2, the cup owns its horse number
+#define FW_VERSION      "0.7"   // 0.7: brownout, the cup comes back with its count; 0.6: protocol v2, the cup owns its horse number
 #define TOUCH_CLK          25
 #define TOUCH_CS           33
 #define TOUCH_MOSI         32
@@ -515,7 +533,8 @@ HX711 hx711;
 
 enum ScalePhase : uint8_t {
   SCALE_WARMUP,    // first SCALE_WARMUP_MS after boot: sampling, not counting
-  SCALE_TARING,    // collecting SCALE_TARE_SAMPLES for the empty reading
+  SCALE_BOOT_READ, // after the warm-up: waiting for a flat plate, then deciding empty or pile (scaleBootDecide)
+  SCALE_TARING,    // collecting SCALE_TARE_SAMPLES for the empty reading (a manual tare)
   SCALE_RUNNING    // counting
 };
 
@@ -540,6 +559,14 @@ long       prevReading   = 0;        // the sample before lastReading (single-sa
 long       ring[SETTLE_RING];        // the last ~2 s of samples, for the settle check
 uint8_t    ringN         = 0;        // valid samples in ring (0 after every event)
 uint8_t    ringI         = 0;
+// Brownout: what NVS holds, and the timers that decide when to write it.
+bool       haveSavedZero = false;    // NVS "zero" exists (key presence is the validity flag)
+long       savedZero     = 0;        // the empty reading in NVS, raw counts
+uint16_t   savedCount    = 0;        // the settled count in NVS
+uint32_t   tZeroSaved    = 0;        // millis() of the last "zero" write: ZERO_REFRESH_MS between drift saves
+uint16_t   shadowTokens  = 0;        // `tokens` as of the last tick, to time COUNT_SAVE_HOLD_MS
+uint32_t   tTokensChanged = 0;       // millis() `tokens` last changed
+uint32_t   tBootNote     = 0;        // last "[boot] waiting" line
 long       calNum        = 0;        // serial c<N>: digits being collected
 int8_t     calDigits     = -1;       // -1 = not collecting
 uint32_t   tCalDigit     = 0;        // last digit seen (the number ends 500 ms after it, any line ending)
@@ -828,10 +855,7 @@ void drawOverlay() {
   if (!scaleOk)
     snprintf(line, sizeof(line), "TOKENS:-  NET:-  NO HX711");
   else
-    snprintf(line, sizeof(line), "TOKENS:%u  NET:%+ld  %s", tokens, lastReading - tare,
-             scalePhase == SCALE_WARMUP ? "WARMUP" :
-             scalePhase == SCALE_TARING ? "TARING" :
-             disturbed                  ? "HANDLED" : "OK");
+    snprintf(line, sizeof(line), "TOKENS:%u  NET:%+ld  %s", tokens, lastReading - tare, scalePhaseName());
   drawTextLeft(line, x0, y + 5 + 3 * pitch, cap, C_WHITE, C_BLACK);
 }
 
@@ -1098,9 +1122,66 @@ static void panelUseDefaultOrientation() {                          // serial 'x
 // `[handled] ... (re-baselined)` line, no event. A dump therefore reads
 // 50 -> 0 once, which is the truth.
 //
+// BROWNOUT (2026-09-29): a cup comes back with its count. Until now every
+// power-up re-measured "empty" after the warm-up, so a cup that browned out
+// with thirty tokens in it decided the pile was empty, reported 0, and the pot
+// dropped by thirty. Now the empty reading (`zero`, raw counts) and the settled
+// count (`count`) are kept in NVS beside the horse number:
+//   * Through the warm-up the cup reports the saved count, not 0, so the board
+//     never dips. `tare` is the saved zero meanwhile, so NET means something.
+//   * After the warm-up (SCALE_BOOT_READ) it waits for a flat plate (the settle
+//     ring), averages SCALE_TARE_SAMPLES of it as r, and scaleBootDecide()
+//     picks: no saved zero (first boot on this firmware) -> tare to r, count 0;
+//     r - zero <= half a token, or lighter -> empty, re-zero to r; heavier ->
+//     the pile: keep the saved zero, count = round((r - zero) / countsPerToken).
+//     The weight wins over the saved count. One [boot] line reports the
+//     decision and the drift r - zero, the figure the bench test reads.
+//   * A manual tare (BOOT 3 s, menu TARE, serial t) saves zero and count 0.
+//   * The count is written once it has held COUNT_SAVE_HOLD_MS with no settle
+//     pending and the cup not DISTURBED, and only when it differs from NVS.
+//   * An empty cup whose floating tare has moved ZERO_REFRESH_TOKENS from the
+//     saved zero saves the new empty reading, at most once per ZERO_REFRESH_MS.
+//   * CAL 10 / c<N> and a horse change never touch `zero`; the count c<N>
+//     sets is saved like any other settled count.
+//   * A flat reading more than HANDLING_TOKENS below the saved zero at the boot
+//     read is a lifted or tilted cup, not an empty one: the cup keeps waiting.
+// Writes are therefore at most one per settled count change, plus one per
+// ZERO_REFRESH_MS for the zero, plus tares.
+//
 // Everything here is non-blocking: the ADC is only read when is_ready() says
 // a conversion is waiting, so the display and the radio never stall on it.
 // ===========================================================================
+static const char* scalePhaseName() {
+  return scalePhase == SCALE_WARMUP    ? "WARMUP"   :
+         scalePhase == SCALE_BOOT_READ ? "SETTLING" :
+         scalePhase == SCALE_TARING    ? "TARING"   :
+         disturbed                     ? "HANDLED"  : "OK";
+}
+
+// NVS "zero": the empty reading. Skips the write when NVS already holds it.
+static void nvsSaveZero(long z, uint32_t now, const char* why) {
+  bool same = haveSavedZero && z == savedZero;
+  if (!same) prefs.putLong("zero", z);
+  savedZero     = z;
+  haveSavedZero = true;
+  tZeroSaved    = now;
+  Serial.printf("[nvs] zero=%ld %s (%s)\n", z, same ? "unchanged" : "saved", why);
+}
+
+// NVS "count": the settled count. Skips the write when NVS already holds it.
+static void nvsSaveCount(uint16_t n, const char* why) {
+  if (n == savedCount) return;
+  prefs.putUShort("count", n);
+  savedCount = n;
+  Serial.printf("[nvs] count=%u saved (%s)\n", n, why);
+}
+
+static inline void scaleRingPush(long r) {
+  ring[ringI] = r;
+  ringI = (uint8_t)((ringI + 1) % SETTLE_RING);
+  if (ringN < SETTLE_RING) ringN++;
+}
+
 static void scaleStartTare(const char* why, bool blink) {
   scalePhase = SCALE_TARING;
   tareSum    = 0;
@@ -1139,6 +1220,76 @@ static bool scaleSettled(long* mean) {
   }
   *mean = (long)(sum / SETTLE_RING);
   return (mx - mn) <= SETTLE_SPREAD;
+}
+
+// The boot read: the plate is flat and r is its SCALE_TARE_SAMPLES average.
+// Empty, or the pile the cup went down with? The drift r - zero is printed in
+// counts and tokens either way: it is what the bench test reads to decide
+// whether the saved empty reading is good enough across a power cycle.
+static void scaleBootDecide(long r, uint32_t now) {
+  long  net = r - savedZero;
+  float tok = (float)net / (float)countsPerToken;
+  if (!haveSavedZero) {
+    tare   = r;
+    tokens = 0;
+    Serial.printf("[boot] no saved zero | read=%ld → tare, count 0\n", r);
+    nvsSaveZero(r, now, "boot");
+    nvsSaveCount(0, "boot");
+  } else if (net <= tokenThreshold) {                   // within half a token above empty, or any amount lighter
+    tare   = r;
+    tokens = 0;
+    Serial.printf("[boot] saved zero=%ld count=%u | read=%ld net=%+ld (%+.2f tok) → empty, re-zero (drift %+ld counts)\n",
+                  savedZero, savedCount, r, net, tok, net);
+    nvsSaveZero(r, now, "boot");
+    nvsSaveCount(0, "boot");
+  } else {                                              // a pile: the weight against the saved zero is the count
+    long n = lroundf(tok);
+    if (n < 0) n = 0;
+    tare   = savedZero;
+    tokens = (uint16_t)n;
+    Serial.printf("[boot] saved zero=%ld count=%u | read=%ld net=%+ld (%.2f tok) → keep zero, count %u%s\n",
+                  savedZero, savedCount, r, net, tok, tokens,
+                  tokens == savedCount ? "" : " (the weight wins over the saved count)");
+    tZeroSaved = now;                                   // the drift clock runs from boot in every branch
+    nvsSaveCount(tokens, "boot");
+  }
+  baseline      = (float)r;
+  scalePhase    = SCALE_RUNNING;
+  tLastEvent    = now;
+  settlePending = false;
+  disturbed     = false;
+  confirmN      = 0;
+  shadowTokens  = tokens;
+  tTokensChanged = now;
+  if (cur.scr == SCR_NO_HORSE) lastDrawn.scr = SCR_BOOT;  // drop the WARMING UP note
+}
+
+// Serial 'z': the saved empty reading and count beside a fresh averaged
+// reading (the settle ring, the last ~2 s), and the drift between them.
+static void scaleZeroReport() {
+  if (!scaleOk) { Serial.println("[zero] no HX711"); return; }
+  char saved[40];
+  if (haveSavedZero) snprintf(saved, sizeof(saved), "saved zero=%ld count=%u", savedZero, savedCount);
+  else               snprintf(saved, sizeof(saved), "saved zero=none count=%u", savedCount);
+  if (ringN == 0) {
+    Serial.printf("[zero] %s | no reading yet | tokens=%u tare=%ld %s\n", saved, tokens, tare, scalePhaseName());
+    return;
+  }
+  long mn = ring[0], mx = ring[0]; long long sum = 0;
+  for (uint8_t i = 0; i < ringN; i++) {
+    if (ring[i] < mn) mn = ring[i];
+    if (ring[i] > mx) mx = ring[i];
+    sum += ring[i];
+  }
+  long reading = (long)(sum / ringN);
+  char drift[48];
+  if (haveSavedZero) snprintf(drift, sizeof(drift), "drift=%+ld counts (%+.2f tok)",
+                              reading - savedZero, (float)(reading - savedZero) / (float)countsPerToken);
+  else               snprintf(drift, sizeof(drift), "drift=n/a");
+  Serial.printf("[zero] %s | reading=%ld (avg of %u, spread %ld%s) %s | tokens=%u tare=%ld %s\n",
+                saved, reading, (unsigned)ringN, mx - mn,
+                (ringN >= SETTLE_RING && mx - mn <= SETTLE_SPREAD) ? ", flat" : "", drift,
+                tokens, tare, scalePhaseName());
 }
 
 // Serial c<N>: N tokens are on the plate and the cup is quiet. c0 forgets the
@@ -1247,8 +1398,26 @@ static void scaleTick(uint32_t now) {
   }
   if (!scaleOk) return;
 
-  if (scalePhase == SCALE_WARMUP && now - tScaleWarmup >= SCALE_WARMUP_MS)
-    scaleStartTare("warm-up done", false);
+  if (scalePhase == SCALE_WARMUP && now - tScaleWarmup >= SCALE_WARMUP_MS) {
+    scalePhase = SCALE_BOOT_READ;       // brownout: read the plate before deciding what "empty" is
+    tareSum    = 0;
+    tareN      = 0;
+    tBootNote  = now;
+    Serial.printf("[boot] warm-up done: waiting for a flat plate, then %d samples; reporting saved count %u meanwhile\n",
+                  SCALE_TARE_SAMPLES, tokens);
+  }
+
+  // Brownout: the settled count goes to NVS once it has held COUNT_SAVE_HOLD_MS
+  // with no settle pending and the cup not handled, and only when it differs
+  // from what NVS holds. Timed here, off the sample clock, so a stalled ADC
+  // cannot hold a value back.
+  if (tokens != shadowTokens) {
+    shadowTokens   = tokens;
+    tTokensChanged = now;
+  } else if (scalePhase == SCALE_RUNNING && !disturbed && !settlePending &&
+             tokens != savedCount && now - tTokensChanged >= COUNT_SAVE_HOLD_MS) {
+    nvsSaveCount(tokens, "settled");
+  }
 
   if (!hx711.is_ready()) return;        // nothing waiting: never block on the ADC
   long r = hx711.read();
@@ -1259,7 +1428,36 @@ static void scaleTick(uint32_t now) {
 
   switch (scalePhase) {
     case SCALE_WARMUP:
-      return;                           // sampling only, so the overlay has a live number
+      scaleRingPush(r);                 // sampling only: the overlay has a live number, and the boot read
+      return;                           // (and serial z) has a full ring the moment the warm-up ends
+
+    case SCALE_BOOT_READ: {             // brownout: wait for a flat plate, average it, decide
+      scaleRingPush(r);
+      long settled;
+      bool flat  = scaleSettled(&settled);
+      // Flat but more than HANDLING_TOKENS below the saved zero: the sleeve is off
+      // the beam (held tilted, on its side), not an empty cup. Drift across a
+      // power-off is never eight tokens, so this refuses only a plate that is
+      // being handled; anything nearer the saved zero still re-zeroes below.
+      bool lifted = flat && haveSavedZero && (settled - savedZero) < -(HANDLING_TOKENS * countsPerToken);
+      if (!flat || lifted) {            // not flat, or being handled: keep waiting, keep reporting the saved count
+        tareSum = 0;
+        tareN   = 0;
+        if (now - tBootNote >= BOOT_WAIT_NOTE_MS) {
+          tBootNote = now;
+          if (lifted)
+            Serial.printf("[boot] flat but %.1f tokens below the saved zero: lifted or tilted? waiting; tare (BOOT 3 s) if the sleeve changed. Reporting saved count %u\n",
+                          (float)(settled - savedZero) / (float)countsPerToken, tokens);
+          else
+            Serial.printf("[boot] waiting for a flat plate (ring %u/%d), reporting saved count %u\n",
+                          (unsigned)ringN, SETTLE_RING, tokens);
+        }
+        return;
+      }
+      tareSum += r;                     // flat: average SCALE_TARE_SAMPLES of it, as the tare does
+      if (++tareN >= SCALE_TARE_SAMPLES) scaleBootDecide(tareSum / SCALE_TARE_SAMPLES, now);
+      return;
+    }
 
     case SCALE_TARING:
       tareSum += r;
@@ -1269,14 +1467,18 @@ static void scaleTick(uint32_t now) {
         scalePhase = SCALE_RUNNING;
         tLastEvent = now;
         Serial.printf("[tare] offset=%ld tokens=%u\n", tare, tokens);
+        nvsSaveZero(tare, now, "tare");                  // brownout: this is what "empty" means from now on
+        nvsSaveCount(0, "tare");
+        if (now - tScaleWarmup < SCALE_WARMUP_MS) {      // a tare inside the warm-up saved a cold reading:
+          tZeroSaved = now - ZERO_REFRESH_MS;            // let the drift refresh re-save it as soon as it has moved
+          Serial.println("[tare] during the warm-up: the empty reading will be re-saved once it has drifted a quarter token");
+        }
         if (cur.scr == SCR_NO_HORSE) lastDrawn.scr = SCR_BOOT;  // drop the WARMING UP note
       }
       return;
 
     case SCALE_RUNNING: {
-      ring[ringI] = r;
-      ringI = (uint8_t)((ringI + 1) % SETTLE_RING);
-      if (ringN < SETTLE_RING) ringN++;
+      scaleRingPush(r);
 
       if (disturbed) {                                    // handled: count nothing until it rests
         scaleDisturbedCheck(now);
@@ -1300,7 +1502,19 @@ static void scaleTick(uint32_t now) {
         float a = (float)dt / (float)SCALE_BASELINE_TAU_MS;
         if (a > 1.0f) a = 1.0f;
         baseline += delta * a;
-        if (tokens == 0) tare = lroundf(baseline);   // an empty cup keeps re-zeroing itself
+        if (tokens == 0) {
+          tare = lroundf(baseline);                  // an empty cup keeps re-zeroing itself
+          // Brownout: an empty reading that has drifted ZERO_REFRESH_TOKENS from the
+          // saved zero is worth saving, at most once per ZERO_REFRESH_MS.
+          long drift = tare - savedZero;
+          if (haveSavedZero && !settlePending &&     // settled: never the first sample after a removal to 0
+              labs(drift) > lroundf((float)countsPerToken * ZERO_REFRESH_TOKENS) &&
+              now - tZeroSaved >= ZERO_REFRESH_MS) {
+            Serial.printf("[nvs] empty reading drifted %+ld counts (%+.2f tok) from the saved zero\n",
+                          drift, (float)drift / (float)countsPerToken);
+            nvsSaveZero(tare, now, "drift");
+          }
+        }
         scaleSettleCheck(now);
         return;
       }
@@ -1451,7 +1665,7 @@ static void menuDrawMain() {
   tft.fillScreen(C_BLACK);
   textBg = C_BLACK;
   menuDrawHeader();
-  int n = (menu == MENU_MORE) ? MM_COUNT : MB_COUNT;
+  int n = (menu == MENU_MORE) ? (int)MM_COUNT : (int)MB_COUNT;   // two enums: cast, or -Wenum-compare
   for (int i = 0; i < n; i++) menuDrawBar(i, false);
 }
 
@@ -1657,7 +1871,7 @@ static void menuTick(uint32_t now) {
   if (menu == MENU_MAIN || menu == MENU_MORE) {
     if (touchY < MENU_BAR_Y0) return;
     int i = (touchY - MENU_BAR_Y0) / MENU_BAR_PITCH;
-    if (i >= ((menu == MENU_MORE) ? MM_COUNT : MB_COUNT)) return;
+    if (i >= ((menu == MENU_MORE) ? (int)MM_COUNT : (int)MB_COUNT)) return;
     menuHl = (int8_t)i;
     tMenuHl = now + MENU_HL_MS;
     menuDrawBar(i, true);
@@ -1785,13 +1999,29 @@ void setup() {
   tScaleWarmup = millis();
   tScaleSample = tScaleWarmup;
   Serial.printf("scale: %s\n", scaleOk
-                ? "HX711 ok, warming up 30 s before tare"
+                ? "HX711 ok, warming up 30 s before the boot read"
                 : "no HX711 on CN1 (DT 27, SCK 22), counting disabled");
   countsPerToken = prefs.getLong("cpt", COUNTS_PER_TOKEN);
   if (countsPerToken < 1000 || countsPerToken > 200000) countsPerToken = COUNTS_PER_TOKEN;
   tokenThreshold = countsPerToken / 2;
   Serial.printf("scale: %ld counts/token%s, threshold %ld; serial c<N> recalibrates with N tokens on the plate\n",
                 countsPerToken, prefs.isKey("cpt") ? " from NVS" : " (default)", tokenThreshold);
+
+  // Brownout: the empty reading and the settled count from NVS. The count is
+  // what telemetry reports through the warm-up; the boot read then decides
+  // whether the plate is empty or still holds that pile (scaleBootDecide).
+  haveSavedZero = prefs.isKey("zero");
+  savedZero     = haveSavedZero ? prefs.getLong("zero", 0) : 0;
+  savedCount    = prefs.getUShort("count", 0);
+  if (scaleOk) {
+    tokens = savedCount;                                // reported until the boot read; 0 if nothing saved, as before
+    if (haveSavedZero) tare = savedZero;                // so NET and rawWeight mean something meanwhile
+  }
+  shadowTokens   = tokens;
+  tTokensChanged = tScaleWarmup;
+  if (haveSavedZero) Serial.printf("scale: saved zero=%ld count=%u from NVS; reporting %u tokens until the boot read\n",
+                                   savedZero, savedCount, tokens);
+  else               Serial.println("scale: no saved zero (first boot on this firmware): the boot read will tare");
 
   // Touch panel: XPT2046 on HSPI with its own pins. The library's begin()
   // calls touchSPI.begin() again with default pins, which is a no-op because
@@ -1834,7 +2064,7 @@ void loop() {
     }
   }
 
-  // --- serial commands (bench): n<N> = horse, o/h/v/x orientation, t = tare, c<N> = calibrate
+  // --- serial commands (bench): n<N> = horse, o/h/v/x orientation, t = tare, c<N> = calibrate, z = saved zero and drift
   static char numCmd = 0;                                 // 'c' or 'n': which command the digits belong to
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -1859,8 +2089,10 @@ void loop() {
     else if (c == 't') serialTare();
     else if (c == 'p') { touchDebug = !touchDebug; Serial.printf("[touch] coordinate print %s\n", touchDebug ? "ON" : "off"); }
     else if (c == 's') scaleApplySettled();
+    else if (c == 'z') scaleZeroReport();
     else if (c == '?') Serial.println("commands: n<N> = this cup is horse N (1-24, n0 = none; saved to NVS), o = next orientation, h = mirror left-right, v = mirror top-bottom (all saved), "
-                                      "x = forget the saved orientation and use the panel-ID default, t = tare, p = toggle the touch coordinate print, s = apply the settled load to the count, "
+                                      "x = forget the saved orientation and use the panel-ID default, t = tare (saves the empty reading, count 0), p = toggle the touch coordinate print, "
+                                      "s = apply the settled load to the count, z = the saved empty reading and count, a fresh reading and the drift between them, "
                                       "c<N> = N tokens are on the plate, calibrate counts/token and save (c0 forgets it), ? = help");
   }
   if (calDigits > 0 && now - tCalDigit > 500) {            // no line ending needed

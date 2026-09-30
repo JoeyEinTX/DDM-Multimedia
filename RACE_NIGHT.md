@@ -49,10 +49,11 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       `SPLASH_URL='http://localhost:5001/display?look=impact' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`.
       To change the default: `QUINIELA_LOOK` in `splash_display/config.py`, restart the
       splash and the kiosk.
-- [ ] Every cup and the gateway: flashed from the current firmware (`45510f8` or later,
-      protocol v2, both of them), sleeve installed, orientation right, touch working (`p`
-      in serial shows touches), `CAL 10` done with the sleeve on, and a 10-token drop/dump
-      test passes.
+- [ ] Every cup and the gateway: flashed from the current firmware (cup v0.7, the brownout
+      build, and the protocol v2 gateway), sleeve installed, orientation right, touch working
+      (`p` in serial shows touches), `CAL 10` done with the sleeve on, then **tared empty**
+      (cup empty → hold the screen → `TARE` → `YES`) so its saved empty reading is fresh, and
+      a 10-token drop/dump test passes.
 - [ ] Every cup: hold the screen → `HORSE` → tap the top half of the number to go up, the
       bottom half to go down, to its post (the cup for post 1 → 1, … post 20 → 20) →
       `SET`. The number is the cup's own: it keeps it across power and across **Reset
@@ -67,7 +68,9 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       `● online` and the line above the list says `20 cups online · 0 with no horse`. A
       `○ no cup` row: no cup says that number (walk the mantle for the `NO HORSE` screen
       and set it). A `⚠ 2 CUPS` row: two cups say the same number; set one of them right.
-- [ ] Spare cup, spare gateway, spare CYD, flashed and in the drawer.
+- [ ] Spare cup, spare gateway, spare CYD, flashed and in the drawer. Tare the spare cup
+      empty before it goes in: a cup remembers its last count and would report it for the
+      first ~30 s after power-up.
 
 ## 1. Derby week — the field
 
@@ -233,6 +236,8 @@ too and leaves the results and the LEDs as they are.
 | Count wrong after a bump | baseline drifted | Pull all tokens, wait for 0, put them back in one pour. |
 | Cup screen upside down / mirrored | orientation stepped (BOOT held 15 s) | Serial: `x`. Or touch menu (hold 3 s) → FLIP 180. |
 | Cup blinks / reboots | power sag | Check the bus voltage at that cup; never USB. |
+| A cup rebooted (power blip) with tokens in it | it comes back with its count: it reports the count it saved through its 30 s warm-up, then re-reads the pile from the weight (`[boot] … keep zero, count N` on its serial) | Nothing. Leave it alone for the first 35 s. |
+| An empty cup comes back from a power blip reporting 1 | its empty reading drifted more than half a token across the power-off, so the boot read took the cup for a pile of one | Hold the screen → `TARE` → `YES` (cup empty). A pull-and-refill does not clear it. |
 | No countdown slide, or the wrong race on it; the roster's post time blank | Race info has no post time, or last year's | `ADMIN` → Race info → the date and the post time → Save race info (section 1). A countdown on screen shows it on its next second; one left out of the slideshow comes back on the next lap (the playlist is rebuilt every ~35 slides, a few minutes). |
 | No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
 | The crawl has no weather | pi5 has no `WEATHER_API_KEY`, or no internet yet | Nothing needed: the item is left out. With a key it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |

@@ -645,12 +645,15 @@ survive that; with the sleeve they had turned into the miscount and are gone.
 
 ### Tare
 
-- On boot the cup waits 30 s for the HX711 to settle (the NO HORSE screen and the overlay say
-  `SCALE WARMING UP`), then averages 30 samples as the empty reading.
+- On boot the cup waits 30 s for the HX711 to settle (the NO HORSE screen says
+  `SCALE WARMING UP`, the overlay `WARMUP`), then, once the plate is flat
+  (overlay `SETTLING`), averages 30 samples and decides whether that is a fresh
+  empty reading or the saved one plus a pile (Brownout, below).
 - While the count is 0 the tare follows the slow baseline, so an empty cup keeps
   re-zeroing itself. Once a token is counted the tare freezes.
 - **Hold BOOT for 3 s** to re-tare by hand: the count goes back to 0, the
-  current reading becomes "empty", the green LED blinks once and serial prints
+  current reading becomes "empty" and is saved (`[nvs] zero=… saved (tare)`),
+  the green LED blinks once and serial prints
   `[tare]`. Keep holding to 15 s and the cup steps its display orientation and
   saves it instead (see the display controller section); `t` over serial also
   tares. A short press still toggles the diagnostic overlay, whose last line
@@ -662,6 +665,57 @@ or `[remove] -1 ...`, plus `[handled] enter reason=below-empty net=...` /
 `[handled] enter reason=step step=... est=...` and `[handled] tokens N -> M
 net=... (re-baselined)` around a handled cup, so a bench session can be grepped. If no HX711 answers at
 boot the cup runs without counting and the overlay says `no HX711`.
+
+### Brownout: a cup comes back with its count
+
+- The cup keeps its empty reading (`zero`, raw counts) and its settled count
+  (`count`) in NVS, in the same `ddmcup` namespace as the horse number.
+- Through the 30 s warm-up it reports the saved count, not 0, so the board
+  never dips; then it waits for a flat plate, averages 30 samples and decides:
+  no saved zero (first boot on this firmware) → tare, count 0; within half a
+  token of the saved zero, or lighter → empty, re-zero and save; heavier → the
+  pile: keep the saved zero, `count = round((reading − zero) / counts-per-token)`.
+  The weight wins over the saved count.
+- One `[boot]` line reports the decision with the drift `reading − zero` in
+  counts and tokens (the figure the bench test reads for the spec's open
+  question 4): `[boot] saved zero=… count=30 | read=… net=+186420 (30.01 tok) →
+  keep zero, count 30`, or `… net=-1210 (-0.19 tok) → empty, re-zero (drift
+  -1210 counts)`, or `[boot] no saved zero | read=… → tare, count 0`.
+- The count is written once it has held `COUNT_SAVE_HOLD_MS` (2 s) with no
+  settle pending and the cup not handled (`[nvs] count=30 saved (settled)`),
+  never for an unchanged value. An empty, settled cup whose floating tare has
+  moved `ZERO_REFRESH_TOKENS` (a quarter token) from the saved zero saves the
+  new empty reading, at most once per `ZERO_REFRESH_MS` (10 min). A manual tare
+  (BOOT 3 s, the menu's `TARE`, serial `t`) saves the new zero and count 0; a
+  tare inside the 30 s warm-up saves a cold reading, so that one is re-saved as
+  soon as it has drifted a quarter token, without the 10 min wait. `CAL 10` /
+  `c<N>` and a horse change never touch `zero` (the count `c<N>` sets is saved
+  like any other settled count). While the boot read waits for a flat plate it
+  says so every `BOOT_WAIT_NOTE_MS` (10 s). A plate that is flat but more than
+  `HANDLING_TOKENS` (8) tokens below the saved zero is a lifted or tilted cup,
+  not an empty one: the cup keeps waiting and says why.
+- `z` over serial prints the saved zero and count, a fresh averaged reading
+  (the settle ring), the drift between them in counts and tokens, and the
+  current count: `[zero] saved zero=… count=30 | reading=… (avg of 20, spread
+  310, flat) drift=+186420 counts (+30.01 tok) | tokens=30 tare=… OK`.
+
+Bench test: 30 tokens in, power off, wait, power on. The board never dips and
+the count comes back 30. Then with an empty cup: power cycle, count 0. The
+drift printed at boot across an empty power cycle decides whether the saved
+zero is good enough on its own.
+
+### Serial commands
+
+| Key | Does |
+| --- | --- |
+| `n<N>` | this cup is horse N (1–24, `n0` = none), saved |
+| `o` / `h` / `v` / `x` | next orientation / mirror left-right / mirror top-bottom (all saved) / forget the saved orientation |
+| `t` | tare: count 0, the reading becomes "empty", saved (`zero`, `count`) |
+| `s` | apply the settled load to the count now |
+| `z` | the saved zero and count, a fresh reading, the drift, the current count |
+| `c<N>` | N tokens are on the plate: calibrate counts/token and save (`c0` forgets it); does not touch `zero` |
+| `p` | print raw and mapped touch coordinates on/off |
+| `?` | help |
 
 ## Touch menu
 
@@ -680,7 +734,7 @@ them. Since protocol v2 it is also how a cup is told which horse it is.
 - **Closes** after 5 s without a touch, and after most actions. On close the
   normal screen is redrawn exactly as it was.
 
-Header: `HORSE 7   STATE 1` (or `NO HORSE   STATE 0`) and `V0.6  SEP 27 2026
+Header: `HORSE 7   STATE 1` (or `NO HORSE   STATE 0`) and `V0.7  SEP 29 2026
 <MAC>` (firmware version from `FW_VERSION`, build date from `__DATE__`).
 Then two pages of full-width bars:
 
@@ -768,7 +822,7 @@ tolerance in grid units, default 1.4.
 | --------- | ----- |
 | `ddm_common.h` — ESP-NOW protocol | ✅ **v2** (2026-09-27): the cup owns its horse number; `DdmStatePacket` 22 bytes keyed by horse (scratched bits, 4 renumber pairs, 3 results), `DdmTelemetryPacket` 18 bytes with `horse` in place of `cupId`. Every device must be reflashed |
 | `ddm_gateway/` — gateway sketch | ✅ implemented (JSON line protocol v2 to DevPi: `telem` by MAC and horse, `status` with the cup table; silent boot; broadcast-only ESP-NOW, no acks, no peers but broadcast; bench commands `state` / `scratch` / `renum` / `results` / `cups`; demo mode walks the results) |
-| `ddm_cup/` — cup sketch | ✅ implemented (v0.6: horse in NVS, touch menu `HORSE` picker locked in states 1–4, `FLIP H` / `FLIP V`, serial `n<N>`, renumber pairs followed and saved, scratched bit, WIN / PLACE / SHOW frame from the results; display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
+| `ddm_cup/` — cup sketch | ✅ implemented (v0.7: brownout, the cup comes back with its count: `zero` and `count` in NVS, boot read decides empty or pile, serial `z`; v0.6: horse in NVS, touch menu `HORSE` picker locked in states 1–4, `FLIP H` / `FLIP V`, serial `n<N>`, renumber pairs followed and saved, scratched bit, WIN / PLACE / SHOW frame from the results; display + ESP-NOW + HX711 token counting, calibrated for the current token print) |
 
 The v1 protocol gaps are closed by v2: there is no cup ID to assign (so no
 hello-ack, and no way for a cup to mistake a neighbour's `HELLO` for one), and
