@@ -236,10 +236,10 @@ There is no roster line. A v1 `roster` line is ignored.
 - **Per-cup calibration** (`CAL 10` in the touch menu) with the sleeve installed. [BUILT]
 - **Handling rule:** a cup that is bumped, lifted or dumped stops counting until it is
   flat again, then re-reads itself from the weight with no phantom bets. [BUILT]
-- **Brownout: a cup comes back with its count.** [DECIDED 2026-09-29, TO BUILD]
-  - Today a cup re-measures "empty" 30 s after every power-up. A cup that reboots with
-    tokens in it decides the pile is empty, reads zero, and the pot drops.
-  - Fix: the cup saves its empty reading in NVS. At startup, after the warm-up, it re-zeroes
+- **Brownout: a cup comes back with its count.** [DECIDED 2026-09-29, BUILT]
+  - Before v0.7 a cup re-measured "empty" 30 s after every power-up. A cup that rebooted
+    with tokens in it decided the pile was empty, read zero, and the pot dropped.
+  - Fix (cup sketch v0.7, `ec0e063`): the cup saves its empty reading in NVS. At startup, after the warm-up, it re-zeroes
     only if it reads empty. A cup with a pile keeps its saved empty reading, so the weight
     gives back the right count.
   - The cup also saves its last count and reports it during the 30 s warm-up, so the board
@@ -247,10 +247,13 @@ There is no roster line. A v1 `roster` line is ignored.
   - Manual tare (3 s BOOT hold or the touch menu `TARE`) is unchanged, and saves the new
     empty reading.
   - No protocol change; a cup reflash only.
-  - Acceptance test: 30 tokens in, power off, wait, power on. The board never dips and the
-    count comes back 30. Then with an empty cup: power cycle, count 0. How far the empty
-    reading drifts across a power cycle decides whether the saved value is good enough
-    (open question 4).
+  - Acceptance test, passed on the bench 2026-10-01 after a `c30` calibration with the
+    sleeve on and a tare: 30 tokens in, power off 15 s, power on. The cup reported 30
+    through the warm-up and the boot read `net=+180126 (29.97 tok) → keep zero, count 30`;
+    the board never dipped. Empty cup, power off 15 s, power on: `net=-5 (-0.00 tok) →
+    empty, re-zero (drift -5 counts)`. At ≈6004 counts per token that drift is ~0.001
+    token, so the saved empty reading is good enough on its own (open question 4,
+    resolved).
 - **No CLOSED screen on the cups.** [DECIDED 2026-09-29] The TV shows the race state and
   freezes at the post.
 
@@ -460,7 +463,7 @@ Rules for either:
 | DevPi reboots | Same, and the splash finds pi5 again on its own. [BUILT] |
 | Gateway reboots | Sends `hello`, stays silent until pi5 answers, never enters demo mode. Cups keep showing their own numbers. [BUILT] |
 | Power blip takes out DevPi and the gateway | The gateway is back in a second and silent. Cups show their own numbers with a `NO LINK` badge. Everything resumes when pi5 is up. [BUILT] |
-| A cup reboots | Its horse number comes back from NVS. **Its count comes back as zero today.** [TO BUILD, section 5] |
+| A cup reboots | Its horse number and its count come back from NVS. Through the warm-up it reports the saved count, then re-zeroes only if it reads empty; a cup with a pile keeps its saved empty reading (section 5). Bench-tested 2026-10-01. [BUILT] |
 | A cup dies | Spare cup: set its number, put it in the post, move the tokens. [BUILT] |
 | TV or splash reloads | Fetches the model; shows the figures at the post, not emptied cups. [BUILT] |
 | LED controller unreachable | The race state and results still apply; the dashboard says `LEDs unreachable`. [BUILT] |
@@ -480,8 +483,9 @@ Rules for either:
 2. **JoeyAI for 2027?** Build it as an odds and names source (section 8A), or leave the
    Claude odds poller as is?
 3. **Same-day scratch wording** on the board, replacing `TOKENS REFUNDED`.
-4. **Scale drift across a power cycle.** The brownout bench test decides whether the saved
-   empty reading is good enough on its own.
+4. ~~**Scale drift across a power cycle.**~~ Resolved 2026-10-01: the brownout bench test
+   read a drift of −5 counts (≈0.001 token at ≈6004 counts per token) across a power
+   cycle; the saved empty reading is good enough on its own.
 5. **LED controller address:** `10.0.0.44` (repo) or `10.0.0.42` (DevPi's local config)?
 6. **The bridge's SocketIO events:** keep them for a future screen (HUB75), or remove them
    as unused?
@@ -489,7 +493,7 @@ Rules for either:
 Resolved since v0.9: cup counting (the cup counts; the settled weight decides), odds on
 the board (none; bets only), LED sub-phases (the mode table), display transport (HTTP and
 an event stream), La Subasta migration (yes, section 8), admin PIN (no), cups showing
-CLOSED (no).
+CLOSED (no), scale drift across a power cycle (−5 counts; the saved zero is enough).
 
 ---
 
@@ -516,15 +520,16 @@ gateway says hello.
 - The admin page
 - The figures at the post
 - Race info and names in La Quiniela's store; Race Setup removed
+- Cup brownout: a cup comes back with its count (cup sketch v0.7, bench-tested 2026-10-01)
 - La Subasta on La Quiniela's store: names, program numbers 1–24, scratches
 
 ### Next
 
 One single-concern Claude Code prompt each, in this order:
 
-1. **Cup brownout:** save the empty reading and the last count; re-zero at startup only
-   when empty. Reflash the four cups, then run the bench test (section 5). First, because
-   it is the only firmware change and cheapest while there are four cups.
+1. ~~**Cup brownout:** save the empty reading and the last count; re-zero at startup only
+   when empty. Reflash the four cups, then run the bench test (section 5).~~ Done
+   (bench-tested 2026-10-01; listed under Done).
 2. ~~**La Subasta on La Quiniela's store:** names, program numbers 1–24, scratches.~~
    Done (2026-10-01; listed under Done).
 3. **Counted pot** on the admin page; pot and prizes from the hand count.
