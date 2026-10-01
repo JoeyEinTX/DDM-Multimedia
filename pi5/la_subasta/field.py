@@ -13,6 +13,11 @@
 # Without a La Quiniela board (an app that never called init_board()) the
 # field is what an empty store gives, 1..20 with no names, and the log says
 # so once. main.py always makes the board.
+#
+# A store that could not read its database at start (HorseStore.load_failed)
+# is the same empty store, and says so: Field.degraded. The list is still
+# served, but it is a default and not the operator's field, so scratches.py
+# does not apply it to the auction.
 
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -87,6 +92,7 @@ class Field:
 
     def __init__(self, snapshot: Dict[str, Any], live: bool) -> None:
         self.live = live                        # False: the stand-in, no board
+        self.degraded = bool(snapshot.get("degraded"))   # the store could not read its database
         self.names_rev: Optional[int] = snapshot.get("names_rev") if live else None
         self.scratches: Dict[int, Optional[int]] = dict(snapshot.get("scratches") or {})
         self.horses: List[Dict[str, Any]] = [_horse(h) for h in snapshot.get("horses") or []]
@@ -107,11 +113,14 @@ class Field:
         return dict(entry) if entry is not None else None
 
     def refusal(self, number: int) -> str:
-        """What a guest is told when a bid names a horse that is not in it."""
+        """What a guest is told when a bid names a horse that is not in it.
+        A replacement can be scratched in turn (9 -> 22, then 22 -> 23): the
+        horse that runs in its place is the end of that chain, here 23."""
         if number in self.scratches:
-            now = self.scratches[number]
-            if now is not None:
-                return f"#{number} is not in the field: scratched, #{now} runs in its place"
+            from la_quiniela.horses import horse_at
+            runs = horse_at(number, self.scratches)
+            if runs is not None:
+                return f"#{number} is not in the field: scratched, #{runs} runs in its place"
             return f"#{number} is not in the field: scratched"
         return f"#{number} is not in the field"
 

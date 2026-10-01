@@ -287,13 +287,28 @@ def close_conn() -> None:
 
 
 @contextmanager
-def write_txn():
+def write_txn(prepare=None):
     """
     Serialize writes with an explicit transaction. Use for any multi-statement
     write (bid placement, void+re-award, etc.) so readers see a consistent
     view and undo/state transitions don't interleave.
+
+    prepare: an optional no-argument callable, run once _write_lock is held
+    and before BEGIN IMMEDIATE, so while this thread holds no sqlite write
+    lock. Read in it whatever sits behind another lock, La Quiniela's store
+    above all: a scratch holds the store's lock while it writes this same
+    database file, so a transaction that waits for the store with sqlite's
+    write lock in hand, and a scratch that waits for sqlite's with the
+    store's in hand, wait on each other until sqlite's busy timeout. The
+    caller keeps what prepare read (a closure) and uses it in the
+    transaction. A scratch recorded after that read is not lost:
+    scratches.apply() takes _write_lock too, so it runs once this
+    transaction has committed and voids what it wrote on a horse that has
+    left the field.
     """
     with _write_lock:
+        if prepare is not None:
+            prepare()
         conn = get_conn()
         conn.execute("BEGIN IMMEDIATE;")
         try:

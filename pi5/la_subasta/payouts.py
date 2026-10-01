@@ -68,13 +68,22 @@ def freeze_ownership(event_year: int = EVENT_YEAR) -> List[dict]:
     field is frozen: a horse La Quiniela does not have in it is not sold.
     A row voided by a scratch (scratches.py) is kept, as the record of the
     refund, unless its horse is in the field and owned again.
+
+    The field is read in write_txn's prepare hook, before sqlite's write lock
+    is taken (models.write_txn). A scratch recorded after that read voids
+    its row once this commits (scratches.apply).
     """
     rows = []
-    with write_txn() as conn:
+    read = {}
+
+    def read_field():
+        read["numbers"] = field.current().numbers()
+
+    with write_txn(prepare=read_field) as conn:
         conn.execute(
             "DELETE FROM ownership WHERE event_year = ? AND voided = 0", (event_year,),
         )
-        for horse_id in field.current().numbers():
+        for horse_id in read["numbers"]:
             hb = current_high_bid(horse_id, event_year)
             if hb is None:
                 continue

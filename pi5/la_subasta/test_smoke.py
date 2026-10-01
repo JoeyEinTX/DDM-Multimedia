@@ -51,6 +51,7 @@ from la_subasta.state_machine import (  # noqa: E402
 )
 from la_subasta.blueprint import la_subasta_bp, init_la_subasta  # noqa: E402
 from la_subasta import field as ls_field  # noqa: E402
+from la_subasta import scratches as ls_scratches  # noqa: E402
 from la_quiniela import board as lq_board  # noqa: E402
 from la_quiniela.horses import HORSE_COUNT as LQ_HORSE_COUNT, HorseStore  # noqa: E402
 
@@ -103,17 +104,19 @@ def _run(name, fn):
 _LQ_TMP = tempfile.mkdtemp(prefix="la_subasta_lq_")
 
 
-def _make_app():
+def _make_app(store=None):
     """A Flask app with the la_subasta blueprint and La Quiniela's board
     routes (the admin page's names and scratches), over a fresh La Quiniela
-    board with a memory-only store and no bridge: La Subasta reads its
-    horses from that board's store, as it does in the app."""
+    board with a memory-only store (or `store`, to have one on a database
+    file) and no bridge: La Subasta reads its horses from that board's
+    store, as it does in the app."""
     from flask import Flask
     app = Flask(__name__)
     app.config["TESTING"] = True
-    lq_board.init_board(bridge=None, log_dir=os.path.join(_LQ_TMP, "logs"),
+    lq_board.init_board(bridge=None, store=store, log_dir=os.path.join(_LQ_TMP, "logs"),
                         results_path=os.path.join(_LQ_TMP, "results.json"))
     ls_field.set_store_source(None)          # the board's store, as in the app
+    ls_scratches.forget()                    # one test's field is never diffed against the last test's
     init_la_subasta(socketio=None)
     app.register_blueprint(la_subasta_bp)
     app.register_blueprint(lq_board.quiniela_board_bp)
@@ -1262,6 +1265,25 @@ def test_field_bid_on_absent_horse_rejected():
     r = client.post("/la-subasta/api/admin/results", json={"win": 21, "place": 22, "show": 1})
     _check("results naming 21 rejected", r.status_code == 400, f"body={r.get_json()}")
 
+    # A replacement can be scratched in turn (9 -> 22, then 22 -> 23): the horse
+    # that runs in 9's place, and in 22's, is 23, not 22.
+    r = _lq_scratch(client, 22, 23, "Robusta")
+    _check("LQ admin: 22 -> 23 recorded", r.status_code == 200, f"body={r.get_json()}")
+    status, error = bid(9)
+    _check("a bid on 9 says 23 runs in its place, 22 being out too",
+           status == 400 and error == "#9 is not in the field: scratched, #23 runs in its place",
+           f"got {status} {error!r}")
+    status, error = bid(22)
+    _check("...a bid on 22 says the same",
+           status == 400 and error == "#22 is not in the field: scratched, #23 runs in its place",
+           f"got {status} {error!r}")
+    # ...and the chain can end in nobody
+    r = _lq_scratch(client, 23)
+    _check("LQ admin: 23 scratched with no replacement", r.status_code == 200, f"body={r.get_json()}")
+    status, error = bid(9)
+    _check("a bid on 9 no longer says anyone runs in its place",
+           status == 400 and error == "#9 is not in the field: scratched", f"got {status} {error!r}")
+
 
 def test_field_no_board_standin_and_no_mock():
     """Without a La Quiniela board La Subasta sells 1-20 with no names (the
@@ -1353,6 +1375,32 @@ def _ownership(horse):
 def _done_with_events():
     from la_subasta import notifications as nots
     nots.init_notifications(None)
+
+
+class _Logs(logging.Handler):
+    """Collects what the named loggers say while it is entered, so that a
+    test can check an expected ERROR line and the console stays quiet."""
+    def __init__(self, *names):
+        super().__init__(level=logging.DEBUG)
+        self.records = []
+        self._names = names
+
+    def __enter__(self):
+        for name in self._names:
+            logging.getLogger(name).addHandler(self)
+        return self
+
+    def __exit__(self, *exc):
+        for name in self._names:
+            logging.getLogger(name).removeHandler(self)
+        return False
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def errors(self, name=None):
+        return [r for r in self.records
+                if r.levelno >= logging.ERROR and (name is None or r.name == name)]
 
 
 def test_scratch_while_open():
@@ -1610,6 +1658,326 @@ def test_scratch_restart_does_not_double_void():
         db.close()
 
 
+def _scratch_meets(app, store, db, action, horse, scratch_first):
+    """Run action() on one thread and the LQ admin page's scratch of `horse`
+    (POST /api/quiniela/scratch) on another, over a store on a real file, so
+    that the two meet on the locks. The action's thread parks in the store's
+    field() read it makes under the write lock (the check a bid makes before
+    that holds no lock, and is let through): with scratch_first it parks
+    before the read and is let go once the scratch holds the store's lock and
+    is about to write, so the read finds the scratch; without it it parks
+    after the read and is let go once the scratch is on disk, so the read
+    found the horse still in the field. Returns (what action returned or
+    raised, the scratch's response or what it raised, seconds taken)."""
+    import threading
+    parked, go = threading.Event(), threading.Event()
+    real_field, real_save = store.field, db.save_scratch
+    out = {}
+
+    def field():
+        if threading.current_thread().name != "acts" or not models._write_lock.locked():
+            return real_field()
+        if scratch_first:
+            parked.set()
+            go.wait(3)
+        snapshot = real_field()
+        if not scratch_first:
+            parked.set()
+            go.wait(3)
+        return snapshot
+
+    def save_scratch(was, now):
+        if scratch_first:
+            go.set()                    # it holds the store's lock and is about to write
+        real_save(was, now)
+        if not scratch_first:
+            go.set()                    # it is on disk
+
+    def acts():
+        try:
+            out["action"] = action()
+        except Exception as exc:        # a refused bid is an answer
+            out["action"] = exc
+        finally:
+            models.close_conn()
+
+    def scratches():
+        try:
+            out["scratch"] = _lq_scratch(app.test_client(), horse)
+        except Exception as exc:        # sqlite's "database is locked", say
+            out["scratch"] = exc
+        finally:
+            models.close_conn()
+
+    store.field, db.save_scratch = field, save_scratch
+    started = time.monotonic()
+    try:
+        a = threading.Thread(target=acts, name="acts")
+        b = threading.Thread(target=scratches, name="scratches")
+        a.start()
+        parked.wait(3)
+        b.start()
+        a.join(20)
+        b.join(20)
+    finally:
+        del store.field, db.save_scratch
+    return out.get("action"), out.get("scratch"), time.monotonic() - started
+
+
+def test_scratch_never_waits_on_a_bid_holding_sqlite():
+    """Lock order. A bid holds sqlite's write lock (write_txn) and a scratch
+    holds La Quiniela's store lock while it writes the same database file.
+    Were the bid to wait for the store inside its transaction, the two would
+    wait for each other until sqlite's 5 s busy timeout, and the admin would
+    get a 500 with the scratch in memory and not on disk. So the store is read
+    before sqlite's lock is taken (write_txn's prepare). Four meetings on
+    threads over a store on a real file, a bid and the lock (freeze_ownership)
+    each against a scratch recorded before the field is read and after it:
+    the scratch always answers 200, is on disk, in well under 5 s, and the
+    horse's bid or ownership does not survive it, refused or voided once the
+    other side has committed."""
+    from la_quiniela.models import LqDb
+    _reset()
+    db = LqDb(_TMP_DB)
+    db.init_schema()
+    try:
+        store = HorseStore(db)
+        store.set_names({n: name for n, name in enumerate(DERBY_2026, 1)})
+        app = _make_app(store=store)
+        client = app.test_client()
+        transition(AuctionState.OPEN)
+        alice, bob = [client.post("/la-subasta/api/register", json={"name": n, "emoji": e}).get_json()["bidder"]
+                      for n, e in (("Alice", "🌮"), ("Bob", "🐴"))]
+
+        def on_disk():
+            other = LqDb(_TMP_DB)       # not the connection that wrote it
+            try:
+                return other.load_scratches()
+            finally:
+                other.close()
+
+        def meet(label, action, horse, scratch_first):
+            done, scratch, seconds = _scratch_meets(app, store, db, action, horse, scratch_first)
+            _check(f"{label}: the scratch of {horse} answers 200",
+                   getattr(scratch, "status_code", None) == 200, f"got {scratch!r}")
+            _check(f"{label}: ...and is on disk", horse in on_disk(), f"got {on_disk()}")
+            _check(f"{label}: ...both finish well under sqlite's 5 s busy timeout", seconds < 2.0,
+                   f"took {seconds:.1f} s")
+            return done
+
+        done = meet("bid, scratch first", lambda: bidding.place_bid(bob["id"], 9, 2), 9, True)
+        _check("bid, scratch first: the bid is refused, naming the scratch",
+               isinstance(done, bidding.BidError) and done.reason == "#9 is not in the field: scratched",
+               f"got {done!r}")
+        _check("bid, scratch first: nothing was recorded on 9", _bids_on(9) == [])
+
+        done = meet("bid, field read first", lambda: bidding.place_bid(bob["id"], 10, 2), 10, False)
+        _check("bid, field read first: the bid was accepted (its field still had 10)",
+               isinstance(done, bidding.PlacedBid), f"got {done!r}")
+        _check("bid, field read first: the scratch voided it once it committed",
+               [(b["voided"], b["voided_reason"]) for b in _bids_on(10)] == [(1, "scratched")],
+               f"got {_bids_on(10)}")
+
+        _bid(client, alice, 11, 3)
+        _bid(client, alice, 12, 4)
+        done = meet("lock, scratch first", payouts.freeze_ownership, 11, True)
+        _check("lock, scratch first: 11 is not frozen into ownership, 12 is",
+               isinstance(done, list) and [r["horse_id"] for r in done] == [12] and _ownership(11) is None,
+               f"got {done!r}, {_ownership(11)}")
+        _check("lock, scratch first: 11's bid is voided",
+               [b["voided_reason"] for b in _bids_on(11)] == ["scratched"])
+
+        done = meet("lock, field read first", payouts.freeze_ownership, 12, False)
+        _check("lock, field read first: 12 was frozen (its field still had 12)",
+               isinstance(done, list) and [r["horse_id"] for r in done] == [12], f"got {done!r}")
+        own = _ownership(12)
+        _check("lock, field read first: the scratch voided its ownership once it committed",
+               own is not None and own["voided"] == 1 and own["voided_reason"] == "scratched", f"got {own}")
+        _check("lock, field read first: ...and its bid",
+               [b["voided_reason"] for b in _bids_on(12)] == ["scratched"])
+
+        # And the rule itself, on this thread: wherever the field is read, no
+        # sqlite write lock is held.
+        held = []
+        real_field = store.field
+
+        def watching():
+            held.append(models.get_conn().in_transaction)
+            return real_field()
+
+        store.field = watching
+        try:
+            bidding.place_bid(bob["id"], 13, 1)
+            payouts.freeze_ownership()
+        finally:
+            del store.field
+        _check("place_bid and freeze_ownership read the field only with sqlite's write lock free",
+               len(held) >= 3 and not any(held), f"got {held}")
+    finally:
+        ls_field.set_store_source(None)
+        ls_scratches.forget()
+        db.close()
+
+
+def test_degraded_store_voids_nothing():
+    """A HorseStore whose database cannot be read at start comes up empty: no
+    names and no scratch records, so the field it lists is 1-20 and #22,
+    which stood in for #9, looks scratched. Applying that would void every
+    bid and ownership on 22 as 'scratched'. La Subasta does not: nothing is
+    voided, nothing is pushed, the log says so once at ERROR, the list is
+    still served, and a store that does load is applied normally afterwards."""
+    import sqlite3
+    from la_subasta.models import get_conn
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _lq_scratch(client, 9, 22, "Ocelli")                # 22 runs in 9's place
+        _bid(client, alice, 22, 3)
+        _bid(client, bob, 22, 5)
+        _bid(client, carol, 4, 2)
+        r = client.post("/la-subasta/api/admin/lock")
+        assert r.status_code == 200, r.get_json()
+        _check("before: Bob owns 22 and Carol 4",
+               (_ownership(22) or {}).get("bidder_id") == bob["id"] and (_ownership(4) or {}).get("voided") == 0)
+
+        def rows():
+            return [[tuple(r) for r in get_conn().execute(sql).fetchall()] for sql in (
+                "SELECT id, horse_id, voided, voided_reason FROM bids ORDER BY id",
+                "SELECT id, horse_id, voided, voided_reason FROM ownership ORDER BY id")]
+
+        before = rows()
+
+        class _UnreadableDb:
+            """What an LqDb is when its tables cannot be read."""
+            def load_horses(self):
+                raise sqlite3.OperationalError("no such table: lq_horses")
+
+        with _Logs("la_quiniela.horses", "la_subasta.scratches") as logs:
+            store = HorseStore(db=_UnreadableDb())
+            _check("the store says it could not load",
+                   store.load_failed is True and store.field()["degraded"] is True)
+            ls_field.set_store_source(lambda: store)
+            ls_scratches.forget()                            # pi5 restarts
+            ev.events.clear()
+            _check("follow_la_quiniela() finds the store", ls_scratches.follow_la_quiniela() is True)
+            listed = [h["horse_id"] for h in client.get("/la-subasta/api/horses").get_json()["horses"]]
+            client.get("/la-subasta/api/state")
+            ls_scratches.sync(force=True)
+            _check("field.current() still serves the list: 1-20, flagged degraded",
+                   ls_field.current().numbers() == list(range(1, 21)) and ls_field.current().degraded
+                   and listed == list(range(1, 21)), f"got {listed}")
+            _check("no bid and no ownership was voided", rows() == before, f"got {rows()}")
+            _check("22 is still Bob's, with both bids active",
+                   _ownership(22)["voided"] == 0 and [b["voided"] for b in _bids_on(22)] == [0, 0])
+            _check("nothing was pushed", ev.events == [], f"got {ev.events}")
+            _check("the sync stays undone (a store that loads is applied normally)",
+                   ls_scratches._seen is None)
+            errors = logs.errors("la_subasta.scratches")
+            _check("the log says so, once, at ERROR (not on every request)",
+                   len(errors) == 1 and "NOT applied" in errors[0].getMessage(),
+                   f"got {[r.getMessage() for r in errors]}")
+
+            healthy = HorseStore()                           # one that does load: the default 1-20
+            ls_field.set_store_source(lambda: healthy)
+            client.get("/la-subasta/api/state")              # the next La Subasta request catches up
+            _check("a store that loads is applied normally: 22 is not in its field, so it is voided",
+                   [b["voided_reason"] for b in _bids_on(22)] == ["scratched", "scratched"]
+                   and _ownership(22)["voided"] == 1, f"got {_bids_on(22)}, {_ownership(22)}")
+            _check("...and pushed", [p["horse_id"] for p in ev.named("horse_scratched")] == [22],
+                   f"got {ev.events}")
+    finally:
+        ls_field.set_store_source(None)
+        ls_scratches.forget()
+        _done_with_events()
+
+
+def test_failed_scratch_push_is_retried():
+    """sync() counts a field as seen only once its pushes have gone out. A
+    push that raises after apply() committed is sent again by the next La
+    Subasta request, and nothing is voided a second time."""
+    from la_subasta import notifications as nots
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    real = nots.horse_scratched
+    tries = []
+
+    def flaky(horse_id, refund_count=0, ownership_voided=False):
+        tries.append(horse_id)
+        if len(tries) == 1:
+            raise RuntimeError("socketio.emit failed")
+        return real(horse_id, refund_count=refund_count, ownership_voided=ownership_voided)
+
+    nots.horse_scratched = flaky
+    try:
+        _bid(client, alice, 4, 2)
+        _bid(client, bob, 4, 3)
+        ev.events.clear()
+        with _Logs("la_subasta.scratches") as logs:
+            r = _lq_scratch(client, 4)
+            _check("LQ admin: the scratch is recorded though the push raised (the listener catches it)",
+                   r.status_code == 200, f"body={r.get_json()}")
+            _check("...the failure is logged", len(logs.errors("la_subasta.scratches")) == 1)
+        voided = _bids_on(4)
+        _check("...the bids on 4 were voided, and nothing has gone out yet",
+               [b["voided_reason"] for b in voided] == ["scratched", "scratched"] and ev.events == [],
+               f"got {voided}, {ev.events}")
+
+        client.get("/la-subasta/api/horses")                 # the next La Subasta request
+        _check("the retry pushes horse_scratched for 4, then field_changed",
+               [e for e, _ in ev.events] == ["horse_scratched", "field_changed"]
+               and ev.named("horse_scratched")[0]["horse_id"] == 4 and tries == [4, 4], f"got {ev.events}")
+        _check("...with the field as it stands", 4 not in ev.named("field_changed")[0]["horses"])
+        _check("...and voids nothing a second time", _bids_on(4) == voided, f"got {_bids_on(4)}")
+        n = len(ev.events)
+        client.get("/la-subasta/api/horses")
+        client.get("/la-subasta/api/state")
+        _check("later requests find nothing more to push", len(ev.events) == n)
+    finally:
+        nots.horse_scratched = real
+        _done_with_events()
+
+
+def test_paid_twice_keeps_the_refund():
+    """Paid is idempotent. paid_amount is what was collected and the refund
+    owed after a scratch is worked out from it, so a second tap must not lower
+    it to the smaller total owed now and lose the refund. It only ever goes
+    up, and the first paid_at stands."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        def tap(bidder):
+            r = client.post("/la-subasta/api/admin/paid", json={"bidder_id": bidder["id"]})
+            assert r.status_code == 200, r.get_json()
+            return r.get_json()["amount"]
+
+        def ledger(bidder):
+            return {b["id"]: b for b in client.get("/la-subasta/api/bidders").get_json()["bidders"]}[bidder["id"]]
+
+        # Someone who owes more by the second tap is recorded as having paid more
+        _bid(client, carol, 8, 2)
+        _check("Carol is marked paid 2", tap(carol) == 2)
+        _bid(client, carol, 9, 3)
+        _check("she bids on and is marked paid again: 5, the new total",
+               tap(carol) == 5 and bidding.get_bidder(carol["id"])["paid_amount"] == 5)
+
+        _bid(client, alice, 2, 5)
+        _bid(client, alice, 3, 2)
+        r = client.post("/la-subasta/api/admin/lock")
+        assert r.status_code == 200, r.get_json()
+        _check("Alice is marked paid 7", tap(alice) == 7)
+        first = bidding.get_bidder(alice["id"])
+        _lq_scratch(client, 2)                                  # 5 of it was for a horse that is out
+        _check("a scratch after the lock: Alice owes 2 and is owed 5 back",
+               ledger(alice)["owed"] == 2 and ledger(alice)["refund_owed"] == 5, f"got {ledger(alice)}")
+        _check("a second tap reports the 7 on record, not the 2 owed", tap(alice) == 7)
+        _check("...and the refund owed is still 5", ledger(alice)["refund_owed"] == 5, f"got {ledger(alice)}")
+        again = bidding.get_bidder(alice["id"])
+        _check("paid_amount and paid_at stand as the first tap left them",
+               again["paid"] == 1 and again["paid_amount"] == 7 and again["paid_at"] == first["paid_at"],
+               f"got {again}")
+        tap(alice)
+        _check("a third tap changes nothing either", ledger(alice)["refund_owed"] == 5)
+    finally:
+        _done_with_events()
+
+
 def test_ownership_migration():
     """An ownership table from before this change gets the void columns,
     its rows read not voided, and nothing else is touched."""
@@ -1653,23 +2021,43 @@ def test_ownership_migration():
 
 def test_guest_js_follows_the_field():
     """Guest phones drop a scratched horse and pick up a replacement
-    without a reload: guest.js handles horse_scratched and field_changed by
-    reading the list again, rebuilds the cards when the horses change (9
-    out, 22 in: same count) and bids on the card's current horse."""
+    without a reload: guest.js drops the horse on horse_scratched (closing a
+    custom-bid dialog open on it, with the reason) and reads the list again on
+    field_changed, which always follows, and on every socket connect (a phone
+    that was offline catches up); it rebuilds the cards when the horses change
+    (9 out, 22 in: same count), bids on the card's current horse, does not
+    write a bid into a card whose horse left mid-request, and draws the
+    saddle-cloth digits in the cloth's own colour (#2: black on white)."""
     _reset()
     app = _make_app()
     js = app.test_client().get("/la-subasta/static/js/guest.js").get_data(as_text=True)
     hs = js[js.index("socket.on('horse_scratched'"):]
     hs = hs[:hs.index("});")]
     _check("horse_scratched drops the horse from the list", "delete state.horses[payload.horse_id]" in hs)
-    _check("horse_scratched reads the list again", "refreshHorses()" in hs)
+    _check("horse_scratched leaves the re-read to field_changed, which always follows",
+           "refreshHorses()" not in hs)
+    _check("horse_scratched closes a custom-bid dialog open on that horse, and says why",
+           "state.customBid.horseId === payload.horse_id" in hs and "state.customBid.close()" in hs
+           and "showNotice(" in hs and "was scratched" in hs)
+    _check("the custom-bid dialog registers itself where that handler finds it, and clears itself",
+           "state.customBid = { horseId: horseId, close: cleanup };" in js
+           and "state.customBid.close === cleanup) state.customBid = null;" in js)
     fc = js[js.index("socket.on('field_changed'"):]
     fc = fc[:fc.index("});")]
     _check("field_changed reads the list again", "refreshHorses()" in fc)
+    cn = js[js.index("socket.on('connect'"):]
+    cn = cn[:cn.index("});")]
+    _check("every socket connect, a reconnect included, reads the list again", "refreshHorses()" in cn)
     _check("cards are rebuilt when the horses differ, not only their count",
            "const sameHorses" in js and "existing[i].dataset.horseId === String(h.horse_id)" in js)
     _check("a bid button bids on the card's current horse",
            "const horseId = parseInt(card.dataset.horseId, 10);" in js)
+    _check("a bid accepted for a horse that left mid-request is not written to a card",
+           "state.horses[horseId].current_high_bid" not in js
+           and "state.horses[horseId].current_leader" not in js
+           and "const horse = state.horses[horseId];\n            if (horse) {" in js)
+    _check("the saddle-cloth digits take the cloth's own colour",
+           "saddle.style.color = horse.saddle_cloth_text_color" in js)
 
 
 def test_horses_scratched_flag_roundtrip():
@@ -2709,6 +3097,11 @@ def main():
     _run("scratch — replacement: 22 enters with no bids", test_scratch_replacement_adds_fresh_horse)
     _run("scratch — undo restores the field, not the bids", test_scratch_undo_restores_field_not_bids)
     _run("scratch — a restart does not double-void", test_scratch_restart_does_not_double_void)
+    _run("scratch — never waits on a bid holding sqlite (lock order)",
+         test_scratch_never_waits_on_a_bid_holding_sqlite)
+    _run("scratch — a degraded store voids nothing", test_degraded_store_voids_nothing)
+    _run("scratch — a failed push is retried, nothing voided twice", test_failed_scratch_push_is_retried)
+    _run("paid — a second tap keeps the refund owed", test_paid_twice_keeps_the_refund)
     _run("scratch — old ownership table migrated", test_ownership_migration)
     _run("scratch — guest page follows the field live", test_guest_js_follows_the_field)
     _run("guest UI — /api/horses scratched flag round-trip (regression)",

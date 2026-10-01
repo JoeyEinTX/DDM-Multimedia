@@ -239,11 +239,19 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
         raise BidError("Unknown bidder")
 
     # ---- Serialized validation + insert ------------------------------------
-    with write_txn() as conn:
-        # Again under the write lock: a scratch recorded since the check above
-        # either refuses this bid here or, applied after it under this same
-        # lock (scratches.apply), voids it. A bid never outlives its horse.
-        the_field = field.current()
+    # The field is read again under the write lock, in write_txn's prepare
+    # hook so that it is read before sqlite's write lock is taken: this thread
+    # never waits for La Quiniela's store with that lock in hand
+    # (models.write_txn). A scratch recorded since the check above either
+    # refuses this bid here or, applied after the bid commits under this same
+    # lock (scratches.apply), voids it. A bid never outlives its horse.
+    read = {}
+
+    def read_field():
+        read["field"] = field.current()
+
+    with write_txn(prepare=read_field) as conn:
+        the_field = read["field"]
         if horse_id not in the_field:
             raise BidError(the_field.refusal(horse_id))
 

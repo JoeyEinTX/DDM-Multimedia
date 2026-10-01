@@ -433,15 +433,23 @@ def api_admin_paid():
 
     from la_subasta.models import write_txn
     portfolio = bidding.bidder_portfolio(bidder_id)
+    # Idempotent: paid_amount is what was collected, and ledger() works the
+    # refund out of it (a horse scratched after the lock leaves the bidder
+    # owing less than they paid). A second tap must not lower it to the new,
+    # smaller total owed and lose that refund, so it only ever goes up, and
+    # the first paid_at stands.
     with write_txn() as conn:
         conn.execute(
-            "UPDATE bidders SET paid = 1, paid_at = datetime('now'), "
-            "paid_amount = ? WHERE id = ?",
+            "UPDATE bidders SET paid = 1, paid_at = COALESCE(paid_at, datetime('now')), "
+            "paid_amount = MAX(COALESCE(paid_amount, 0), ?) WHERE id = ?",
             (portfolio["total"], bidder_id),
         )
+        paid_amount = conn.execute(
+            "SELECT paid_amount FROM bidders WHERE id = ?", (bidder_id,),
+        ).fetchone()["paid_amount"]
     notifications.paid_marked(bidder_id)
     return jsonify({"success": True, "bidder_id": bidder_id,
-                    "amount": portfolio["total"]})
+                    "amount": paid_amount})
 
 
 @la_subasta_bp.route("/api/admin/payouts", methods=["GET"])

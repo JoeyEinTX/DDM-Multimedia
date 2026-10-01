@@ -6,7 +6,8 @@
      - Render horse list from /la-subasta/api/horses
      - Place bids with +1 / +3 / +5 / custom; disable out-of-range buttons
      - Live updates via SocketIO (bid_placed, horse_scratched, field_changed,
-       auction_locked, settings_changed)
+       auction_locked, settings_changed); the horse list is read again on
+       every socket connect, so a phone that was offline catches up
      - Countdown strip (refreshes every 30s)
 
    Out of scope for Phase 2A (coming in 2B): portfolio view, undo toast,
@@ -50,6 +51,7 @@
         horseLoadFailed: false,  // drives the placeholder copy
         horseLoadInFlight: null, // de-dupes concurrent retry loops
         horseRecoveryPoll: null,
+        customBid: null,         // the open custom-bid dialog: { horseId, close }
     };
 
     // ---------------------------------------------------------------------
@@ -475,6 +477,13 @@
         if (horse.saddle_cloth_color) {
             saddle.style.setProperty('--ls-saddle-color', horse.saddle_cloth_color);
         }
+        // The cloth's own digit colour: the stylesheet's white digits vanish
+        // on a white cloth (#2 is white with black digits).
+        if (horse.saddle_cloth_text_color) {
+            saddle.style.color = horse.saddle_cloth_text_color;
+        } else {
+            saddle.style.removeProperty('color');
+        }
 
         card.querySelector('[data-role="name"]').textContent =
             horse.name || ('Horse #' + horse.saddle_cloth);
@@ -596,20 +605,26 @@
         if (btn) btn.classList.remove('ls-loading');
 
         if (resp.ok && resp.data.success) {
-            // Optimistic update — the socketio broadcast will confirm
+            // Optimistic update — the socketio broadcast will confirm. The
+            // horse may have left the field while the request was out (a
+            // scratch voids the bid it just took): then there is no card to
+            // update, and horse_scratched has already told the guest.
             const bid = resp.data.bid;
-            state.horses[horseId].current_high_bid = {
-                amount: bid.amount,
-                bidder_id: bid.bidder_id,
-                bidder_identity: bid.bidder_identity,
-                bid_time: bid.bid_time,
-            };
-            state.horses[horseId].current_leader_identity = bid.bidder_identity;
-            state.horses[horseId].current_leader_bidder_id = bid.bidder_id;
-            renderHorseList();
-            renderIdentityTotal();
-            flashCard(horseId);
-            vibrate();
+            const horse = state.horses[horseId];
+            if (horse) {
+                horse.current_high_bid = {
+                    amount: bid.amount,
+                    bidder_id: bid.bidder_id,
+                    bidder_identity: bid.bidder_identity,
+                    bid_time: bid.bid_time,
+                };
+                horse.current_leader_identity = bid.bidder_identity;
+                horse.current_leader_bidder_id = bid.bidder_id;
+                renderHorseList();
+                renderIdentityTotal();
+                flashCard(horseId);
+                vibrate();
+            }
             return true;
         }
 
@@ -634,6 +649,21 @@
         if (navigator.vibrate) {
             try { navigator.vibrate(50); } catch (e) { /* ignore */ }
         }
+    }
+
+    // A short message over the page, for something the guest should know that
+    // has no card to show it on (a horse scratched out from under an open
+    // dialog). It borrows the page's one toast element, the dev panel's, which
+    // sits outside the hidden panel, and stays long enough to be read.
+    const NOTICE_MS = 6000;
+
+    function showNotice(msg) {
+        const el = document.getElementById('ls-dev-toast');
+        if (!el) return;
+        el.textContent = msg;
+        el.hidden = false;
+        clearTimeout(showNotice._t);
+        showNotice._t = setTimeout(function () { el.hidden = true; }, NOTICE_MS);
     }
 
     // ---------------------------------------------------------------------
@@ -671,6 +701,7 @@
             modal.hidden = true;
             submit.removeEventListener('click', onSubmit);
             cancel.removeEventListener('click', onCancel);
+            if (state.customBid && state.customBid.close === cleanup) state.customBid = null;
         }
 
         async function onSubmit() {
@@ -694,6 +725,9 @@
 
         submit.addEventListener('click', onSubmit);
         cancel.addEventListener('click', onCancel);
+        // Where the horse_scratched handler finds the dialog: it closes it if
+        // this horse leaves the field while it is open.
+        state.customBid = { horseId: horseId, close: cleanup };
     }
 
     // ---------------------------------------------------------------------
@@ -775,7 +809,13 @@
         const socket = io();
         state.socket = socket;
 
-        socket.on('connect', function () { logInfo('socket connected'); });
+        // Every connect, the first and each reconnect: a phone that was
+        // offline or asleep while a horse was scratched missed horse_scratched
+        // and field_changed, so it reads the list again.
+        socket.on('connect', function () {
+            logInfo('socket connected');
+            refreshHorses();
+        });
         socket.on('connect_error', function (err) {
             logWarn('socket connect_error', err);
         });
@@ -796,15 +836,22 @@
         });
 
         // A scratch entered on the LQ admin page: the horse leaves the list
-        // (its bids are void), then the list is read again, which brings in
-        // a horse that replaced it.
+        // at once (its bids are void), and a custom-bid dialog open on it
+        // closes with the reason. field_changed always follows this and reads
+        // the list again, which brings in a horse that replaced it.
         socket.on('horse_scratched', function (payload) {
-            if (payload && state.horses[payload.horse_id]) {
+            if (!payload) return;
+            const horse = state.horses[payload.horse_id];
+            if (state.customBid && state.customBid.horseId === payload.horse_id) {
+                state.customBid.close();
+                showNotice('#' + payload.horse_id + (horse && horse.name ? ' ' + horse.name : '') +
+                           ' was scratched — bids on it are refunded');
+            }
+            if (horse) {
                 delete state.horses[payload.horse_id];
                 renderHorseList();
                 renderIdentityTotal();
             }
-            refreshHorses();
         });
 
         // La Quiniela's field or a name in it changed: read the list again.

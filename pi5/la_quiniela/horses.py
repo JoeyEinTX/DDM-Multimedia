@@ -203,11 +203,18 @@ class HorseStore:
 
     db is an LqDb (models.py) or None for a memory-only store. on_change is a
     no-argument callable invoked after every write, outside the lock; more
-    listeners can be added (add_listener) and are invoked after it."""
+    listeners can be added (add_listener) and are invoked after it.
+
+    load_failed: the database was given but its names / scratches / board
+    could not be read at start, so the store came up empty (no names, no
+    scratch records) and carries on in memory. What it holds is then not the
+    operator's field, only the default: field() says "degraded" and La
+    Subasta does not act on it (la_subasta/scratches.py)."""
 
     def __init__(self, db: Any = None, on_change: Optional[Callable[[], None]] = None) -> None:
         self._db = db
         self.on_change = on_change
+        self.load_failed = False
         self._listeners: List[Callable[[], None]] = []
         self._lock = threading.Lock()
         self._horses: Dict[int, Dict[str, str]] = {
@@ -247,6 +254,7 @@ class HorseStore:
             log.error("La Quiniela horses: cannot read lq_horses / lq_scratches / lq_board (%s); "
                       "names will not persist", exc)
             self._db = None
+            self.load_failed = True
             return
         try:
             self._closing = _parse_closing(self._db.load_closing())
@@ -382,19 +390,23 @@ class HorseStore:
         """The field as it stands, for La Subasta (la_subasta/field.py),
         which runs in this process and reads it here rather than over HTTP.
         One snapshot under one lock, so the names, the records and names_rev
-        agree: {"names_rev": N, "horses": [...], "scratches": {was: now}}.
+        agree: {"names_rev": N, "horses": [...], "scratches": {was: now},
+        "degraded": bool}.
         horses: every horse in_field (the rule above), by program number,
         {"number": 22, "name": "OCELLI", "replaces": 9}: the name upper-cased
         as the board serves it ("" when none is stored), replaces the horse
         it stands in for or None. A replacement is listed under its own
         number and the horse it replaced is absent. scratches: every record,
-        as scratches() gives them."""
+        as scratches() gives them. degraded: load_failed, the store could not
+        read its database at start, so the names and records above are an
+        empty default (1-20, no names, no scratches) and not the operator's."""
         with self._lock:
             records = dict(self._scratches)
             by_now = {now: was for was, now in records.items() if now is not None}
             horses = [{"number": n, "name": self._horses[n]["name"].upper(), "replaces": by_now.get(n)}
                       for n in range(1, HORSE_COUNT + 1) if in_field(n, records)]
-            return {"names_rev": self._names_rev, "horses": horses, "scratches": records}
+            return {"names_rev": self._names_rev, "horses": horses, "scratches": records,
+                    "degraded": self.load_failed}
 
     @property
     def names_rev(self) -> int:
