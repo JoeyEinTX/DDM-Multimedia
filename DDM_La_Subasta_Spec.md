@@ -30,7 +30,7 @@ Top line = smaller, serape-beige, sets context (whose event). Bottom line = big,
 
 ## Executive Summary
 
-Derby de Mayo's **La Subasta** is an automated, hands-off horse auction for Derby de Mayo guests. Instead of traditional parimutuel betting, each of the 20 Derby horses is auctioned to the highest bidder throughout party day. Guests bid from their phones (or Joey's iPad) on the home wifi, outbid each other in real time, and the final roster locks 15 minutes before post time. After the race, payouts are auto-calculated from the pot using a 60/25/15 win/place/show split.
+Derby de Mayo's **La Subasta** is an automated, hands-off horse auction for Derby de Mayo guests. Instead of traditional parimutuel betting, every horse in La Quiniela's field (normally twenty, by program number, a replacement under its own number) is auctioned to the highest bidder throughout party day. Guests bid from their phones (or Joey's iPad) on the home wifi, outbid each other in real time, and the final roster locks 15 minutes before post time. After the race, payouts are auto-calculated from the pot using a 60/25/15 win/place/show split.
 
 **Key design principle: zero live management required from Joey.** System opens in the morning, runs itself all day, locks on schedule, and auto-computes payouts when Joey enters race results into the existing dashboard.
 
@@ -62,7 +62,7 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 
 1. System auto-closes bidding at hard-stop timestamp (no snipe extensions)
 2. All displays flash "BIDDING CLOSED — TIME TO PAY UP" with cheeky messaging
-3. Spectator TV transitions to **Ownership Reveal**: rotates through all 20 horses showing owner name + emoji + winning bid
+3. Spectator TV transitions to **Ownership Reveal**: rotates through every horse in the field (a horse scratched after the lock is skipped) showing owner name + emoji + winning bid
 4. Guest phones show their final portfolio ("You own: #3 Magnolia ($45), #14 Carry Back ($67) — Total: $112 — Pay Joey")
 5. Admin dashboard shows per-bidder Paid/Unpaid tracker
 6. Joey chases payments face-to-face as guests arrive / already at party (Venmo, Zelle, cash)
@@ -94,7 +94,7 @@ This system **does not require new hardware**. It runs as a new Flask blueprint 
 | Flask server | Existing | New `/la-subasta` blueprint |
 | SocketIO | Existing | Real-time bid updates |
 | SQLite database | Existing | New La Subasta tables |
-| Horse roster | Existing | Shared with dashboard |
+| Horse roster | Existing | La Quiniela's store (names, field, scratches), read in-process; see "Horses: from La Quiniela's store" |
 | DDM branding CSS | Existing | Reused across views |
 | LED cup array | Existing | Optional visual tie-in |
 
@@ -124,7 +124,8 @@ This system **does not require new hardware**. It runs as a new Flask blueprint 
 │                                                             │
 │   ┌───────────────────────────────────────────────────┐    │
 │   │  SQLite Database                                  │    │
-│   │  - bidders, horses (shared), bids, payouts        │    │
+│   │  - bidders, bids, ownership, payouts              │    │
+│   │    (the horses are in La Quiniela's store)        │    │
 │   └───────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -152,7 +153,7 @@ bidders (
 bids (
   id INTEGER PRIMARY KEY,
   bidder_id INTEGER REFERENCES bidders,
-  horse_id INTEGER REFERENCES horses,
+  horse_id INTEGER NOT NULL,     -- program number 1-24, La Quiniela's field
   amount REAL NOT NULL,
   bid_time TIMESTAMP NOT NULL,
   voided BOOLEAN DEFAULT FALSE,  -- admin can void
@@ -162,17 +163,22 @@ bids (
 
 ownership (
   id INTEGER PRIMARY KEY,
-  horse_id INTEGER UNIQUE REFERENCES horses,
+  horse_id INTEGER UNIQUE NOT NULL,  -- program number 1-24, La Quiniela's field
   bidder_id INTEGER REFERENCES bidders,
   winning_bid REAL NOT NULL,
-  locked_at TIMESTAMP
+  locked_at TIMESTAMP,
+  -- A scratch after the lock (see Scratches); a voided row owes, pays out and
+  -- counts in the pot nothing. Added by ALTER TABLE on an existing database.
+  voided INTEGER NOT NULL DEFAULT 0,
+  voided_reason TEXT,
+  voided_at TEXT
 );
 -- Populated when auction closes
 
 payouts (
   id INTEGER PRIMARY KEY,
   bidder_id INTEGER REFERENCES bidders,
-  horse_id INTEGER REFERENCES horses,
+  horse_id INTEGER NOT NULL,     -- program number 1-24, La Quiniela's field
   finish TEXT NOT NULL,          -- 'win', 'place', 'show'
   amount REAL NOT NULL,
   paid_out BOOLEAN DEFAULT FALSE
@@ -259,7 +265,7 @@ A scratch is entered **once, on La Quiniela's admin page** (`/quiniela/admin`, S
 2. **Auction locked, or after the auction:** the horse's `ownership` row is voided the same way (it stays, with `voided_at`, as the record of the refund), and so are its bids. The owner's total owed drops by that winning bid, the horse is out of the pot, and it cannot pay out: race results naming it are refused. If the owner had already been marked paid, the bidders' ledger (`GET /api/bidders`) shows the refund owed (`refund_owed`, with the horse in the portfolio's `scratched` list). The House rule does not apply to a scratched horse: it is gone, not unsold.
 
 - **A replacement scratch** (9 → 22) does both halves at once: 9 is handled as above, and 22 enters the list as a fresh horse with no bids. By the party this has normally happened already, before the auction opens.
-- **Undo** on the LQ admin page reverses the field change. It does **not** un-void bids: the horse comes back with no bids, and undoing a replacement takes the stand-in out of the field again, its bids voided the same way. La Subasta has no un-void; for the rare case the admin's existing void / re-award tool (`/api/admin/void`) is what there is.
+- **Undo** on the LQ admin page reverses the field change. It does **not** un-void bids: the horse comes back with no bids, and undoing a replacement takes the stand-in out of the field again, its bids voided the same way. La Subasta has no un-void, and the admin's void / re-award tool (`/api/admin/void`) does not make up for it: it voids a bid, it cannot bring one back. After the lock this matters: an undone scratch leaves the horse back in the field with **no owner** and its bids voided, so if it wins, its payout goes to the House as an unsold horse. The admin settles that by hand with the bidder who owned it.
 - **When:** on change, never on a timer. The store's change listener applies a scratch the moment it is recorded; pi5 applies what is already recorded when it starts; a La Subasta request catches up if `names_rev` moved and a listener failed. It is idempotent: only what is still active on a horse not in the field is voided, so a restart never voids anything twice.
 - **Live:** `horse_scratched` (per horse that left) and `field_changed` (the new field) go out over SocketIO; guest phones drop the horse and re-read the list without a reload.
 - If results were already entered when a horse is scratched (it ran, so this is an operator error), its payouts are left as they are and the log says so.
@@ -298,7 +304,7 @@ If an unpaid bidder wins a payout, admin sees flag: "Mike T 🎺 owes $145 but w
 ### Formula
 
 ```
-Total Pot = sum of all winning bids across 20 horses
+Total Pot = sum of the winning bids over the field as it stands (ownership rows not voided)
 
 Win payout  = Total Pot × 0.60 → horse finishing 1st
 Place payout = Total Pot × 0.25 → horse finishing 2nd
@@ -488,13 +494,13 @@ Rotating content every 15 sec:
 ```
 
 **Panel B — Full Field**
-All 20 horses with current bid and owner emoji.
+Every horse in the field as it stands, with current bid and owner emoji.
 
 **Panel C — Leaderboard**
 Biggest spender, most horses owned, biggest single bid.
 
 **Panel D (post-lockdown) — Ownership Reveal**
-Slow rotation through all 20 horses: photo, saddle cloth, owner name + emoji, winning bid. Dramatic reveal pacing (~3 sec per horse).
+Slow rotation through every horse in the field (a horse scratched after the lock is skipped): photo, saddle cloth, owner name + emoji, winning bid. Dramatic reveal pacing (~3 sec per horse).
 
 **Panel E (post-race) — Victory Sequence**
 1. "🏆 WINNER: MAGNOLIA — Owner: Dave K 🌮 — Payout: $300"
