@@ -253,19 +253,8 @@
                 <div class="ls-dev-me" id="ls-dev-identity">Not registered</div>
                 <button type="button" class="ls-dev-btn" data-dev-action="clear-identity">👤 Clear my identity</button>
             </section>
-            <div class="ls-dev-divider" aria-hidden="true"></div>
-
-            <section class="ls-dev-section">
-                <div class="ls-dev-section-title">Horse actions</div>
-                <label class="ls-dev-field" for="ls-dev-horse">Horse #
-                    <input type="number" id="ls-dev-horse" class="ls-dev-input"
-                           min="1" max="{{ max_horse }}" value="1" inputmode="numeric">
-                </label>
-                <div class="ls-dev-btn-row">
-                    <button type="button" class="ls-dev-btn" data-dev-action="scratch">🐴 Scratch</button>
-                    <button type="button" class="ls-dev-btn" data-dev-action="unscratch">✅ Unscratch</button>
-                </div>
-            </section>
+            <!-- No scratch here: a scratch is entered once, on the LQ admin
+                 page (/quiniela/admin), and reaches the auction from there. -->
         </div>
     </div>
 </div>

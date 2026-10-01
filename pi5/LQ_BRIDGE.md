@@ -677,8 +677,14 @@ process through `HorseStore.field()` (one snapshot under the store's lock:
 `names_rev`, every horse `in_field` by program number with its upper-cased
 name and the horse it `replaces`, and the scratch records), so the auction
 sells the field as it stands, a replacement under its own number (22, not
-9), and its `horse_id` is the program number (`DDM_La_Subasta_Spec.md`,
-"Horses: from La Quiniela's store").
+9), and its `horse_id` is the program number. It also listens: the store
+calls every listener given to `HorseStore.add_listener()` after each write
+(after `on_change`, the board's `wake()`, outside the lock, on the writer's
+thread), and La Subasta's applies a scratch to the auction there and then by
+its own rule (bids voided while it is open, the ownership too after the
+lock). A scratch is entered once, here; undo puts the horse back in the
+field but not its auction bids (`DDM_La_Subasta_Spec.md`, "Horses: from La
+Quiniela's store" and "Scratches").
 
 ### The race and the track's odds
 

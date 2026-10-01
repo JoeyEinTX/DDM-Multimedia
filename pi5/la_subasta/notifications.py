@@ -66,8 +66,23 @@ def auction_state_changed(new_state: str, old_state: Optional[str] = None) -> No
     })
 
 
-def horse_scratched(horse_id: int) -> None:
-    emit("horse_scratched", {"horse_id": horse_id})
+def horse_scratched(horse_id: int, refund_count: int = 0,
+                    ownership_voided: bool = False) -> None:
+    """A horse left La Quiniela's field (scratches.py): refund_count bids on
+    it were voided, and its ownership row too once the auction had locked.
+    Guest pages drop the horse from the list and re-read it."""
+    emit("horse_scratched", {
+        "horse_id": horse_id,
+        "refund_count": refund_count,
+        "ownership_voided": ownership_voided,
+    })
+
+
+def field_changed(names_rev: Optional[int], horses: list) -> None:
+    """La Quiniela's field or a name in it changed (a scratch, a
+    replacement, an undo, a name typed on the LQ admin page). horses: the
+    program numbers now in the field. Guest pages re-read the list."""
+    emit("field_changed", {"names_rev": names_rev, "horses": horses})
 
 
 def results_entered(win: int, place: int, show: int) -> None:

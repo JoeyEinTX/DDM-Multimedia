@@ -34,7 +34,7 @@ import logging
 import re
 import sqlite3
 import threading
-from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from la_quiniela import protocol as P
 
@@ -202,11 +202,13 @@ class HorseStore:
     live in lq_scratches and survive a reset.
 
     db is an LqDb (models.py) or None for a memory-only store. on_change is a
-    no-argument callable invoked after every write, outside the lock."""
+    no-argument callable invoked after every write, outside the lock; more
+    listeners can be added (add_listener) and are invoked after it."""
 
     def __init__(self, db: Any = None, on_change: Optional[Callable[[], None]] = None) -> None:
         self._db = db
         self.on_change = on_change
+        self._listeners: List[Callable[[], None]] = []
         self._lock = threading.Lock()
         self._horses: Dict[int, Dict[str, str]] = {
             n: {"name": ""} for n in range(1, HORSE_COUNT + 1)}
@@ -294,6 +296,27 @@ class HorseStore:
                 fn()
             except Exception:           # a listener bug must not fail the write
                 log.exception("La Quiniela horses: on_change failed")
+        with self._lock:
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn()
+            except Exception:
+                log.exception("La Quiniela horses: a change listener failed")
+
+    def add_listener(self, fn: Callable[[], None]) -> None:
+        """Another no-argument callable invoked after every write, after
+        on_change and like it outside the lock, on the writer's thread. La
+        Subasta's (la_subasta/scratches.py) applies a scratch to the auction
+        the moment it is recorded. Added once, however often it is given."""
+        with self._lock:
+            if fn not in self._listeners:
+                self._listeners.append(fn)
+
+    def remove_listener(self, fn: Callable[[], None]) -> None:
+        with self._lock:
+            if fn in self._listeners:
+                self._listeners.remove(fn)
 
     # -- reads ----------------------------------------------------------------
 

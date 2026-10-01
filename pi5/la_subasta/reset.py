@@ -35,7 +35,8 @@ def _reset_auction_state_row(conn, event_year: int) -> None:
 
 
 def _do_reset_bids(conn, event_year: int) -> Dict[str, int]:
-    """Wipe bids/ownership/payouts + clear scratched flags + reset state.
+    """Wipe bids/ownership/payouts + reset state. Scratches are La Quiniela's
+    and are not touched.
     Caller must already be inside write_txn so the whole reset commits atomically."""
     bids_cur = conn.execute(
         "DELETE FROM bids WHERE event_year = ?", (event_year,),
@@ -51,12 +52,6 @@ def _do_reset_bids(conn, event_year: int) -> Dict[str, int]:
         "DELETE FROM payouts WHERE event_year = ?", (event_year,),
     )
     pay_deleted = pay_cur.rowcount or 0
-
-    conn.execute(
-        "UPDATE horse_state SET scratched = 0, scratched_at = NULL "
-        "WHERE event_year = ?",
-        (event_year,),
-    )
 
     _reset_auction_state_row(conn, event_year)
 
@@ -74,7 +69,7 @@ def _do_reset_bids(conn, event_year: int) -> Dict[str, int]:
 
 def reset_bids(event_year: int = EVENT_YEAR) -> Dict[str, int]:
     """
-    Wipe bids, ownership, payouts, scratched flags. Reset auction_state to
+    Wipe bids, ownership, payouts. Reset auction_state to
     NOT_STARTED with total_pot = 0. Bidders (including The House) are kept.
     Single atomic transaction.
     """

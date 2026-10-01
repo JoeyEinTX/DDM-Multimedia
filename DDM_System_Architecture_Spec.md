@@ -347,11 +347,17 @@ There is no roster line. A v1 `roster` line is ignored.
 
 ## 8. La Subasta
 
-- **Today** [BUILT, a gap]:
-  - Names come from the dashboard's mock racing service (`use_mock=True` in `main.py`),
-    which invents test horses. **At the party the auction would show made-up names.**
-  - Scratches live in La Subasta's own `horse_state` table, entered with its own button.
-  - Horses are 1–20 only.
+- **Today** [BUILT]:
+  - Names and program numbers come from La Quiniela's store, read in the same process
+    (`HorseStore.field()`, through `pi5/la_subasta/field.py`). The auction lists the field
+    as it stands, `in_field` horses by number, 1–24, a replacement under its own number;
+    `horse_id` in bids, ownership and payouts is the program number. The mock racing
+    service no longer feeds La Subasta.
+  - Scratches are La Quiniela's: entered once, on the LQ admin page. La Subasta's own
+    scratch button, route and `horse_state` table are gone. Its store listener
+    (`pi5/la_subasta/scratches.py`) applies a scratch on change, idempotently, by the
+    auction's own rule: while open, the horse's bids are voided; after the lock, its
+    ownership too, and the owner's total owed drops. Guest phones update over SocketIO.
 - **Decision** [DECIDED 2026-09-29, TO BUILD, must-do before DDM 2027]: La Subasta reads
   names, program numbers (1–24, `in_field`) and scratches from La Quiniela's store. A
   scratch is entered once, on the LQ admin page.
@@ -510,6 +516,7 @@ gateway says hello.
 - The admin page
 - The figures at the post
 - Race info and names in La Quiniela's store; Race Setup removed
+- La Subasta on La Quiniela's store: names, program numbers 1–24, scratches
 
 ### Next
 
@@ -518,8 +525,8 @@ One single-concern Claude Code prompt each, in this order:
 1. **Cup brownout:** save the empty reading and the last count; re-zero at startup only
    when empty. Reflash the four cups, then run the bench test (section 5). First, because
    it is the only firmware change and cheapest while there are four cups.
-2. **La Subasta on La Quiniela's store:** names, program numbers 1–24, scratches. Second,
-   because fake names at the party are the most visible failure left.
+2. ~~**La Subasta on La Quiniela's store:** names, program numbers 1–24, scratches.~~
+   Done (2026-10-01; listed under Done).
 3. **Counted pot** on the admin page; pot and prizes from the hand count.
 4. **SET WINNERS no-bets marker.**
 5. **Remove the admin page's race-state buttons**; show the state read-only; update

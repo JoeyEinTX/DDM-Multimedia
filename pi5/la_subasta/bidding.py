@@ -176,54 +176,9 @@ def horses_leading_by(bidder_id: int,
     return leading
 
 
-# Scratched state lives ONLY in La Subasta's horse_state table. The dashboard's
-# DerbyHorse dataclass (services/racing_data_service.py) has no `scratched`
-# field today, so there is nothing to mirror from. If the dashboard grows a
-# scratch concept later, the recommended sync is one-way dashboard → La
-# Subasta: RacingDataService.scratch_horse() emits a SocketIO event (e.g.
-# "horse_scratched") or invokes a registered callback, and La Subasta's
-# listener calls scratch_horse() here to write through. Joey scratches once
-# on the dashboard; La Subasta picks it up. Until that exists, the admin
-# iPad view (Phase 3) POSTs to /la-subasta/api/admin/scratch directly.
-def is_horse_scratched(horse_id: int,
-                       event_year: int = EVENT_YEAR) -> bool:
-    row = get_conn().execute(
-        "SELECT scratched FROM horse_state WHERE horse_id = ? AND event_year = ?",
-        (horse_id, event_year),
-    ).fetchone()
-    return bool(row and row["scratched"])
-
-
-def scratch_horse(horse_id: int, event_year: int = EVENT_YEAR) -> None:
-    with write_txn() as conn:
-        conn.execute(
-            """
-            INSERT INTO horse_state (horse_id, scratched, scratched_at, event_year)
-            VALUES (?, 1, datetime('now'), ?)
-            ON CONFLICT(horse_id, event_year) DO UPDATE SET
-                scratched = 1, scratched_at = datetime('now')
-            """,
-            (horse_id, event_year),
-        )
-
-
-def unscratch_horse(horse_id: int, event_year: int = EVENT_YEAR) -> None:
-    """Clear a horse's scratched flag — the reverse of scratch_horse().
-
-    Used by the dev/admin tooling to undo an accidental scratch. Writes a
-    horse_state row with scratched=0 (creating one if absent) so the change
-    is idempotent whether or not the horse was previously scratched.
-    """
-    with write_txn() as conn:
-        conn.execute(
-            """
-            INSERT INTO horse_state (horse_id, scratched, scratched_at, event_year)
-            VALUES (?, 0, NULL, ?)
-            ON CONFLICT(horse_id, event_year) DO UPDATE SET
-                scratched = 0, scratched_at = NULL
-            """,
-            (horse_id, event_year),
-        )
+# Scratches are La Quiniela's: a scratched horse is simply not in the field
+# (field.py), and scratches.py voids what was bid on it. There is no
+# scratched flag here.
 
 
 # -----------------------------------------------------------------------------
@@ -280,14 +235,18 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
     if not is_biddable(event_year):
         raise BidError("Auction is not accepting bids right now")
 
-    if is_horse_scratched(horse_id, event_year):
-        raise BidError("That horse has been scratched")
-
     if get_bidder(bidder_id) is None:
         raise BidError("Unknown bidder")
 
     # ---- Serialized validation + insert ------------------------------------
     with write_txn() as conn:
+        # Again under the write lock: a scratch recorded since the check above
+        # either refuses this bid here or, applied after it under this same
+        # lock (scratches.apply), voids it. A bid never outlives its horse.
+        the_field = field.current()
+        if horse_id not in the_field:
+            raise BidError(the_field.refusal(horse_id))
+
         # Current high bid (re-queried inside txn)
         hb_row = conn.execute(
             """
@@ -459,11 +418,9 @@ def void_bid(bid_id: int, reason: str) -> dict:
 # -----------------------------------------------------------------------------
 
 def total_pot(event_year: int = EVENT_YEAR) -> float:
-    """Sum of current high bids across the field's non-scratched horses."""
+    """Sum of current high bids across the field's horses."""
     pot = 0.0
     for horse_id in field.current().numbers():
-        if is_horse_scratched(horse_id, event_year):
-            continue
         hb = current_high_bid(horse_id, event_year)
         if hb:
             pot += hb["amount"]
@@ -472,7 +429,9 @@ def total_pot(event_year: int = EVENT_YEAR) -> float:
 
 def bidder_portfolio(bidder_id: int,
                      event_year: int = EVENT_YEAR) -> Dict:
-    """Return what horses a bidder is leading + total owed."""
+    """Return what horses a bidder is leading + total owed. scratched: the
+    horses they owned at the lock that La Quiniela then scratched, each
+    with the winning bid no longer owed (ownership voided, scratches.py)."""
     leading = horses_leading_by(bidder_id, event_year)
     total = 0.0
     horses = []
@@ -481,4 +440,24 @@ def bidder_portfolio(bidder_id: int,
         if hb:
             horses.append({"horse_id": h, "amount": hb["amount"]})
             total += hb["amount"]
-    return {"bidder_id": bidder_id, "horses": horses, "total": total}
+    rows = get_conn().execute(
+        "SELECT horse_id, winning_bid FROM ownership "
+        "WHERE bidder_id = ? AND event_year = ? AND voided = 1 AND voided_reason = 'scratched' "
+        "ORDER BY horse_id",
+        (bidder_id, event_year),
+    ).fetchall()
+    scratched = [{"horse_id": r["horse_id"], "amount": r["winning_bid"]} for r in rows]
+    return {"bidder_id": bidder_id, "horses": horses, "total": total,
+            "scratched": scratched}
+
+
+def ledger(bidder: dict, portfolio: Dict) -> Dict:
+    """What the admin settles with a bidder: owed (the portfolio's total)
+    and refund_owed, what a bidder already marked paid gets back because a
+    horse was scratched after they paid (paid_amount minus what they owe
+    now; 0 for an unpaid bidder, who simply owes less)."""
+    owed = portfolio["total"]
+    refund = 0.0
+    if bidder.get("paid") and bidder.get("paid_amount") is not None:
+        refund = max(0.0, float(bidder["paid_amount"]) - owed)
+    return {"owed": owed, "refund_owed": refund}

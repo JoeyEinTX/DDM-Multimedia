@@ -90,6 +90,11 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       new one the moment it hears the gateway).
 - [ ] Wrong? `ADMIN` → Scratches → Scratched → `Undo` on that line. Undo the most recent
       scratch first if there were several (the page greys out the others).
+- The names and scratches entered here feed La Subasta too: the auction at
+  `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
+  entered in La Subasta. A scratch made during the auction voids its bids on that horse
+  (after the auction locks, the owner's purchase too) and guest phones drop the horse on
+  their own. Undo puts the horse back in the field but not its auction bids.
 
 ## 2. Party day — setup, before guests arrive
 

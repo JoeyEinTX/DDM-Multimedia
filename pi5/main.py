@@ -23,7 +23,7 @@ from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
-from la_subasta import la_subasta_bp, init_la_subasta
+from la_subasta import la_subasta_bp, init_la_subasta, follow_la_quiniela
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
                          quiniela_board_bp, init_board, start_board, get_board)
 from la_quiniela import racetime
@@ -1130,8 +1130,8 @@ app.register_blueprint(guest_ui)
 print("Racing data service initialised (mock mode)")
 
 # La Subasta auction blueprint. Its horses are La Quiniela's (names, program
-# numbers 1-24, the field), read from the board's store in this process; the
-# mock racing service above no longer feeds it.
+# numbers 1-24, the field, the scratches), read from the board's store in
+# this process; the mock racing service above no longer feeds it.
 init_la_subasta(socketio=socketio)
 app.register_blueprint(la_subasta_bp)
 print("La Subasta initialised (/la-subasta)")
@@ -1144,6 +1144,10 @@ print("La Quiniela bridge initialised (/api/lq)")
 init_board()
 app.register_blueprint(quiniela_board_bp)
 print("La Quiniela board initialised (/api/quiniela)")
+# La Subasta follows the board's store from here on: a scratch recorded on
+# the LQ admin page applies to the auction as it is saved, and one recorded
+# while pi5 was down is applied now (idempotent: nothing is voided twice).
+follow_la_quiniela()
 # The real track's odds, for the TV's roster slide: fetched only while
 # POST /api/quiniela/odds/start has it running, keyed by program number and
 # served in La Quiniela's model as horses[n].odds (null without them).

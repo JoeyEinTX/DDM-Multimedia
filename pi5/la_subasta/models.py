@@ -59,13 +59,19 @@ CREATE INDEX IF NOT EXISTS idx_bids_bidder
 CREATE INDEX IF NOT EXISTS idx_bids_time
     ON bids(bid_time);
 
+-- voided: a horse scratched after the lock (La Quiniela's store, see
+-- scratches.py). The row stays as the record of what was refunded; nothing
+-- owes, pays out or counts in the pot from a voided row.
 CREATE TABLE IF NOT EXISTS ownership (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    horse_id    INTEGER NOT NULL,
-    bidder_id   INTEGER NOT NULL REFERENCES bidders(id),
-    winning_bid REAL    NOT NULL,
-    locked_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-    event_year  INTEGER NOT NULL,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    horse_id      INTEGER NOT NULL,
+    bidder_id     INTEGER NOT NULL REFERENCES bidders(id),
+    winning_bid   REAL    NOT NULL,
+    locked_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    event_year    INTEGER NOT NULL,
+    voided        INTEGER NOT NULL DEFAULT 0,
+    voided_reason TEXT,
+    voided_at     TEXT,
     UNIQUE(horse_id, event_year)
 );
 
@@ -91,16 +97,9 @@ CREATE TABLE IF NOT EXISTS auction_state (
     event_year INTEGER NOT NULL UNIQUE
 );
 
--- La Subasta-local horse state (scratched flag, etc.). The canonical horse
--- metadata lives with the dashboard's RacingDataService; this table only
--- tracks auction-side flags that don't belong on dashboard horses.
-CREATE TABLE IF NOT EXISTS horse_state (
-    horse_id   INTEGER NOT NULL,
-    scratched  INTEGER NOT NULL DEFAULT 0,
-    scratched_at TEXT,
-    event_year INTEGER NOT NULL,
-    PRIMARY KEY (horse_id, event_year)
-);
+-- No horse table and no horse_state: the horses, their names and their
+-- scratches are La Quiniela's (field.py, scratches.py). A horse_state table
+-- left by an older version is not read or written; it is left as it is.
 
 CREATE TABLE IF NOT EXISTS event_years (
     year              INTEGER PRIMARY KEY,
@@ -193,10 +192,30 @@ def init_db(path: str = None) -> sqlite3.Connection:
     if path is None:
         path = _db_path()
     conn = _open_for_thread(path)
+    _migrate_ownership(conn)
     conn.executescript(SCHEMA_SQL)
     _house_bidder_id = None  # force re-lookup after schema apply
     _ensure_house_bidder(conn)
     return conn
+
+
+_OWNERSHIP_VOID_COLUMNS = (
+    ("voided", "INTEGER NOT NULL DEFAULT 0"),
+    ("voided_reason", "TEXT"),
+    ("voided_at", "TEXT"),
+)
+
+
+def _migrate_ownership(conn: sqlite3.Connection) -> None:
+    """An ownership table from before scratches came from La Quiniela has
+    no void columns: add them (every existing row reads not voided).
+    Nothing else is touched; a missing table is created by the schema."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(ownership)").fetchall()}
+    if not have:
+        return
+    for column, ddl in _OWNERSHIP_VOID_COLUMNS:
+        if column not in have:
+            conn.execute(f"ALTER TABLE ownership ADD COLUMN {column} {ddl}")
 
 
 # -----------------------------------------------------------------------------

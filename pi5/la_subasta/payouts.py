@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from la_subasta import field, settings
 from la_subasta.config import EVENT_YEAR
-from la_subasta.bidding import current_high_bid, is_horse_scratched
+from la_subasta.bidding import current_high_bid
 from la_subasta.models import get_conn, house_bidder_id, write_txn
 
 
@@ -66,20 +66,20 @@ def freeze_ownership(event_year: int = EVENT_YEAR) -> List[dict]:
     Horses with no bids get no ownership row (they go to The House at $0
     for payout purposes, handled by compute_and_persist_payouts). Only the
     field is frozen: a horse La Quiniela does not have in it is not sold.
+    A row voided by a scratch (scratches.py) is kept, as the record of the
+    refund, unless its horse is in the field and owned again.
     """
     rows = []
     with write_txn() as conn:
         conn.execute(
-            "DELETE FROM ownership WHERE event_year = ?", (event_year,),
+            "DELETE FROM ownership WHERE event_year = ? AND voided = 0", (event_year,),
         )
         for horse_id in field.current().numbers():
-            if is_horse_scratched(horse_id, event_year):
-                continue
             hb = current_high_bid(horse_id, event_year)
             if hb is None:
                 continue
             conn.execute(
-                "INSERT INTO ownership (horse_id, bidder_id, winning_bid, event_year) "
+                "INSERT OR REPLACE INTO ownership (horse_id, bidder_id, winning_bid, event_year) "
                 "VALUES (?, ?, ?, ?)",
                 (horse_id, hb["bidder_id"], hb["amount"], event_year),
             )
@@ -92,13 +92,14 @@ def freeze_ownership(event_year: int = EVENT_YEAR) -> List[dict]:
 
 
 def get_owner(horse_id: int, event_year: int = EVENT_YEAR) -> Optional[dict]:
-    """Return the owner row for a horse, or None if it went unbid/to House."""
+    """Return the owner row for a horse, or None if it went unbid/to House
+    (or its ownership was voided by a scratch: it cannot pay out)."""
     row = get_conn().execute(
         """
         SELECT o.horse_id, o.bidder_id, o.winning_bid, bd.identity, bd.name, bd.emoji
           FROM ownership o
           JOIN bidders bd ON bd.id = o.bidder_id
-         WHERE o.horse_id = ? AND o.event_year = ?
+         WHERE o.horse_id = ? AND o.event_year = ? AND o.voided = 0
         """,
         (horse_id, event_year),
     ).fetchone()
@@ -117,8 +118,9 @@ def compute_and_persist_payouts(win_horse_id: int, place_horse_id: int,
 
     Returns a dict with the payout breakdown + total pot used.
     """
-    # Total pot = sum of winning bids in ownership (post-lock snapshot).
-    # If freeze_ownership hasn't been called yet, call it now.
+    # Total pot = sum of winning bids in ownership (post-lock snapshot),
+    # less any voided by a scratch. If freeze_ownership hasn't been called
+    # yet (no rows at all, voided or not), call it now.
     own_count = get_conn().execute(
         "SELECT COUNT(*) AS c FROM ownership WHERE event_year = ?",
         (event_year,),
@@ -128,7 +130,7 @@ def compute_and_persist_payouts(win_horse_id: int, place_horse_id: int,
 
     pot_row = get_conn().execute(
         "SELECT COALESCE(SUM(winning_bid), 0) AS pot "
-        "FROM ownership WHERE event_year = ?",
+        "FROM ownership WHERE event_year = ? AND voided = 0",
         (event_year,),
     ).fetchone()
     pot = float(pot_row["pot"])

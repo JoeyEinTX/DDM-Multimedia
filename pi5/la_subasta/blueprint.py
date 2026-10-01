@@ -8,9 +8,9 @@ import time
 
 from flask import Blueprint, jsonify, render_template, request
 
-from la_subasta import bidding, field, notifications, payouts, reset, settings
+from la_subasta import bidding, field, notifications, payouts, reset, scratches, settings
 from la_subasta.bidding import BidError
-from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR, MAX_HORSE
+from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR
 from la_subasta.models import init_db
 from la_subasta.settings import SettingsError
 from la_subasta.state_machine import (
@@ -46,6 +46,20 @@ def _no_store_api_responses(response):
     return response
 
 
+@la_subasta_bp.before_request
+def _catch_up_with_la_quiniela():
+    """Apply La Quiniela's field if names_rev has moved since the last sync
+    (normally the store's listener already has; this catches one that
+    failed). Cheap when nothing changed; never fails the request."""
+    if (request.endpoint or "").endswith(".static"):
+        return None
+    try:
+        scratches.sync()
+    except Exception:
+        logger.exception("La Subasta: catching up with La Quiniela's field failed")
+    return None
+
+
 # -----------------------------------------------------------------------------
 # Init — called from main.py at app startup
 # -----------------------------------------------------------------------------
@@ -57,11 +71,15 @@ def init_la_subasta(socketio=None) -> None:
     Args:
         socketio: Shared Flask-SocketIO instance for broadcasts.
 
-    La Subasta doesn't own horse data: its horses, their names and program
-    numbers are La Quiniela's (field.py), read when they are needed.
+    La Subasta doesn't own horse data: its horses, their names, program
+    numbers and scratches are La Quiniela's (field.py, scratches.py). When
+    the La Quiniela board already exists La Subasta starts following its
+    store here; main.py makes the board afterwards and calls
+    follow_la_quiniela() itself.
     """
     init_db()
     notifications.init_notifications(socketio)
+    scratches.follow_la_quiniela()
     logger.info("La Subasta initialised (DB ready, socketio=%s)",
                 "yes" if socketio else "no")
 
@@ -91,7 +109,6 @@ def guest_view():
         "guest.html",
         emoji_palette=EMOJI_PALETTE,
         num_horses=len(field.current()),
-        max_horse=MAX_HORSE,
     )
 
 
@@ -142,7 +159,7 @@ def api_horses():
         horse_id = meta["horse_id"]
         meta["jockey"] = None           # La Quiniela keeps no jockeys
         hb = bidding.current_high_bid(horse_id)
-        meta["scratched"] = bidding.is_horse_scratched(horse_id)
+        meta["scratched"] = False       # a scratched horse is not listed at all
         if hb:
             meta["current_high_bid"] = {
                 "amount": hb["amount"],
@@ -193,6 +210,9 @@ def api_bidders():
     bidders = bidding.list_bidders(include_house=include_house)
     for b in bidders:
         b["portfolio"] = bidding.bidder_portfolio(b["id"])
+        # The ledger: what the bidder owes now, and what a bidder already
+        # marked paid gets back for a horse scratched after the lock.
+        b.update(bidding.ledger(b, b["portfolio"]))
     return jsonify({"success": True, "bidders": bidders})
 
 
@@ -397,34 +417,6 @@ def api_admin_void():
     notifications.bid_voided(result["voided_bid_id"], result["horse_id"],
                              result["new_high_bid"])
     return jsonify({"success": True, **result})
-
-
-@la_subasta_bp.route("/api/admin/scratch", methods=["POST"])
-def api_admin_scratch():
-    data = request.get_json(silent=True) or {}
-    try:
-        horse_id = int(data.get("horse_id"))
-    except (TypeError, ValueError):
-        return _err("horse_id must be an integer")
-    if not field.valid_number(horse_id):
-        return _err(f"Invalid horse_id: {horse_id}")
-    bidding.scratch_horse(horse_id)
-    notifications.horse_scratched(horse_id)
-    return jsonify({"success": True, "horse_id": horse_id})
-
-
-@la_subasta_bp.route("/api/admin/unscratch", methods=["POST"])
-def api_admin_unscratch():
-    """Clear a horse's scratched flag (dev/admin reversal of /scratch)."""
-    data = request.get_json(silent=True) or {}
-    try:
-        horse_id = int(data.get("horse_id"))
-    except (TypeError, ValueError):
-        return _err("horse_id must be an integer")
-    if not field.valid_number(horse_id):
-        return _err(f"Invalid horse_id: {horse_id}")
-    bidding.unscratch_horse(horse_id)
-    return jsonify({"success": True, "horse_id": horse_id})
 
 
 @la_subasta_bp.route("/api/admin/paid", methods=["POST"])

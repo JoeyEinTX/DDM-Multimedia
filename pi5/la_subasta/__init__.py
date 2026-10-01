@@ -3,8 +3,10 @@
 # Phase 1: Core backend. UI templates/static live here for Phase 2.
 
 from la_subasta.blueprint import la_subasta_bp, init_la_subasta
+from la_subasta.scratches import follow_la_quiniela
 
 __all__ = [
     "la_subasta_bp",
     "init_la_subasta",
+    "follow_la_quiniela",
 ]

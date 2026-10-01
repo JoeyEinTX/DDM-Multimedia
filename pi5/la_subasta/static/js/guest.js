@@ -5,8 +5,8 @@
      - Identity modal on first visit; persist to localStorage
      - Render horse list from /la-subasta/api/horses
      - Place bids with +1 / +3 / +5 / custom; disable out-of-range buttons
-     - Live updates via SocketIO (bid_placed, horse_scratched, auction_locked,
-       settings_changed)
+     - Live updates via SocketIO (bid_placed, horse_scratched, field_changed,
+       auction_locked, settings_changed)
      - Countdown strip (refreshes every 30s)
 
    Out of scope for Phase 2A (coming in 2B): portfolio view, undo toast,
@@ -408,9 +408,15 @@
         }
 
         // Cheap DOM diff: if every card already exists, update in place;
-        // otherwise rebuild the list.
+        // otherwise rebuild the list. The field is La Quiniela's and can
+        // change under the page (9 out, 22 in: same count), so the cards
+        // must be the same horses in the same order, not just as many.
         const existing = list.querySelectorAll('.ls-horse-card');
-        if (existing.length !== horses.length) {
+        const sameHorses = existing.length === horses.length &&
+            horses.every(function (h, i) {
+                return existing[i].dataset.horseId === String(h.horse_id);
+            });
+        if (!sameHorses) {
             list.innerHTML = '';
             horses.forEach(function (h) { list.appendChild(buildHorseCard(h)); });
         } else {
@@ -448,10 +454,14 @@
         card.querySelector('[data-role="bid-row"]').addEventListener('click', function (e) {
             const btn = e.target.closest('.ls-bid-btn');
             if (!btn || btn.disabled) return;
+            // The card's horse as it is now: updateHorseCard() keeps
+            // data-horse-id current, the horse this card was built for may
+            // have left the field since.
+            const horseId = parseInt(card.dataset.horseId, 10);
             if (btn.dataset.custom) {
-                openCustomBidModal(horse.horse_id);
+                openCustomBidModal(horseId);
             } else {
-                placeQuickBid(horse.horse_id, parseInt(btn.dataset.delta, 10), btn);
+                placeQuickBid(horseId, parseInt(btn.dataset.delta, 10), btn);
             }
         });
         updateHorseCard(card, horse);
@@ -785,12 +795,21 @@
             flashCard(payload.horse_id);
         });
 
+        // A scratch entered on the LQ admin page: the horse leaves the list
+        // (its bids are void), then the list is read again, which brings in
+        // a horse that replaced it.
         socket.on('horse_scratched', function (payload) {
-            const h = horseFromEvent(payload.horse_id);
-            if (!h) return;
-            h.scratched = true;
-            renderHorseList();
-            renderIdentityTotal();
+            if (payload && state.horses[payload.horse_id]) {
+                delete state.horses[payload.horse_id];
+                renderHorseList();
+                renderIdentityTotal();
+            }
+            refreshHorses();
+        });
+
+        // La Quiniela's field or a name in it changed: read the list again.
+        socket.on('field_changed', function () {
+            refreshHorses();
         });
 
         socket.on('auction_locked', function () {
@@ -1117,16 +1136,6 @@
                 localStorage.removeItem(ONBOARDED_KEY);
             } catch (e) { /* ignore */ }
             location.reload();
-        } else if (action === 'scratch' || action === 'unscratch') {
-            const input = document.getElementById('ls-dev-horse');
-            const horseId = parseInt(input ? input.value : '', 10);
-            if (isNaN(horseId)) { devToast('Enter a horse #'); return; }
-            const r = await postJSON(ADMIN + action, { horse_id: horseId });
-            if (r.ok && r.data.success) {
-                devToast('Horse #' + horseId + ' ' + action + 'ed');
-                refreshHorses();
-                devRefreshStatus();
-            } else devToast((r.data && r.data.error) || (action + ' failed'));
         }
     }
 

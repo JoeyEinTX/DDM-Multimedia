@@ -1,6 +1,6 @@
 # Derby de Mayo's La Subasta — System Specification
 
-**Version:** 1.3 (Horses from La Quiniela's store)
+**Version:** 1.3 (Horses and scratches from La Quiniela's store)
 **Date:** October 2026
 **Status:** Design Phase - Ready for Implementation
 **Author:** Joey + Claude
@@ -211,7 +211,7 @@ auction_state (
 | Bid close | Hard stop at T-15 before Derby post | No snipe extensions |
 | Tiebreaker | Earliest timestamp wins | Standard |
 | Bid retraction | 10-second undo window | Fat-finger protection |
-| Scratched horse | Bid refunded, horse removed | Standard |
+| Scratched horse | Bid refunded, horse removed | Standard; entered on the LQ admin page (see **Scratches**) |
 
 ### Enforcement Logic (server-side validation)
 
@@ -219,7 +219,7 @@ auction_state (
 def validate_bid(bidder, horse, amount):
     # Identity and state checks
     if auction_state not in ('OPEN', 'FINAL_HOUR'): reject("Auction closed")
-    if horse.scratched: reject("Horse scratched")
+    if horse not in la_quiniela_field: reject("#9 is not in the field: scratched")
 
     # Max 3 horses owned
     currently_leading = count_horses_where_top_bidder(bidder)
@@ -250,6 +250,19 @@ If a guest refuses to pay or bids in bad faith:
 4. Audit trail preserved in `voided_reason` column
 
 ---
+
+### Scratches: entered on the LQ admin page
+
+A scratch is entered **once, on La Quiniela's admin page** (`/quiniela/admin`, Scratches), and lives in La Quiniela's store (`lq_scratches`). La Subasta has no scratch button, no scratch endpoint and no scratch table of its own: a horse is scratched for the auction when it is not in La Quiniela's field. The auction then applies its own rule, **bid refunded, horse removed** (`pi5/la_subasta/scratches.py`):
+
+1. **Auction open or in its final hour:** the horse leaves the list and every bid on it is voided (`voided = 1`, `voided_reason = 'scratched'`). Nobody is charged for it, and a new bid on it is refused (`#4 is not in the field: scratched`).
+2. **Auction locked, or after the auction:** the horse's `ownership` row is voided the same way (it stays, with `voided_at`, as the record of the refund), and so are its bids. The owner's total owed drops by that winning bid, the horse is out of the pot, and it cannot pay out: race results naming it are refused. If the owner had already been marked paid, the bidders' ledger (`GET /api/bidders`) shows the refund owed (`refund_owed`, with the horse in the portfolio's `scratched` list). The House rule does not apply to a scratched horse: it is gone, not unsold.
+
+- **A replacement scratch** (9 → 22) does both halves at once: 9 is handled as above, and 22 enters the list as a fresh horse with no bids. By the party this has normally happened already, before the auction opens.
+- **Undo** on the LQ admin page reverses the field change. It does **not** un-void bids: the horse comes back with no bids, and undoing a replacement takes the stand-in out of the field again, its bids voided the same way. La Subasta has no un-void; for the rare case the admin's existing void / re-award tool (`/api/admin/void`) is what there is.
+- **When:** on change, never on a timer. The store's change listener applies a scratch the moment it is recorded; pi5 applies what is already recorded when it starts; a La Subasta request catches up if `names_rev` moved and a listener failed. It is idempotent: only what is still active on a horse not in the field is voided, so a restart never voids anything twice.
+- **Live:** `horse_scratched` (per horse that left) and `field_changed` (the new field) go out over SocketIO; guest phones drop the horse and re-read the list without a reload.
+- If results were already entered when a horse is scratched (it ran, so this is an operator error), its payouts are left as they are and the log says so.
 
 ## Payment Tracking (Honor System)
 
@@ -328,7 +341,8 @@ Reuses existing SocketIO infrastructure. New event types:
 | `bid_placed` | `{horse, bidder, amount, prev_bidder}` | All views |
 | `outbid` | `{horse, old_bidder, new_bidder, amount}` | Old bidder's push |
 | `auction_locked` | `{timestamp}` | All views |
-| `horse_scratched` | `{horse, refund_count}` | All views |
+| `horse_scratched` | `{horse_id, refund_count, ownership_voided}` | All views |
+| `field_changed` | `{names_rev, horses}` | All views |
 | `results_entered` | `{win, place, show}` | All views |
 | `payout_computed` | `{bidder, amount, horse, finish}` | Winner push |
 | `paid_marked` | `{bidder}` | Admin view |
@@ -439,7 +453,7 @@ Payouts and ownership are stored in DB — **never dependent on notifications la
 - Mark any bidder Paid/Unpaid
 - Void any bid (triggers re-award)
 - Manually edit a bid (fix fat-finger)
-- Mark horse scratched
+- Scratches: none here, they are entered on the LQ admin page (see **Scratches**)
 - Force lock auction early
 - Enter race results
 - Mark payouts as settled
@@ -544,7 +558,6 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/api/admin/lock` | POST | Force-lock auction (admin) |
 | `/la_subasta/api/admin/void` | POST | Void a bid `{bid_id, reason}` (admin) |
 | `/la_subasta/api/admin/paid` | POST | Mark bidder paid `{bidder_id}` (admin) |
-| `/la_subasta/api/admin/scratch` | POST | Scratch horse `{horse_id}` (admin) |
 | `/la_subasta/api/admin/testing` | POST | Toggle sandbox mode (admin) |
 | `/la_subasta/api/admin/export` | GET | Export all data as JSON/CSV |
 | `/la_subasta/api/history` | GET | Past years' winners (year-over-year) |
@@ -670,7 +683,7 @@ Subtle horizontal serape band across the top of guest view. Scaled-down version 
 
 ### Phase 3: Admin iPad UI (Week 3)
 - [ ] Bidder list with Paid/Unpaid toggles
-- [ ] Horse list with void / scratch actions
+- [ ] Horse list with void actions (scratches come from the LQ admin page)
 - [ ] Live bid feed
 - [ ] Start auction / lock now controls
 - [ ] Race results entry (shared with dashboard)
@@ -931,7 +944,7 @@ These remain code-only (rare to change, edit the file directly if needed):
 | 1.0 | April 2026 | Initial specification document (as "Calcutta Auction") |
 | 1.1 | April 2026 | Renamed to **Derby de Mayo's La Subasta**; added Naming & Branding Conventions section; updated all directory paths, URL slugs, CSS file names, and ASCII mockups |
 | 1.2 | April 2026 | Added **Admin Tunables & Overrides** section: 7 live-adjustable settings, lock-when-open guardrail, override storage pattern, audit log table, settings panel UI |
-| 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta |
+| 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta. **Scratches** entered on the LQ admin page and applied by the auction's own rule; La Subasta's own scratch endpoint and `horse_state` are gone |
 
 ---
 
