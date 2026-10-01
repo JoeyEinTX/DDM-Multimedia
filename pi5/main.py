@@ -1129,8 +1129,10 @@ app.register_blueprint(racing_bp)
 app.register_blueprint(guest_ui)
 print("Racing data service initialised (mock mode)")
 
-# La Subasta auction blueprint
-init_la_subasta(socketio=socketio, racing_service=racing_service)
+# La Subasta auction blueprint. Its horses are La Quiniela's (names, program
+# numbers 1-24, the field), read from the board's store in this process; the
+# mock racing service above no longer feeds it.
+init_la_subasta(socketio=socketio)
 app.register_blueprint(la_subasta_bp)
 print("La Subasta initialised (/la-subasta)")
 

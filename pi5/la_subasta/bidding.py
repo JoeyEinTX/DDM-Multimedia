@@ -8,10 +8,10 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional, List, Dict
 
-from la_subasta import settings
+from la_subasta import field, settings
 from la_subasta.config import (
     EMOJI_PALETTE, EVENT_YEAR, MIN_RAISE,
-    BID_UNDO_WINDOW_SECONDS, NUM_HORSES,
+    BID_UNDO_WINDOW_SECONDS, MAX_HORSE,
     HOUSE_BIDDER_IDENTITY,
 )
 from la_subasta.models import get_conn, write_txn
@@ -167,9 +167,9 @@ def current_high_bid(horse_id: int,
 
 def horses_leading_by(bidder_id: int,
                       event_year: int = EVENT_YEAR) -> List[int]:
-    """Return list of horse_ids this bidder is currently leading on."""
+    """Return list of horse_ids in the field this bidder is currently leading on."""
     leading = []
-    for horse_id in range(1, NUM_HORSES + 1):
+    for horse_id in field.current().numbers():
         hb = current_high_bid(horse_id, event_year)
         if hb and hb["bidder_id"] == bidder_id:
             leading.append(horse_id)
@@ -256,8 +256,14 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
     max_raise = settings.get_setting("MAX_RAISE")
     max_horses_per_bidder = settings.get_setting("MAX_HORSES_PER_BIDDER")
 
-    if not isinstance(horse_id, int) or horse_id < 1 or horse_id > NUM_HORSES:
-        raise BidError(f"Invalid horse (must be 1-{NUM_HORSES})")
+    if not field.valid_number(horse_id):
+        raise BidError(f"Invalid horse (must be 1-{MAX_HORSE})")
+
+    # The field is La Quiniela's: a scratched horse, or an also-eligible
+    # standing in for nobody, is not sold.
+    the_field = field.current()
+    if horse_id not in the_field:
+        raise BidError(the_field.refusal(horse_id))
 
     try:
         amount = float(amount)
@@ -453,9 +459,9 @@ def void_bid(bid_id: int, reason: str) -> dict:
 # -----------------------------------------------------------------------------
 
 def total_pot(event_year: int = EVENT_YEAR) -> float:
-    """Sum of current high bids across all non-scratched horses."""
+    """Sum of current high bids across the field's non-scratched horses."""
     pot = 0.0
-    for horse_id in range(1, NUM_HORSES + 1):
+    for horse_id in field.current().numbers():
         if is_horse_scratched(horse_id, event_year):
             continue
         hb = current_high_bid(horse_id, event_year)

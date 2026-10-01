@@ -5,8 +5,8 @@
 
 from typing import Dict, List, Optional
 
-from la_subasta import settings
-from la_subasta.config import EVENT_YEAR, NUM_HORSES
+from la_subasta import field, settings
+from la_subasta.config import EVENT_YEAR
 from la_subasta.bidding import current_high_bid, is_horse_scratched
 from la_subasta.models import get_conn, house_bidder_id, write_txn
 
@@ -64,14 +64,15 @@ def freeze_ownership(event_year: int = EVENT_YEAR) -> List[dict]:
     when the auction locks. Idempotent — repeated calls refresh the snapshot.
 
     Horses with no bids get no ownership row (they go to The House at $0
-    for payout purposes, handled by compute_and_persist_payouts).
+    for payout purposes, handled by compute_and_persist_payouts). Only the
+    field is frozen: a horse La Quiniela does not have in it is not sold.
     """
     rows = []
     with write_txn() as conn:
         conn.execute(
             "DELETE FROM ownership WHERE event_year = ?", (event_year,),
         )
-        for horse_id in range(1, NUM_HORSES + 1):
+        for horse_id in field.current().numbers():
             if is_horse_scratched(horse_id, event_year):
                 continue
             hb = current_high_bid(horse_id, event_year)

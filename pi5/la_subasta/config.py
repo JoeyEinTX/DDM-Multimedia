@@ -109,5 +109,8 @@ DB_PATH = os.path.join(_PI5_DIR, "data", "la_subasta.db")
 # Current event year (used for tagging rows for year-over-year history)
 EVENT_YEAR = 2026
 
-# Total horses in the field
-NUM_HORSES = 20
+# Horses are program numbers 1..24, La Quiniela's: 1..20 the field, 21..24 the
+# also-eligibles, sold only while standing in for a scratched horse. Which of
+# them are in the field, and their names, come from La Quiniela's store
+# (field.py); a horse_id in bids, ownership and payouts is the program number.
+MAX_HORSE = 24

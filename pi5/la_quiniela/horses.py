@@ -355,6 +355,24 @@ class HorseStore:
         with self._lock:
             return in_field(horse, self._scratches, gateway_scratched)
 
+    def field(self) -> Dict[str, Any]:
+        """The field as it stands, for La Subasta (la_subasta/field.py),
+        which runs in this process and reads it here rather than over HTTP.
+        One snapshot under one lock, so the names, the records and names_rev
+        agree: {"names_rev": N, "horses": [...], "scratches": {was: now}}.
+        horses: every horse in_field (the rule above), by program number,
+        {"number": 22, "name": "OCELLI", "replaces": 9}: the name upper-cased
+        as the board serves it ("" when none is stored), replaces the horse
+        it stands in for or None. A replacement is listed under its own
+        number and the horse it replaced is absent. scratches: every record,
+        as scratches() gives them."""
+        with self._lock:
+            records = dict(self._scratches)
+            by_now = {now: was for was, now in records.items() if now is not None}
+            horses = [{"number": n, "name": self._horses[n]["name"].upper(), "replaces": by_now.get(n)}
+                      for n in range(1, HORSE_COUNT + 1) if in_field(n, records)]
+            return {"names_rev": self._names_rev, "horses": horses, "scratches": records}
+
     @property
     def names_rev(self) -> int:
         with self._lock:

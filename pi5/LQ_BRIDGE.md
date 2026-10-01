@@ -665,6 +665,21 @@ roster slide showed that store's field). The race's name and post time live
 in La Quiniela's store and the odds poller is La Quiniela's (next section);
 `GET /api/race` is built from them.
 
+### Who reads the store
+
+The store (names, both kinds of scratch, the race) has three readers, and
+none keeps a copy. The **board** builds its model from it (`_name_horses()`:
+`name`, `in_field`, `replaced`, `scratches`), and the dashboard's results
+tote and SET WINNERS pickers read it through `GET /api/quiniela/field`. The
+**splash** (the TV's board, roster and countdown slides, the crawl) reads
+that model over HTTP and the event stream. **La Subasta** reads it in this
+process through `HorseStore.field()` (one snapshot under the store's lock:
+`names_rev`, every horse `in_field` by program number with its upper-cased
+name and the horse it `replaces`, and the scratch records), so the auction
+sells the field as it stands, a replacement under its own number (22, not
+9), and its `horse_id` is the program number (`DDM_La_Subasta_Spec.md`,
+"Horses: from La Quiniela's store").
+
 ### The race and the track's odds
 
 La Quiniela's store is the one home of race information:

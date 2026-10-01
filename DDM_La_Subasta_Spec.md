@@ -1,7 +1,7 @@
 # Derby de Mayo's La Subasta — System Specification
 
-**Version:** 1.2 (Added Admin Tunables & Overrides)
-**Date:** April 2026
+**Version:** 1.3 (Horses from La Quiniela's store)
+**Date:** October 2026
 **Status:** Design Phase - Ready for Implementation
 **Author:** Joey + Claude
 **Target Event:** Derby de Mayo 2026 (May 2, 2026)
@@ -43,7 +43,7 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 ### Morning of Party (Joey — 1 action)
 
 1. Joey opens admin view on iPad, hits **"Start Auction"**
-2. System loads the 20 horses from the shared horse database
+2. The horses are La Quiniela's field as it stands: the names and scratches entered on the LQ admin page during Derby week (see **Horses: from La Quiniela's store**)
 3. Auction goes live at 9:00 AM (configurable)
 4. QR code placards around the house point guests to `http://ddm.local/la-subasta` (or the Pi's IP)
 
@@ -132,8 +132,8 @@ This system **does not require new hardware**. It runs as a new Flask blueprint 
 ### Data Model (SQLite)
 
 ```sql
--- Shared with existing dashboard, not created here
--- horses: id, saddle_cloth, name, jockey, program_number, scratched
+-- No horses table: the horses are La Quiniela's (see "Horses: from La
+-- Quiniela's store"). horse_id below is the program number, 1-24.
 
 -- NEW tables for La Subasta:
 
@@ -492,9 +492,17 @@ Slow rotation through all 20 horses: photo, saddle cloth, owner name + emoji, wi
 
 ## Integration with Existing Dashboard
 
-### Shared Horse Data
+### Horses: from La Quiniela's store
 
-La Subasta **reads from the existing `horses` table.** Joey enters the 20 Derby horses once into the dashboard, and La Subasta picks them up automatically.
+La Subasta has no horses table and no horse data of its own. It sells La Quiniela's field, read in the same process from La Quiniela's store (`HorseStore.field()` in `pi5/la_quiniela/horses.py`, through `pi5/la_subasta/field.py`), never over HTTP. The whole system has one names list and one field (`DDM_System_Architecture_Spec.md` section 8).
+
+- **Numbers.** A horse is its program number, 1–24, and that number is `horse_id` in `bids`, `ownership` and `payouts`. 1–20 are the field, 21–24 the also-eligibles.
+- **The field as it stands.** The list is every horse La Quiniela has `in_field`, sorted by number. A replacement is sold under its own number: in 2026 #22 Ocelli ran for #9 The Puma, so the list shows 22 and no 9. An also-eligible standing in for nobody is not listed. The auction runs at the party, after the Friday scratch deadline, so a replacement has normally happened before it opens.
+- **Names** are the ones pasted on the LQ admin page (`lq_horses`), upper-cased as the board shows them; a horse with no name yet is `HORSE n`. A name changed there is on the next read.
+- **Saddle cloths** use the LQ board's colours for 1–24 (`SADDLE` in `splash_display/static/js/quiniela_board.js`; 21–24 its placeholders).
+- **Validation.** A bid on a number outside 1–24 is refused (`Invalid horse (must be 1-24)`), and a bid on a horse not in the field says why: `#9 is not in the field: scratched, #22 runs in its place`, `#20 is not in the field: scratched`, `#21 is not in the field`. Race results can only name horses in the field.
+- The dashboard's mock racing service (`use_mock=True` in `main.py`) no longer feeds La Subasta. It stays for the dashboard's AUTO mode and the old spectator page.
+- Without a La Quiniela board (an app that never made one) La Subasta sells 1–20 with no names and logs it once. `main.py` always makes the board.
 
 ### Race State Machine Integration
 
@@ -525,7 +533,7 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/admin` | GET | Admin view (iPad) |
 | `/la_subasta/spectator` | GET | Spectator TV view |
 | `/la_subasta/api/state` | GET | Current auction state, pot, countdown |
-| `/la_subasta/api/horses` | GET | All horses with current high bids |
+| `/la_subasta/api/horses` | GET | La Quiniela's field by program number, with current high bids |
 | `/la_subasta/api/bidders` | GET | All bidders with totals (admin-only) |
 | `/la_subasta/api/bid` | POST | Place a bid `{horse_id, amount, bidder_id}` |
 | `/la_subasta/api/bid/undo` | POST | Undo most recent bid (10-sec window) |
@@ -923,6 +931,7 @@ These remain code-only (rare to change, edit the file directly if needed):
 | 1.0 | April 2026 | Initial specification document (as "Calcutta Auction") |
 | 1.1 | April 2026 | Renamed to **Derby de Mayo's La Subasta**; added Naming & Branding Conventions section; updated all directory paths, URL slugs, CSS file names, and ASCII mockups |
 | 1.2 | April 2026 | Added **Admin Tunables & Overrides** section: 7 live-adjustable settings, lock-when-open guardrail, override storage pattern, audit log table, settings panel UI |
+| 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta |
 
 ---
 

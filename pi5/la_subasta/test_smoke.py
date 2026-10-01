@@ -10,6 +10,9 @@
 #   - Valid bids accepted
 #   - Bid undo within 10s, rejected after
 #   - Payout math: 60/25/15 of test pot
+#   - The horses are La Quiniela's: names, program numbers 1-24 and the
+#     field from its store (a real board on a memory-only store per test,
+#     driven through the LQ admin page's own routes)
 
 import io
 import json
@@ -47,6 +50,26 @@ from la_subasta.state_machine import (  # noqa: E402
     AuctionState, transition, get_state, get_state_row,
 )
 from la_subasta.blueprint import la_subasta_bp, init_la_subasta  # noqa: E402
+from la_subasta import field as ls_field  # noqa: E402
+from la_quiniela import board as lq_board  # noqa: E402
+from la_quiniela.horses import HORSE_COUNT as LQ_HORSE_COUNT, HorseStore  # noqa: E402
+
+import logging  # noqa: E402
+# init_board() without a bridge says so at WARNING; La Subasta's tests never
+# have one.
+logging.getLogger("la_quiniela.board").setLevel(logging.ERROR)
+
+# The 2026 Kentucky Derby field in post order and the named also-eligibles.
+# The Puma (#9) scratched before the Friday deadline and Ocelli ran as #22.
+DERBY_2026 = [
+    "Renegade", "Albus", "Intrepido", "Litmus Test", "Right to Party",
+    "Commandment", "Danon Bourbon", "So Happy", "The Puma", "Wonder Dean",
+    "Incredibolt", "Chief Wallabee", "Silent Tactic", "Potente", "Emerging Market",
+    "Pavlovian", "Six Speed", "Further Ado", "Golden Tempo", "Fulleffort",
+]
+ALSO_ELIGIBLE_2026 = {21: "Great White", 22: "Ocelli", 23: "Robusta"}
+NAMES_2026 = "\n".join(f"{n}. {name}" for n, name in
+                        list(enumerate(DERBY_2026, 1)) + sorted(ALSO_ELIGIBLE_2026.items()))
 
 
 # -----------------------------------------------------------------------------
@@ -77,14 +100,36 @@ def _run(name, fn):
 # Fixtures
 # -----------------------------------------------------------------------------
 
+_LQ_TMP = tempfile.mkdtemp(prefix="la_subasta_lq_")
+
+
 def _make_app():
-    """Create a Flask app with just the la_subasta blueprint for testing."""
+    """A Flask app with the la_subasta blueprint and La Quiniela's board
+    routes (the admin page's names and scratches), over a fresh La Quiniela
+    board with a memory-only store and no bridge: La Subasta reads its
+    horses from that board's store, as it does in the app."""
     from flask import Flask
     app = Flask(__name__)
     app.config["TESTING"] = True
-    init_la_subasta(socketio=None, racing_service=None)
+    lq_board.init_board(bridge=None, log_dir=os.path.join(_LQ_TMP, "logs"),
+                        results_path=os.path.join(_LQ_TMP, "results.json"))
+    ls_field.set_store_source(None)          # the board's store, as in the app
+    init_la_subasta(socketio=None)
     app.register_blueprint(la_subasta_bp)
+    app.register_blueprint(lq_board.quiniela_board_bp)
     return app
+
+
+def _lq_names(client, text=None):
+    r = client.put("/api/quiniela/horses", json={"text": text if text is not None else NAMES_2026})
+    assert r.status_code == 200, r.get_json()
+
+
+def _lq_scratch(client, horse, number=None, name=None):
+    body = {"horse": horse}
+    if number is not None:
+        body["replacement"] = {"number": number, "name": name or ""}
+    return client.post("/api/quiniela/scratch", json=body)
 
 
 def _reset():
@@ -1055,6 +1100,205 @@ def test_horses_endpoint_shape():
            horse7["current_leader_bidder_id"] == alice["id"])
 
 
+def test_field_from_lq_store_with_replacement():
+    """The horse list is La Quiniela's field: the names pasted on the LQ
+    admin page, the 2026 field with The Puma (#9) scratched and Ocelli
+    running as #22. 22 is listed under its own number, 9 is absent, the list
+    is sorted by number, names upper-cased, colours from the board's table."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    r = _lq_scratch(client, 9, 22, "Ocelli")
+    _check("LQ admin: 9 -> 22 recorded", r.status_code == 200, f"body={r.get_json()}")
+
+    horses = client.get("/la-subasta/api/horses").get_json()["horses"]
+    numbers = [h["horse_id"] for h in horses]
+    expected = [n for n in range(1, 21) if n != 9] + [22]
+    _check("field: 1-8, 10-20 and 22, sorted by number", numbers == expected, f"got {numbers}")
+    _check("field: 9 (The Puma) is absent", 9 not in numbers)
+    by_id = {h["horse_id"]: h for h in horses}
+    h22 = by_id.get(22) or {}
+    _check("field: 22 is OCELLI", h22.get("name") == "OCELLI", f"got {h22.get('name')!r}")
+    _check("field: 22's saddle cloth is its own number", h22.get("saddle_cloth") == 22)
+    _check("field: 22 replaces 9", h22.get("replaces") == 9, f"got {h22.get('replaces')!r}")
+    _check("field: 22's cloth is the board's (#008080, white digits)",
+           (h22.get("saddle_cloth_color"), h22.get("saddle_cloth_text_color")) == ("#008080", "#FFFFFF"),
+           f"got {h22.get('saddle_cloth_color')}, {h22.get('saddle_cloth_text_color')}")
+    _check("field: names upper-cased as the board shows them",
+           by_id[1]["name"] == "RENEGADE" and by_id[19]["name"] == "GOLDEN TEMPO",
+           f"got {by_id[1]['name']!r}, {by_id[19]['name']!r}")
+    _check("field: 1's cloth is red with white digits",
+           (by_id[1]["saddle_cloth_color"], by_id[1]["saddle_cloth_text_color"]) == ("#E31837", "#FFFFFF"))
+    _check("field: a horse in its own post replaces nobody", by_id[1]["replaces"] is None)
+    _check("field: the also-eligibles not drawn in (21, 23) are not listed",
+           21 not in numbers and 23 not in numbers)
+    state = client.get("/la-subasta/api/state").get_json()
+    _check("/api/state num_horses is the field's size (20)", state.get("num_horses") == 20,
+           f"got {state.get('num_horses')}")
+    html = client.get("/la-subasta/").get_data(as_text=True)
+    _check("guest footer counts the field", "20 horses" in html)
+    _check("dev panel horse input allows 1-24", 'max="24"' in html)
+
+    # The board's model agrees, horse by horse
+    model = client.get("/api/quiniela").get_json()
+    in_field = sorted(int(n) for n, h in model["horses"].items() if h["in_field"])
+    _check("the same field the LQ board shows", in_field == numbers, f"board {in_field}")
+
+    # A name change on the admin page is on the next read
+    client.put("/api/quiniela/horses", json={"22": {"name": "Ocelli II"}})
+    horses = client.get("/la-subasta/api/horses").get_json()["horses"]
+    _check("a renamed horse reads its new name",
+           next(h for h in horses if h["horse_id"] == 22)["name"] == "OCELLI II")
+
+    # Undo the replacement: 9 is back, 22 gone
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("LQ admin: undo 9 -> 22", r.status_code == 200, f"body={r.get_json()}")
+    numbers = [h["horse_id"] for h in client.get("/la-subasta/api/horses").get_json()["horses"]]
+    _check("after the undo the field is 1-20 again", numbers == list(range(1, 21)), f"got {numbers}")
+
+
+def test_field_horse_n_fallback():
+    """A horse with no name stored reads HORSE n; with no names at all the
+    field is 1-20, every one HORSE n."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    horses = client.get("/la-subasta/api/horses").get_json()["horses"]
+    _check("no names: twenty horses", len(horses) == 20, f"got {len(horses)}")
+    _check("no names: every horse is HORSE n",
+           all(h["name"] == f"HORSE {h['horse_id']}" for h in horses),
+           f"got {[h['name'] for h in horses][:3]}")
+    _lq_names(client, "1. renegade\n2. Albus")
+    by_id = {h["horse_id"]: h for h in client.get("/la-subasta/api/horses").get_json()["horses"]}
+    _check("a lower-case name is served upper-cased", by_id[1]["name"] == "RENEGADE")
+    _check("an unnamed horse beside named ones is HORSE n", by_id[3]["name"] == "HORSE 3")
+    # A replacement entered with no name and none stored
+    r = _lq_scratch(client, 4, 24)
+    _check("LQ admin: 4 -> 24 with no name", r.status_code == 200, f"body={r.get_json()}")
+    by_id = {h["horse_id"]: h for h in client.get("/la-subasta/api/horses").get_json()["horses"]}
+    _check("an unnamed replacement is HORSE 24", by_id.get(24, {}).get("name") == "HORSE 24")
+    _check("24's cloth is the board's (#2F4F4F)", by_id[24]["saddle_cloth_color"] == "#2F4F4F")
+
+
+def test_field_21_to_24_accepted():
+    """A horse standing in under 21-24 is bid on, frozen at the lock and paid
+    out like any other: no 1-20 cap anywhere."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    _lq_scratch(client, 9, 22, "Ocelli")
+    _lq_scratch(client, 13, 23, "Robusta")
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    bob = client.post("/la-subasta/api/register",
+                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+    r = client.post("/la-subasta/api/bid", json={"bidder_id": alice["id"], "horse_id": 22, "amount": 4})
+    _check("bid on 22 accepted", r.status_code == 200, f"body={r.get_json()}")
+    r = client.post("/la-subasta/api/bid", json={"bidder_id": bob["id"], "horse_id": 23, "amount": 2})
+    _check("bid on 23 accepted", r.status_code == 200, f"body={r.get_json()}")
+    r = client.post("/la-subasta/api/bid", json={"bidder_id": bob["id"], "horse_id": 1, "amount": 3})
+    assert r.status_code == 200, r.get_json()
+    h22 = next(h for h in client.get("/la-subasta/api/horses").get_json()["horses"] if h["horse_id"] == 22)
+    _check("22 shows Alice leading at 4", h22["current_leader_bidder_id"] == alice["id"]
+           and h22["current_high_bid"]["amount"] == 4)
+    _check("pot counts 22 and 23", bidding.total_pot() == 9, f"got {bidding.total_pot()}")
+    _check("Alice leads 22", bidding.horses_leading_by(alice["id"]) == [22])
+    _check("Bob leads 1 and 23", bidding.horses_leading_by(bob["id"]) == [1, 23])
+    r = client.post("/la-subasta/api/admin/lock")
+    assert r.status_code == 200, r.get_json()
+    owned = sorted(o["horse_id"] for o in (payouts.get_owner(n) for n in (1, 22, 23)) if o)
+    _check("22 and 23 frozen into ownership", owned == [1, 22, 23], f"got {owned}")
+    r = client.post("/la-subasta/api/admin/results", json={"win": 22, "place": 23, "show": 1})
+    data = r.get_json()
+    _check("results 22 / 23 / 1 accepted", r.status_code == 200 and data.get("success"), f"body={data}")
+    by_finish = {p["finish"]: p for p in payouts.list_payouts()}
+    _check("22's owner (Alice) is paid the win", by_finish["win"]["bidder_id"] == alice["id"]
+           and by_finish["win"]["horse_id"] == 22)
+    _check("23's owner (Bob) is paid the place", by_finish["place"]["bidder_id"] == bob["id"])
+    _check("MAX_HORSE is La Quiniela's 24", la_config.MAX_HORSE == LQ_HORSE_COUNT == 24)
+
+
+def test_field_bid_on_absent_horse_rejected():
+    """A bid on a horse not in the field is refused with a reason a guest can
+    read: the scratched horse (9), an also-eligible standing in for nobody
+    (21), and a number no horse can have (25)."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    _lq_scratch(client, 9, 22, "Ocelli")
+    _lq_scratch(client, 20)                       # no replacement
+    transition(AuctionState.OPEN)
+    alice = client.post("/la-subasta/api/register",
+                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+
+    def bid(horse):
+        r = client.post("/la-subasta/api/bid", json={"bidder_id": alice["id"], "horse_id": horse, "amount": 1})
+        return r.status_code, (r.get_json() or {}).get("error", "")
+
+    status, error = bid(9)
+    _check("bid on 9 (replaced by 22) rejected", status == 400, f"status={status}")
+    _check("...saying 9 is not in the field and 22 runs for it",
+           error == "#9 is not in the field: scratched, #22 runs in its place", f"got {error!r}")
+    status, error = bid(20)
+    _check("bid on 20 (scratched, no replacement) rejected",
+           status == 400 and error == "#20 is not in the field: scratched", f"got {status} {error!r}")
+    status, error = bid(21)
+    _check("bid on 21 (an also-eligible not drawn in) rejected",
+           status == 400 and error == "#21 is not in the field", f"got {status} {error!r}")
+    status, error = bid(25)
+    _check("bid on 25 rejected as no horse at all",
+           status == 400 and error == "Invalid horse (must be 1-24)", f"got {status} {error!r}")
+    _check("nothing was recorded", bidding.count_bids() == 0)
+    status, error = bid(22)
+    _check("bid on 22 accepted", status == 200, f"got {status} {error!r}")
+    # Results can only name horses in the field
+    client.post("/la-subasta/api/admin/lock")
+    r = client.post("/la-subasta/api/admin/results", json={"win": 9, "place": 22, "show": 1})
+    _check("results naming 9 rejected", r.status_code == 400
+           and "#9 is not in the field" in r.get_json().get("error", ""), f"body={r.get_json()}")
+    r = client.post("/la-subasta/api/admin/results", json={"win": 21, "place": 22, "show": 1})
+    _check("results naming 21 rejected", r.status_code == 400, f"body={r.get_json()}")
+
+
+def test_field_no_board_standin_and_no_mock():
+    """Without a La Quiniela board La Subasta sells 1-20 with no names (the
+    empty store's field). The mock racing service no longer feeds it."""
+    import inspect
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    ls_field.set_store_source(lambda: None)
+    try:
+        f = ls_field.current()
+        _check("no board: the stand-in field is 1-20", f.numbers() == list(range(1, 21)))
+        _check("no board: the stand-in is not live", f.live is False and f.names_rev is None)
+        horses = client.get("/la-subasta/api/horses").get_json()["horses"]
+        _check("no board: /api/horses lists HORSE 1..HORSE 20",
+               [h["name"] for h in horses] == [f"HORSE {n}" for n in range(1, 21)])
+    finally:
+        ls_field.set_store_source(None)
+    _check("init_la_subasta takes no racing service",
+           "racing_service" not in inspect.signature(init_la_subasta).parameters)
+    main_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "main.py"), encoding="utf-8").read()
+    _check("main.py no longer hands La Subasta the racing service",
+           "init_la_subasta(socketio=socketio)" in main_src
+           and "racing_service=racing_service" not in main_src)
+    store = HorseStore()
+    store.set_names({1: "renegade"})
+    ls_field.set_store_source(lambda: store)
+    try:
+        f = ls_field.current()
+        _check("the field is read through HorseStore.field()",
+               f.live and f.get(1)["name"] == "RENEGADE" and f.names_rev == store.names_rev)
+    finally:
+        ls_field.set_store_source(None)
+
+
 def test_horses_scratched_flag_roundtrip():
     """A client that loads /api/horses AFTER a scratch (the 'window B opened
     later' case) must see scratched=true — the flag is sourced from the
@@ -1534,8 +1778,8 @@ def test_initial_horse_load_after_registration():
 
     horses = (horses_body or {}).get("horses") or []
     _check("boot: /api/horses returns the full field immediately",
-           len(horses) == la_config.NUM_HORSES,
-           f"got {len(horses)} horses, expected {la_config.NUM_HORSES}")
+           len(horses) == 20,
+           f"got {len(horses)} horses, expected 20")
 
     # renderHorseList()/updateHorseCard() dereference these on every card; a
     # missing key throws mid-render and leaves the list half-built.
@@ -2089,6 +2333,12 @@ def main():
     # Phase 2A
     _run("guest UI — page served", test_guest_page_served)
     _run("guest UI — /api/horses shape", test_horses_endpoint_shape)
+    _run("field — La Quiniela's, with 22 for 9", test_field_from_lq_store_with_replacement)
+    _run("field — HORSE n without a name", test_field_horse_n_fallback)
+    _run("field — 21-24 bid on, frozen and paid", test_field_21_to_24_accepted)
+    _run("field — a bid on a horse not in it is refused", test_field_bid_on_absent_horse_rejected)
+    _run("field — no board: the stand-in; no mock racing service",
+         test_field_no_board_standin_and_no_mock)
     _run("guest UI — /api/horses scratched flag round-trip (regression)",
          test_horses_scratched_flag_roundtrip)
     _run("guest UI — static assets served", test_static_assets_served)

@@ -8,9 +8,9 @@ import time
 
 from flask import Blueprint, jsonify, render_template, request
 
-from la_subasta import bidding, notifications, payouts, reset, settings
+from la_subasta import bidding, field, notifications, payouts, reset, settings
 from la_subasta.bidding import BidError
-from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR, NUM_HORSES
+from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR, MAX_HORSE
 from la_subasta.models import init_db
 from la_subasta.settings import SettingsError
 from la_subasta.state_machine import (
@@ -50,52 +50,20 @@ def _no_store_api_responses(response):
 # Init — called from main.py at app startup
 # -----------------------------------------------------------------------------
 
-def init_la_subasta(socketio=None, racing_service=None) -> None:
+def init_la_subasta(socketio=None) -> None:
     """
     Wire up DB + SocketIO. Safe to call multiple times.
 
     Args:
         socketio: Shared Flask-SocketIO instance for broadcasts.
-        racing_service: Optional — the dashboard's RacingDataService, used
-            to look up horse metadata (name, saddle cloth, jockey) by post
-            position. La Subasta doesn't own horse data.
+
+    La Subasta doesn't own horse data: its horses, their names and program
+    numbers are La Quiniela's (field.py), read when they are needed.
     """
     init_db()
     notifications.init_notifications(socketio)
-    _set_racing_service(racing_service)
     logger.info("La Subasta initialised (DB ready, socketio=%s)",
                 "yes" if socketio else "no")
-
-
-_racing_service = None
-
-
-def _set_racing_service(svc) -> None:
-    global _racing_service
-    _racing_service = svc
-
-
-def _horse_meta(horse_id: int) -> dict:
-    """Return minimal horse metadata for JSON responses (graceful if no dashboard)."""
-    if _racing_service is not None:
-        horse = _racing_service.get_horse(horse_id)
-        if horse:
-            return {
-                "horse_id": horse_id,
-                "saddle_cloth": horse_id,       # 1..20 — same as post position
-                "name": horse.get("horse_name"),
-                "jockey": horse.get("jockey"),
-                "saddle_cloth_color": horse.get("saddle_cloth_color"),
-            }
-    # No dashboard service (headless tests). Return a stable shape so the
-    # guest UI can still render a placeholder card.
-    return {
-        "horse_id": horse_id,
-        "saddle_cloth": horse_id,
-        "name": None,
-        "jockey": None,
-        "saddle_cloth_color": None,
-    }
 
 
 # -----------------------------------------------------------------------------
@@ -122,7 +90,8 @@ def guest_view():
     return render_template(
         "guest.html",
         emoji_palette=EMOJI_PALETTE,
-        num_horses=NUM_HORSES,
+        num_horses=len(field.current()),
+        max_horse=MAX_HORSE,
     )
 
 
@@ -152,7 +121,7 @@ def api_state():
         "updated_at": row["updated_at"],
         "event_year": EVENT_YEAR,
         "emoji_palette": EMOJI_PALETTE,
-        "num_horses": NUM_HORSES,
+        "num_horses": len(field.current()),
         "num_bidders": bidding.count_bidders(),
         "num_bids": bidding.count_bids(),
     })
@@ -164,9 +133,14 @@ def api_state():
 
 @la_subasta_bp.route("/api/horses", methods=["GET"])
 def api_horses():
+    """The field as La Quiniela has it, by program number: a replacement
+    under its own number (22, not 9), names upper-cased, HORSE n without
+    one, each with its current high bid."""
     horses = []
-    for horse_id in range(1, NUM_HORSES + 1):
-        meta = _horse_meta(horse_id)
+    for meta in field.current().horses:
+        meta = dict(meta)
+        horse_id = meta["horse_id"]
+        meta["jockey"] = None           # La Quiniela keeps no jockeys
         hb = bidding.current_high_bid(horse_id)
         meta["scratched"] = bidding.is_horse_scratched(horse_id)
         if hb:
@@ -373,7 +347,8 @@ def api_admin_results():
     """
     Enter race results, compute payouts.
 
-    Body JSON: {"win": 7, "place": 3, "show": 12}  (horse_id / post position)
+    Body JSON: {"win": 7, "place": 3, "show": 22}  (program numbers, each
+    a horse in La Quiniela's field)
     """
     data = request.get_json(silent=True) or {}
     try:
@@ -385,9 +360,12 @@ def api_admin_results():
 
     if len({win, place, show}) != 3:
         return _err("win, place, show must all differ")
+    the_field = field.current()
     for pos in (win, place, show):
-        if pos < 1 or pos > NUM_HORSES:
+        if not field.valid_number(pos):
             return _err(f"Invalid horse id: {pos}")
+        if pos not in the_field:
+            return _err(the_field.refusal(pos))
 
     current = get_state()
     if current == AuctionState.LOCKED:
@@ -428,7 +406,7 @@ def api_admin_scratch():
         horse_id = int(data.get("horse_id"))
     except (TypeError, ValueError):
         return _err("horse_id must be an integer")
-    if horse_id < 1 or horse_id > NUM_HORSES:
+    if not field.valid_number(horse_id):
         return _err(f"Invalid horse_id: {horse_id}")
     bidding.scratch_horse(horse_id)
     notifications.horse_scratched(horse_id)
@@ -443,7 +421,7 @@ def api_admin_unscratch():
         horse_id = int(data.get("horse_id"))
     except (TypeError, ValueError):
         return _err("horse_id must be an integer")
-    if horse_id < 1 or horse_id > NUM_HORSES:
+    if not field.valid_number(horse_id):
         return _err(f"Invalid horse_id: {horse_id}")
     bidding.unscratch_horse(horse_id)
     return jsonify({"success": True, "horse_id": horse_id})
