@@ -57,6 +57,17 @@
   .figure .val { font-size: 40px; font-weight: 800; line-height: 1.15; color: var(--gold); }
   .figure.pot { grid-column: 1 / -1; } .figure.pot .val { font-size: 56px; }
   .figure.bets .val { color: var(--fg); }
+  /* Counted pot: the host's hand count of the cash box. The scale figure at the post, the
+     count and the difference side by side; a number box with the numeric keypad and a big Save. */
+  .counted { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--line); }
+  .compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
+  .compare .figure { padding: 6px 8px; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; }   /* the three figures sit on one line even when a label wraps */
+  .compare .figure .lbl { font-size: 12px; letter-spacing: .04em; }
+  .compare .figure .val { font-size: 28px; }
+  .compare .figure.counted-fig .val { color: var(--fg); } .compare .figure.diff .val { color: var(--dim); }
+  #counted-input { font-size: 32px; font-weight: 800; text-align: center; min-height: 68px; letter-spacing: .04em; }
+  button.big { min-height: 68px; font-size: 22px; letter-spacing: .02em; }
+  #counted .row .big { flex: 3 1 160px; } #counted .row button:not(.big) { flex: 1 1 90px; min-height: 68px; }
   /* The Horses list: one row per horse, the number on its cloth, name, status, tokens. */
   .hrow { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 0 10px; align-items: center;
           padding: 6px 0; border-top: 1px solid var(--line); }
@@ -87,11 +98,33 @@
   <div id="states" class="states"></div>
   <div id="state-status" class="status"></div>
   <div class="figures">
-    <div class="figure pot"><div class="lbl">Pot</div><div class="val" id="fig-pot">$0</div></div>
+    <div class="figure pot"><div class="lbl" id="fig-pot-lbl">Pot</div><div class="val" id="fig-pot">$0</div></div>
     <div class="figure"><div class="lbl">Win</div><div class="val" id="fig-win">$0</div></div>
     <div class="figure"><div class="lbl">Place</div><div class="val" id="fig-place">$0</div></div>
     <div class="figure"><div class="lbl">Show</div><div class="val" id="fig-show">$0</div></div>
     <div class="figure bets"><div class="lbl" id="fig-bets-lbl">Bets</div><div class="val" id="fig-bets">0</div></div>
+  </div>
+  <div id="fig-note" class="note"></div>
+  <div id="counted" class="counted" hidden>
+    <h3>Counted pot</h3>
+    <p class="note" id="counted-help">After betting closes, count the BETS compartment of the cash box and type the
+       dollars. The pot and all three prizes, here and on the TV, then come from your count; bets per horse stay as
+       the scales read them.</p>
+    <div class="compare">
+      <div class="figure"><div class="lbl">Scale at the post</div><div class="val" id="cmp-scale">&mdash;</div></div>
+      <div class="figure counted-fig"><div class="lbl">Counted</div><div class="val" id="cmp-counted">&mdash;</div></div>
+      <div class="figure diff"><div class="lbl">Difference</div><div class="val" id="cmp-diff">&mdash;</div></div>
+    </div>
+    <div id="counted-form">
+      <label class="field" for="counted-input">Counted dollars</label>
+      <input id="counted-input" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+             enterkeyhint="done" placeholder="0" aria-label="Counted pot in whole dollars">
+      <div class="row">
+        <button id="counted-save" class="primary big">Save count</button>
+        <button id="counted-clear">Clear</button>
+      </div>
+    </div>
+    <div id="counted-status" class="status"></div>
   </div>
   <div class="row">
     <button id="reset-betting" class="danger">Reset betting</button>
@@ -226,8 +259,19 @@
     $("fig-win").textContent = money(p.win); $("fig-place").textContent = money(p.place); $("fig-show").textContent = money(p.show);
     $("fig-bets").textContent = String(bets);
     $("fig-bets-lbl").textContent = "Bets" + (refunded > 0 ? " (+" + refunded + " in scratched cups)" : "");
+    renderFigureLabels();
+    renderCounted();
     renderCloses();
     renderHorses();
+  }
+  // The pot and prizes above are the model's pot and prizes: the hand count's once there is
+  // one, the scales' live figures before it. After the post, say which.
+  function renderFigureLabels() {
+    var st = model.race_state, counted = model.hand_counted === true;
+    $("fig-pot-lbl").textContent = counted ? "Pot · hand counted" : (st >= 3 ? "Pot · scale" : "Pot");
+    $("fig-note").textContent = counted
+      ? "The pot and prizes come from your hand count" + (model.pot_scale != null ? " (the scales said " + money(model.pot_scale) + " at the post)." : ".")
+      : (st >= 3 && st <= 5 ? "These are the scales' figures, live from the cups. Count the cash box and enter it below." : "");
   }
   $("states").addEventListener("click", function (ev) {
     var btn = ev.target.closest("button[data-state]"); if (!btn) { return; }
@@ -256,6 +300,69 @@
       loadModel();
     }).catch(fail("reset-status"));
   };
+
+  // ---- the counted pot ---------------------------------------------------------
+  // The scales are estimates. After betting closes the host counts the cash box's BETS
+  // compartment and types the dollars; PUT /api/quiniela/counted_pot saves it, and from then
+  // on the pot and all three prizes (the TV's too) come from it. The box is here in states
+  // 3-5, read-only in 6 while a count is saved, and not shown before the figures at the post
+  // exist (0-2). It reads the model's pot_scale (the scale pot frozen at the post),
+  // pot_counted and hand_counted; the difference is information only, nothing blocks.
+  var HELP_EDIT = "After betting closes, count the BETS compartment of the cash box and type the dollars. " +
+                  "The pot and all three prizes, here and on the TV, then come from your count; bets per horse " +
+                  "stay as the scales read them.";
+  var HELP_READONLY = "The race is over, so the saved count is read-only. Reset betting clears it.";
+  var countShown = "";        // what the number box last took from the model; while it still holds this it is untouched
+  function signedDollars(n) { n = Math.round(n); return n === 0 ? "same" : (n > 0 ? "+" : "−") + "$" + Math.abs(n); }
+  function renderCounted() {
+    var st = model.race_state, saved = model.pot_counted, has = saved != null, scale = model.pot_scale;
+    var editable = st >= 3 && st <= 5, readOnly = st === 6 && has, input = $("counted-input");
+    $("counted").hidden = !(editable || readOnly);
+    if (!editable && !readOnly) {       // betting is open again or has not closed: nothing of the last race stays
+      input.value = ""; countShown = ""; say("counted-status", "");
+      return;
+    }
+    $("counted-form").hidden = !editable;
+    $("counted-help").textContent = editable ? HELP_EDIT : HELP_READONLY;
+    $("cmp-scale").textContent = scale == null ? "—" : money(scale);
+    $("cmp-counted").textContent = has ? money(saved) : "—";
+    $("cmp-diff").textContent = has && scale != null ? signedDollars(Math.round(saved) - Math.round(scale)) : "—";
+    var text = has ? String(saved) : "";
+    if (document.activeElement !== input && input.value === countShown) { input.value = text; countShown = text; }
+  }
+  function saveCount(amount) {          // whole dollars, or null for Clear
+    var save = $("counted-save"), clear = $("counted-clear");
+    var done = function () { save.disabled = clear.disabled = false; };
+    save.disabled = clear.disabled = true;
+    say("counted-status", amount === null ? "clearing…" : "saving…");
+    api("PUT", "/api/quiniela/counted_pot", { amount: amount }).then(function (r) {
+      done();
+      if (!r.ok) { say("counted-status", r.body.error || ("error " + r.status), "err"); loadModel(); return; }
+      var b = r.body, input = $("counted-input"), p = b.prizes || {};
+      if (b.pot_counted == null) {
+        input.value = ""; countShown = "";
+        say("counted-status", "Cleared. The pot and prizes are the scales' figures again.", "ok");
+      } else {
+        input.value = countShown = String(b.pot_counted);
+        var vs = b.pot_scale == null ? "" : " (the scales said " + money(b.pot_scale) + ", " +
+                 signedDollars(Math.round(b.pot_counted) - Math.round(b.pot_scale)) + ")";
+        say("counted-status", "Saved: counted " + money(b.pot_counted) + vs + ". WIN " + money(p.win) + " · PLACE " +
+            money(p.place) + " · SHOW " + money(p.show) + "." +
+            (b.saved === false ? " NOT stored: pi5 could not write it to its database, so a restart would lose it." : ""),
+            b.saved === false ? "err" : "ok");
+      }
+      loadModel();
+    }).catch(function () { done(); fail("counted-status")(); });
+  }
+  $("counted-save").onclick = function () {
+    var raw = $("counted-input").value.trim();
+    if (!/^[0-9]+$/.test(raw)) { say("counted-status", "Type the dollars as a whole number, digits only (no cents, no $).", "err"); return; }
+    saveCount(Number(raw));
+  };
+  $("counted-clear").onclick = function () { saveCount(null); };
+  $("counted-input").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") { ev.preventDefault(); $("counted-save").click(); }
+  });
 
   // ---- the model ---------------------------------------------------------------
   // GET /api/quiniela is the one thing this page reads (at load, every 5 s and

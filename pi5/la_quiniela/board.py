@@ -12,6 +12,8 @@
 # the race itself (GET/PUT /api/quiniela/race: its name and post time, the
 # one store of race information), the real track's odds for the slideshow
 # (GET/PUT /api/quiniela/odds, POST /api/quiniela/odds/start and /stop), the
+# hand count of the cash box (PUT /api/quiniela/counted_pot: the pot and the
+# prizes come from it once betting has closed), the
 # between-races reset (POST /api/quiniela/reset) and the phone-sized admin
 # page at GET /quiniela/admin that drives them. Race state stays on
 # /api/quiniela/cmd. migrate_race_setup() copies what the old Race Setup
@@ -40,7 +42,7 @@ from flask import Blueprint, Response, jsonify, render_template, request
 from la_quiniela import protocol as P
 from la_quiniela import racetime
 from la_quiniela.betting import (
-    MODE_STATES, BettingBoard, load_board_settings, sse_events, validate_cmd,
+    COUNTED_POT_MAX, MODE_STATES, BettingBoard, CountRefused, load_board_settings, sse_events, validate_cmd,
 )
 from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
@@ -66,6 +68,8 @@ REPLACEMENT_SHAPE = 'replacement must be {"number": N, "name": "..."}'
 USAGE_RACE = ('usage: {"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"} (the race\'s clock; '
               '"" for both clears the post time) | {"post_at": <unix time> | null}')
 USAGE_ODDS = 'usage: {"odds": {"1": "5-2", "22": "30-1", ...}} | {"odds": null}'
+USAGE_COUNTED_POT = ('usage: {"amount": <whole dollars, 0-%d>} sets the hand count | {"amount": null} clears it'
+                     % COUNTED_POT_MAX)
 
 # The Race Setup page kept a post time as a time of day, which it treated as
 # on this date and on Churchill's clock (it printed "6:57 PM ET"): what
@@ -563,6 +567,32 @@ def api_quiniela_unscratch():
     return jsonify({"ok": True, "kind": "gateway", "horse": horse, "cup": on_cups.get(horse),
                     "scratched": False, "rev": _rev(board), "gateway_online": _gateway_online(snap),
                     "names_rev": board.store.names_rev})
+
+
+@quiniela_board_bp.route("/api/quiniela/counted_pot", methods=["PUT"])
+def api_quiniela_counted_pot():
+    """The hand count of the cash box's BETS compartment. {"amount": 152}
+    sets it (whole dollars, 0 to COUNTED_POT_MAX; entering again overwrites),
+    {"amount": null} clears it and puts the scale figures back. From then
+    on the pot and all three prizes, on the TV and the admin page, come from
+    the count with the same split and rounding; bets per horse stay as the
+    scales read them. 400 for an amount that is not a whole number of
+    dollars in range; 409 when the race is not in AT THE POST, RUNNING or
+    WINNER (3-5) or there are no figures at the post yet. The count is kept
+    in the figures-at-the-post record, so Reset betting and a state of 0 or 1
+    clear it with them and a restart of pi5 keeps it. The model is pushed at
+    once. Reply {"ok": true, "pot_counted", "pot_scale", "pot", "prizes",
+    "hand_counted", "race_state", "saved"}."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or "amount" not in body:
+        return _bad(USAGE_COUNTED_POT)
+    try:
+        done = get_board().set_pot_counted(body["amount"])
+    except CountRefused as exc:
+        return _bad(str(exc), 409)
+    except ValueError as exc:
+        return _bad(str(exc))
+    return jsonify({"ok": True, **done})
 
 
 @quiniela_board_bp.route("/api/quiniela/closes_at", methods=["PUT"])

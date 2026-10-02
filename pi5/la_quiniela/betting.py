@@ -32,6 +32,17 @@
 # none. The TV board shows them in 3, 4 and 5, so a page loaded after the
 # cups were emptied for the draw, a second screen or a restart of pi5 all
 # show the numbers at the post. The live fields keep following the cups.
+# The counted pot: the scales are estimates, so after betting closes the host
+# counts the cash box and enters the dollars (set_pot_counted(), PUT
+# /api/quiniela/counted_pot, states 3-5). The count is stored inside the
+# closing record (its "pot_counted"), so it is saved, held and dropped exactly
+# as the figures at the post are. While it is held the pot and the three
+# prizes are the count's (prizes_for(count), the same split and rounding), in
+# closing's pot and prizes and in the model's own from the post to the end
+# (3-6; in FINAL CALL betting is open again and the model's are the live
+# ones); the bets per horse stay the scales'. pot_scale is the scale pot frozen
+# at the post, pot_counted the count (or null), hand_counted whether the
+# model's pot and prizes are the count's.
 # race is the race itself from the store (name, year, post time as unix
 # seconds and as it reads on the race's clock, and that clock's zone): the
 # one home of race information, which the TV's countdown and roster slides
@@ -99,6 +110,19 @@ CMD_WHITELIST = frozenset({"state", "demo", "json"})
 # FINAL_CALL and AFTER_PARTY leave them as they are.
 CLOSED_STATES = frozenset({int(P.Phase.AT_THE_POST), int(P.Phase.RUNNING), int(P.Phase.WINNER)})
 REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN)})
+
+# The hand count (the counted pot): after betting closes the host counts the
+# cash box's BETS compartment and types the dollars, and from then on the pot
+# and all three prizes come from that number. It can be entered in the
+# CLOSED_STATES once the figures at the post exist, and it lives inside that
+# very record (its "pot_counted" key), so it is saved, held and dropped
+# exactly as they are. COUNTED_POT_MAX only catches a typo (a party's pot is a
+# few hundred dollars).
+COUNTED_POT_MAX = 10000
+# From the post to the end (3, 4, 5, 6) the model's pot and prizes are the
+# count's. The count is held through FINAL_CALL like the figures at the post,
+# but betting is open again there, so in 2 the model's pot is the live one.
+COUNT_IN_FORCE = CLOSED_STATES | frozenset({int(P.Phase.AFTER_PARTY)})
 
 # One race state. The dashboard's modes (its thirteen buttons, which drive
 # the LEDs) are the source of truth, and La Quiniela's race state (the cups,
@@ -474,6 +498,73 @@ def _closing_note(closing: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]
     return {"pot": closing["pot"], "prizes": closing["prizes"], "total_tokens": closing["total_tokens"]}
 
 
+class CountRefused(Exception):
+    """The hand count cannot be entered (or cleared) now: betting is not
+    closed, or the figures at the post do not exist yet. The message is
+    plain; PUT /api/quiniela/counted_pot answers it with a 409."""
+
+
+def counted_pot_arg(value: Any) -> int:
+    """The hand count as a whole number of dollars, 0..COUNTED_POT_MAX. A
+    bool, a float, a string or anything else is a ValueError with a plain
+    message (the route's 400)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("the count must be a whole number of dollars, 0 to %d (no cents, no $ sign)"
+                         % COUNTED_POT_MAX)
+    if not 0 <= value <= COUNTED_POT_MAX:
+        raise ValueError("%d dollars is outside 0 to %d" % (value, COUNTED_POT_MAX))
+    return value
+
+
+def _stored_count(closing: Optional[Dict[str, Any]]) -> Optional[int]:
+    """The hand count a closing record holds, or None: no record, no count,
+    or a stored value that is not a whole number of dollars of 0 or more
+    (ignored, never raised: a bad row must not take the board down)."""
+    if not isinstance(closing, dict):
+        return None
+    value = closing.get("pot_counted")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _closing_view(closing: Optional[Dict[str, Any]], split: Dict[str, float]) -> Optional[Dict[str, Any]]:
+    """The model's closing from the stored record: the same five keys it
+    always had (pot, prizes, total_tokens, horses, at). Without a hand count
+    the pot and prizes are the scale figures as taken at the post; with one
+    the pot is the count and the prizes are prizes_for(count, split), the very
+    function the scale pot went through. The stored "pot_counted" itself is
+    the model's own key, not part of closing."""
+    if closing is None:
+        return None
+    view = {key: value for key, value in closing.items() if key != "pot_counted"}
+    counted = _stored_count(closing)
+    if counted is not None:
+        view["pot"] = float(counted)
+        view["prizes"] = prizes_for(counted, split)
+    return view
+
+
+def _money_view(closing: Optional[Dict[str, Any]], pot: float, prizes: Dict[str, int],
+                split: Dict[str, float], race_state: int) -> Dict[str, Any]:
+    """What the model says about the money once the figures at the post and
+    the hand count are known; pot and prizes are the live scale figures from
+    the cups. closing: _closing_view(), always the count's when there is one.
+    pot_scale: the scale pot frozen at the post (None while there are no
+    figures at the post). pot_counted: the hand count held in whole dollars,
+    or None. hand_counted: whether the pot and prizes below are the count's,
+    which is when one is held and the race is in COUNT_IN_FORCE; then pot and
+    prizes are the count's, else the live ones."""
+    counted = _stored_count(closing)
+    view = _closing_view(closing, split)
+    scale = closing.get("pot") if isinstance(closing, dict) else None
+    in_force = counted is not None and view is not None and race_state in COUNT_IN_FORCE
+    if in_force:
+        pot, prizes = view["pot"], view["prizes"]
+    return {"pot": pot, "prizes": prizes, "closing": view, "pot_scale": scale,
+            "pot_counted": counted, "hand_counted": in_force}
+
+
 class BettingBoard:
     """The betting model, its event log, its SSE subscribers and the thread
     that keeps it current.
@@ -535,6 +626,7 @@ class BettingBoard:
             self.store.on_change = self.wake
         self._closing: Optional[Dict[str, Any]] = self.store.closing   # survives a restart (lq_closing)
         self._closing_warned = False
+        self._last_snap: Any = {}                  # the snapshot the model was last built from (set_pot_counted rebuilds from it)
         self._odds: Dict[int, str] = {}           # program number -> the track's odds (set_odds)
         self._weather: Optional[Dict[str, Any]] = None   # pi5's weather, for the TV's crawl (set_weather)
         self._model: Dict[str, Any] = self._empty_model()
@@ -643,12 +735,13 @@ class BettingBoard:
     def _empty_model(self) -> Dict[str, Any]:
         horses = {str(n): _unassigned() for n in range(1, HORSE_COUNT + 1)}
         split = self._split()
+        money = _money_view(self._closing, 0.0, prizes_for(0.0, split), split, 0)
         return {
             "link_ok": False,
             "race_state": 0,
             "race_state_name": race_state_name(0),
             "token_value": self._token_value(),
-            "pot": 0.0,
+            "pot": money["pot"],
             "total_tokens": 0,
             "horses": self._name_horses(horses)[0],
             "leader": None,
@@ -656,7 +749,7 @@ class BettingBoard:
             "updated": self._wall(),
             "board_states": self._board_states(),
             "closes_at": self.store.closes_at,
-            "prizes": prizes_for(0.0, split),
+            "prizes": money["prizes"],
             "split": split,
             "chyron": self._chyron(),
             "names_rev": self.store.names_rev,
@@ -664,7 +757,10 @@ class BettingBoard:
             "cups_online": 0,
             "cups_no_horse": 0,
             "results": _results_dict(None),
-            "closing": self._closing,
+            "closing": money["closing"],
+            "pot_scale": money["pot_scale"],
+            "pot_counted": money["pot_counted"],
+            "hand_counted": money["hand_counted"],
             "race": self.race_view(),
             "weather": self._weather,
         }
@@ -856,6 +952,7 @@ class BettingBoard:
         {"closing": null})."""
         now_w = self._wall()
         horses, race_state, total, link_ok, extras = self._digest(snap)
+        self._last_snap = snap
 
         leader: Optional[int] = None
         best = 0
@@ -938,12 +1035,17 @@ class BettingBoard:
                 self._closing = closing
                 self._save_closing(closing)
 
+            # The money the model reports: the live scale figures, unless the
+            # host has hand counted the cash box (the count is in the record
+            # above), when the pot and every prize come from the count.
+            money = _money_view(closing, pot, prizes, split, race_state)
+
             model = {
                 "link_ok": bool(link_ok),
                 "race_state": race_state,
                 "race_state_name": race_state_name(race_state),
                 "token_value": token_value,
-                "pot": pot,
+                "pot": money["pot"],
                 "total_tokens": total,
                 "horses": horses,
                 "leader": leader,
@@ -951,7 +1053,7 @@ class BettingBoard:
                 "updated": old["updated"],
                 "board_states": self._board_states(),
                 "closes_at": self.store.closes_at,
-                "prizes": prizes,
+                "prizes": money["prizes"],
                 "split": split,
                 "chyron": self._chyron(),
                 "names_rev": self.store.names_rev,
@@ -959,7 +1061,10 @@ class BettingBoard:
                 "cups_online": extras["cups_online"],
                 "cups_no_horse": extras["cups_no_horse"],
                 "results": _results_dict(extras["results"]),
-                "closing": closing,
+                "closing": money["closing"],
+                "pot_scale": money["pot_scale"],
+                "pot_counted": money["pot_counted"],
+                "hand_counted": money["hand_counted"],
                 "race": self.race_view(),
                 "weather": dict(self._weather) if self._weather is not None else None,
             }
@@ -982,17 +1087,78 @@ class BettingBoard:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed
 
-    def _save_closing(self, closing: Optional[Dict[str, Any]]) -> None:
-        """Persist the closing figures (board lock held; twice a race at
-        most). A database error is logged once and costs only the copy on
-        disk: the model carries the figures either way."""
+    def _save_closing(self, closing: Optional[Dict[str, Any]]) -> bool:
+        """Persist the closing figures, and the hand count inside them (board
+        lock held; a few times a race at most). A database error is logged
+        once and costs only the copy on disk: the model carries the figures
+        either way. True when they were saved."""
         try:
             self.store.set_closing(closing)
+            return True
         except Exception as exc:
             if not self._closing_warned:
                 self._closing_warned = True
                 log.warning("La Quiniela board: cannot save the closing figures (%s); "
                             "they will not survive a restart", exc)
+            return False
+
+    def set_pot_counted(self, amount: Any) -> Dict[str, Any]:
+        """The hand count: the host counted the cash box's BETS compartment
+        and `amount` is the whole dollars. None clears it, which puts the
+        scale figures back. Entering again overwrites.
+
+        The count goes into the figures-at-the-post record (the "pot_counted"
+        key of lq_closing's row), so it is saved with them, survives a
+        restart, and is dropped by Reset betting and by a state of 0 or 1,
+        never by 3, 4, 5 or 6. The model then carries it: pot and prizes (and
+        closing's) from prizes_for(count), pot_scale, pot_counted and
+        hand_counted. Bets per horse are the scales' and do not move.
+
+        ValueError (a plain message) for an amount that is not a whole number
+        of dollars from 0 to COUNTED_POT_MAX; CountRefused when the race is
+        not in 3, 4 or 5 or there are no figures at the post yet. The model
+        is rebuilt and published at once, so the TV does not wait for its
+        next poll. Returns what PUT /api/quiniela/counted_pot reports: {
+        "pot_counted", "pot_scale", "pot", "prizes", "hand_counted",
+        "race_state", "saved"} ("saved": false when the database refused the
+        write: the count is held, but it would not survive a restart)."""
+        count = None if amount is None else counted_pot_arg(amount)
+        with self._lock:
+            state = int(self._model["race_state"])
+            closing = self._closing
+            if state not in CLOSED_STATES:
+                raise CountRefused(
+                    "The count can only be entered after betting closes (AT THE POST, RUNNING or WINNER); "
+                    "the race is in %s%s." % (race_state_name(state).replace("_", " "),
+                                              ": the saved count is read-only, Reset betting clears it"
+                                              if state == int(P.Phase.AFTER_PARTY) and _stored_count(closing) is not None
+                                              else ""))
+            if closing is None:
+                raise CountRefused("There are no figures at the post yet, so there is nothing to count against; "
+                                   "they are taken when the race reaches AT THE POST.")
+            before = _stored_count(closing)
+            changed = count != before
+            saved = True
+            if changed:
+                record = {key: value for key, value in closing.items() if key != "pot_counted"}
+                if count is not None:
+                    record["pot_counted"] = count
+                self._closing = record
+                saved = self._save_closing(record)
+            total = sum(h["tokens"] for h in self._model["horses"].values())
+            now_w = self._wall()
+        if changed:
+            self._write_log({"ts": round(now_w, 3), "race_state": state,
+                             "changes": [{"pot_counted": [before, count]}], "total_tokens": total})
+            # Rebuild from the snapshot the model was last built from (under
+            # the refresh lock, so no older picture can overwrite a newer one
+            # and invent a drop): the count is the only thing that changed.
+            with self._refresh_lock:
+                self.apply_snapshot(self._last_snap)
+        model = self.model()
+        return {"pot_counted": model["pot_counted"], "pot_scale": model["pot_scale"], "pot": model["pot"],
+                "prizes": model["prizes"], "hand_counted": model["hand_counted"],
+                "race_state": model["race_state"], "saved": saved}
 
     def refresh(self) -> bool:
         """Take the bridge's snapshot, apply it, and keep the gateway's state

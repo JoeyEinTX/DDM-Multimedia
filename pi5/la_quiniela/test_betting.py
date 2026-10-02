@@ -71,7 +71,9 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive since race info lives in La Quiniela (the race; each horse's odds too)
               "race",
               # additive with the crawl's live items: pi5's weather
-              "weather"}
+              "weather",
+              # additive with the counted pot: the scale pot frozen at the post, the hand count, whether there is one
+              "pot_scale", "pot_counted", "hand_counted"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
               "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
@@ -247,7 +249,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 24 model keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("exactly the 27 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 27, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -1084,7 +1086,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 24 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 27 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -2430,6 +2432,375 @@ def test_results_and_closing_survive_a_restart():
            and not Path(board._results_path).exists() and HorseStore(b2.db).closing is None)
 
 
+# -----------------------------------------------------------------------------
+# The counted pot: the host's hand count of the cash box
+# -----------------------------------------------------------------------------
+
+# 150 tokens on the scales: the scale prizes are 89 / 38 / 23 (150 x .25 = 37.5
+# and 150 x .15 = 22.5 round up). A hand count of $154 gives 92 / 39 / 23.
+COUNT_CUPS = [cup_entry(1, horse=19, count=4, online=True), cup_entry(2, horse=1, count=11, online=True),
+              cup_entry(3, horse=22, count=7, online=True), cup_entry(4, horse=7, count=128, online=True)]
+SCALE_PRIZES = {"win": 89, "place": 38, "show": 23}
+COUNTED_PRIZES = {"win": 92, "place": 39, "show": 23}
+CLOSING_KEYS = {"pot", "prizes", "total_tokens", "horses", "at"}
+
+
+def _tokens_by_horse(model):
+    return {k: h["tokens"] for k, h in model["horses"].items()}
+
+
+def test_counted_pot_model():
+    """The hand count: the pot and all three prizes come from it, through
+    prizes_for, with the same split and rounding; bets per horse stay as the
+    scales read them; it is held with the figures at the post, through 4, 5,
+    6 and 2, and dropped by 0, 1 and Reset betting; it can be entered in 3-5
+    only, and only as a whole number of dollars."""
+    b, wall, log_dir = fresh_board()
+    b.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
+    m = b.model()
+    _check("before the post: no figures, so no scale figure, no count",
+           (m["pot_scale"], m["pot_counted"], m["hand_counted"]) == (None, None, False) and m["closing"] is None
+           and m["pot"] == 150.0 and m["prizes"] == SCALE_PRIZES, str((m["pot"], m["prizes"])))
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    m0 = b.model()
+    c0 = m0["closing"]
+    _check("at the post: the scale figures, frozen, nothing counted yet",
+           (m0["pot"], m0["prizes"]) == (150.0, SCALE_PRIZES) and m0["pot_scale"] == 150.0
+           and m0["pot_counted"] is None and m0["hand_counted"] is False
+           and (c0["pot"], c0["prizes"]) == (150.0, SCALE_PRIZES), str(c0))
+    _check("closing keeps the five keys it always had", set(c0) == CLOSING_KEYS, str(sorted(c0)))
+    bets = _tokens_by_horse(m0)
+
+    done = b.set_pot_counted(154)
+    _check("set 154: the reply says the count, the scale pot, the new pot and prizes, saved",
+           done == {"pot_counted": 154, "pot_scale": 150.0, "pot": 154.0, "prizes": COUNTED_PRIZES,
+                    "hand_counted": True, "race_state": 3, "saved": True}, str(done))
+    m = b.model()
+    c = m["closing"]
+    _check("$154 -> WIN 92 / PLACE 39 / SHOW 23 in the model's pot and prizes ...",
+           m["pot"] == 154.0 and m["prizes"] == COUNTED_PRIZES and sum(m["prizes"].values()) == 154, str((m["pot"], m["prizes"])))
+    _check("... and in closing's, which is what the TV board paints",
+           c["pot"] == 154.0 and c["prizes"] == COUNTED_PRIZES and set(c) == CLOSING_KEYS, str(c))
+    _check("pot_scale is still the scale pot at the post; pot_counted and hand_counted say there is a count",
+           (m["pot_scale"], m["pot_counted"], m["hand_counted"]) == (150.0, 154, True))
+    _check("bets per horse, the token total and closing's tokens are the scales', unchanged",
+           _tokens_by_horse(m) == bets and m["total_tokens"] == 150 and c["total_tokens"] == 150
+           and c["horses"] == c0["horses"] and c["at"] == c0["at"] and m["leader"] == m0["leader"])
+    _check("the JSON the TV gets carries it",
+           json.loads(b.model_json())["closing"]["pot"] == 154.0 and json.loads(b.model_json())["pot_counted"] == 154)
+    _check("the store's record holds it beside the figures (and the model's closing does not repeat it)",
+           b.store.closing["pot_counted"] == 154 and b.store.closing["pot"] == 150.0 and "pot_counted" not in c)
+
+    # The same function: the scale pot and the counted pot both go through prizes_for, no other code does the sum.
+    calls = []
+    real = betting.prizes_for
+
+    def spy(pot, split):
+        calls.append(pot)
+        return real(pot, split)
+    betting.prizes_for = spy
+    try:
+        b.set_pot_counted(153)
+        m = b.model()
+    finally:
+        betting.prizes_for = real
+    _check("the live scale pot (150) and the count (153) were both turned into prizes by prizes_for",
+           150.0 in calls and 153 in calls, str(calls))
+    _check("... 153 -> 92 / 38 / 23", m["prizes"] == real(153, SPLIT) == {"win": 92, "place": 38, "show": 23}, str(m["prizes"]))
+    here = Path(__file__).resolve().parent
+    offenders = [p.name for p in sorted(here.glob("*.py"))
+                 if not p.name.startswith("test_") and p.name != "betting.py"
+                 and any(s in p.read_text(encoding="utf-8") for s in ("prizes_for", "round_half_up", "LQ_SPLIT"))]
+    _check("no other module of La Quiniela computes prizes: only betting.py names the split and the rounding",
+           offenders == [], str(offenders))
+
+    for pot in (0, 1, 2, 3, 7, 10, 30, 99, 154, 155, 1000, 9999, 10000):
+        b.set_pot_counted(pot)
+        m = b.model()
+        _check(f"a count of {pot}: prizes_for's figures, summing to the pot, the same in closing",
+               m["prizes"] == real(pot, SPLIT) and sum(m["prizes"].values()) == pot and m["pot"] == float(pot)
+               and m["closing"]["prizes"] == m["prizes"] and m["closing"]["pot"] == float(pot) and m["hand_counted"] is True,
+               str((m["pot"], m["prizes"])))
+    b.set_pot_counted(150)
+    m = b.model()
+    _check("a count equal to the scale pot is still a hand count",
+           m["hand_counted"] is True and m["pot_counted"] == 150 and m["pot"] == 150.0 and m["prizes"] == SCALE_PRIZES)
+
+    # Clear: the scale figures come back, exactly as a board that was never counted has them.
+    b.set_pot_counted(152)
+    b.set_pot_counted(154)
+    _check("entering again overwrites", b.model()["pot_counted"] == 154 and b.model()["pot"] == 154.0)
+    done = b.set_pot_counted(None)
+    m = b.model()
+    ref, _, _ = fresh_board()
+    ref.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
+    ref.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    drop = ("updated", "now")
+    _check("Clear: the scale pot and prizes are back, nothing counted",
+           (m["pot"], m["prizes"], m["pot_counted"], m["hand_counted"]) == (150.0, SCALE_PRIZES, None, False)
+           and (m["closing"]["pot"], m["closing"]["prizes"]) == (150.0, SCALE_PRIZES) and done["pot_counted"] is None
+           and done["hand_counted"] is False and done["pot"] == 150.0 and done["prizes"] == SCALE_PRIZES, str(done))
+    _check("...and the model is the one a never-counted board has, key for key",
+           {k: v for k, v in m.items() if k not in drop} == {k: v for k, v in ref.model().items() if k not in drop})
+    _check("...the record holds no count any more", "pot_counted" not in b.store.closing)
+    _check("clearing when there is none changes nothing", b.set_pot_counted(None)["pot_counted"] is None)
+
+    # Held: 3 -> 4 -> 5 -> 6, 2, and the cups emptied for the draw.
+    b.set_pot_counted(152)
+    held = b.model()["closing"]
+    EMPTY = [dict(c_, count=0) for c_ in COUNT_CUPS]
+    for phase, cups in ((4, COUNT_CUPS), (5, EMPTY), (6, EMPTY)):
+        b.apply_snapshot(snap(phase=phase, cups=cups))
+        m = b.model()
+        _check(f"state {phase}: the count and the figures at the post are held, and the pot is the count's",
+               m["pot_counted"] == 152 and m["hand_counted"] is True and m["closing"] == held and m["pot"] == 152.0
+               and m["prizes"] == real_prizes(152) and m["pot_scale"] == 150.0, str((m["pot_counted"], m["pot"])))
+    b.apply_snapshot(snap(phase=2, cups=EMPTY))
+    m = b.model()
+    _check("state 2 (FINAL CALL after the draw): the count is held with the figures, but betting is open again, "
+           "so the model's pot and prizes are the live ones and hand_counted says they are not the count",
+           m["pot_counted"] == 152 and m["closing"] == held and m["pot_scale"] == 150.0 and m["hand_counted"] is False
+           and m["pot"] == 0.0 and m["prizes"] == {"win": 0, "place": 0, "show": 0}, str((m["pot_counted"], m["pot"], m["hand_counted"])))
+    b.apply_snapshot(snap(phase=5, cups=EMPTY))
+    m = b.model()
+    _check("...and WINNER again: the count's, unchanged",
+           m["pot_counted"] == 152 and m["hand_counted"] is True and m["pot"] == 152.0 and m["closing"] == held)
+    _check("...the cups emptied for the draw show as they are (the count does not touch bets)",
+           all(h["tokens"] == 0 for h in b.model()["horses"].values()) and b.model()["total_tokens"] == 0)
+    b.apply_snapshot({})
+    _check("a snapshot with no phase (no bridge) leaves it", b.model()["pot_counted"] == 152)
+
+    # Dropped by 1, by 0 and by Reset betting; a later post starts clean.
+    b.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
+    m = b.model()
+    _check("state 1 (BETTING OPEN again) drops it with the figures: the live scale figures, nothing counted",
+           (m["pot_counted"], m["pot_scale"], m["hand_counted"], m["closing"]) == (None, None, False, None)
+           and m["pot"] == 150.0 and m["prizes"] == SCALE_PRIZES)
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    _check("the next post is taken fresh: no count comes back", b.model()["pot_counted"] is None
+           and b.model()["closing"]["pot"] == 150.0)
+    b.set_pot_counted(140)
+    b.apply_snapshot(snap(phase=0, cups=COUNT_CUPS))
+    _check("state 0 (PRE_RACE) drops it too", b.model()["pot_counted"] is None and b.model()["closing"] is None)
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    b.set_pot_counted(140)
+    done = b.reset_betting()
+    _check("Reset betting drops it with the figures", b.model()["pot_counted"] is None and b.model()["closing"] is None
+           and b.model()["hand_counted"] is False and done["race_state"] == 0)
+
+    # Refused outside 3-5 and with no figures at the post; nothing changes.
+    refusal = {}
+    for phase in (0, 1, 2):
+        b.apply_snapshot(snap(phase=phase, cups=COUNT_CUPS))
+        try:
+            b.set_pot_counted(152)
+            refusal[phase] = None
+        except betting.CountRefused as exc:
+            refusal[phase] = str(exc)
+        _check(f"state {phase}: refused with a plain message, nothing held",
+               refusal[phase] is not None and "after betting closes" in refusal[phase] and b.model()["pot_counted"] is None,
+               str(refusal[phase]))
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    b.set_pot_counted(152)
+    b.apply_snapshot(snap(phase=6, cups=EMPTY))
+    for attempt in (150, None):
+        try:
+            b.set_pot_counted(attempt)
+            refusal[6] = None
+        except betting.CountRefused as exc:
+            refusal[6] = str(exc)
+        _check(f"state 6, {'a new count' if attempt is not None else 'Clear'}: refused, the saved count is read-only",
+               refusal[6] is not None and "read-only" in refusal[6] and b.model()["pot_counted"] == 152, str(refusal[6]))
+    b.apply_snapshot(snap(phase=2, cups=EMPTY))
+    try:
+        b.set_pot_counted(None)
+        refusal[2] = None
+    except betting.CountRefused as exc:
+        refusal[2] = str(exc)
+    _check("state 2 with a held count: refused as well, the count stays", refusal[2] is not None and b.model()["pot_counted"] == 152)
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    b._closing = None                       # a post with no figures (what a database without them would leave)
+    try:
+        b.set_pot_counted(152)
+        none_yet = None
+    except betting.CountRefused as exc:
+        none_yet = str(exc)
+    _check("state 3 but no figures at the post: refused, and it says why",
+           none_yet is not None and "no figures at the post" in none_yet, str(none_yet))
+
+    # Whole dollars only, 0 to the ceiling.
+    b.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    b.set_pot_counted(152)
+    for bad in (True, False, 152.0, 1.5, float("nan"), "152", "", -1, 10001, 10 ** 9, [152], {"amount": 1}):
+        try:
+            b.set_pot_counted(bad)
+            rejected = False
+        except ValueError as exc:
+            rejected = "whole number of dollars" in str(exc) or "outside 0 to 10000" in str(exc)
+        _check(f"{bad!r:.20}: rejected with a plain message, the count it had stays",
+               rejected and b.model()["pot_counted"] == 152)
+    _check("the ceiling is 10000", betting.COUNTED_POT_MAX == 10000)
+    b.set_pot_counted(0)
+    m = b.model()
+    _check("0 is a count (the cash box was empty): pot 0, prizes 0 / 0 / 0, hand counted",
+           (m["pot"], m["prizes"], m["pot_counted"], m["hand_counted"]) == (0.0, {"win": 0, "place": 0, "show": 0}, 0, True))
+
+    # Pushed at once, and logged.
+    b2, wall2, log2 = fresh_board()
+    b2.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
+    b2.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    q = b2.subscribe()
+    b2.set_pot_counted(154)
+    pushed = [json.loads(q.get_nowait())]
+    _check("setting it publishes the model to the stream straight away, with the count in it",
+           q.qsize() == 0 and pushed[0]["pot_counted"] == 154 and pushed[0]["closing"]["pot"] == 154.0
+           and pushed[0]["prizes"] == COUNTED_PRIZES)
+    b2.set_pot_counted(154)
+    _check("the same count again publishes nothing", q.qsize() == 0)
+    b2.set_pot_counted(None)
+    pushed.append(json.loads(q.get_nowait()))
+    _check("clearing it publishes too, with the scale figures back",
+           pushed[1]["pot_counted"] is None and pushed[1]["pot"] == 150.0 and pushed[1]["prizes"] == SCALE_PRIZES)
+    _, lines = log_lines(log2)
+    _check("the log records each entry, state and tokens beside it",
+           {"ts": 1_700_000_000.0, "race_state": 3, "changes": [{"pot_counted": [None, 154]}], "total_tokens": 150} in lines
+           and {"ts": 1_700_000_000.0, "race_state": 3, "changes": [{"pot_counted": [154, None]}], "total_tokens": 150} in lines,
+           str(lines[-2:]))
+
+    # A stored value that is not a count is ignored, never raised.
+    for junk in ("x", -3, True, 1.5, None):
+        store = HorseStore(None)
+        store.set_closing(dict(c0, pot_counted=junk))
+        b3 = BettingBoard(store=store, clock=FakeClock(1000.0), wall=FakeClock(1_700_000_000.0),
+                          log_dir=tmpdir() / "logs", results_path=tmpdir() / "results.json")
+        m = b3.model()
+        _check(f"a stored pot_counted of {junk!r} is not a count: the figures at the post, as taken",
+               (m["pot_counted"], m["hand_counted"]) == (None, False) and m["closing"] == c0
+               and m["pot_scale"] == 150.0, str((m["pot_counted"], m["closing"])))
+
+
+def test_counted_pot_route_and_restart():
+    """PUT /api/quiniela/counted_pot on a real bridge: 409 before the post,
+    400 for a bad amount, the count in the model and on disk, held through the
+    race, kept by a restart of pi5, cleared by Clear, by Reset betting and by
+    state 1; the TV is told at once."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    board = get_board()
+    for mac, horse, count in ((MAC_A, 19, 4), (MAC_B, 1, 11), (MAC_C, 7, 135)):
+        b.handle_raw_line(telem(mac, horse=horse, count=count))
+    board.set_mode("BETTING_60")
+    url = "/api/quiniela/counted_pot"
+    r = client.put(url, json={"amount": 152})
+    _check("state 1: 409 with a plain message, nothing held",
+           r.status_code == 409 and r.get_json()["ok"] is False and "after betting closes" in r.get_json()["error"]
+           and board.model()["pot_counted"] is None, str(r.get_json()))
+    board.set_mode("AT_THE_GATE")
+    m = client.get("/api/quiniela").get_json()
+    _check("at the post: the scale pot of 150, frozen", m["pot"] == 150.0 and m["pot_scale"] == 150.0 and m["closing"]["pot"] == 150.0
+           and m["pot_counted"] is None and m["hand_counted"] is False)
+    for bad in ({}, {"amount": "x"}, {"amount": "152"}, {"amount": 1.5}, {"amount": True}, {"amount": -1}, {"amount": 10001},
+                {"amount": [1]}, {"sum": 5}):
+        r = client.put(url, json=bad)
+        _check(f"PUT {bad!r:.30} -> 400", r.status_code == 400 and r.get_json()["ok"] is False and r.get_json()["error"]
+               and board.model()["pot_counted"] is None, f"{r.status_code} {r.get_json()}")
+    r = client.put(url, json={})
+    _check("a body with no amount gets the usage line", r.get_json() == {"ok": False, "error": board_mod.USAGE_COUNTED_POT})
+    r = client.put(url, data="5", content_type="application/json")
+    _check("a non-object body -> 400", r.status_code == 400)
+    q = board.subscribe()
+    r = client.put(url, json={"amount": 152})
+    body = r.get_json()
+    _check("PUT 152: ok, the count, the scale pot, the pot and prizes from the count, saved",
+           r.status_code == 200 and body == {"ok": True, "pot_counted": 152, "pot_scale": 150.0, "pot": 152.0,
+                                             "prizes": real_prizes(152), "hand_counted": True, "race_state": 3, "saved": True},
+           str(body))
+    pushed = json.loads(q.get_nowait())
+    board.unsubscribe(q)
+    _check("the TV's stream got the model at once, with the count", pushed["pot_counted"] == 152 and pushed["closing"]["pot"] == 152.0
+           and pushed["prizes"] == real_prizes(152))
+    m = client.get("/api/quiniela").get_json()
+    _check("GET /api/quiniela: the counted figures everywhere, the bets as the cups read them",
+           m["pot"] == 152.0 and m["prizes"] == real_prizes(152) and m["closing"]["pot"] == 152.0
+           and m["closing"]["prizes"] == real_prizes(152) and m["pot_scale"] == 150.0 and m["pot_counted"] == 152
+           and m["hand_counted"] is True and m["horses"]["7"]["tokens"] == 135 and m["closing"]["horses"]["7"] == {"tokens": 135}
+           and m["total_tokens"] == 150)
+    _check("saved with the figures at the post", HorseStore(b.db).closing["pot_counted"] == 152
+           and HorseStore(b.db).closing["pot"] == 150.0)
+    r = client.put(url, json={"amount": 154})
+    _check("entering again overwrites", r.get_json()["pot"] == 154.0 and r.get_json()["prizes"] == COUNTED_PRIZES
+           and HorseStore(b.db).closing["pot_counted"] == 154)
+
+    # The race goes on: the count is held, whatever the cups do.
+    board.set_mode("FINISH")
+    board.set_mode("RESULTS")
+    b.handle_raw_line(telem(MAC_C, horse=7, count=0))
+    board.refresh()
+    m = client.get("/api/quiniela").get_json()
+    _check("through RUNNING and WINNER, with a cup emptied: still the count (the cups' live bets fell)",
+           m["pot_counted"] == 154 and m["pot"] == 154.0 and m["horses"]["7"]["tokens"] == 0 and m["closing"]["horses"]["7"] == {"tokens": 135})
+    board.set_mode("RESET")
+    _check("AFTER_PARTY (the dashboard's RESET) keeps it", board.model()["race_state"] == 6 and board.model()["pot_counted"] == 154)
+    r = client.put(url, json={"amount": 100})
+    _check("state 6: 409, the saved count is read-only", r.status_code == 409 and "read-only" in r.get_json()["error"]
+           and board.model()["pot_counted"] == 154, str(r.get_json()))
+    r = client.put(url, json={"amount": None})
+    _check("...Clear too", r.status_code == 409 and board.model()["pot_counted"] == 154)
+
+    # A restart of pi5: a new bridge and board over the same database.
+    settings = dict(b.settings)
+    log_dir = board._log_dir
+    b.close()
+    port2 = S.FakeSerial()
+    b2 = LqBridge(settings=settings, db_path=S._TMP_DB, serial_factory=lambda p, baud, t: port2,
+                  socketio=S.StubSocketIO(), clock=FakeClock(), console=S.ConsoleCapture())
+    S._current = b2                             # the next _fresh_bridge() closes it
+    board2 = BettingBoard(bridge=b2, clock=FakeClock(1000.0), wall=FakeClock(1_700_000_600.0),
+                          log_dir=log_dir, results_path=board._results_path)
+    _check("a restarted pi5 serves the count (and the figures) before its first snapshot, which knows no race state yet",
+           board2.model()["pot_counted"] == 154 and board2.model()["closing"]["pot"] == 154.0
+           and board2.model()["hand_counted"] is False and board2.model()["race_state"] == 0)
+    board2.refresh()
+    m = board2.model()
+    _check("... and after it: the same count, the same scale pot, the same prizes",
+           m["race_state"] == 6 and m["pot_counted"] == 154 and m["pot_scale"] == 150.0 and m["prizes"] == COUNTED_PRIZES
+           and m["closing"]["prizes"] == COUNTED_PRIZES and m["hand_counted"] is True)
+    board2.set_mode("AT_THE_GATE")
+    _check("the held figures are not taken again at a later post (3 after 6), so neither is the count",
+           board2.model()["pot_counted"] == 154)
+    board2.set_mode("BETTING_30")
+    _check("state 1 clears it, on disk too", board2.model()["pot_counted"] is None and board2.model()["closing"] is None
+           and HorseStore(b2.db).closing is None)
+    board2.set_mode("AT_THE_GATE")
+    _check("a fresh post has no count", board2.model()["pot_counted"] is None and board2.model()["hand_counted"] is False)
+    board2.set_pot_counted(99)
+    board2.reset_betting()
+    _check("Reset betting clears it, on disk too", board2.model()["pot_counted"] is None and board2.model()["closing"] is None
+           and HorseStore(b2.db).closing is None)
+
+    # A database that refuses the write: the count is held, and the reply says it was not stored.
+    board2.set_mode("BETTING_60")
+    board2.set_mode("AT_THE_GATE")
+    client2 = _make_board_app(b2).test_client()
+    board3 = get_board()
+    board3.refresh()                        # what start_board() does at startup: the model knows the race state
+
+    def refuse(_closing):
+        raise sqlite3.OperationalError("database is locked")
+    board3.store.set_closing = refuse
+    with capture_logs(LOGGER) as cap:
+        r = client2.put(url, json={"amount": 120})
+    _check("the database refuses: 200, the count is held, saved false, one WARNING",
+           r.status_code == 200 and r.get_json()["saved"] is False and r.get_json()["pot_counted"] == 120
+           and board3.model()["pot_counted"] == 120 and len(cap.messages("cannot save the closing figures")) == 1, str(r.get_json()))
+
+
+def real_prizes(pot):
+    return prizes_for(pot, SPLIT)
+
+
 def test_admin_page():
     b, port, sio, clk = _fresh_bridge()
     client = _make_board_app(b).test_client()
@@ -2475,7 +2846,19 @@ def test_admin_page():
            all(s in html for s in ('id="race-name"', 'type="date"', 'id="race-date"', 'type="time"', 'id="race-time"',
                                    'id="race-save"', 'id="race-status"', '"/api/quiniela/race"', '"PUT", "/api/quiniela/race"'))
            and "KENTUCKY DERBY" in html)
-    _check("well under 600 lines", html.count("\n") < 600, str(html.count("\n")))
+    _check("the Counted pot box: after the figures, before Reset betting, hidden until the model says states 3-5 (or a saved count in 6)",
+           html.index('id="fig-note"') < html.index('id="counted"') < html.index('id="reset-betting"')
+           and 'id="counted" class="counted" hidden' in html and "st >= 3 && st <= 5" in html and "st === 6 && has" in html)
+    _check("...a number box with the phone's numeric keypad, a big Save, Clear, and a reply line",
+           'id="counted-input" type="text" inputmode="numeric" pattern="[0-9]*"' in html and 'id="counted-save" class="primary big"' in html
+           and 'id="counted-clear"' in html and 'id="counted-status"' in html and "min-height: 68px" in html)
+    _check("...it saves with PUT /api/quiniela/counted_pot, reads pot_scale, pot_counted and hand_counted from the model, and shows the difference",
+           '"PUT", "/api/quiniela/counted_pot"' in html and "model.pot_scale" in html and "model.pot_counted" in html
+           and "model.hand_counted" in html and 'id="cmp-scale"' in html and 'id="cmp-counted"' in html and 'id="cmp-diff"' in html
+           and '"same"' in html and chr(0x2212) in html)
+    _check("...the figures say which they are (hand counted, or the scales'), and the page does no prize arithmetic of its own",
+           "hand counted" in html and ("Pot " + chr(0xb7) + " scale") in html and "model.split" not in html and "* 0.2" not in html and "* 0.6" not in html)
+    _check("well under 700 lines", html.count("\n") < 700, str(html.count("\n")))
 
 
 def test_reset_betting_route():
@@ -3127,6 +3510,8 @@ def main():
     _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
     _run("closing — a database from before lq_closing gains it at start", test_lq_closing_on_an_existing_database)
     _run("closing — the results and the closing figures survive a restart", test_results_and_closing_survive_a_restart)
+    _run("counted pot — the model: same function, held, dropped, refused, bad input", test_counted_pot_model)
+    _run("counted pot — PUT /api/quiniela/counted_pot, a restart, Clear, Reset betting", test_counted_pot_route_and_restart)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
     _run("reset — POST /api/quiniela/reset", test_reset_betting_route)
