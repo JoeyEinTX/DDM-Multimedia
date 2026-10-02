@@ -153,7 +153,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 - **No per-token or per-guest data** is stored anywhere. Token numbers exist only on the
   plastic.
 - The counted pot (section 6) is stored beside the figures at the post and cleared with
-  them. [TO BUILD]
+  them. [BUILT]
 
 ---
 
@@ -276,13 +276,13 @@ There is no roster line. A v1 `roster` line is ignored.
   reaches 3 AT_THE_POST (or 4 or 5 if 3 was skipped), saved, and held through the race, the
   draw and any restart. They are dropped by Reset betting and by any state that reopens
   betting (0 or 1). The TV shows them in states 3–5. [BUILT]
-- **Counted pot: the payout comes from the hand count.** [DECIDED 2026-09-29, TO BUILD]
+- **Counted pot: the payout comes from the hand count.** [DECIDED 2026-09-29, BUILT]
   - After betting closes (states 3–5), the admin page shows a **Counted pot** box.
   - The host counts the cash box's BETS compartment and enters the amount.
   - The pot and all three prizes on the TV and the admin page recalculate from it with the
     same split and rounding. Bets per horse stay as the scales read them.
-  - The board marks the pot as hand counted. [PROPOSED] The admin page shows the scale
-    figure beside the counted one. [PROPOSED]
+  - The board marks the pot as hand counted. [DECIDED 2026-10-02, BUILT] The admin page
+    shows the scale figure beside the counted one. [DECIDED 2026-10-02, BUILT]
   - Saved; cleared by Reset betting and by reopening betting, the same as the figures at
     the post.
   - This is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
@@ -445,7 +445,7 @@ Rules for either:
 | LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
 | The mode buttons: LEDs **and** race state | The current race state, read-only [PROPOSED] |
 | SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [TO BUILD] | Figures: pot, prizes, bets |
-| RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [TO BUILD] |
+| RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
 | Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept |
 | | Race info, horse names, scratches and undo, the betting close time |
 
@@ -538,6 +538,7 @@ gateway says hello.
 - Race info and names in La Quiniela's store; Race Setup removed
 - Cup brownout: a cup comes back with its count (cup sketch v0.7, bench-tested 2026-10-01)
 - La Subasta on La Quiniela's store: names, program numbers 1–24, scratches
+- Counted pot: the pot and the prizes come from the host's hand count of the cash box
 
 ### Next
 
@@ -548,7 +549,8 @@ One single-concern Claude Code prompt each, in this order:
    (bench-tested 2026-10-01; listed under Done).
 2. ~~**La Subasta on La Quiniela's store:** names, program numbers 1–24, scratches.~~
    Done (2026-10-01; listed under Done).
-3. **Counted pot** on the admin page; pot and prizes from the hand count.
+3. ~~**Counted pot** on the admin page; pot and prizes from the hand count.~~ Done
+   (2026-10-02; listed under Done).
 4. **SET WINNERS no-bets marker.**
 5. **Remove the admin page's race-state buttons**; show the state read-only; update
    `RACE_NIGHT.md`, which uses them in several places.

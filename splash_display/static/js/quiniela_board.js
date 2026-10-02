@@ -67,7 +67,10 @@
    delta, ts}], and the additive keys now, closes_at, prizes{win,place,
    show}, chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
    names_rev, results{win,place,show}|null, closing{pot, prizes,
-   total_tokens, horses{n: {tokens}}, at}|null, race{name, year, post_at,
+   total_tokens, horses{n: {tokens}}, at}|null, hand_counted (pi5 says it
+   while the pot and the prizes are the host's count of the cash box, which
+   closing's pot and prizes then are: the pot wears a small HAND COUNTED
+   tag), race{name, year, post_at,
    post_local, tz} (La Quiniela's race info, the only copy: the crawl's
    clock and time to post, and the slideshow's race slides) and
    weather{location, temp_f, condition}|null (the crawl). odds is the
@@ -159,6 +162,13 @@
     const TOAST_OUT_MS   = 200;     // ... the drop, matches .qb-toast.is-leaving
     const TOAST_NAME_MAX_PX = 64;   // the toast's name shrinks from here ...
     const TOAST_NAME_MIN_PX = 36;   // ... down to here, then clips
+    // The tag by the POT figure when the pot is the host's hand count
+    // (placeCounted): its text, the one that fits when that does not, and the
+    // gap to the figure and to the logo, in px.
+    const COUNTED_LONG   = 'HAND COUNTED';
+    const COUNTED_SHORT  = 'COUNTED';
+    const COUNTED_GAP_PX = 22;
+    const COUNTED_LOGO_GAP_PX = 24;
     const CRAWL_PX_S     = 120;     // chyron speed
     const CLOSES_TICK_MS = 250;     // the countdown is checked 4x a second, written once a second
     const LIVE_TICK_MS   = 1000;    // the crawl's clock and time to post, in place
@@ -212,6 +222,7 @@
     const dottedFigures = look !== 'impact';    // figures and the crawl
 
     const potEl         = $('qb-pot');
+    const countedEl     = $('qb-counted');
     const tokenValueEl  = $('qb-token-value');
     const prizeEls      = { win: $('qb-prize-win'), place: $('qb-prize-place'), show: $('qb-prize-show') };
     const bannerEl      = $('qb-banner');
@@ -299,6 +310,7 @@
     let visible = false;       // board layer shown
     let frozen = false;        // betting is closed: rows/pot/prizes are the figures at the post
     let closingKey = null;     // the closing figures on the board (their JSON), null when they are not
+    let countedOn = false;     // the pot is the host's hand count: its tag is up
     let renderedOnce = false;  // rows have been painted at least once
     let es = null;
     let reconnectTimer = null;
@@ -368,6 +380,7 @@
             paint(m);
         }
         closingKey = key;
+        renderCounted(m.hand_counted === true);   // after the paint: the tag hangs off the figure just written (99 -> 100 moves it)
         renderNames(m);            // live in every state
         renderResults(m, results); // the results screen, or back to the rows
         renderCloses(m, state);
@@ -439,6 +452,41 @@
             const v = Number(p[k]);
             setText(prizeEls[k], '$' + (Number.isFinite(v) ? Math.round(v) : 0));
         }
+    }
+
+    // The hand count's tag. The scales are estimates: once the host has
+    // counted the cash box and entered it, pi5 says hand_counted and the pot
+    // and the prizes above are that count, so the pot wears a small tag,
+    // HAND COUNTED (COUNTED when the longer text does not fit between the
+    // logo and the figure). The tag is out of the flow, hung to the left of
+    // the POT figure at its middle (placeCounted): the figure, the prizes
+    // and the header's columns stand exactly where they do without it. It
+    // follows the model's hand_counted alone: pi5 says it only while the pot
+    // shown is the count's (the frozen board and the results screen), never
+    // for a live pot.
+    function renderCounted(on) {
+        if (!countedEl) return;
+        if (on !== countedOn) {
+            countedOn = on;
+            countedEl.classList.toggle('is-on', on);
+            countedEl.setAttribute('aria-hidden', on ? 'false' : 'true');
+        }
+        placeCounted();
+    }
+
+    function placeCounted() {
+        if (!countedEl || !countedOn) return;
+        const box = potEl.parentElement.getBoundingClientRect();         // .qb-pot
+        const range = document.createRange();
+        range.selectNodeContents(potEl);
+        const fig = range.getBoundingClientRect();                       // the figure's own text
+        if (!fig.width || !box.width) return;                            // not laid out yet: the next paint places it
+        const logo = headerEl.querySelector('.qb-logo');
+        const room = fig.left - COUNTED_GAP_PX - (logo ? logo.getBoundingClientRect().right + COUNTED_LOGO_GAP_PX : box.left);
+        setText(countedEl, COUNTED_LONG);
+        if (countedEl.offsetWidth > room) setText(countedEl, COUNTED_SHORT);
+        countedEl.style.left = (fig.left - COUNTED_GAP_PX - box.left) + 'px';
+        countedEl.style.top = ((fig.top + fig.bottom) / 2 - box.top) + 'px';
     }
 
     function horseName(h, n) {
@@ -728,6 +776,7 @@
     function refitAll() {
         layoutStrips();
         refitNames();
+        placeCounted();
         if (crawlHtml != null) applyCrawl(crawlHtml);
     }
 
@@ -1363,6 +1412,8 @@
     // Anton arrives late where Impact is missing: the names' widths change.
     // So does every dotted width when the tote face arrives.
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(refitNames);
+    // A window that changes size moves the POT figure, and its tag with it.
+    window.addEventListener('resize', () => { placeCounted(); });
     // In "dots" a window that changes size (a kiosk settling into full
     // screen) measures the strips again.
     if (dottedNames) {

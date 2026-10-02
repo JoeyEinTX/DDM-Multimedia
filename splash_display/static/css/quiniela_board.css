@@ -141,6 +141,7 @@
 }
 
 .qb-pot {
+    position: relative;     /* the hand count's tag hangs off the figure, out of the flow */
     text-align: center;
     white-space: nowrap;
 }
@@ -164,6 +165,31 @@
     font-variant-numeric: tabular-nums;
     text-shadow: 0 6px 0 #062119, 0 10px 30px #000c;
 }
+
+/* The hand count's tag: HAND COUNTED (the JS makes it COUNTED when that does
+   not fit), by the POT figure while the pot and the prizes are the host's
+   count of the cash box. Out of the flow: the JS puts its left and top where
+   the figure's left edge less a gap meets the figure's middle, and the
+   transform hangs it to the left of that point, so the figure, the prizes
+   and the header's columns stand where they do without it. */
+.qb-counted {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate(-100%, -50%);
+    width: max-content;
+    padding: 2px 14px 3px;
+    border: 3px solid var(--qb-gold);
+    border-radius: 10px;
+    background: var(--qb-tile);
+    color: var(--qb-gold);
+    font-size: 26px;
+    line-height: 1.1;
+    letter-spacing: 4px;
+    white-space: nowrap;
+}
+.qb-counted.is-on { display: block; }
 
 .qb-prizes {
     display: flex;
@@ -851,6 +877,7 @@
 
 .qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"],
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text,
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted,
 .qb[data-look="dots"] [data-tote="name"] {
     font-family: "DDM Tote", Impact, "Anton", sans-serif;
     font-variant-numeric: normal;
@@ -885,6 +912,18 @@
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-prize-v {
     display: inline-block;
     font-size: 40px;
+}
+
+/* The hand count's tag in the dot face: a small sign at a 3 px pitch, HAND
+   COUNTED twelve tiles of 18 px, in the figure's amber, left of it. Its box,
+   border and padding go (the tiles are its box), the rest is the shared
+   tote rule above. */
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+    font-size: 24px;
 }
 
 /* Rows in "dots": one strip of tiles that fills the room from just right

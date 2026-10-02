@@ -83,6 +83,7 @@ PI5_MODEL_KEYS = CONTRACT_KEYS | {
     "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
     "cups_online", "cups_no_horse", "results", "closing",
     "race", "weather",                      # race info lives in La Quiniela; pi5's weather for the crawl
+    "pot_scale", "pot_counted", "hand_counted",     # the host's hand count of the cash box (the counted pot)
 }
 PI5_HORSE_KEYS = {"tokens", "share", "scratched", "online", "cup", "conflict", "cups",
                   "name", "replaced", "in_field", "odds"}
@@ -1090,8 +1091,17 @@ class LookTests(RouteCase):
                 self.assertIn("data-look", one, f"a tote-look rule must name its look: {one.strip()!r}")
         js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
         for needle in ("board.dataset.look", "'impact', 'dots', 'numbers'", "function fitTiles", "qb-crawl-text", "DDM Tote",
-                       "function layoutStrips", "function updateScroll", "STRIP_TILE_MIN", "--qb-strip-tile-w"):
+                       "function layoutStrips", "function updateScroll", "STRIP_TILE_MIN", "--qb-strip-tile-w",
+                       "function placeCounted", "m.hand_counted === true", "'HAND COUNTED'", "'COUNTED'"):
             self.assertIn(needle, js)
+        # the hand count's tag: one element in the template, no tote field of its own (the count of those above stands),
+        # the dot face in the tote looks through the shared rule, a gold pill in impact
+        with server.app.test_request_context("/"):
+            html = server.render_template("splash/quiniela_live.html")
+        self.assertEqual(html.count('id="qb-counted"'), 1)
+        self.assertRegex(html, r'<div class="qb-counted" id="qb-counted" aria-hidden="true">HAND COUNTED</div>')
+        self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted', css)
+        self.assertIn(".qb-counted.is-on { display: block; }", css)
         self.assertNotRegex(js, r"\bNAME_PITCH\b", "the rows' pitch-shrinking fit is gone (the results screen keeps its own)")
         # impact and numbers: the strip's wrappers are no boxes, outside the tote section
         self.assertIn(".qb-strip-cell,\n.qb-strip,\n.qb-namebox { display: contents; }", css.replace("\r\n", "\n"))
@@ -1212,10 +1222,23 @@ BOARD_PROBE_JS = r"""
             pulses.push(Number(el.dataset.horse));
             el.classList.remove('is-pulse');
         }
+        // The header, where the POT figure and the hand count's tag sit: each box as
+        // [left, top, width, height], and the figure's own text (a Range).
+        const box = (sel) => { const b = document.querySelector(sel).getBoundingClientRect(); return [r2(b.left), r2(b.top), r2(b.width), r2(b.height)]; };
+        const fig = document.createRange();
+        fig.selectNodeContents(document.getElementById('qb-pot'));
+        const fb = fig.getBoundingClientRect();
+        const tag = document.getElementById('qb-counted');
+        const header = { pot: box('#qb-pot'), figure: [r2(fb.left), r2(fb.top), r2(fb.width), r2(fb.height)],
+                         label: box('.qb-pot-label'), win: box('.qb-prize--win'), place: box('.qb-prizes .qb-prize:nth-child(2)'),
+                         show: box('.qb-prizes .qb-prize:nth-child(3)'), banner: box('#qb-banner'), logo: box('.qb-logo') };
+        const counted = { on: tag.classList.contains('is-on'), text: tag.textContent.trim(), display: getComputedStyle(tag).display,
+                          hidden: tag.getAttribute('aria-hidden'), rect: box('#qb-counted'), font: getComputedStyle(tag).fontFamily };
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
                  rows: rows, strips: strips, results: results, pulses: pulses, crawl: crawl(), roster: roster(),
+                 header: header, counted: counted,
                  toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
     let stream = null;
@@ -1251,14 +1274,18 @@ BOARD_PROBE_JS = r"""
 
 
 def run_board(models: List[dict], look: str = "impact", styled: bool = False,
-              stage: Tuple[int, int] = (1920, 1080), roster: bool = False) -> List[dict]:
+              stage: Tuple[int, int] = (1920, 1080), roster: bool = False, css: str = "",
+              slow_face: float = 0.0) -> List[dict]:
     """The board's real template and script in a page of their own, fed
     `models` in turn; what the board showed after each. Styled, the page is
     served over loopback with the board's stylesheet and fonts, the board on
     a `stage` (1920x1080 unless said), which is what the tote look's rows
     need to be measured; otherwise it is a file with the template and the
     script alone. roster: the slideshow's roster slide as well (styled),
-    in a slide layer of its own under the board, as on the TV."""
+    in a slide layer of its own under the board, as on the TV. css: extra
+    rules after the stylesheet (styled), to put the page in a corner of
+    its own. slow_face: seconds the tote face takes to arrive (styled), a
+    kiosk loading cold, so a model comes before it."""
     with server.app.test_request_context("/"):
         board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
         roster_html = server.render_template("splash/horse_roster.html") if roster else ""
@@ -1271,7 +1298,8 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
             # the TV: a headless window's viewport is its size less a frame.
             page = ('<!doctype html><html><head><meta charset="utf-8">'
                     + ('<link rel="stylesheet" href="/static/css/ddm_style.css">' if roster else '')
-                    + '<link rel="stylesheet" href="/static/css/quiniela_board.css"></head><body style="margin: 0">\n'
+                    + '<link rel="stylesheet" href="/static/css/quiniela_board.css">'
+                    + (f'<style>{css}</style>' if css else '') + '</head><body style="margin: 0">\n'
                     f'<div id="qb-stage" style="position: relative; width: {stage[0]}px; height: {stage[1]}px; '
                     'overflow: hidden">'
                     + ('<div class="slide is-active">' + roster_html + '</div>' if roster else '') + board_html
@@ -1279,6 +1307,11 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
                     + '</script>\n<script src="/static/js/quiniela_board.js"></script>\n</body></html>\n')
             app = Flask("board_page", static_folder=str(HERE / "static"), static_url_path="/static")
             app.add_url_rule("/", "page", lambda: page)
+            if slow_face:
+                @app.before_request
+                def _slow_face():
+                    if request.path.endswith("DDMTote.ttf"):
+                        time.sleep(slow_face)
             logging.getLogger("werkzeug").setLevel(logging.ERROR)      # no line per request
             srv = make_server("127.0.0.1", 0, app, threaded=True)
             thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -1393,6 +1426,144 @@ class BoardPageTests(unittest.TestCase):
         [seen] = run_board([old[-1]])
         self.assertEqual(seen["results"]["win"], {"horse": "19", "bets": "0", "prize": "$80"})
         self.assertEqual(seen["pot"], "$133")
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class HandCountTagTests(unittest.TestCase):
+    """The tag by the POT figure while the pot is the host's hand count of the
+    cash box (pi5's hand_counted), in headless Chrome with the stylesheet and
+    the face at 1920x1080, in all three looks: HAND COUNTED, in the dot face
+    in the tote looks and a gold pill in impact, hung to the left of the
+    figure out of the flow, so the figure, the prizes and the header's columns
+    stay where they are. The feed is tools/fake_pi5.py's counted pot: the 2026
+    race, scale pot $154."""
+
+    LOOKS = ("impact", "dots", "numbers")
+    SCALE = ["$92", "$39", "$23"]
+    COUNTED = ["$91", "$38", "$23"]          # a count of $152
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["closed"], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS, names_rev=2)
+        cls.fake = fake
+        snap = lambda: json.loads(fake.model_json())          # noqa: E731
+        cls.plain = snap()                                    # at the post, nothing counted: $154
+        fake.set_counted(154)
+        cls.same = snap()                                     # counted as the scales said: only the tag differs
+        fake.set_counted(152)
+        cls.counted = snap()                                  # $152, WIN $91 / PLACE $38 / SHOW $23
+        fake.set_phase(fake_pi5.PHASES["running"])
+        cls.running = snap()
+        fake.set_phase(fake_pi5.PHASES["final"])
+        cls.final = snap()                                    # held through FINAL CALL, where the pot is live again
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        fake.set_results(*fake_pi5.RESULTS_WPS)
+        cls.results = snap()
+        fake.set_counted(None)
+        cls.cleared = snap()
+
+    def test_the_models_are_what_the_tests_say(self) -> None:
+        self.assertEqual((self.plain["pot"], self.plain["hand_counted"]), (154.0, False))
+        self.assertEqual((self.same["pot"], self.same["pot_counted"], self.same["hand_counted"]), (154.0, 154, True))
+        self.assertEqual((self.counted["pot"], self.counted["prizes"]), (152.0, {"win": 91, "place": 38, "show": 23}))
+        self.assertEqual((self.final["race_state"], self.final["pot"], self.final["pot_counted"], self.final["hand_counted"]),
+                         (2, 154.0, 152, False))
+        self.assertEqual((self.results["race_state"], self.results["hand_counted"], self.cleared["hand_counted"]), (5, True, False))
+
+    def test_the_tag_is_up_with_a_count_and_down_without(self) -> None:
+        for look in self.LOOKS:
+            plain, counted, cleared = run_board([self.plain, self.counted, self.cleared], look=look, styled=True)
+            self.assertEqual((plain["counted"]["on"], plain["counted"]["display"], plain["counted"]["hidden"], plain["pot"]),
+                             (False, "none", "true", "$154"), look)
+            self.assertEqual((counted["counted"]["on"], counted["counted"]["text"], counted["counted"]["display"],
+                              counted["counted"]["hidden"]), (True, "HAND COUNTED", "block", "false"), look)
+            self.assertEqual((counted["pot"], counted["prizes"]), ("$152", self.COUNTED), look)
+            self.assertEqual((cleared["counted"]["on"], cleared["pot"], cleared["prizes"]), (False, "$154", self.SCALE), look)
+
+    def test_nothing_in_the_header_moves(self) -> None:
+        """The same figure with and without the tag ($154, counted as $154):
+        the POT figure, its label, the three prize tiles, the banner and the
+        logo stay within 2 px (in fact they do not move at all)."""
+        for look in self.LOOKS:
+            without, tagged = run_board([self.plain, self.same], look=look, styled=True)
+            self.assertEqual((without["counted"]["on"], tagged["counted"]["on"]), (False, True), look)
+            self.assertEqual((without["pot"], tagged["pot"]), ("$154", "$154"), look)
+            for part in ("pot", "figure", "label", "win", "place", "show", "banner", "logo"):
+                for a, b in zip(without["header"][part], tagged["header"][part]):
+                    self.assertLessEqual(abs(a - b), 2, f"{look}: the {part} moved from {without['header'][part]} to {tagged['header'][part]}")
+
+    def test_the_tag_hangs_left_of_the_figure_at_its_middle_clear_of_the_logo(self) -> None:
+        for look in self.LOOKS:
+            [seen] = run_board([self.counted], look=look, styled=True)
+            left, top, width, height = seen["counted"]["rect"]
+            fx, fy, fw, fh = seen["header"]["figure"]
+            logo = seen["header"]["logo"]
+            self.assertAlmostEqual(left + width, fx - 22, delta=1, msg=f"{look}: a 22 px gap to the figure")
+            self.assertAlmostEqual(top + height / 2, fy + fh / 2, delta=1.5, msg=f"{look}: at the figure's middle")
+            self.assertGreaterEqual(left, logo[0] + logo[2] + 24, f"{look}: clear of the logo")
+            self.assertLess(width, 300, f"{look}: a small tag")
+            self.assertLess(height, 50, look)
+
+    def test_the_tag_wears_the_looks_face(self) -> None:
+        tags = {look: run_board([self.counted], look=look, styled=True)[0]["counted"] for look in self.LOOKS}
+        for look in ("dots", "numbers"):
+            self.assertIn("DDM Tote", tags[look]["font"], look)
+            self.assertEqual(tags[look]["rect"][2:], [216, 24], f"{look}: twelve tiles of 18 px, the face at a 3 px pitch")
+        self.assertNotIn("DDM Tote", tags["impact"]["font"])
+
+    def test_the_results_screen_and_the_race_in_progress(self) -> None:
+        results, running = run_board([self.results, self.running], look="dots", styled=True)
+        self.assertEqual((results["view"], results["counted"]["on"], results["pot"]), ("results", True, "$152"))
+        self.assertEqual([results["results"][p]["prize"] for p in ("win", "place", "show")], self.COUNTED)
+        self.assertEqual((running["state"], running["counted"]["on"], running["pot"], running["prizes"]),
+                         ("4", True, "$152", self.COUNTED))
+
+    def test_held_through_final_call_it_is_not_the_pot(self) -> None:
+        [seen] = run_board([self.final], look="dots", styled=True)
+        self.assertEqual((seen["banner"], seen["counted"]["on"], seen["pot"]), ("Final call", False, "$154"))
+
+    def test_the_longer_text_gives_way(self) -> None:
+        [seen] = run_board([self.counted], look="dots", styled=True)
+        self.assertEqual(seen["counted"]["text"], "HAND COUNTED")
+        [seen] = run_board([self.counted], look="dots", styled=True, css=".qb-logo { width: 640px !important; }")
+        self.assertEqual(seen["counted"]["text"], "COUNTED", "no room for HAND COUNTED between a wide logo and the figure")
+        [seen] = run_board([self.counted], look="impact", styled=True, css=".qb-logo { width: 640px !important; }")
+        self.assertEqual(seen["counted"]["text"], "COUNTED")
+
+    def test_a_resized_window_takes_the_tag_along(self) -> None:
+        for look in ("dots", "impact"):
+            before, after = run_board([self.counted, {"__stage": [1800, 1080]}], look=look, styled=True)
+            self.assertNotEqual(before["header"]["figure"][0], after["header"]["figure"][0], f"{look}: the figure moved with the window")
+            left, _top, width, _height = after["counted"]["rect"]
+            self.assertAlmostEqual(left + width, after["header"]["figure"][0] - 22, delta=1, msg=look)
+
+    def test_a_late_face_takes_the_tag_along(self) -> None:
+        """The dot face arrives after the first model (a kiosk loading cold):
+        the figure changes width when it does, and the tag follows."""
+        before, after = run_board([self.counted, {"__wait": 3000}], look="dots", styled=True, slow_face=1.5)
+        self.assertEqual((before["pot"], after["pot"], after["counted"]["on"]), ("$152", "$152", True))
+        for seen in (before, after):
+            left, _top, width, _height = seen["counted"]["rect"]
+            self.assertAlmostEqual(left + width, seen["header"]["figure"][0] - 22, delta=1)
+        self.assertEqual(after["header"]["figure"][2], 288, "four tiles of 72 px: the face, once it is there")
+
+    def test_a_figure_that_changes_width_takes_its_tag_along(self) -> None:
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["closed"], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS, names_rev=2)
+        fake.set_counted(99)
+        short = json.loads(fake.model_json())
+        fake.set_counted(1000)
+        long_ = json.loads(fake.model_json())
+        for look in ("dots", "impact"):
+            a, b = run_board([short, long_], look=look, styled=True)
+            self.assertEqual((a["pot"], b["pot"]), ("$99", "$1000"), look)
+            for seen in (a, b):
+                left, _top, width, _height = seen["counted"]["rect"]
+                self.assertAlmostEqual(left + width, seen["header"]["figure"][0] - 22, delta=1, msg=look)
+            self.assertGreater(a["header"]["figure"][0], b["header"]["figure"][0], f"{look}: the longer figure starts further left")
 
 
 @unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
@@ -1742,7 +1913,9 @@ class ToteFontTests(unittest.TestCase):
             self.assertIn(ord(ch), self.cmap, repr(ch))
         for low, up in (("a", "A"), ("z", "Z"), ("\u00f1", "N"), ("\u00c9", "E"), ("\u2019", "'"), ("\u2013", "-")):
             self.assertEqual(self.cmap[ord(low)], self.cmap[ord(up)], f"{low!r} is drawn as {up!r}")
-        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234"]:
+        # the hand count's tag: HAND COUNTED, or COUNTED when that does not fit (every character must be a glyph)
+        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234",
+                                             "HAND COUNTED", "COUNTED"]:
             for ch in line:
                 self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
 
@@ -1868,6 +2041,84 @@ class HarnessTests(unittest.TestCase):
         self.assertIsNone(model()["closing"], "a reset drops them")
         fake.reset(fake_pi5.RESULTS_TOKENS, fake_pi5.PHASES["running"])
         self.assertEqual(model()["closing"]["pot"], 154.0, "the results cycle's reset into RUNNING takes them again")
+
+    def test_the_hand_count_follows_pis_rule(self) -> None:
+        """pi5's counted pot on the fake: taken in 3-5 once the figures at the
+        post exist; closing's pot and prizes (and from the post to the end the
+        model's own) are the count's, through the fake's one prizes_for; held
+        with the figures; dropped by 0, 1 and a reset."""
+        scale = {"win": 92, "place": 39, "show": 23}
+        counted = {"win": 91, "place": 38, "show": 23}
+        fake = self.derby("open")
+        model = lambda: json.loads(fake.model_json())                                # noqa: E731
+        keys = lambda m: (m["pot_scale"], m["pot_counted"], m["hand_counted"])       # noqa: E731
+        self.assertEqual(keys(model()), (None, None, False), "betting open: no figures at the post, no count")
+        self.assertIn("betting closes", fake.set_counted(152))
+        self.assertIsNone(fake.counted)
+        fake.set_phase(fake_pi5.PHASES["closed"])
+        m = model()
+        self.assertEqual((keys(m), m["pot"], m["prizes"]), ((154.0, None, False), 154.0, scale))
+        self.assertIsNone(fake.set_counted(152))
+        m = model()
+        self.assertEqual((keys(m), m["pot"], m["prizes"]), ((154.0, 152, True), 152.0, counted))
+        self.assertEqual((m["closing"]["pot"], m["closing"]["prizes"]), (152.0, counted))
+        self.assertEqual(set(m), PI5_MODEL_KEYS)
+        self.assertEqual(set(m["closing"]), {"pot", "prizes", "total_tokens", "horses", "at"}, "closing keeps its five keys")
+        self.assertEqual((m["total_tokens"], [m["horses"][n]["tokens"] for n in ("19", "1", "22")]), (158, [4, 11, 7]),
+                         "bets per horse are the scales'")
+        self.assertEqual([m["closing"]["horses"][n]["tokens"] for n in ("19", "1", "22")], [4, 11, 7])
+        self.assertEqual((fake_pi5.prizes_for(154), fake_pi5.prizes_for(152)), (scale, counted))
+        for amount in (0, 1, 2, 30, 154, 155, 10000):
+            self.assertIsNone(fake.set_counted(amount))
+            m = model()
+            self.assertEqual((m["prizes"], m["closing"]["prizes"]), (fake_pi5.prizes_for(amount),) * 2, amount)
+            self.assertEqual(sum(m["prizes"].values()), amount, "the prizes always sum to the pot")
+        for bad in (True, 1.5, "152", -1, 10001):
+            self.assertIn("whole number", fake.set_counted(bad), bad)
+        self.assertEqual(fake.counted, 10000, "a refused count changes nothing")
+        self.assertIsNone(fake.set_counted(152))
+        fake.set_phase(fake_pi5.PHASES["final"])
+        m = model()
+        self.assertEqual((keys(m), m["pot"], m["closing"]["pot"]), ((154.0, 152, False), 154.0, 152.0),
+                         "held through FINAL CALL, where betting is open again: the live pot, no hand count")
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        self.assertEqual(keys(model()), (154.0, 152, True))
+        fake.set_phase(fake_pi5.PHASES["after"])
+        m = model()
+        self.assertEqual((keys(m), m["pot"]), ((154.0, 152, True), 152.0), "AFTER_PARTY keeps it")
+        self.assertIn("betting closes", fake.set_counted(1), "and it is read-only there")
+        fake.set_phase(fake_pi5.PHASES["open"])
+        self.assertEqual(keys(model()), (None, None, False), "state 1 drops it with the figures")
+        fake.set_phase(fake_pi5.PHASES["closed"])
+        self.assertEqual(keys(model()), (154.0, None, False), "the next post starts clean")
+        fake.set_counted(152)
+        fake.reset(fake_pi5.RESULTS_TOKENS, fake_pi5.PHASES["closed"])
+        self.assertEqual(keys(model()), (154.0, None, False), "a reset drops it too")
+        q: "queue.Queue[str]" = queue.Queue(maxsize=32)
+        fake._subs.append(q)
+        fake.set_counted(152)
+        self.assertEqual(json.loads(q.get_nowait())["pot_counted"], 152, "published at once")
+        fake.set_counted(152)
+        self.assertTrue(q.empty(), "the same count again publishes nothing")
+        fake.set_counted(None)
+        self.assertIsNone(json.loads(q.get_nowait())["pot_counted"])
+
+    def test_the_fakes_counted_command(self) -> None:
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)
+        fake = self.derby("closed")
+        self.assertEqual(self.post(fake, "counted 152").status_code, 200)
+        self.assertEqual(fake.counted, 152)
+        self.assertEqual(json.loads(fake.model_json())["prizes"], {"win": 91, "place": 38, "show": 23})
+        for bad in ("counted x", "counted 1.5", "counted -1", "counted 10001", "counted 1 2"):
+            resp = self.post(fake, bad)
+            self.assertEqual(resp.status_code, 400, bad)
+            self.assertIs(resp.get_json()["ok"], False)
+            self.assertEqual(fake.counted, 152, bad)
+        self.assertEqual(self.post(fake, "counted").status_code, 200)
+        self.assertIsNone(fake.counted)
+        fake.set_phase(fake_pi5.PHASES["open"])
+        resp = self.post(fake, "counted 152")
+        self.assertEqual((resp.status_code, fake.counted), (400, None), "not before the post, as on pi5")
 
     def test_results_are_three_different_horses_or_nothing(self) -> None:
         fake = self.derby()

@@ -532,6 +532,59 @@ Always HTTP 200, with `Access-Control-Allow-Origin: *`.
 
 ---
 
+### Counted Pot Endpoint
+
+The scales are estimates. After betting closes the host counts the cash box's BETS
+compartment and enters the dollars; from then on the pot and all three prizes, on the TV
+and on the admin page, come from that number. The rest of La Quiniela's routes
+(`/api/quiniela...`) are in `pi5/LQ_BRIDGE.md`; this one is here because race night uses it.
+
+#### `PUT /api/quiniela/counted_pot`
+**Description:** Set or clear the hand count.
+
+**Request body:**
+```json
+{"amount": 152}
+```
+`amount` is whole dollars, 0 to 10000; entering again overwrites. `{"amount": null}`
+clears the count and puts the scales' figures back.
+
+**Response:**
+```json
+{"ok": true, "pot_counted": 152, "pot_scale": 154.0, "pot": 152.0,
+ "prizes": {"win": 91, "place": 38, "show": 23}, "hand_counted": true,
+ "race_state": 3, "saved": true}
+```
+`saved` is false when the database refused the write: the count is held, but a restart of
+pi5 would lose it.
+
+**Errors:** `{"ok": false, "error": "..."}` with a plain message.
+- 400: the amount is not a whole number of dollars from 0 to 10000 (a float, a string, a
+  bool, a negative number), or the body has no `amount`
+- 409: the race is not in 3 AT_THE_POST, 4 RUNNING or 5 WINNER, or there are no figures at
+  the post yet. In 6 AFTER_PARTY a saved count stays and is read-only
+
+**Side Effects:**
+- The count is stored inside the figures at the post, so Reset betting and a state of 0 or 1
+  clear it with them, and a restart of pi5 keeps it
+- The model is pushed to the event stream at once (the TV does not wait for a poll)
+
+**The model** (`GET /api/quiniela` and its event stream) gains three keys, and its pot and
+prizes follow the count:
+
+| Key | Meaning |
+|---|---|
+| `pot_scale` | the scale pot frozen at the post, or null while there are no figures at the post |
+| `pot_counted` | the hand count in whole dollars, or null |
+| `hand_counted` | true while the model's `pot` and `prizes` are the count's (a count is held and the race is in 3-6); the TV's pot wears a `HAND COUNTED` tag |
+| `pot`, `prizes` | the count's when `hand_counted`, with the same split and whole-dollar rounding as the scale pot's; else the live scale figures |
+| `closing.pot`, `closing.prizes` | the figures at the post, the count's when there is one (what the TV paints from the post on); `closing` keeps its five keys |
+
+Bets per horse (`horses[n].tokens`, `total_tokens`, `closing.horses`) are always as the scales
+read them.
+
+---
+
 ### Reset Endpoint
 
 #### `POST /api/reset`

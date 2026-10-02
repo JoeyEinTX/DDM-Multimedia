@@ -100,7 +100,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
-| `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes |
+| `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes. While the host's hand count is held it is one more key of this JSON, `pot_counted` (whole dollars), so the count is saved, held and dropped exactly as the figures are ("The counted pot", below); no schema change |
 | `lq_race` | one row, the race: `name` (as typed, `''` for the default KENTUCKY DERBY), `year`, `post_at` (unix time; NULL while unset), `migrated` (1 once the old Race Setup file has been looked at). Reset betting never touches it. Added at start like `lq_closing` |
 
 **The v1 tables are migrated on start** (`_migrate_v2`, each step in its own
@@ -578,13 +578,59 @@ betting closed, and **pi5 holds them**, not the page: the model's `closing`.
   with 60 MIN (or BETTING OPEN) and close again.
 
 The live fields keep following the cups underneath (that is the truth about
-the cups, and what the admin page shows); nothing on the TV reads them in
+the cups, and what the admin page shows: the tokens always, the pot and the
+prizes until a hand count is entered, below); nothing on the TV reads them in
 3, 4 and 5. So a TV page loaded after the cups were emptied, a second
 screen, a phone on the board or on `/api/quiniela`, and a restart of pi5 or
 of the splash all show the numbers at the post. The page falls back to its
 own freeze (what it showed when betting closed) only for a model without
 `closing`, which is an older pi5. The runbook's written-down figures are now
 a one-line backup, for a close that was reopened before the draw was paid.
+
+#### The counted pot (the hand count)
+
+The scales are "totals based on cheap Chinese electronics". After betting
+closes the host counts the cash box's BETS compartment and enters the
+dollars, and from then on **the pot and all three prizes come from that
+number**, on the TV and on the admin page, with the same split and the same
+whole-dollar rounding. Bets per horse stay exactly as the scales read them.
+It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
+
+- **Stored inside the figures at the post.** The count is one more key of
+  the `lq_closing` record, `pot_counted` (whole dollars, 0 or more; the key
+  is absent while there is no count), so the two lifecycles cannot drift
+  apart: it is saved when it is entered, held through 4, 5, 6 and a restart
+  of pi5 (the store loads the record), and dropped with the figures by
+  Reset betting and by 0 or 1 (2 keeps both, as it keeps the figures). A
+  record without the key, which is every record from before this, has no
+  count. A stored value that is not a whole number of dollars is ignored.
+- **One function.** `prizes_for(pot, split)` is the only place a prize is
+  worked out (PLACE and SHOW rounded half up, WIN the rest). The scale pot
+  and the count both go through it, so a count of 154 gives WIN 92 / PLACE
+  39 / SHOW 23 and a count of 152 gives 91 / 38 / 23, always summing to the
+  pot. Nothing downstream recomputes them: the admin page and the board's
+  script only read the model.
+- **In the model** ("The model", below): `closing.pot` and `closing.prizes`,
+  which the TV paints from the post on, are the count's, and `closing` keeps
+  its five keys. The model's own `pot` and `prizes` are the count's from the
+  post to the end (3 to 6). In FINAL CALL (2) the figures and the count are
+  held but betting is open again, so they are the live ones. Three keys are
+  new: `pot_scale` (the scale pot frozen at the post), `pot_counted` (the
+  count, an int, or `null`) and `hand_counted` (whether the model's pot and
+  prizes are the count's, which is what puts the tag on the board). Clear
+  puts the scale figures back, key for key.
+- **Entered with** `PUT /api/quiniela/counted_pot` (Routes, below):
+  `{"amount": 152}` sets it, entering again overwrites, `{"amount": null}`
+  clears it. Whole dollars from 0 to `COUNTED_POT_MAX` (10000, a ceiling for
+  typos), anything else is a 400 with a plain message. It is refused with a
+  409 when the race is not in 3 AT_THE_POST, 4 RUNNING or 5 WINNER, or there
+  are no figures at the post yet; in 6 AFTER_PARTY a saved count stays and
+  is read-only. The model is rebuilt and pushed to the stream at once, so
+  the TV does not wait for a poll; each entry is logged ("The log"), and
+  the reply says `"saved": false` when the database refused the write (the
+  count is held, but a restart would lose it).
+- **On the board** the pot wears a small `HAND COUNTED` tag
+  (`splash_display/README.md`, "The hand count's tag").
 
 ### Admin page
 
@@ -612,6 +658,17 @@ Top to bottom:
   showing `NO HORSE` is counted there and appears in no row). There is no
   cups table, no picker, nothing to adopt and nothing to forget: a cup's
   number is set on the cup.
+- **Counted pot**, in the Race section under the figures, in states 3 to 5
+  (read-only in 6 while a count is saved; not shown in 0 to 2, before the
+  figures at the post exist): the scale pot at the post, the counted pot and
+  the difference (`+$2`, `−$2` or `same`; information only, nothing blocks), a
+  number box with the phone's numeric keypad, a big **Save count**, **Clear**
+  and a reply line (`Saved: counted $152 (the scales said $154, −$2). WIN
+  $91 · PLACE $38 · SHOW $23.`, the server's error verbatim in red). The
+  Pot above it reads `Pot · scale` from the post on (the scales' live figures)
+  and `Pot · hand counted` once a count is saved, when Pot, WIN, PLACE and
+  SHOW are the count's: the page shows the model's `pot` and `prizes` and
+  works nothing out.
 - **Race info**, first of the setup sections: the race's name (empty for
   KENTUCKY DERBY), the date and the post time as they read on the race's
   clock (`LQ_RACE_TZ`, Central), **Save race info** with its reply line
@@ -772,6 +829,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name stays stored), `names_rev` bumps and the pair `[22, 9]` goes down for a minute or until a cup reports 9: `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order: the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
+| `PUT /api/quiniela/counted_pot` | The host's hand count of the cash box: `{"amount": 152}` sets it (whole dollars, 0 to 10000; again overwrites), `{"amount": null}` clears it. `{"ok": true, "pot_counted": 152, "pot_scale": 154.0, "pot": 152.0, "prizes": {"win": 91, "place": 38, "show": 23}, "hand_counted": true, "race_state": 3, "saved": true}`. 400 `the count must be a whole number of dollars, 0 to 10000 ...` for anything else (a float, a string, a bool, a negative, over the ceiling) or a body with no `amount`; 409 when the race is not in 3, 4 or 5 (in 6 a saved count is read-only) or there are no figures at the post yet. See "The counted pot". |
 | `GET /api/quiniela/race` | `{"ok": true, "race": {...the model's race...}, "name": "Kentucky Derby", "date": "2027-05-01", "time": "17:57"}`: the name as typed, the post time's date and time on the race's clock (null while unset), what the admin page's form shows. `Cache-Control: no-store`. |
 | `PUT /api/quiniela/race` | `{"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}`, any part left out left alone; date and time on the race's clock and together (400 `date and time go together ...`), both `""` clear the post time and the year. Or `{"post_at": <unix time> or null}`. 400 for a date or time that does not parse, a name over 80 characters. Returns what GET does. |
 | `GET /api/quiniela/odds` | `{"ok": true, "odds": {"1": "5-2", "22": "30-1"}, "polling": bool, "interval": 300, "last_update": "...Z", "next_update": "...Z"}`: the odds the model carries, by program number, and the poller's state. |
@@ -793,6 +851,8 @@ curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application
 curl -X POST localhost:5000/api/quiniela/unscratch -H 'Content-Type: application/json' -d '{"horse": 9}'
 curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"in_minutes": 30}'
 curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"at": null}'
+curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": 152}'
+curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": null}'
 curl -X POST localhost:5000/api/quiniela/reset
 ```
 
@@ -830,6 +890,7 @@ rewrites `Cache-Control`.
  "cups_online": 20, "cups_no_horse": 0,
  "results": null,
  "closing": null,
+ "pot_scale": null, "pot_counted": null, "hand_counted": false,
  "race": {"name": "KENTUCKY DERBY", "year": 2027, "post_at": 1809212220.0, "post_local": "5:57 PM CDT",
           "tz": "America/Chicago"}}
 ```
@@ -867,6 +928,8 @@ the store and the results file as follows:
   used to be a cup number; the splash page only tests it for `null`.
 - `pot` = `round(tokens * token_value, 2)` over the horses that are **not**
   scratched (the no-replacement kind above); `total_tokens` is every cup.
+  Once the host has hand counted the cash box, `pot` is the count instead
+  (`hand_counted`; "The counted pot", above).
 - `leader`: strictly the most tokens, the lowest horse number on a tie, `null`
   when every count is 0. Scratched horses are not excluded.
 - `events`: the last eight token changes, newest first. The first snapshot a
@@ -901,7 +964,8 @@ the store and the results file as follows:
 - `closes_at`: unix time or `null`, from `PUT /api/quiniela/closes_at`.
   `reset_betting()` clears it; names survive.
 - `prizes`: `{"win", "place", "show"}` whole dollars summing to `pot`, by the
-  rule above. `split`: the three fractions from config.
+  rule above (from the count when the pot is hand counted). `split`: the
+  three fractions from config.
 - `chyron`: `LQ_CHYRON_LINES` from config, for the crawl along the bottom.
 - `names_rev`: the names store's revision, bumped by any name change, any
   scratch of either kind and its undo, persisted in `lq_board`; a change
@@ -928,8 +992,20 @@ the store and the results file as follows:
   are none: taken the first time the race state is 3 (or 4 or 5 when 3 was
   skipped), held through the race, the draw and a restart, dropped by Reset
   betting and by 0 or 1 ("The figures at the post", above). The TV reads
-  them in 3, 4 and 5; the live `pot`, `prizes`, `total_tokens` and tokens
-  keep following the cups.
+  them in 3, 4 and 5; the live `total_tokens` and tokens keep following the
+  cups, and so do `pot` and `prizes` until a hand count is entered, which
+  makes `closing`'s pot and prizes (and, from the post to the end, the
+  model's own) the count's. Still five keys: the count is not one of them.
+- `pot_scale`: the scale pot frozen at the post (`closing`'s pot as it was
+  taken, whatever a count says), or `null` while there are no figures at
+  the post.
+- `pot_counted`: the host's hand count in whole dollars, or `null` (none
+  entered, or no figures at the post). It is held with the figures, so it
+  is still set in FINAL CALL (2), where `hand_counted` is false.
+- `hand_counted`: whether the model's `pot` and `prizes` are the count's: a
+  count is held and the race is in 3, 4, 5 or 6. It is what puts the `HAND
+  COUNTED` tag on the TV's pot, and the only one of the three keys the TV
+  reads.
 - `race`: the race from the store ("The race and the track's odds",
   above): `name` upper-cased (KENTUCKY DERBY while none is stored), `year`
   (the stored one, else the post time's; null), `post_at` (unix seconds or
@@ -1103,7 +1179,9 @@ horse changed, or went away, or arrived) carries the move in its change,
 e.g. `{"horse":22,"tokens":[0,51],"cup":[null,"A0:B7:65:12:34:56"]}`. The
 closing figures leave their trace too: taken, `{"closing":{"pot":154.0,
 "prizes":{"win":92,"place":39,"show":23},"total_tokens":158}}` beside the
-state change that took them; dropped, `{"closing":null}`. The
+state change that took them; dropped, `{"closing":null}`. A hand count
+is a record of its own when it is entered or cleared, `{"pot_counted":
+[null,152]}` (before, after), with the race state and the token total. The
 first write failure logs one WARNING and disables the log for the rest of
 the process; the model is unaffected.
 
@@ -1136,7 +1214,15 @@ cups read and their horses named), the closing figures (taken on 2 -> 3,
 state; not moved by later counts, the emptied cups included; kept by 2, 6
 and a snapshot with no phase; dropped by 1 and by Reset betting; logged,
 saved in `lq_closing`, and a database error costing only the copy on disk),
-a database from before `lq_closing` gaining it at start, a restart in
+a database from before `lq_closing` gaining it at start, the counted pot
+(`prizes_for` the only place a prize is worked out, for the scale pot and
+the count alike, no other module doing the sum; 154 -> 92 / 39 / 23, a
+spread of pots summing to themselves; bets per horse unchanged; held
+through 4, 5, 6 and 2, dropped by 0, 1 and Reset betting; refused outside
+3 to 5 and with no figures at the post; bad amounts rejected; Clear
+putting the scale figures back, key for key; pushed at once, logged,
+saved in `lq_closing` and kept by a restart; the route's 400s and 409s; a
+database that refuses the write), a restart in
 WINNER after the cups were emptied (a new bridge and board over the same
 database and results file: WINNER, the results and the closing figures as
 they were, the hello answered with them), the `now` stamp, the three tables

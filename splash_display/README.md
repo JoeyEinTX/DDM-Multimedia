@@ -282,6 +282,7 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "cups_online": 20, "cups_no_horse": 0,
   "results": null,
   "closing": null,
+  "pot_scale": null, "pot_counted": null, "hand_counted": false,
   "race": {"name": "KENTUCKY DERBY", "year": 2026, "post_at": 1777762620.0,
            "post_local": "5:57 PM CDT", "tz": "America/Chicago"},
   "weather": {"location": "Dallas", "temp_f": 88, "condition": "Sunny"}
@@ -320,7 +321,10 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   split, rounded half up (Decimal `ROUND_HALF_UP`, never Python's
   banker's `round()`: 38.5 is $39), win takes the rest. 154 gives
   92 / 39 / 23; 1 gives 1 / 0 / 0. `split` is pi5's `LQ_SPLIT_*` config,
-  `chyron` its `LQ_CHYRON_LINES`.
+  `chyron` its `LQ_CHYRON_LINES`. Once the host has hand counted the
+  cash box, `pot` and `prizes` are the count's (`hand_counted`, below),
+  worked out by pi5 with the same split and rounding: nothing here sums
+  or splits anything.
 - `now` is the server's clock when the JSON was built (never stored, never
   part of change detection, so the stream stays quiet between real
   changes). pi5 stamps it, and this relay stamps its own on every serve and
@@ -348,8 +352,21 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   takes them the first time the race state is 3 (or 4 or 5 when 3 was
   skipped), keeps them through the race, the draw and a restart of pi5,
   and drops them on Reset betting and in 0 or 1. The board shows them in
-  3, 4 and 5 (below); the live `pot`, `prizes` and tokens keep following
-  the cups underneath.
+  3, 4 and 5 (below); the live tokens keep following the cups underneath,
+  and so do `pot` and `prizes` until a hand count is entered.
+- `hand_counted`, `pot_counted` and `pot_scale` are pi5's counted pot.
+  The scales are estimates, so after betting closes the host counts the
+  cash box and enters the dollars on the admin page (pi5's
+  `PUT /api/quiniela/counted_pot`): `pot_counted` is that count in whole
+  dollars (or `null`), `pot_scale` the scale pot frozen at the post (or
+  `null` while there are no figures), and `hand_counted` is true while the
+  model's `pot` and `prizes` are the count's, which is from the post to
+  the end (states 3 to 6; in FINAL CALL the count is held but betting is
+  open again, so it is false). The count is stored inside `closing`'s
+  record on pi5 and goes with it, but is not one of its keys: `closing`
+  keeps its five, and its `pot` and `prizes` are the count's. The board
+  reads `hand_counted` alone, for the tag (below); bets per horse are
+  the scales' either way.
 - `race` is La Quiniela's race info, the only copy (pi5's Race Setup is
   gone): `name` upper-cased (`KENTUCKY DERBY` until one is saved),
   `year`, `post_at` (unix seconds, or `null` while no post time is set),
@@ -367,8 +384,9 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
   board stays hidden), and none of the additive keys (`now`, `closes_at`,
   `prizes`, `split`, `chyron`, `names_rev`, `scratches`, `results`,
-  `closing`, `cups_online`, `cups_no_horse`, `race`, `weather`, `name`,
-  `replaced`, `odds`, `in_field`, `conflict`, `cups`); the board and the
+  `closing`, `pot_scale`, `pot_counted`, `hand_counted`, `cups_online`,
+  `cups_no_horse`, `race`, `weather`, `name`, `replaced`, `odds`,
+  `in_field`, `conflict`, `cups`); the board and the
   race slides tolerate their absence.
 
 ```bash
@@ -477,6 +495,27 @@ screen shows the same numbers whenever it was loaded: a TV page reloaded
 after the draw, a second screen, a phone, a restarted splash or pi5. A
 model without `closing` (an older pi5) keeps the page's own freeze, what
 it showed when betting closed, which a page loaded later cannot know.
+
+**The hand count's tag.** While `hand_counted` is true the pot wears a small
+tag, `HAND COUNTED`, to the left of the POT figure, at its middle: the pot
+and the three prizes on the board (and on the results screen, whose header
+keeps the pot) are the host's count of the cash box, not the scales'
+estimate. It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
+The tag is out of the flow, so the figure, its label, the prize tiles, the
+banner and the logo stand exactly where they do without it (measured at
+1920 x 1080 in all three looks: 0 px; the limit is 2); it follows the
+figure when its width changes (`$99` to `$100`), when the window is
+resized and when the tote face arrives late. It reads `COUNTED` instead
+when `HAND COUNTED` would not fit between the logo and the figure; with the
+logo's 480 px cell there is room at every width the header itself fits in,
+so that is a safety net, and the tests make it happen by widening the logo.
+In `dots` and `numbers` it is set in the dot face at pitch 3 (twelve tiles
+of 18 px, amber like the figure); in `impact` it is a gold-outlined pill in
+Impact. Every character of both texts is in the face (the tests check its
+character map), so no glyph falls back to Impact. It is up only while the
+pot shown is the count: never in betting (1, 2), where the pot is live
+whatever a held count says, and never on a model without `hand_counted` (an
+older pi5).
 
 Either freeze only holds while the board is up. A board coming up already
 in 3, 4 or 5 — a page loaded mid-race, or the server restarted during the
@@ -599,7 +638,8 @@ while the board is hidden, the names too, and under the results screen).
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
 online / cup / name`, `events`, and the additive keys `now`, `closes_at`,
 `prizes`, `chyron`, `scratches`, `names_rev`, `results`, `closing`,
-`race` (the crawl's clock and time to post) and `weather`; the race
+`hand_counted` (the tag), `race` (the crawl's clock and time to post) and
+`weather`; the race
 slides read `race` and `horses[n].odds` from the same script. Every one of
 the additive keys is optional: before pi5 has been heard the splash's
 empty model carries none of them and the board renders without errors
@@ -631,8 +671,8 @@ logged once. The page carries the look in the board's `data-look`.
 - a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at the crawl's 120 px/s until its last character is in the area's last tile, held 1 s, back to the start;
 - whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again, as are the strips when the window is resized.
 
-- **Dotted** in `dots`: the pot, the three prizes, every row's name and
-  bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
+- **Dotted** in `dots`: the pot, its `HAND COUNTED` tag, the three prizes,
+  every row's name and bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
   dots, a struck name and `TOKENS REFUNDED` dimmed), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
@@ -685,6 +725,7 @@ pitches, which keeps every dot on the pixel grid:
 | Field | Impact | Tote look |
 | --- | --- | --- |
 | Pot | 104 px | pitch 12 (96 px) |
+| `HAND COUNTED` tag | 26 px, gold-outlined pill | pitch 3 (24 px), twelve tiles of 18 px |
 | Header prizes | 40 px | pitch 5 |
 | Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles filling the row (20 of 40.25 px at 1920 px); a long name scrolls; a dim `0` |
 | Row bets (`numbers`) | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
@@ -851,12 +892,17 @@ python tools/fake_pi5.py --phase strip                     # the tote look's row
                                                            # gives up a tile and it starts to scroll), then back to 7; no closing
                                                            # time, nothing else ticks
 python tools/fake_pi5.py --phase strip-static              # the same picture with nothing moving
+python tools/fake_pi5.py --phase counted                   # AT_THE_POST on the 2026 race, scale pot $154 (WIN $92 / PLACE $39 / SHOW $23), nothing
+                                                           # counted yet; post `counted 152` to the fake and the pot reads $152 under a HAND COUNTED
+                                                           # tag, WIN $91 / PLACE $38 / SHOW $23; `counted` alone puts the scale figures back
+python tools/fake_pi5.py --phase results-static --counted 152   # the results screen over a hand counted pot
 # --port 5077 (the splash), --pi5-port 5078 (the fake), --period 15 (cycle, and each bench-reset or results step),
 # --host 127.0.0.1, --no-splash (the fake alone; point a splash at it)
 # every phase carries the race (KENTUCKY DERBY, post time a day from now on America/Chicago's clock), Dallas 88°F Sunny
 # and the track's odds by number (the redesign field's line; in redesign 23 Robusta has none: the dim dash):
 # --post-in 74 (minutes to post; negative: already past, AND THEY'RE OFF), --no-post (the countdown leaves the playlist),
 # --no-weather (the crawl leaves it out), --no-odds (every roster row a dim dash)
+# --counted 152 starts with the host's hand count entered (states 3-5 only, as on pi5)
 ```
 
 The older phases carry no horse names, so the board shows `HORSE n`;
@@ -865,7 +911,9 @@ every phase carries the full contract (horses 1-24 with `in_field`,
 `split`, `chyron`, `names_rev`, `scratches` in the record shape,
 `cups_online`, `cups_no_horse`, `results`, `race`, `weather`, and `closing`, taken and dropped
 by pi5's rule: the first time the state is 3, 4 or 5 with none held, and in
-0, 1 or on `reset`). A horse's `cup` is a MAC
+0, 1 or on `reset`; with `pot_scale`, `pot_counted` and `hand_counted`: the hand count
+lives and dies with `closing`, makes `closing`'s pot and prizes the count's through the
+fake's one `prizes_for`, and the model's own from the post to the end, as pi5 does). A horse's `cup` is a MAC
 string (`A0:B7:65:00:00:07` for the fake's cup 7) or `null`, as pi5 has
 served it since protocol v2; a renumbered cup keeps its MAC. In `redesign` the cups
 that were 5, 9 and 13 carry 21, 22 and 23 with their tokens (the count
@@ -893,10 +941,12 @@ to fit its row (38 px down to 20 px), or scroll in `dots` and on the
 roster slide. `post MINUTES` moves the post time (negative: already
 past; `post none` clears it), `weather 88 Partly cloudy` sets the
 weather (`weather none` clears it) and `odds none` / `odds on` take the
-odds away and give them back: what the admin page, pi5's weather feed and
-its odds poller do on a real pi5. Post the fake-only commands
-(`reset`, `results`, `scratch`, `renumber`, `name`, `post`, `weather`,
-`odds`) to the fake itself on 5078: the real relay forwards everything to
+odds away and give them back, and `counted 152` enters the hand count of
+the cash box (whole dollars, 0 to 10000, in states 3 to 5 once the figures
+at the post exist, else a 400; `counted` alone clears it): what the admin
+page, pi5's weather feed and its odds poller do on a real pi5. Post the
+fake-only commands (`reset`, `results`, `scratch`, `renumber`, `name`,
+`post`, `weather`, `odds`, `counted`) to the fake itself on 5078: the real relay forwards everything to
 pi5 unchecked, but pi5 would reject them. Through the relay, `state N`
 drives the takeover:
 
@@ -948,7 +998,14 @@ cd splash_display && python -m unittest -v tests.test_quiniela
 Chrome or Chromium and reads the figures off the page: once betting has
 closed it must show `closing`, not the live fields. It finds `chromium`,
 `chromium-browser` or Chrome by itself (`DDM_CHROME` names another) and is
-skipped where there is none.
+skipped where there is none. `HandCountTagTests` does the same for the hand
+count's tag, at 1920 x 1080 in all three looks: it is up with a count and down
+without, the pot, its label, the prize tiles, the banner and the logo do not
+move by more than 2 px (they do not move at all), it hangs left of the figure
+at its middle and clear of the logo, it wears the look's face, it follows a
+figure that changes width, a resized window and a face that arrives late, it
+is there on the results screen and not in FINAL CALL, and it gives way to
+`COUNTED` when the room is short.
 
 ---
 

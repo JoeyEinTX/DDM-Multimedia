@@ -188,6 +188,9 @@ the prizes and every cup's bets as they are now, and the TV shows those until th
 over and paid (section 8), through a reload of the TV or a restart of pi5.
 (Backup only, if you like: a photo of `ADMIN` → Race's figures now; they are the same.)
 
+The cash box can be counted from now on: it is the first step of section 8. The scales
+are estimates, so the pot you pay from is your count of the BETS compartment.
+
 They're off: `DASH` → **THEY'RE OFF!** (then **CHAOS**, **FINISH** as the race runs: all
 three are RUNNING).
 
@@ -207,23 +210,39 @@ does. (WINNER without results, from **HEARTBEAT** or `ADMIN` → WINNER: the TV 
 The results are saved whether or not the LED controller answers: a red `Results set: …
 · LEDs unreachable` means the TV and the cups have them and only the LEDs missed them.
 
+- [ ] **Count the cash**, any time after AT THE GATE and always before you pay and before
+      **RESET** (in AFTER PARTY the box is read-only). Open the cash box's BETS
+      compartment, count the dollars. `ADMIN` → Race → Counted pot → type the
+      number → **Save count**. The line under the buttons reads `Saved: counted $152
+      (the scales said $154, −$2). WIN $91 · PLACE $38 · SHOW $23.` From now on
+      the pot and the three prizes, on `ADMIN` and on the TV (tagged `HAND COUNTED`
+      beside the pot), are those: the same 60 / 25 / 15, whole dollars. The bets per
+      horse stay as the scales read them, and the scales' figure and the difference
+      sit beside the box for information only: a few dollars either way is the
+      scales, nothing to fix. Typed it wrong, or counted again after a late bet? Type
+      it again and **Save count** (it overwrites), or **Clear** to go back to the
+      scales' figures. No `HAND COUNTED` tag on the TV means no count is saved.
 - [ ] WIN cup: shake it, pull **one** token. Read its number aloud. The guest with the
       other half takes the WIN prize.
 - [ ] PLACE cup: one token, PLACE prize.
 - [ ] SHOW cup: one token, SHOW prize.
-- [ ] Pay in whole dollars, the amounts on the results board. Emptying the cups doesn't
-      change it: it shows what each cup held when betting closed, and so does a TV
-      reloaded, or pi5 restarted, in between.
+- [ ] Pay in whole dollars, the amounts on the results board: your counted ones, with the
+      `HAND COUNTED` tag by the pot. Emptying the cups doesn't change them: the board
+      shows what each cup held when betting closed, and so does a TV reloaded, or pi5
+      restarted, in between; the count is kept with those figures.
 - [ ] Undrawn tokens are just tokens. Nobody else wins anything.
 
-Then: `DASH` → **RESET** → OK (clears the results, LEDs off): AFTER PARTY, and the TV
-goes back to the slideshow. Or `ADMIN` → Race → **AFTER PARTY**, which hands the TV back
-too and leaves the results and the LEDs as they are.
+Then, with the count entered and the prizes paid: `DASH` → **RESET** → OK (clears the
+results, LEDs off): AFTER PARTY, and the TV goes back to the slideshow. The saved
+count stays and shows read-only on `ADMIN` until **Reset betting**. Or `ADMIN` → Race →
+**AFTER PARTY**, which hands the TV back too and leaves the results and the LEDs as
+they are.
 
 ## 9. Another race on the same night
 
 - [ ] `ADMIN` → Race → **Reset betting** → OK. The cups keep their numbers; names and
-      scratches stay. The line says `Reset. Pot $0`; if it names horses with tokens still
+      scratches stay; the figures at the post and the hand count go. The line says
+      `Reset. Pot $0`; if it names horses with tokens still
       in their cups, empty those (each count drops to 0 by itself) and press it again.
 - [ ] Section 5 (close time), then section 6 (`DASH` → **60 MIN**).
 - [ ] A different field next race: `ADMIN` → Horse names → paste the new names → Save
@@ -250,13 +269,18 @@ too and leaves the results and the LEDs as they are.
 | No countdown slide, or the wrong race on it; the roster's post time blank | Race info has no post time, or last year's | `ADMIN` → Race info → the date and the post time → Save race info (section 1). A countdown on screen shows it on its next second; one left out of the slideshow comes back on the next lap (the playlist is rebuilt every ~35 slides, a few minutes). |
 | No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
 | The crawl has no weather | pi5 has no `WEATHER_API_KEY`, or no internet yet | Nothing needed: the item is left out. With a key it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
-| Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results and the figures at the post until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. |
+| Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results, the figures at the post and the hand count until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. |
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
+| No Counted pot box on `ADMIN`, or Save answers `The count can only be entered after betting closes …` | the box shows from AT THE POST to WINNER; before that betting is still open (nothing to count against yet), after it (AFTER PARTY) a saved count is read-only | Close betting first (section 7: `DASH` → **AT THE GATE**); the box appears within five seconds. |
+| A count typed wrong, or the cash changed after a late bet | the count is whatever was saved last | `ADMIN` → Race → Counted pot → type it again → **Save count** (it overwrites), or **Clear** to go back to the scales' figures. |
+| The count is wrong or missing and **RESET** was already pressed | AFTER PARTY makes the box read-only | `ADMIN` → Race → **WINNER**: the box is back (the results board is gone after RESET; `ADMIN`'s figures carry the prizes). Enter it and pay from those. |
+| The scales and the count differ by a few dollars | the scales are estimates ("totals based on cheap Chinese electronics") | Nothing: pay from the count. The difference is shown for information, nothing blocks. |
+| `Saved: … NOT stored: pi5 could not write it…` in red under Save count | pi5 holds the count but its database refused the write | Pay from it. If pi5 restarts before the draw is paid, enter the count again. |
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: the lit button is the state pi5 holds (the ticker on `DASH` says the same). Press the right one, on either page, and read what it answers. |
 | TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: results not saved …` (pi5 could not write the file; the LED controller has nothing to do with it) | `DASH` → **SET WINNERS** → confirm again. Meanwhile the prizes are in the board's header (WIN / PLACE / SHOW under the pot, the figures at the post); draw and pay from those. |
 | `Results set: … · LEDs unreachable` in red on `DASH` | the results are saved, on the TV and on the cups; only the LED controller missed them | Nothing for the results. The LEDs: check the LED controller (the device icon, top left of `DASH`). |
 | pi5 restarted, or the TV reloaded, during the draw | nothing is lost: pi5 keeps the results and the figures at the post | Nothing. The TV finds pi5 again by itself and shows the results board as it was. |
-| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid (a `DASH` WELCOME / TEST / STANDBY / 60 MIN / 30 MIN, `ADMIN` PRE-RACE / BETTING OPEN, or Reset betting): pi5 dropped the figures at the post, and a later close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held. |
+| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid (a `DASH` WELCOME / TEST / STANDBY / 60 MIN / 30 MIN, `ADMIN` PRE-RACE / BETTING OPEN, or Reset betting): pi5 dropped the figures at the post, and a later close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held and count the cash again (the hand count went with the figures). |
 | `DASH` button says `Error: …` | the LED controller didn't answer | If the text goes on `· BETTING OPEN` (the state's name), the race state was set and only the LEDs are missing: check the LED controller (the device icon, top left of `DASH`). |
 | A button's line is red | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the phone's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
@@ -302,7 +326,12 @@ curl -s -X POST localhost:5000/api/quiniela/reset
 
 The figures (what the page shows; `at the post` is what the TV shows from AT THE GATE on):
 ```bash
-curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('closing') or {};print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'],'prizes',d['prizes'],'results',d['results'],'at the post',c.get('pot'),c.get('prizes'))"
+curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('closing') or {};print('link',d['link_ok'],'state',d['race_state'],'pot',d['pot'],'prizes',d['prizes'],'results',d['results'],'at the post',c.get('pot'),c.get('prizes'),'counted',d.get('pot_counted'),'scale',d.get('pot_scale'))"
+```
+
+The hand count, what `ADMIN` → Race → Counted pot → Save count does (whole dollars; AT THE POST, RUNNING or WINNER only; `{"amount":null}` clears it):
+```bash
+curl -s -X PUT localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount":152}'
 ```
 
 The cups pi5 hears (MAC, the horse each says it is, online, count):

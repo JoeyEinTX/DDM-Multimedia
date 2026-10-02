@@ -39,10 +39,17 @@ Nothing leaves loopback: no serial port, no dashboard poller.
                                                    # 13 -> 23), 20 scratched at the gateway, 19 rows, POT $150, closes in
                                                    # 15 min, a bet on horse 7 every 4 s (toast)
     python tools/fake_pi5.py --phase redesign-static   # the same picture, nothing moving (screenshots)
+    python tools/fake_pi5.py --phase counted       # AT_THE_POST on the 2026 race (scale pot $154, WIN $92 / PLACE $39 /
+                                                   # SHOW $23), nothing counted yet: post `counted 152` to the fake and the
+                                                   # pot reads $152 under a HAND COUNTED tag, WIN $91 / PLACE $38 / SHOW $23;
+                                                   # `counted` alone puts the scale figures back
+    python tools/fake_pi5.py --phase results-static --counted 152   # the results screen over a hand counted pot
 
 Flags:
     --phase {idle,open,final,closed,running,winner,after,cycle,bench,bench-reset,redesign,redesign-static,
-             results,results-static,strip,strip-static}   (default: open)
+             results,results-static,strip,strip-static,counted}   (default: open)
+    --counted DOLLARS      start with the host's hand count entered, as `counted DOLLARS` would (only in
+                           states 3-5, like pi5; the phases `counted`, `closed`, `running`, `winner`, `results-static`)
     --period SECONDS       seconds per state in --phase cycle, and per step in
                            --phase bench-reset and --phase results (default: 15)
     --stop-feed-after N    after N s the fake pi5 stops answering: its stream
@@ -81,7 +88,10 @@ with A's tokens where 22 sorts and A is gone (the redesign feed's bet on 7
 then lands under B: the token is the cup's); ``renumber B A`` undoes it;
 ``name N Some Long Name`` renames horse N (1-24; names_rev bumps, no event;
 ``name N`` alone clears it), which is how to watch a long name shrink to
-fit its row.
+fit its row; ``counted 152`` is the host's hand count of the cash box (pi5:
+PUT /api/quiniela/counted_pot): a whole number of dollars, 0 to 10000, taken
+only in states 3-5 once the figures at the post exist (the fake answers 400
+where pi5 answers 400 or 409), and ``counted`` alone clears it.
 
 Static phases carry 20 cups (cup n on horse n), tokens spread with a clear
 leader (horse 7), one scratched horse (13, at the gateway: out of the field,
@@ -104,7 +114,13 @@ by was.number), ``cups_online``, ``cups_no_horse``, ``results`` (``{"win",
 ``closing`` (the figures at the post: ``pot``, ``prizes``, ``total_tokens``,
 ``horses`` ``{"1": {"tokens"}, ...}`` and ``at``, taken as pi5 takes them, the
 first time the state is 3, 4 or 5 with none held, and dropped by a reset or by
-state 0 or 1; ``null`` while there are none). A
+state 0 or 1; ``null`` while there are none) with ``pot_scale`` (the scale pot
+frozen at the post, ``null`` while there are no figures), ``pot_counted`` (the
+hand count in whole dollars, or ``null``) and ``hand_counted``: with a count,
+``closing``'s pot and prizes are the count's (through the same ``prizes_for``
+as the scale pot's) and so are the model's own from the post to the end
+(states 3-6; in FINAL CALL they stay the live ones), and ``hand_counted`` says
+so, which is what puts the tag on the board. A
 horse's ``cup`` is what pi5 has served since protocol v2: the MAC of the cup
 claiming that horse (``"A0:B7:65:00:00:07"`` for the fake's cup 7), ``null``
 when none does; never a cup number. A gateway scratch keeps its tokens in
@@ -400,7 +416,7 @@ def build_model(
             leader, best = n, t
     scratches.sort(key=lambda s: s["was"]["number"])
     wps = [int(h) for h in results] if results is not None else []
-    return {
+    return apply_count({
         "link_ok": bool(link_ok),
         "race_state": int(phase),
         "race_state_name": RACE_STATE_NAMES.get(int(phase), f"STATE_{int(phase)}"),
@@ -425,11 +441,13 @@ def build_model(
         "closing": closing,
         "race": race if race is not None else race_for(None),
         "weather": weather,
-    }
+    }, None)               # no hand count here: pot_scale from `closing`, pot_counted None, hand_counted False
 
 
 CLOSED_STATES = (3, 4, 5)       # pi5 takes the closing figures the first time it sees one of these
 REOPEN_STATES = (0, 1)          # ... and drops them in these (and on a reset)
+COUNT_IN_FORCE = (3, 4, 5, 6)   # the hand count is the model's pot and prizes from the post to the end (not in FINAL CALL)
+COUNTED_POT_MAX = 10000         # pi5's ceiling for a hand count, in dollars
 
 
 def closing_of(model: Dict[str, Any]) -> Dict[str, Any]:
@@ -438,6 +456,27 @@ def closing_of(model: Dict[str, Any]) -> Dict[str, Any]:
     return {"pot": model["pot"], "prizes": dict(model["prizes"]), "total_tokens": model["total_tokens"],
             "horses": {n: {"tokens": h["tokens"]} for n, h in model["horses"].items()},
             "at": round(time.time(), 3)}
+
+
+def apply_count(model: Dict[str, Any], counted: Optional[int]) -> Dict[str, Any]:
+    """pi5's hand count on a built model whose "closing" is the record taken
+    at the post (the scale figures). Sets pot_scale (the scale pot at the
+    post), pot_counted (the count) and hand_counted, and with a count makes
+    closing's pot and prizes the count's, through prizes_for like the scale
+    pot's, and the model's own too from the post to the end (COUNT_IN_FORCE;
+    in FINAL CALL they stay the live ones). Without figures at the post
+    there is nothing to count against: None, False. Returns the model."""
+    closing = model["closing"]
+    counted = counted if closing is not None else None
+    model["pot_scale"] = closing["pot"] if closing is not None else None
+    model["pot_counted"] = counted
+    model["hand_counted"] = False
+    if counted is not None:
+        shown = dict(closing, pot=float(counted), prizes=prizes_for(counted))
+        model["closing"] = shown
+        if model["race_state"] in COUNT_IN_FORCE:
+            model["pot"], model["prizes"], model["hand_counted"] = shown["pot"], dict(shown["prizes"]), True
+    return model
 
 
 def seed_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -481,6 +520,7 @@ class FakePi5:
         if results is not None and not self._set_results_locked(results):
             raise ValueError(f"results must be three different horses 1-{MAX_HORSE}: {results!r}")
         self.closing: Optional[Dict[str, Any]] = None             # the figures at the post, as pi5 holds them
+        self.counted: Optional[int] = None                        # the hand count, held and dropped with them
         self.post_at: Optional[float] = (time.time() + DEFAULT_POST_IN_S) if post_at is _DEFAULT else post_at
         self.weather: Optional[Dict[str, Any]] = dict(DEFAULT_WEATHER) if weather is _DEFAULT else weather
         self.odds: Dict[int, str] = dict(REDESIGN_ODDS) if odds is _DEFAULT else dict(odds or {})
@@ -495,17 +535,19 @@ class FakePi5:
         """The model as pi5 would serve it now. The closing figures follow
         pi5's rule on the way: taken the first time the phase is 3, 4 or 5
         with none held, dropped in 0 and 1 (and by reset()), otherwise kept
-        whatever the counts do."""
+        whatever the counts do; the hand count lives and dies with them
+        (apply_count)."""
         model = build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
                             names=self.names, cup_of=self.cup_of, replacements=self.replacements,
                             closes_at=self.closes_at, names_rev=self.names_rev, results=self.results,
                             race=race_for(self.post_at), weather=self.weather, odds=self.odds)
         if self.phase in REOPEN_STATES:
             self.closing = None
+            self.counted = None
         elif self.phase in CLOSED_STATES and self.closing is None:
             self.closing = closing_of(model)
         model["closing"] = self.closing
-        return model
+        return apply_count(model, self.counted)
 
     def _publish_locked(self) -> None:
         self._json = _dumps(self._build())
@@ -540,6 +582,7 @@ class FakePi5:
             self.events = [] if events is None else list(events)
             self.results = None
             self.closing = None
+            self.counted = None
             if phase is not None:
                 self.phase = int(phase)
             self._publish_locked()
@@ -572,6 +615,25 @@ class FakePi5:
             if self.results is not None:
                 self.results = None
                 self._publish_locked()
+
+    def set_counted(self, amount: Optional[int]) -> Optional[str]:
+        """The host's hand count of the cash box (pi5's PUT
+        /api/quiniela/counted_pot): whole dollars, 0 to COUNTED_POT_MAX; None
+        clears it. Returns None when it was taken, else why not: not a whole
+        number in range (pi5's 400), or the race is not in 3-5 or there are
+        no figures at the post yet (its 409). The model is published."""
+        if amount is not None and (isinstance(amount, bool) or not isinstance(amount, int)
+                                   or not 0 <= amount <= COUNTED_POT_MAX):
+            return f"the count must be a whole number of dollars, 0 to {COUNTED_POT_MAX}"
+        with self._lock:
+            if self.phase not in CLOSED_STATES:
+                return "the count can only be entered after betting closes (AT THE POST, RUNNING or WINNER)"
+            if self.closing is None:
+                return "there are no figures at the post yet"
+            if amount != self.counted:
+                self.counted = amount
+                self._publish_locked()
+        return None
 
     def empty(self, horse: int) -> None:
         """The cup on `horse` is emptied (the draw): its count goes to 0,
@@ -817,6 +879,15 @@ class FakePi5:
             elif words[0] == "odds" and len(words) == 2 and words[1] in ("none", "on"):
                 # Not a pi5 command (there: the odds poller, or PUT /api/quiniela/odds).
                 fake.set_odds(None if words[1] == "none" else REDESIGN_ODDS)
+            elif words[0] == "counted":
+                # Not a pi5 command (there it is PUT /api/quiniela/counted_pot): the
+                # host's hand count of the cash box in whole dollars, in states 3-5
+                # once the figures at the post exist; `counted` alone clears it.
+                if len(words) > 2 or (len(words) == 2 and not words[1].isdigit()):
+                    return jsonify({"ok": False, "error": "usage: counted DOLLARS (a whole number) | counted alone clears it"}), 400
+                why = fake.set_counted(int(words[1]) if len(words) == 2 else None)
+                if why:
+                    return jsonify({"ok": False, "error": why}), 400
             elif words[0] == "name" and len(words) >= 2 and words[1].isdigit() and 1 <= int(words[1]) <= MAX_HORSE:
                 # Not a pi5 command (there it is PUT /api/quiniela/horses); here
                 # it renames horse N (the rest of the line, empty clears) so a
@@ -1003,8 +1074,11 @@ def _client_host(host: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--phase", choices=sorted(PHASES) + ["cycle", "bench", "bench-reset", "redesign", "redesign-static",
-                                                         "results", "results-static", "strip", "strip-static"],
+                                                         "results", "results-static", "strip", "strip-static",
+                                                         "counted"],
                     default="open")
+    ap.add_argument("--counted", type=int, default=None, metavar="DOLLARS",
+                    help="start with the host's hand count entered (states 3-5 only, as on pi5)")
     ap.add_argument("--period", type=float, default=15.0,
                     help="seconds per state in --phase cycle, per step in --phase bench-reset and --phase results")
     ap.add_argument("--stop-feed-after", type=float, default=None, metavar="SECONDS",
@@ -1038,8 +1112,15 @@ def main() -> None:
     elif args.phase in ("strip", "strip-static"):
         fake = FakePi5(PHASES["open"], tokens=STRIP_TOKENS, scratched=(), offline=(), events=[],
                        names=STRIP_NAMES, names_rev=1)
+    elif args.phase == "counted":
+        fake = FakePi5(PHASES["closed"], tokens=RESULTS_TOKENS, scratched=REDESIGN_SCRATCHED, offline=(), events=[],
+                       names=REDESIGN_NAMES, renumbers=REDESIGN_RENUMBERS, names_rev=2)
     else:
         fake = FakePi5(PHASES[args.phase])
+    if args.counted is not None:
+        why = fake.set_counted(args.counted)
+        if why:
+            print(f"fake pi5: --counted {args.counted} ignored: {why}", flush=True)
     fake.set_post(None if args.no_post else time.time() + args.post_in * 60.0)
     if args.no_weather:
         fake.set_weather(None)
