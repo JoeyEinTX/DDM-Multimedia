@@ -94,7 +94,11 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
   `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
   entered in La Subasta. A scratch made during the auction voids its bids on that horse
   (after the auction locks, the owner's purchase too) and guest phones drop the horse on
-  their own. Undo puts the horse back in the field but not its auction bids.
+  their own. Undo puts the horse back in the field with its auction bids and, after the
+  lock, its owner.
+- Before the auction locks, buy the horses nobody bid on (mark yourself **No cap** on
+  `/la-subasta/admin` and take them at the minimum bid): the lock warns you and lists them,
+  and locks anyway only if you confirm.
 
 ## 2. Party day — setup, before guests arrive
 

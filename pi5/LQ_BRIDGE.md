@@ -675,7 +675,8 @@ tote and SET WINNERS pickers read it through `GET /api/quiniela/field`. The
 that model over HTTP and the event stream. **La Subasta** reads it in this
 process through `HorseStore.field()` (one snapshot under the store's lock:
 `names_rev`, every horse `in_field` by program number with its upper-cased
-name and the horse it `replaces`, and the scratch records), so the auction
+name and the horse it `replaces`, the scratch records, and `degraded`, true
+when the store could not read its database at start), so the auction
 sells the field as it stands, a replacement under its own number (22, not
 9), and its `horse_id` is the program number. It also listens: the store
 calls every listener given to `HorseStore.add_listener()` after each write
@@ -683,8 +684,9 @@ calls every listener given to `HorseStore.add_listener()` after each write
 thread), and La Subasta's applies a scratch to the auction there and then by
 its own rule (bids voided while it is open, the ownership too after the
 lock). A scratch is entered once, here; undo puts the horse back in the
-field but not its auction bids (`DDM_La_Subasta_Spec.md`, "Horses: from La
-Quiniela's store" and "Scratches").
+field and gives it back what the scratch voided, its bids and, after the
+lock, its owner (`DDM_La_Subasta_Spec.md`, "Horses: from La Quiniela's
+store" and "Scratches").
 
 ### The race and the track's odds
 

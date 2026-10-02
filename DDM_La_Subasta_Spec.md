@@ -1,6 +1,6 @@
 # Derby de Mayo's La Subasta — System Specification
 
-**Version:** 1.3 (Horses and scratches from La Quiniela's store)
+**Version:** 1.4 (No House; undo restores everything)
 **Date:** October 2026
 **Status:** Design Phase - Ready for Implementation
 **Author:** Joey + Claude
@@ -66,6 +66,8 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 4. Guest phones show their final portfolio ("You own: #3 Magnolia ($45), #14 Carry Back ($67) — Total: $112 — Pay Joey")
 5. Admin dashboard shows per-bidder Paid/Unpaid tracker
 6. Joey chases payments face-to-face as guests arrive / already at party (Venmo, Zelle, cash)
+
+The lock itself (`POST /api/admin/lock`) first lists any horse in the field nobody has bid on and goes ahead only on the admin's confirm: see **Payouts → Unsold horses: no House**.
 
 ### Race & Payouts (Automatic)
 
@@ -147,7 +149,8 @@ bidders (
   created_at TIMESTAMP,
   paid BOOLEAN DEFAULT FALSE,    -- admin-marked
   paid_at TIMESTAMP,
-  paid_amount REAL
+  paid_amount REAL,
+  cap_exempt BOOLEAN DEFAULT FALSE -- admin-marked: free of the max-horses cap (the host)
 );
 
 bids (
@@ -177,8 +180,9 @@ ownership (
 
 payouts (
   id INTEGER PRIMARY KEY,
-  bidder_id INTEGER REFERENCES bidders,
-  horse_id INTEGER NOT NULL,     -- program number 1-24, La Quiniela's field
+  bidder_id INTEGER REFERENCES bidders,  -- NULL while nobody owns the slot's horse (see Payouts)
+  horse_id INTEGER NOT NULL,     -- the horse that finished there: program number 1-24, La Quiniela's field
+  pays_horse_id INTEGER,         -- the horse the admin named to pay the slot in its place, if any
   finish TEXT NOT NULL,          -- 'win', 'place', 'show'
   amount REAL NOT NULL,
   paid_out BOOLEAN DEFAULT FALSE
@@ -213,7 +217,7 @@ auction_state (
 | Minimum opening bid | $1 | Accessible |
 | Minimum raise | $1 | Fine-tuning allowed |
 | **Maximum raise** | **$5** | Prevents runaway bidding, keeps pot reasonable |
-| Maximum horses per bidder | 3 | Spreads ownership across crowd |
+| Maximum horses per bidder | 3, unless the admin marks a bidder exempt | Spreads ownership across crowd; the host is exempt so he can pick up the horses nobody bid on |
 | Bid close | Hard stop at T-15 before Derby post | No snipe extensions |
 | Tiebreaker | Earliest timestamp wins | Standard |
 | Bid retraction | 10-second undo window | Fat-finger protection |
@@ -227,9 +231,9 @@ def validate_bid(bidder, horse, amount):
     if auction_state not in ('OPEN', 'FINAL_HOUR'): reject("Auction closed")
     if horse not in la_quiniela_field: reject("#9 is not in the field: scratched")
 
-    # Max 3 horses owned
+    # Max 3 horses owned, unless the admin marked this bidder exempt (the host)
     currently_leading = count_horses_where_top_bidder(bidder)
-    if currently_leading >= 3 and not outbid_existing: reject("Max 3 horses")
+    if currently_leading >= 3 and not outbid_existing and not bidder.cap_exempt: reject("Max 3 horses")
 
     # Bid range
     current = horse.current_high_bid or 0
@@ -251,8 +255,8 @@ def validate_bid(bidder, horse, amount):
 If a guest refuses to pay or bids in bad faith:
 
 1. Admin clicks **"Void bid"** on that bidder's winning bid for a specific horse
-2. System automatically re-awards horse to **2nd highest bidder at their bid amount**
-3. If no 2nd bid exists, horse goes to House (see below)
+2. System automatically re-awards horse to **2nd highest bidder at their bid amount**; after the lock the horse's `ownership` row follows the bids, so the new owner owes that amount and the voided bidder owes nothing
+3. If no 2nd bid exists, the horse is **unsold**, not the House's: before the lock it is back on the list with no bid (the lock warns about it); after the lock it has no owner, and if it finishes in the money its payout slot is left for the admin to name (see **Payouts**)
 4. Audit trail preserved in `voided_reason` column
 
 ---
@@ -262,10 +266,10 @@ If a guest refuses to pay or bids in bad faith:
 A scratch is entered **once, on La Quiniela's admin page** (`/quiniela/admin`, Scratches), and lives in La Quiniela's store (`lq_scratches`). La Subasta has no scratch button, no scratch endpoint and no scratch table of its own: a horse is scratched for the auction when it is not in La Quiniela's field. The auction then applies its own rule, **bid refunded, horse removed** (`pi5/la_subasta/scratches.py`):
 
 1. **Auction open or in its final hour:** the horse leaves the list and every bid on it is voided (`voided = 1`, `voided_reason = 'scratched'`). Nobody is charged for it, and a new bid on it is refused (`#4 is not in the field: scratched`).
-2. **Auction locked, or after the auction:** the horse's `ownership` row is voided the same way (it stays, with `voided_at`, as the record of the refund), and so are its bids. The owner's total owed drops by that winning bid, the horse is out of the pot, and it cannot pay out: race results naming it are refused. If the owner had already been marked paid, the bidders' ledger (`GET /api/bidders`) shows the refund owed (`refund_owed`, with the horse in the portfolio's `scratched` list). The House rule does not apply to a scratched horse: it is gone, not unsold.
+2. **Auction locked, or after the auction:** the horse's `ownership` row is voided the same way (it stays, with `voided_at`, as the record of the refund), and so are its bids. The owner's total owed drops by that winning bid, the horse is out of the pot, and it cannot pay out: race results naming it are refused. If the owner had already been marked paid, the bidders' ledger (`GET /api/bidders`) shows the refund owed (`refund_owed`, with the horse in the portfolio's `scratched` list). A scratched horse is gone, not unsold.
 
 - **A replacement scratch** (9 → 22) does both halves at once: 9 is handled as above, and 22 enters the list as a fresh horse with no bids. By the party this has normally happened already, before the auction opens.
-- **Undo** on the LQ admin page reverses the field change. It does **not** un-void bids: the horse comes back with no bids, and undoing a replacement takes the stand-in out of the field again, its bids voided the same way. La Subasta has no un-void, and the admin's void / re-award tool (`/api/admin/void`) does not make up for it: it voids a bid, it cannot bring one back. After the lock this matters: an undone scratch leaves the horse back in the field with **no owner** and its bids voided, so if it wins, its payout goes to the House as an unsold horse. The admin settles that by hand with the bidder who owned it.
+- **Undo** on the LQ admin page restores everything. The horse is back in the field and what its scratch voided comes back with it: its bids and, after the lock, its `ownership` row (`voided = 0` again), so the owner owes the winning bid again and a paid owner's `refund_owed` goes. No horse is ever left without an owner by an undo. Only what the scratch voided returns (`voided_reason = 'scratched'`): a bid an admin voided stays voided. Undoing a replacement takes the stand-in out of the field again and voids its bids the same way; they come back if the replacement is made again. A horse scratched **before** the lock and undone **after** it has its bids back but was never frozen into ownership, so it is frozen from those bids (unless the lock froze nothing at all, in which case settlement freezes everything itself). Like the scratch it is idempotent: a restart, or an undo made while pi5 was down, changes nothing twice (`scratches.restore()`, run after `apply()`), and `field_changed` goes out so phones read the list again. The cap is not re-checked: a restored bid can leave a bidder leading more than three horses.
 - **When:** on change, never on a timer. The store's change listener applies a scratch the moment it is recorded; pi5 applies what is already recorded when it starts; a La Subasta request catches up if `names_rev` moved and a listener failed. It is idempotent: only what is still active on a horse not in the field is voided, so a restart never voids anything twice.
 - **Live:** `horse_scratched` (per horse that left) and `field_changed` (the new field) go out over SocketIO; guest phones drop the horse and re-read the list without a reload.
 - If results were already entered when a horse is scratched (it ran, so this is an operator error), its payouts are left as they are and the log says so.
@@ -293,6 +297,8 @@ A scratch is entered **once, on La Quiniela's admin page** (`/quiniela/admin`, S
 └────────────────────────────────────────────────────────────┘
 ```
 
+Each row also has a **No cap** toggle: the admin marks a bidder (the host) exempt from the max-horses cap (`POST /api/admin/cap-exempt`).
+
 ### Edge Case: Unpaid Bidder Wins
 
 If an unpaid bidder wins a payout, admin sees flag: "Mike T 🎺 owes $145 but won $340 on Magnolia — net $195 owed to them." Joey settles net.
@@ -318,12 +324,12 @@ Total pot = $500
 - Place owner: $125
 - Show owner: $75
 
-### "The House" Safety Net
+### Unsold horses: no House
 
-Joey's encouraging a bid on all cups, so this shouldn't trigger. But as a safety net:
+There is **no House**. No payout ever goes to a House or to the DDM build fund, and no horse is held by anyone "at $0". A horse nobody bids on is simply **unsold**:
 
-- Any horse with **zero bids** at lockdown goes to "The House" at $0
-- If The House wins a payout, it rolls to the **DDM 2027 Build Fund** (displayed on spectator TV as: "The House wins $45 → DDM 2027 Fund 🛠️")
+- **Before the lock the admin is warned.** Joey encourages a bid on every horse, but one nobody bid on would reach the lock unsold. `POST /api/admin/lock` answers `409 {"unsold": [3, 12]}` (the horses in the field with no bid) and does nothing until the body says `{"confirm": true}`; the admin page lists them and has a confirm button. In practice the host buys them first, at the minimum bid. He is the one bidder the admin marks exempt from the max-three cap (**No cap** on his row, `POST /api/admin/cap-exempt`), so he can pick up the stragglers.
+- **A paying horse with no owner at settlement** (WIN, PLACE or SHOW; the warning should make it impossible, but a void after the lock, or a replacement that entered after it, can still cause it) is **skipped, and the next finisher pays**: La Quiniela's rule for an empty cup in the money. Settlement does not wait for it. The slot is stored with no bidder and flagged `unowned` (the results reply, `GET /api/admin/payouts`, the ledger's NO OWNER flag), and nobody is paid it until the admin names the horse that pays it: `POST /api/admin/payout-slot {finish, horse_id}`, a picker of in-field horses in the ledger. Any slot can be set, because skipping one finisher moves the next up into it; the horse must be in the field and have an owner. There is no automatic award.
 
 ### Settlement
 
@@ -331,7 +337,7 @@ Joey's encouraging a bid on all cups, so this shouldn't trigger. But as a safety
 2. La Subasta system reads results, computes payouts
 3. Push notifications fire to winners
 4. Spectator TV runs victory sequence (see below)
-5. Admin view shows payout ledger: "Pay Dave K 🌮 $300 for Magnolia (Win)"
+5. Admin view shows payout ledger: "Pay Dave K 🌮 $300 for Magnolia (Win)"; a slot with no owner shows a NO OWNER flag and a picker (see above)
 6. Joey Venmos out winnings, taps **"Mark Paid Out"** per row
 
 ---
@@ -433,6 +439,8 @@ Payouts and ownership are stored in DB — **never dependent on notifications la
 
 **Landscape iPad layout, denser info, admin controls.**
 
+*Built so far: a small page at `/la-subasta/admin` (the state controls with the lock's warning, race results, the bidders with Mark Paid and No cap, the payout ledger with the NO OWNER picker). The layout below is the target.*
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ 🏇 LA SUBASTA ADMIN        State: OPEN  │  Pot: $412         │
@@ -457,11 +465,13 @@ Payouts and ownership are stored in DB — **never dependent on notifications la
 
 **Admin powers:**
 - Mark any bidder Paid/Unpaid
+- Mark a bidder (the host) exempt from the max-horses cap
 - Void any bid (triggers re-award)
 - Manually edit a bid (fix fat-finger)
 - Scratches: none here, they are entered on the LQ admin page (see **Scratches**)
-- Force lock auction early
+- Lock the auction (the lock lists any horse nobody bid on and goes ahead only on confirm)
 - Enter race results
+- Name the horse that pays a payout slot with no owner
 - Mark payouts as settled
 - Toggle Testing/Sandbox Mode
 - Export full data as CSV/JSON
@@ -561,9 +571,12 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/api/check-identity` | POST | Check if name+emoji available |
 | `/la_subasta/api/push/subscribe` | POST | Register browser push endpoint |
 | `/la_subasta/api/admin/start` | POST | Start auction (admin) |
-| `/la_subasta/api/admin/lock` | POST | Force-lock auction (admin) |
+| `/la_subasta/api/admin/lock` | POST | Lock the auction (admin); `409 {unsold: [...]}` while a horse in the field has no bid, unless the body is `{confirm: true}` |
 | `/la_subasta/api/admin/void` | POST | Void a bid `{bid_id, reason}` (admin) |
 | `/la_subasta/api/admin/paid` | POST | Mark bidder paid `{bidder_id}` (admin) |
+| `/la_subasta/api/admin/cap-exempt` | POST | Exempt a bidder from the max-horses cap, or take it off `{bidder_id, exempt}` (admin) |
+| `/la_subasta/api/admin/payouts` | GET | Payout ledger, with `unowned` slots (admin) |
+| `/la_subasta/api/admin/payout-slot` | POST | Name the horse that pays a slot with no owner `{finish, horse_id}` (admin) |
 | `/la_subasta/api/admin/testing` | POST | Toggle sandbox mode (admin) |
 | `/la_subasta/api/admin/export` | GET | Export all data as JSON/CSV |
 | `/la_subasta/api/history` | GET | Past years' winners (year-over-year) |
@@ -612,7 +625,6 @@ All bid history, ownership, and payouts **persist forever** in SQLite. Enables:
 - **All-Time Biggest Winner:** cumulative winnings across years
 - **All-Time Biggest Spender:** cumulative bids placed
 - **Return Rivalries:** "Dave and Sarah have clashed in 3 straight DDMs"
-- **The House Fund:** cumulative rollover for the 2027 Build Fund
 
 ### Data Table
 
@@ -807,7 +819,7 @@ PAYOUT_WIN_PCT = 0.60
 PAYOUT_PLACE_PCT = 0.25
 PAYOUT_SHOW_PCT = 0.15
 
-# House
+# House fund label: unused since the House rule went (2026-10-01); still an admin tunable
 HOUSE_FUND_LABEL = "DDM 2027 Build Fund"
 
 # Sandbox
@@ -838,7 +850,7 @@ Most config values in `config.py` are set-and-forget. However, **7 specific sett
 | 3 | **Min opening bid** | $1 | $1 – $20 | Floor for first bid on any horse |
 | 4 | **Lockdown minutes before post** | 15 | 5 – 60 | When auction hard-closes |
 | 5 | **Payout split** | 60/25/15 | Preset dropdown | Options: `60/25/15` (classic), `70/20/10` (top-heavy), `50/30/20` (flatter) |
-| 6 | **House fund label** | "DDM 2027 Build Fund" | Free text, ≤40 chars | Yearly text change |
+| 6 | **House fund label** | "DDM 2027 Build Fund" | Free text, ≤40 chars | Yearly text change; **unused** since the House rule went (2026-10-01), kept until it is removed |
 | 7 | **Auction open time** | 09:00 | HH:MM | Morning-of start time |
 
 ### Lock-When-Open Guardrail
@@ -951,6 +963,7 @@ These remain code-only (rare to change, edit the file directly if needed):
 | 1.1 | April 2026 | Renamed to **Derby de Mayo's La Subasta**; added Naming & Branding Conventions section; updated all directory paths, URL slugs, CSS file names, and ASCII mockups |
 | 1.2 | April 2026 | Added **Admin Tunables & Overrides** section: 7 live-adjustable settings, lock-when-open guardrail, override storage pattern, audit log table, settings panel UI |
 | 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta. **Scratches** entered on the LQ admin page and applied by the auction's own rule; La Subasta's own scratch endpoint and `horse_state` are gone |
+| 1.4 | October 2026 | **No House**: no payout ever goes to the House or a build fund. An unsold horse is bought before the lock (the lock warns, and the admin can exempt the host from the max-three cap); a paying horse with no owner is skipped and the admin names the next finisher in the payout ledger. **Undo restores everything**: a scratch's bids and, after the lock, its ownership come back with the horse. A void after the lock moves the ownership with the bids |
 
 ---
 

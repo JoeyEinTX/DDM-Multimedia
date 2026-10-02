@@ -46,7 +46,7 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
    orientation, brightness, and once built, its empty reading and last count). Nothing else
    stores anything pi5 cannot rebuild.
 3. **One race state, one names list.** Everything that shows a horse reads La Quiniela's
-   store: the TV, the dashboard, the roster slide, and La Subasta (section 8, [TO BUILD]).
+   store: the TV, the dashboard, the roster slide, and La Subasta (section 8, [BUILT]).
 4. **Everything survives a reboot.** Any single device, pi5 included, can restart mid-party
    and the system recovers on its own.
 5. **Loose coupling.** A missing subsystem (no LED controller, no HUB75, no Derby Dash, no
@@ -319,7 +319,7 @@ There is no roster line. A v1 `roster` line is ignored.
 
 - A scratch of either kind is entered once, on the admin page, and can be undone (a chain
   undoes last record first). [BUILT]
-- La Subasta must read the same scratch. [TO BUILD, section 8]
+- La Subasta must read the same scratch. [BUILT, section 8]
 
 ---
 
@@ -361,7 +361,7 @@ There is no roster line. A v1 `roster` line is ignored.
     (`pi5/la_subasta/scratches.py`) applies a scratch on change, idempotently, by the
     auction's own rule: while open, the horse's bids are voided; after the lock, its
     ownership too, and the owner's total owed drops. Guest phones update over SocketIO.
-- **Decision** [DECIDED 2026-09-29, TO BUILD, must-do before DDM 2027]: La Subasta reads
+- **Decision** [DECIDED 2026-09-29, BUILT]: La Subasta reads
   names, program numbers (1–24, `in_field`) and scratches from La Quiniela's store. A
   scratch is entered once, on the LQ admin page.
 - **Timing makes replacements simple.** The auction runs at the party, after the Friday
@@ -369,6 +369,22 @@ There is no roster line. A v1 `roster` line is ignored.
   it stands, for example #22 in place of #9.
 - A same-day scratch after the auction follows La Subasta's own rule in
   `DDM_La_Subasta_Spec.md`.
+- **No House.** [DECIDED 2026-10-01, BUILT] No payout ever goes to a House or the DDM
+  build fund. A horse nobody bids on is bought by a bidder before the lock, in practice the
+  host, at the minimum bid.
+- **Undo restores everything.** [DECIDED 2026-10-01, BUILT] Undoing a scratch on the LQ
+  admin page puts the horse back in the field and un-voids the bids, and after the lock the
+  ownership row, that the scratch voided, so the owner owes again. No horse is ever left
+  ownerless by an undo. (This replaces the `ad49ac7` note that an undone horse pays the
+  House.)
+- **Unsold-horse guard.** [DECIDED 2026-10-01, BUILT] The admin page warns before locking
+  if any horse in the field has no bid, and lists them. The lock goes ahead only on confirm.
+- **One bidder may be exempt from the max-three cap.** [DECIDED 2026-10-01, BUILT] The
+  host, so he can pick up the stragglers. The admin marks the bidder; the cap still applies
+  to everyone else.
+- **A paying horse with no owner is skipped.** [DECIDED 2026-10-01, BUILT] The next
+  finisher pays, the same rule La Quiniela uses for an empty cup. The admin payout ledger
+  flags the slot and the admin enters the horse that pays it. No automatic House award.
 - Guest pages are on pi5 at `/la-subasta`, port 5000.
 
 ---
