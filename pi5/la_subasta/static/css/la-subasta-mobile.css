@@ -985,6 +985,30 @@ input {
     font-size: 14px;
 }
 
+/* Guest toast: a short message that has no card to show it on (a horse
+   scratched out from under an open bid dialog; guest.js showNotice). Its own
+   element, not the dev panel's: above the modals, below the dev panel. */
+.ls-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(24px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 3000;
+    width: max-content;
+    max-width: min(92vw, 420px);
+    padding: 12px 18px;
+    border-radius: var(--ls-radius-btn);
+    background: var(--ls-bg-secondary);
+    color: var(--ls-text);
+    border: 1px solid var(--ls-gold);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: center;
+}
+.ls-toast[hidden] { display: none; }
+
 /* Toast */
 .ls-dev-toast {
     position: fixed;

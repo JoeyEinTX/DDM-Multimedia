@@ -68,16 +68,18 @@ PAYOUT_PLACE_PCT = 0.25
 PAYOUT_SHOW_PCT = 0.15
 
 # -----------------------------------------------------------------------------
-# House / rollover
+# No House
 # -----------------------------------------------------------------------------
+# There is no House and no rollover: no payout ever goes to "the House" or to
+# a build fund (DDM_La_Subasta_Spec.md, Payouts). A horse nobody bought is
+# bought by a bidder before the lock, in practice the host (the lock warns
+# about it), and a paying slot whose horse has no owner is named by the admin
+# (payouts.py).
+#
+# HOUSE_FUND_LABEL is what is left of it: a display-only tunable that nothing
+# reads any more (the spectator message it labelled was never built). It stays
+# an admin tunable until Joey decides to remove it (settings.py, the spec).
 HOUSE_FUND_LABEL = DEFAULTS["HOUSE_FUND_LABEL"]
-# Sentinel identity for un-bid horses. Top-hat (🎩) is in the general emoji
-# palette (iOS/Android/desktop push notifications all render it identically)
-# and fits the auctioneer vibe better than 🏠, which ships as a few different
-# house glyphs depending on platform.
-HOUSE_BIDDER_NAME = "The House"
-HOUSE_BIDDER_EMOJI = "🎩"
-HOUSE_BIDDER_IDENTITY = f"{HOUSE_BIDDER_NAME} {HOUSE_BIDDER_EMOJI}"
 
 # -----------------------------------------------------------------------------
 # Sandbox / testing

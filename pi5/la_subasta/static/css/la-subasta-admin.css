@@ -1,0 +1,143 @@
+/* =============================================================================
+   La Subasta admin page. Same DDM palette as the guest page, its own small
+   stylesheet: big tap targets, one column on a phone, two on an iPad.
+   ============================================================================= */
+
+:root {
+    --adm-bg:      #0a1f1a;
+    --adm-card:    #1a3a30;
+    --adm-line:    rgba(255, 255, 255, 0.12);
+    --adm-fg:      #ffffff;
+    --adm-dim:     #a8bfb4;
+    --adm-accent:  #3F8E43;   /* Mistletoe Green */
+    --adm-gold:    #FEC600;   /* Sunflower Yellow */
+    --adm-urgent:  #DE4343;   /* Scarlet Red Matte */
+    --adm-font:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 12px 12px 48px;
+    background: var(--adm-bg);
+    color: var(--adm-fg);
+    font: 16px/1.4 var(--adm-font);
+}
+
+h1 { margin: 0; font-size: 22px; color: var(--adm-gold); letter-spacing: 0.04em; }
+h2 { margin: 0 0 10px; font-size: 18px; color: var(--adm-gold); }
+h3 { margin: 14px 0 8px; font-size: 15px; color: var(--adm-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.adm-head { margin: 4px 0 12px; }
+.adm-figures { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-top: 6px; color: var(--adm-dim); }
+.adm-figures strong { color: var(--adm-fg); }
+
+.adm-pill {
+    display: inline-block;
+    padding: 2px 12px;
+    border-radius: 999px;
+    background: var(--adm-card);
+    border: 1px solid var(--adm-gold);
+    color: var(--adm-gold);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+.adm-main { display: grid; grid-template-columns: 1fr; gap: 14px; max-width: 1100px; margin: 0 auto; }
+@media (min-width: 900px) {
+    .adm-main { grid-template-columns: 1fr 1fr; align-items: start; }
+    .adm-main > :first-child { grid-column: 1 / -1; }
+}
+
+.adm-card {
+    background: var(--adm-card);
+    border: 1px solid var(--adm-line);
+    border-radius: 14px;
+    padding: 14px;
+}
+
+button, select {
+    font: inherit;
+    color: var(--adm-fg);
+    min-height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--adm-line);
+    background: #24483c;
+}
+button { padding: 0 16px; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: default; }
+button.adm-danger { background: var(--adm-urgent); border-color: var(--adm-urgent); }
+button.adm-on { background: var(--adm-accent); border-color: var(--adm-accent); }
+select { padding: 0 8px; max-width: 100%; }
+
+.adm-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.adm-buttons > button { flex: 1 1 140px; }
+
+.adm-warn {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 2px solid var(--adm-gold);
+    background: rgba(254, 198, 0, 0.1);
+}
+.adm-warn[hidden], .adm-results[hidden] { display: none; }
+.adm-warn p { margin: 6px 0 0; color: var(--adm-dim); }
+
+.adm-pick3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.adm-pick3 label { display: grid; gap: 4px; color: var(--adm-dim); }
+
+.adm-status { min-height: 1.4em; margin-top: 10px; color: var(--adm-dim); }
+.adm-status.ok { color: #7bd88f; }
+.adm-status.err { color: #ff8a8a; font-weight: 600; }
+
+.adm-list { display: block; }
+.adm-empty { color: var(--adm-dim); padding: 4px 0; }
+
+/* A bidder row and a payout slot: text on the left, buttons on the right. */
+.adm-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-top: 1px solid var(--adm-line);
+}
+.adm-row:first-child { border-top: 0; }
+.adm-who { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+.adm-meta { color: var(--adm-dim); font-size: 14px; }
+.adm-meta .adm-bad { color: #ff8a8a; font-weight: 700; }
+.adm-meta .adm-good { color: #7bd88f; font-weight: 700; }
+.adm-acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.adm-acts > button { min-width: 96px; }
+
+/* A phone: the buttons go under the text, which then has the whole width. */
+@media (max-width: 560px) {
+    .adm-row { grid-template-columns: 1fr; }
+    .adm-acts { justify-content: flex-start; }
+    .adm-acts > button { flex: 1 1 120px; }
+}
+
+.adm-slot-pick { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.adm-slot-pick select { flex: 1 1 200px; }
+.adm-slot-pick[hidden] { display: none; }
+
+.adm-flag {
+    display: inline-block;
+    padding: 1px 10px;
+    border-radius: 999px;
+    background: var(--adm-urgent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+
+.adm-chip {
+    display: inline-block;
+    margin: 4px 6px 0 0;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    font-weight: 600;
+}

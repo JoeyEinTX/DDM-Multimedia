@@ -653,12 +653,12 @@
 
     // A short message over the page, for something the guest should know that
     // has no card to show it on (a horse scratched out from under an open
-    // dialog). It borrows the page's one toast element, the dev panel's, which
-    // sits outside the hidden panel, and stays long enough to be read.
+    // dialog). It has its own element, #ls-toast (the dev panel keeps its
+    // own), and stays long enough to be read.
     const NOTICE_MS = 6000;
 
     function showNotice(msg) {
-        const el = document.getElementById('ls-dev-toast');
+        const el = document.getElementById('ls-toast');
         if (!el) return;
         el.textContent = msg;
         el.hidden = false;
@@ -1155,7 +1155,17 @@
                      : ((r.data && r.data.error) || 'Transition failed'));
             devRefreshStatus();
         } else if (action === 'lock') {
-            const r = await postJSON(ADMIN + 'lock', {});
+            let r = await postJSON(ADMIN + 'lock', {});
+            // There is no House to take a horse nobody bid on: the server
+            // answers 409 with their numbers and waits for a confirm.
+            if (!r.ok && r.data && Array.isArray(r.data.unsold)) {
+                const list = r.data.unsold.map(function (n) { return '#' + n; }).join(', ');
+                if (!window.confirm('No bid on ' + list + '. Lock anyway?')) {
+                    devToast('Lock cancelled');
+                    return;
+                }
+                r = await postJSON(ADMIN + 'lock', { confirm: true });
+            }
             devToast(r.ok && r.data.success ? 'Auction locked'
                      : ((r.data && r.data.error) || 'Lock failed'));
             devRefreshStatus();

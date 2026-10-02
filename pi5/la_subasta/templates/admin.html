@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a1f1a">
+    <title>La Subasta admin</title>
+    <link rel="stylesheet" href="{{ url_for('la_subasta.static', filename='css/la-subasta-admin.css') }}">
+</head>
+<body>
+
+<!-- La Subasta admin: the auction's state and its controls (with the lock's
+     warning about horses nobody bid on), the bidders (paid; the cap
+     exemption) and the payout ledger (a picker for a slot nobody owns).
+     Everything is read from and sent to the /la-subasta/api routes by
+     admin.js; the page itself holds no state. -->
+
+<header class="adm-head">
+    <h1>La Subasta admin</h1>
+    <div class="adm-figures">
+        <span class="adm-pill" id="ls-admin-state">&mdash;</span>
+        <span>Pot <strong id="ls-admin-pot">&mdash;</strong></span>
+        <span>Bidders <strong id="ls-admin-bidders">&mdash;</strong></span>
+        <span>Bids <strong id="ls-admin-bids">&mdash;</strong></span>
+    </div>
+</header>
+
+<main class="adm-main">
+
+    <section class="adm-card" id="ls-admin-controls">
+        <h2>Auction</h2>
+        <div class="adm-buttons">
+            <button type="button" id="ls-admin-open" data-admin-action="open">Open auction</button>
+            <button type="button" id="ls-admin-final" data-admin-action="final-hour">Final hour</button>
+            <button type="button" id="ls-admin-lock" data-admin-action="lock">Lock auction</button>
+        </div>
+
+        <!-- The lock's warning. There is no House to take a horse nobody
+             bought, so a lock with unsold horses asks first (POST
+             /api/admin/lock answers 409 with their numbers). -->
+        <div id="ls-admin-unsold" class="adm-warn" role="alert" hidden>
+            <strong>No bid on <span id="ls-admin-unsold-list"></span></strong>
+            <p>There is no House to take a horse nobody bought. Buy these before you lock
+               (the host can, at the minimum bid), or lock anyway: a horse that then finishes
+               in the money leaves its payout slot for you to name.</p>
+            <div class="adm-buttons">
+                <button type="button" id="ls-admin-unsold-confirm" class="adm-danger">Lock anyway</button>
+                <button type="button" id="ls-admin-unsold-cancel">Cancel</button>
+            </div>
+        </div>
+
+        <div id="ls-admin-results" class="adm-results" hidden>
+            <h3>Race results</h3>
+            <div class="adm-pick3">
+                <label>Win <select id="ls-admin-win"></select></label>
+                <label>Place <select id="ls-admin-place"></select></label>
+                <label>Show <select id="ls-admin-show"></select></label>
+            </div>
+            <div class="adm-buttons">
+                <button type="button" id="ls-admin-results-submit">Enter results</button>
+            </div>
+        </div>
+
+        <div id="ls-admin-status" class="adm-status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="adm-card">
+        <h2>Bidders</h2>
+        <div id="ls-admin-bidders-list" class="adm-list"></div>
+    </section>
+
+    <section class="adm-card">
+        <h2>Payouts</h2>
+        <div id="ls-admin-payouts" class="adm-list"></div>
+    </section>
+
+</main>
+
+<script src="{{ url_for('la_subasta.static', filename='js/admin.js') }}"></script>
+</body>
+</html>

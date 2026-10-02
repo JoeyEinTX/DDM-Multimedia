@@ -1,7 +1,8 @@
 # la_subasta/blueprint.py - Flask routes for La Subasta
 #
 # URL prefix: /la-subasta (hyphen, per spec § Naming & Branding Conventions)
-# All routes return JSON for Phase 1 — templates/UI land in Phase 2.
+# The guest page (/) and the admin page (/admin) are templates; the spectator
+# view is still a placeholder; everything under /api is JSON.
 
 import logging
 import time
@@ -12,9 +13,10 @@ from la_subasta import bidding, field, notifications, payouts, reset, scratches,
 from la_subasta.bidding import BidError
 from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR
 from la_subasta.models import init_db
+from la_subasta.payouts import PayoutError
 from la_subasta.settings import SettingsError
 from la_subasta.state_machine import (
-    AuctionState, get_state, get_state_row, transition,
+    AuctionState, can_transition, get_state, get_state_row, transition,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +99,7 @@ def _bid_err(exc: BidError, status: int = 400):
 
 
 # -----------------------------------------------------------------------------
-# Page routes — return JSON placeholders until Phase 2 templates land
+# Page routes
 # -----------------------------------------------------------------------------
 
 @la_subasta_bp.route("/", methods=["GET"])
@@ -114,7 +116,12 @@ def guest_view():
 
 @la_subasta_bp.route("/admin", methods=["GET"])
 def admin_view():
-    return jsonify({"view": "admin", "status": "Phase 3 UI pending"})
+    """The admin page: the auction's state and its controls (with the lock's
+    unsold-horse warning), the bidders (paid, and the cap exemption) and the
+    payout ledger (with the picker for an unowned slot). A small page over
+    the /api/admin routes; the fuller iPad view of the spec (Phase 3) is
+    still to come."""
+    return render_template("admin.html")
 
 
 @la_subasta_bp.route("/spectator", methods=["GET"])
@@ -206,8 +213,7 @@ def api_check_identity():
 
 @la_subasta_bp.route("/api/bidders", methods=["GET"])
 def api_bidders():
-    include_house = request.args.get("include_house", "").lower() in ("1", "true", "yes")
-    bidders = bidding.list_bidders(include_house=include_house)
+    bidders = bidding.list_bidders()
     for b in bidders:
         b["portfolio"] = bidding.bidder_portfolio(b["id"])
         # The ledger: what the bidder owes now, and what a bidder already
@@ -353,6 +359,27 @@ def api_admin_transition():
 
 @la_subasta_bp.route("/api/admin/lock", methods=["POST"])
 def api_admin_lock():
+    """Lock bidding and freeze ownership.
+
+    There is no House to take a horse nobody bought, so before locking this
+    looks for horses in the field with no bid. If there are any it answers
+    409 {"unsold": [program numbers]} and does nothing, unless the body says
+    {"confirm": true}: buy them first (in practice the host does, at the
+    minimum bid), or lock anyway and accept that one finishing in the money
+    leaves its payout slot for the admin to name (payouts.py). A lock the
+    auction cannot make from where it is (not OPEN or FINAL_HOUR) is refused
+    as before, without the warning.
+    """
+    data = request.get_json(silent=True) or {}
+    if can_transition(AuctionState.LOCKED):
+        unsold = bidding.unsold_horses()
+        if unsold and data.get("confirm") is not True:
+            return jsonify({
+                "success": False,
+                "error": "No bid on " + ", ".join(f"#{n}" for n in unsold)
+                         + ": buy them before locking, or confirm to lock anyway",
+                "unsold": unsold,
+            }), 409
     try:
         _transition_with_broadcast(AuctionState.LOCKED)
     except ValueError as exc:
@@ -394,6 +421,8 @@ def api_admin_results():
         return _err(f"Cannot enter results from state {current.value}",
                     status=409)
 
+    # A finisher nobody owns is not paid to anyone (there is no House): the
+    # result names it in "unowned", and the admin ledger has the picker.
     result = payouts.compute_and_persist_payouts(win, place, show)
     _transition_with_broadcast(AuctionState.SETTLED)
 
@@ -454,7 +483,51 @@ def api_admin_paid():
 
 @la_subasta_bp.route("/api/admin/payouts", methods=["GET"])
 def api_admin_payouts():
+    """The payout ledger: one row per paying slot (win, place, show), each
+    with `unowned` true while nobody is to be paid it."""
     return jsonify({"success": True, "payouts": payouts.list_payouts()})
+
+
+@la_subasta_bp.route("/api/admin/payout-slot", methods=["POST"])
+def api_admin_payout_slot():
+    """Name the horse that pays a slot: the safety net for a paying horse with
+    no owner (La Quiniela's rule for an empty cup: the next finisher takes the
+    place). Body JSON: {"finish": "win" | "place" | "show", "horse_id": 4},
+    a horse in the field that has an owner. 409 before results are in, or if
+    that horse has no owner either."""
+    data = request.get_json(silent=True) or {}
+    try:
+        horse_id = int(data.get("horse_id"))
+    except (TypeError, ValueError):
+        return _err("horse_id must be an integer")
+    try:
+        slot = payouts.set_slot_horse(data.get("finish"), horse_id)
+    except PayoutError as exc:
+        return _err(exc.reason, status=exc.status)
+    ledger = payouts.ledger()
+    notifications.payout_computed(ledger)
+    return jsonify({"success": True, "slot": slot, **ledger})
+
+
+@la_subasta_bp.route("/api/admin/cap-exempt", methods=["POST"])
+def api_admin_cap_exempt():
+    """Mark a bidder exempt from the max-horses cap, or take the mark off
+    (the host, who buys the horses nobody else bid on). Body JSON:
+    {"bidder_id": 3, "exempt": true}. The cap still applies to everyone else."""
+    data = request.get_json(silent=True) or {}
+    try:
+        bidder_id = int(data.get("bidder_id"))
+    except (TypeError, ValueError):
+        return _err("bidder_id must be an integer")
+    exempt = data.get("exempt")
+    if not isinstance(exempt, bool):
+        return _err("exempt must be true or false")
+    try:
+        bidder = bidding.set_cap_exempt(bidder_id, exempt)
+    except BidError as exc:
+        return _bid_err(exc, status=404)
+    return jsonify({"success": True, "bidder_id": bidder_id,
+                    "cap_exempt": bool(bidder["cap_exempt"])})
 
 
 # -----------------------------------------------------------------------------

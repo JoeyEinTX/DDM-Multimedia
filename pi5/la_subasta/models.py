@@ -25,7 +25,29 @@ _write_lock = threading.Lock()
 # Schema (Phase 1)
 # -----------------------------------------------------------------------------
 
-SCHEMA_SQL = """
+# payouts: bidder_id is NULL for a slot nobody owns yet, because the horse that
+# finished there was never sold (payouts.py): there is no House to pay it to.
+# pays_horse_id is the horse the admin named to pay the slot in its place (the
+# next finisher), when there is one. Shared by SCHEMA_SQL and the rebuild of an
+# older table (_migrate).
+_PAYOUTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS payouts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    bidder_id     INTEGER REFERENCES bidders(id),
+    horse_id      INTEGER NOT NULL,
+    pays_horse_id INTEGER,
+    finish        TEXT    NOT NULL CHECK (finish IN ('win','place','show')),
+    amount        REAL    NOT NULL,
+    paid_out      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    event_year    INTEGER NOT NULL,
+    UNIQUE(finish, event_year)
+);
+"""
+
+SCHEMA_SQL = f"""
+-- cap_exempt: the admin marked this bidder (the host, who picks up the horses
+-- nobody bid on) as free of the max-horses cap (bidding.set_cap_exempt).
 CREATE TABLE IF NOT EXISTS bidders (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL,
@@ -36,7 +58,8 @@ CREATE TABLE IF NOT EXISTS bidders (
     paid         INTEGER NOT NULL DEFAULT 0,
     paid_at      TEXT,
     paid_amount  REAL,
-    event_year   INTEGER NOT NULL
+    event_year   INTEGER NOT NULL,
+    cap_exempt   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_bidders_event_year ON bidders(event_year);
@@ -75,17 +98,7 @@ CREATE TABLE IF NOT EXISTS ownership (
     UNIQUE(horse_id, event_year)
 );
 
-CREATE TABLE IF NOT EXISTS payouts (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    bidder_id  INTEGER NOT NULL REFERENCES bidders(id),
-    horse_id   INTEGER NOT NULL,
-    finish     TEXT    NOT NULL CHECK (finish IN ('win','place','show')),
-    amount     REAL    NOT NULL,
-    paid_out   INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-    event_year INTEGER NOT NULL,
-    UNIQUE(finish, event_year)
-);
+{_PAYOUTS_TABLE_SQL}
 
 CREATE TABLE IF NOT EXISTS auction_state (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,14 +201,12 @@ def init_db(path: str = None) -> sqlite3.Connection:
     other threads (via get_conn) see the same tables. Does NOT create or touch
     the dashboard's horses table.
     """
-    global _house_bidder_id
     if path is None:
         path = _db_path()
     conn = _open_for_thread(path)
-    _migrate_ownership(conn)
+    _migrate(conn)
     conn.executescript(SCHEMA_SQL)
-    _house_bidder_id = None  # force re-lookup after schema apply
-    _ensure_house_bidder(conn)
+    _drop_legacy_house(conn)
     return conn
 
 
@@ -205,55 +216,88 @@ _OWNERSHIP_VOID_COLUMNS = (
     ("voided_at", "TEXT"),
 )
 
+_BIDDER_COLUMNS = (
+    ("cap_exempt", "INTEGER NOT NULL DEFAULT 0"),
+)
 
-def _migrate_ownership(conn: sqlite3.Connection) -> None:
-    """An ownership table from before scratches came from La Quiniela has
-    no void columns: add them (every existing row reads not voided).
-    Nothing else is touched; a missing table is created by the schema."""
-    have = {r["name"] for r in conn.execute("PRAGMA table_info(ownership)").fetchall()}
+_PAYOUT_COLUMNS = (
+    "id", "bidder_id", "horse_id", "finish", "amount", "paid_out", "created_at", "event_year",
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection, table: str, columns) -> None:
+    """ALTER TABLE ADD COLUMN for each column a table from an older version
+    lacks (every existing row reads the column's default). A missing table is
+    left to the schema."""
+    have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if not have:
         return
-    for column, ddl in _OWNERSHIP_VOID_COLUMNS:
+    for column, ddl in columns:
         if column not in have:
-            conn.execute(f"ALTER TABLE ownership ADD COLUMN {column} {ddl}")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
-# -----------------------------------------------------------------------------
-# House bidder sentinel
-# -----------------------------------------------------------------------------
-#
-# "The House" owns any horse that received zero bids at lockdown. Representing
-# it as a real bidder row keeps the payouts.bidder_id foreign key intact and
-# lets JOIN-based queries treat it uniformly. The id is cached after first
-# lookup; filters at the API layer hide it from guest-facing bidder lists.
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a database from an older version up to this schema, before the
+    schema itself is applied. Idempotent; nothing is dropped that held data.
 
-_house_bidder_id: int = None  # type: ignore[assignment]
+    - ownership gains the void columns (a scratch after the lock);
+    - bidders gains cap_exempt (the admin's exemption from the max-horses cap);
+    - payouts is rebuilt when its bidder_id is still NOT NULL (the House was
+      its fallback payee) or it has no pays_horse_id: the rows are copied, and
+      the table can then hold a slot nobody owns.
+    """
+    _add_missing_columns(conn, "ownership", _OWNERSHIP_VOID_COLUMNS)
+    _add_missing_columns(conn, "bidders", _BIDDER_COLUMNS)
+
+    info = {r["name"]: r for r in conn.execute("PRAGMA table_info(payouts)").fetchall()}
+    if not info or (not info["bidder_id"]["notnull"] and "pays_horse_id" in info):
+        return
+    # DDL is transactional in SQLite: either the whole rebuild happens or none.
+    cols = ", ".join(_PAYOUT_COLUMNS)
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute("ALTER TABLE payouts RENAME TO payouts_old")
+        conn.execute(_PAYOUTS_TABLE_SQL)
+        conn.execute(f"INSERT INTO payouts ({cols}) SELECT {cols} FROM payouts_old")
+        conn.execute("DROP TABLE payouts_old")
+        conn.execute("COMMIT;")
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
 
 
-def _ensure_house_bidder(conn: sqlite3.Connection) -> int:
-    """Insert the House row (if missing) and return its id. Called by init_db."""
-    global _house_bidder_id
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO bidders (name, emoji, identity, event_year)
-        VALUES (?, ?, ?, ?)
-        """,
-        (_config.HOUSE_BIDDER_NAME, _config.HOUSE_BIDDER_EMOJI,
-         _config.HOUSE_BIDDER_IDENTITY, _config.EVENT_YEAR),
-    )
+# The House is gone (payouts.py: no payout ever goes to it). A database from
+# before has its sentinel bidder row; this is the identity it was made with.
+_LEGACY_HOUSE_IDENTITY = "The House \U0001F3A9"
+
+
+def _drop_legacy_house(conn: sqlite3.Connection) -> None:
+    """Remove the House's sentinel bidder row from a database that has one. A
+    payout that named it becomes a slot nobody owns (bidder_id NULL), which is
+    what a horse nobody bought is now. A row that somehow has bids or an
+    ownership is left alone."""
     row = conn.execute(
-        "SELECT id FROM bidders WHERE identity = ?",
-        (_config.HOUSE_BIDDER_IDENTITY,),
+        "SELECT id FROM bidders WHERE identity = ?", (_LEGACY_HOUSE_IDENTITY,),
     ).fetchone()
-    _house_bidder_id = int(row["id"])
-    return _house_bidder_id
-
-
-def house_bidder_id() -> int:
-    """Return the House bidder's id. init_db() must have run first."""
-    if _house_bidder_id is None:
-        _ensure_house_bidder(get_conn())
-    return _house_bidder_id
+    if row is None:
+        return
+    house = row["id"]
+    busy = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM bids WHERE bidder_id = ?) "
+        "     + (SELECT COUNT(*) FROM ownership WHERE bidder_id = ?) AS n",
+        (house, house),
+    ).fetchone()["n"]
+    if busy:
+        return
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute("UPDATE payouts SET bidder_id = NULL WHERE bidder_id = ?", (house,))
+        conn.execute("DELETE FROM bidders WHERE id = ?", (house,))
+        conn.execute("COMMIT;")
+    except Exception:
+        conn.execute("ROLLBACK;")
+        raise
 
 
 def get_conn() -> sqlite3.Connection:

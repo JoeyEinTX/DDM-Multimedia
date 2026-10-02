@@ -12,7 +12,6 @@ from la_subasta import field, settings
 from la_subasta.config import (
     EMOJI_PALETTE, EVENT_YEAR, MIN_RAISE,
     BID_UNDO_WINDOW_SECONDS, MAX_HORSE,
-    HOUSE_BIDDER_IDENTITY,
 )
 from la_subasta.models import get_conn, write_txn
 from la_subasta.state_machine import is_biddable
@@ -92,32 +91,36 @@ def identity_available(name: str, emoji: str,
     return get_bidder_by_identity(f"{name} {emoji}", event_year) is None
 
 
-def list_bidders(event_year: int = EVENT_YEAR,
-                 include_house: bool = False) -> List[dict]:
-    """
-    Return all real bidders for the event year. The House sentinel row is
-    filtered out by default — Phase 4 spectator TV renders House wins via a
-    dedicated path, and guest-facing bidder lists shouldn't surface it.
-    Set include_house=True for admin/debug views.
-    """
-    if include_house:
-        rows = get_conn().execute(
-            "SELECT * FROM bidders WHERE event_year = ? ORDER BY created_at",
-            (event_year,),
-        ).fetchall()
-    else:
-        rows = get_conn().execute(
-            "SELECT * FROM bidders WHERE event_year = ? AND identity != ? "
-            "ORDER BY created_at",
-            (event_year, HOUSE_BIDDER_IDENTITY),
-        ).fetchall()
+def list_bidders(event_year: int = EVENT_YEAR) -> List[dict]:
+    """All bidders registered for the event year, oldest first. Each row
+    carries cap_exempt (the admin's exemption from the max-horses cap)."""
+    rows = get_conn().execute(
+        "SELECT * FROM bidders WHERE event_year = ? ORDER BY created_at, id",
+        (event_year,),
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
-def count_bidders(event_year: int = EVENT_YEAR,
-                  include_house: bool = False) -> int:
-    """Number of registered bidders (House sentinel excluded by default)."""
-    return len(list_bidders(event_year, include_house))
+def count_bidders(event_year: int = EVENT_YEAR) -> int:
+    """Number of registered bidders."""
+    return len(list_bidders(event_year))
+
+
+def set_cap_exempt(bidder_id: int, exempt: bool) -> dict:
+    """The admin marks a bidder free of the max-horses cap, or takes the mark
+    off: the host, say, who buys the horses nobody else bid on so that none
+    reaches the lock unsold. The cap still applies to everyone else, and a
+    bidder whose mark comes off keeps what they lead but takes no new horse
+    beyond the cap. Returns the bidder row; BidError if there is no such
+    bidder."""
+    with write_txn() as conn:
+        cur = conn.execute(
+            "UPDATE bidders SET cap_exempt = ? WHERE id = ?",
+            (1 if exempt else 0, bidder_id),
+        )
+        if not cur.rowcount:
+            raise BidError("Unknown bidder")
+    return get_bidder(bidder_id)
 
 
 def count_bids(event_year: int = EVENT_YEAR,
@@ -174,6 +177,15 @@ def horses_leading_by(bidder_id: int,
         if hb and hb["bidder_id"] == bidder_id:
             leading.append(horse_id)
     return leading
+
+
+def unsold_horses(event_year: int = EVENT_YEAR) -> List[int]:
+    """The program numbers, in order, of the horses in the field that nobody
+    has bid on. There is no House to take a horse nobody bought: the lock
+    warns about these (blueprint.api_admin_lock) so a bidder, in practice the
+    host, buys them first."""
+    return [n for n in field.current().numbers()
+            if current_high_bid(n, event_year) is None]
 
 
 # Scratches are La Quiniela's: a scratched horse is simply not in the field
@@ -315,9 +327,17 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
         ).fetchall()
         currently_leading = {r["horse_id"] for r in leading_rows}
 
+        # The admin can mark a bidder exempt from the cap (the host, who buys
+        # the horses nobody else bid on); the cap still applies to the rest.
+        exempt_row = conn.execute(
+            "SELECT cap_exempt FROM bidders WHERE id = ?", (bidder_id,),
+        ).fetchone()
+        cap_exempt = bool(exempt_row and exempt_row["cap_exempt"])
+
         # If bidder isn't currently leading this horse AND adding it would
         # push them past the cap, reject.
-        if horse_id not in currently_leading and len(currently_leading) >= max_horses_per_bidder:
+        if (not cap_exempt and horse_id not in currently_leading
+                and len(currently_leading) >= max_horses_per_bidder):
             raise BidError(f"Max {max_horses_per_bidder} horses per bidder")
 
         # ---- Insert the bid ------------------------------------------------
@@ -396,11 +416,42 @@ def undo_bid(bid_id: int, bidder_id: int) -> dict:
 
 
 # -----------------------------------------------------------------------------
-# Admin void (re-award to 2nd-highest, per spec § Welch / Void Policy)
+# Admin void (re-award to the runner-up, per spec § Welch / Void Policy)
 # -----------------------------------------------------------------------------
 
-def void_bid(bid_id: int, reason: str) -> dict:
-    """Admin void — no time limit, records reason, re-awards horse to runner-up."""
+def _follow_ownership(conn, horse_id: int, event_year: int) -> None:
+    """After the lock a horse's ownership row is its frozen winner. When a bid
+    on it is voided the row follows the bids: re-awarded to the highest bid
+    still active, at that bid's amount, or removed when none is left (the
+    horse is unowned: payouts.py's safety net applies if it pays). Before the
+    lock there is no row and nothing to do."""
+    own = conn.execute(
+        "SELECT id FROM ownership WHERE horse_id = ? AND event_year = ? AND voided = 0",
+        (horse_id, event_year),
+    ).fetchone()
+    if own is None:
+        return
+    top = conn.execute(
+        "SELECT bidder_id, amount FROM bids "
+        "WHERE horse_id = ? AND voided = 0 AND event_year = ? "
+        "ORDER BY amount DESC, bid_time ASC, id ASC LIMIT 1",
+        (horse_id, event_year),
+    ).fetchone()
+    if top is None:
+        conn.execute("DELETE FROM ownership WHERE id = ?", (own["id"],))
+    else:
+        conn.execute(
+            "UPDATE ownership SET bidder_id = ?, winning_bid = ? WHERE id = ?",
+            (top["bidder_id"], top["amount"], own["id"]),
+        )
+
+
+def void_bid(bid_id: int, reason: str, event_year: int = EVENT_YEAR) -> dict:
+    """Admin void: no time limit, records the reason. The horse goes to the
+    runner-up at their bid, which is the next-highest active bid. With no
+    second bidder it is unsold: there is no House to take it, so before the
+    lock it is back on the list with no bid (the lock warns about it), and
+    after the lock it has no owner (see _follow_ownership). `unsold` says so."""
     with write_txn() as conn:
         row = conn.execute(
             "SELECT horse_id, voided FROM bids WHERE id = ?", (bid_id,),
@@ -413,11 +464,14 @@ def void_bid(bid_id: int, reason: str) -> dict:
             "UPDATE bids SET voided = 1, voided_reason = ? WHERE id = ?",
             (reason or "admin void", bid_id),
         )
+        _follow_ownership(conn, row["horse_id"], event_year)
 
+    new_high = current_high_bid(row["horse_id"], event_year)
     return {
         "voided_bid_id": bid_id,
         "horse_id": row["horse_id"],
-        "new_high_bid": current_high_bid(row["horse_id"]),
+        "new_high_bid": new_high,
+        "unsold": new_high is None,
     }
 
 

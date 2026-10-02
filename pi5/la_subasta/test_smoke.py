@@ -493,7 +493,7 @@ def test_payouts():
            abs(amounts["win"] + amounts["place"] + amounts["show"] - pot) < 0.01)
 
     # End-to-end via admin endpoint: lock + enter results
-    resp = client.post("/la-subasta/api/admin/lock")
+    resp = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     _check("lock endpoint succeeds",
            resp.status_code == 200 and resp.get_json().get("success"),
            f"body={resp.get_json()}")
@@ -531,88 +531,314 @@ def test_payouts():
            abs(by_finish["show"]["amount"] - round(pot * 0.15, 2)) < 0.01)
 
 
-def test_house_payout():
-    """Zero-bid horse wins → House receives the payout."""
+# -----------------------------------------------------------------------------
+# No House (decided by Joey, 2026-10-01): unsold horses, unowned slots, the
+# lock's warning, the cap exemption
+# -----------------------------------------------------------------------------
+
+def _package_sources():
+    """(relative path, text) of La Subasta's own Python, JS, HTML and CSS,
+    this test file apart."""
+    root = os.path.dirname(os.path.abspath(__file__))
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        if "__pycache__" in dirpath:
+            continue
+        for name in files:
+            if name == "test_smoke.py" or not name.endswith((".py", ".js", ".html", ".css")):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8") as fh:
+                out.append((os.path.relpath(path, root), fh.read()))
+    return out
+
+
+def test_no_house():
+    """There is no House: no sentinel bidder row, no House payout, no
+    is_house flag, nothing to include."""
+    from la_subasta import config as _cfg, reset as _reset_mod
+    from la_subasta.models import get_conn
     _reset()
     app = _make_app()
     client = app.test_client()
-    transition(AuctionState.OPEN)
+    _check("a fresh database has no bidder at all, so no House row",
+           get_conn().execute("SELECT COUNT(*) AS c FROM bidders").fetchone()["c"] == 0)
+    _check("config has no House bidder",
+           not any(n.startswith("HOUSE_BIDDER") for n in dir(_cfg)))
+    _check("models has no House helpers",
+           not any(hasattr(models, n) for n in ("house_bidder_id", "_ensure_house_bidder")))
+    _check("reset has no House helper", not hasattr(_reset_mod, "_ensure_house_bidder"))
+    hits = [path for path, text in _package_sources()
+            if any(word in text for word in ("is_house", "house_bidder_id", "include_house"))]
+    _check("no is_house, house_bidder_id or include_house anywhere in La Subasta's source",
+           hits == [], f"found in {hits}")
+    client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "🌮"})
+    r = client.get("/la-subasta/api/bidders?include_house=true")
+    _check("?include_house is not a thing: the same list, Alice alone",
+           [b["identity"] for b in r.get_json()["bidders"]] == ["Alice 🌮"], f"got {r.get_json()}")
 
-    # Two real bidders, two bid-on horses, one untouched horse (3) that goes
-    # to The House when results are entered.
-    alice = client.post("/la-subasta/api/register",
-                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
-    bob = client.post("/la-subasta/api/register",
-                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
 
-    r = client.post("/la-subasta/api/bid",
-                    json={"bidder_id": alice["id"], "horse_id": 1, "amount": 5})
-    assert r.status_code == 200, r.get_json()
-    r = client.post("/la-subasta/api/bid",
-                    json={"bidder_id": bob["id"], "horse_id": 2, "amount": 3})
-    assert r.status_code == 200, r.get_json()
+def test_unowned_win_is_a_flagged_slot():
+    """A paying horse nobody owns is paid to nobody: its slot is stored with
+    no bidder and flagged unowned, settlement does not wait for it, and the
+    admin names the horse that pays it (La Quiniela's rule for an empty cup in
+    the money: the next finisher takes the place)."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 1, 5)
+        _bid(client, bob, 2, 3)
+        _bid(client, carol, 4, 2)
+        pot = bidding.total_pot()
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        r = client.post("/la-subasta/api/admin/results", json={"win": 3, "place": 1, "show": 2})
+        data = r.get_json()
+        by = {p["finish"]: p for p in data["payouts"]}
+        _check("results naming a horse that was never sold are accepted and settle",
+               r.status_code == 200 and data["success"] and data["state"] == "SETTLED", f"body={data}")
+        _check("the win slot is flagged unowned, and only it",
+               data["unowned"] == ["win"] and by["win"]["unowned"] is True
+               and by["place"]["unowned"] is False and by["show"]["unowned"] is False)
+        _check("...with no bidder: nobody is paid it, and there is no House",
+               by["win"]["bidder_id"] is None and by["win"]["bidder_identity"] is None
+               and all("is_house" not in p for p in data["payouts"]))
+        _check("...and it carries its amount, 60% of the pot",
+               by["win"]["amount"] == round(pot * 0.60, 2) and by["win"]["horse_id"] == 3,
+               f"got {by['win']}")
+        _check("place is Alice's (horse 1) and show Bob's (horse 2)",
+               by["place"]["bidder_id"] == alice["id"] and by["show"]["bidder_id"] == bob["id"])
+        persisted = {p["finish"]: p for p in payouts.list_payouts()}
+        _check("the persisted win row has no bidder either",
+               persisted["win"]["bidder_id"] is None and persisted["win"]["unowned"] is True)
+        led = client.get("/la-subasta/api/admin/payouts").get_json()["payouts"]
+        _check("GET /api/admin/payouts carries the same flags: win, place, show",
+               [p["unowned"] for p in led] == [True, False, False], f"got {led}")
 
-    pot = bidding.total_pot()
-    _check("total pot ignores zero-bid horse",
-           abs(pot - 8.0) < 0.001, f"pot={pot}")
+        # The admin names the horse that pays it: the next finisher, Carol's 4
+        ev.events.clear()
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 4})
+        body = r.get_json()
+        slot = body.get("slot") or {}
+        _check("naming #4 for the win slot is accepted", r.status_code == 200 and body.get("success"), f"body={body}")
+        _check("the slot is Carol's at the same amount, with #3 still the finisher and #4 paying",
+               slot.get("bidder_id") == carol["id"] and slot.get("horse_id") == 3
+               and slot.get("pays_horse_id") == 4 and slot.get("unowned") is False
+               and slot.get("amount") == round(pot * 0.60, 2), f"got {slot}")
+        _check("nothing is unowned now", body["unowned"] == [])
+        pushed = ev.named("payout_computed")
+        _check("payout_computed is pushed again, with the ledger as it stands",
+               len(pushed) == 1 and pushed[0]["unowned"] == [], f"got {ev.events}")
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 4})
+        _check("any slot can be set: skipping one finisher moves the next up",
+               r.status_code == 200 and r.get_json()["slot"]["bidder_id"] == carol["id"])
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 1})
+        slot = r.get_json()["slot"]
+        _check("naming the finisher's own horse puts the slot back as the results had it",
+               slot["pays_horse_id"] is None and slot["bidder_id"] == alice["id"], f"got {slot}")
 
-    # /api/bidders must hide the House row by default
-    bidders_default = client.get("/la-subasta/api/bidders").get_json()["bidders"]
-    identities = {b["identity"] for b in bidders_default}
-    _check("/api/bidders hides House by default",
-           "The House 🎩" not in identities,
-           f"got {identities}")
+        # What it refuses
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 6})
+        _check("a horse that was never sold cannot pay either: 409",
+               r.status_code == 409 and "no owner either" in r.get_json()["error"], f"body={r.get_json()}")
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 99})
+        _check("a number that is no horse: 400", r.status_code == 400
+               and r.get_json()["error"] == "Invalid horse id: 99")
+        _lq_scratch(client, 20)
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 20})
+        _check("a scratched horse is not in the field: 400",
+               r.status_code == 400 and r.get_json()["error"] == "#20 is not in the field: scratched",
+               f"body={r.get_json()}")
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "fourth", "horse_id": 4})
+        _check("a finish that is not win, place or show: 400", r.status_code == 400)
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": "x"})
+        _check("a horse_id that is not a number: 400", r.status_code == 400)
+        _check("the refused requests changed nothing: win is still #4's, Carol's",
+               {p["finish"]: p for p in payouts.list_payouts()}["win"]["bidder_id"] == carol["id"])
+    finally:
+        _done_with_events()
 
-    # ?include_house=true surfaces it for admin/debug
-    bidders_with_house = client.get(
-        "/la-subasta/api/bidders?include_house=true"
-    ).get_json()["bidders"]
-    identities_w = {b["identity"] for b in bidders_with_house}
-    _check("/api/bidders?include_house=true reveals House",
-           "The House 🎩" in identities_w, f"got {identities_w}")
 
-    # Lock + enter results with the zero-bid horse winning
-    r = client.post("/la-subasta/api/admin/lock")
-    assert r.status_code == 200, r.get_json()
+def test_payout_slot_needs_results():
+    """The slot picker works on a ledger: before results there is none."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 1, 2)
+        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 1})
+        _check("a slot before any results: 409",
+               r.status_code == 409 and r.get_json()["error"] == "No results have been entered yet",
+               f"body={r.get_json()}")
+    finally:
+        _done_with_events()
 
-    r = client.post("/la-subasta/api/admin/results",
-                    json={"win": 3, "place": 1, "show": 2})
-    data = r.get_json()
-    _check("House-win results endpoint succeeds",
-           r.status_code == 200 and data.get("success"), f"body={data}")
 
-    # House row exists and has the expected id
-    from la_subasta.models import house_bidder_id
-    hid = house_bidder_id()
-    _check("House bidder id is a positive int", isinstance(hid, int) and hid > 0,
-           f"got {hid}")
+def test_void_with_no_second_bidder_leaves_the_horse_unsold():
+    """Admin void re-awards the horse to the runner-up at their bid. With no
+    second bidder it is unsold: back on the list before the lock, unowned
+    after it. Never the House."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        def void(bid_id, reason="test"):
+            r = client.post("/la-subasta/api/admin/void", json={"bid_id": bid_id, "reason": reason})
+            assert r.status_code == 200, r.get_json()
+            return r.get_json()
 
-    by_finish = {p["finish"]: p for p in data["payouts"]}
-    _check("win payout goes to the House (bidder_id matches)",
-           by_finish["win"]["bidder_id"] == hid,
-           f"got bidder_id={by_finish['win']['bidder_id']}, house={hid}")
-    _check("win payout flagged is_house=True",
-           by_finish["win"]["is_house"] is True)
-    _check("place payout goes to Alice (owner of horse 1)",
-           by_finish["place"]["bidder_id"] == alice["id"]
-           and by_finish["place"]["is_house"] is False)
-    _check("show payout goes to Bob (owner of horse 2)",
-           by_finish["show"]["bidder_id"] == bob["id"]
-           and by_finish["show"]["is_house"] is False)
+        only = _bid(client, alice, 4, 2)                 # alone on 4
+        _bid(client, alice, 6, 1)
+        _bid(client, bob, 6, 3)                          # Bob leads 6, Alice is the runner-up
+        body = void(only)
+        _check("before the lock: voiding the only bid on 4 leaves it unsold",
+               body["unsold"] is True and body["new_high_bid"] is None, f"got {body}")
+        horses = {h["horse_id"]: h for h in client.get("/la-subasta/api/horses").get_json()["horses"]}
+        _check("...it is back on the list with no bid, and on the lock's unsold list",
+               4 in horses and horses[4]["current_high_bid"] is None and 4 in bidding.unsold_horses())
+        _bid(client, carol, 4, 1)
+        _check("...and anyone can bid on it again", bidding.current_high_bid(4)["bidder_id"] == carol["id"])
 
-    expected_win = round(pot * 0.60, 2)
-    _check("House win amount = 60% of pot",
-           abs(by_finish["win"]["amount"] - expected_win) < 0.01,
-           f"got {by_finish['win']['amount']} expected {expected_win}")
+        body = void(bidding.current_high_bid(6)["id"])
+        _check("with a second bidder it goes to the runner-up at their bid (Alice at 1)",
+               body["unsold"] is False and body["new_high_bid"]["bidder_id"] == alice["id"]
+               and body["new_high_bid"]["amount"] == 1, f"got {body}")
 
-    # Verify the persisted payout row (not just the response) references House
-    ls = payouts.list_payouts()
-    win_row = next(p for p in ls if p["finish"] == "win")
-    _check("persisted win payout row has House bidder_id",
-           win_row["bidder_id"] == hid)
-    _check("persisted win payout row has House identity via JOIN",
-           win_row["bidder_identity"] == "The House 🎩",
-           f"got {win_row['bidder_identity']}")
+        _bid(client, bob, 8, 4)                          # alone on 8
+        _bid(client, alice, 10, 1)
+        _bid(client, carol, 10, 3)                       # Carol leads 10, Alice is the runner-up
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        _check("locked: Carol owns 4 (1) and 10 (3), Alice 6 (1), Bob 8 (4)",
+               [(_ownership(h) or {}).get("bidder_id") for h in (4, 10, 6, 8)]
+               == [carol["id"], carol["id"], alice["id"], bob["id"]])
+
+        body = void(bidding.current_high_bid(8)["id"])
+        _check("after the lock: voiding the only bid on 8 leaves it with no owner",
+               body["unsold"] is True and _ownership(8) is None and payouts.get_owner(8) is None, f"got {body}")
+        _check("...and Bob owes nothing for it", bidding.bidder_portfolio(bob["id"])["total"] == 0)
+        body = void(bidding.current_high_bid(10)["id"])
+        own = _ownership(10)
+        _check("after the lock: voiding the leader on 10 re-awards the row to Alice at her bid",
+               body["unsold"] is False and own["bidder_id"] == alice["id"] and own["winning_bid"] == 1,
+               f"got {own}")
+
+        r = client.post("/la-subasta/api/admin/results", json={"win": 8, "place": 4, "show": 10})
+        data = r.get_json()
+        by = {p["finish"]: p for p in data["payouts"]}
+        _check("a result naming the unowned 8 settles, its slot unowned (the pot is 1 + 1 + 1)",
+               r.status_code == 200 and data["unowned"] == ["win"] and data["total_pot"] == 3
+               and by["place"]["bidder_id"] == carol["id"] and by["show"]["bidder_id"] == alice["id"],
+               f"body={data}")
+    finally:
+        _done_with_events()
+
+
+def test_lock_warns_about_unsold_horses():
+    """There is no House to take a horse nobody bought, so the lock warns:
+    409 with the numbers, nothing done, unless the body confirms."""
+    from la_subasta.models import get_conn
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 1, 2)
+        _bid(client, bob, 2, 3)
+        _bid(client, carol, 3, 1)
+        ev.events.clear()
+        r = client.post("/la-subasta/api/admin/lock")
+        body = r.get_json()
+        _check("lock with unsold horses and no confirm: 409",
+               r.status_code == 409 and body["success"] is False, f"status={r.status_code} body={body}")
+        _check("...listing every horse in the field nobody bid on",
+               body["unsold"] == list(range(4, 21)), f"got {body.get('unsold')}")
+        _check("...and it says so in words", body["error"].startswith("No bid on #4, #5"), f"got {body['error']}")
+        count = lambda: get_conn().execute("SELECT COUNT(*) AS c FROM ownership").fetchone()["c"]
+        _check("...and nothing happened: still OPEN, nothing frozen, nothing pushed",
+               get_state() == AuctionState.OPEN and count() == 0 and ev.events == [], f"got {ev.events}")
+        for body_in in ({"confirm": False}, {"confirm": "true"}, {"confirm": 1}, {}):
+            r = client.post("/la-subasta/api/admin/lock", json=body_in)
+            _check(f"only a JSON true confirms: {body_in} is still 409", r.status_code == 409)
+
+        _lq_scratch(client, 5)                          # no replacement
+        _lq_scratch(client, 9, 22, "Ocelli")            # 22 stands in for 9
+        unsold = client.post("/la-subasta/api/admin/lock").get_json()["unsold"]
+        _check("a scratched horse is not unsold; a replacement with no bid is (22 for 9)",
+               5 not in unsold and 9 not in unsold and 22 in unsold and len(unsold) == 16, f"got {unsold}")
+
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        _check("with confirm it locks", r.status_code == 200 and r.get_json()["state"] == "LOCKED",
+               f"body={r.get_json()}")
+        _check("...and froze the three sold horses", count() == 3)
+
+        _reset()
+        app = _make_app()
+        r = app.test_client().post("/la-subasta/api/admin/lock")
+        _check("an auction that cannot lock yet is refused as before, with no warning",
+               r.status_code == 409 and "unsold" not in r.get_json()
+               and "Illegal transition" in r.get_json()["error"], f"body={r.get_json()}")
+    finally:
+        _done_with_events()
+
+
+def test_lock_needs_no_confirm_when_every_horse_is_sold():
+    """The host, exempt from the cap, buys every horse; the lock then goes
+    through without a word."""
+    from la_subasta.models import get_conn
+    app, client, ev, (host, bob, carol) = _scratch_rig()
+    try:
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": host["id"], "exempt": True})
+        assert r.status_code == 200, r.get_json()
+        for n in range(1, 21):
+            _bid(client, host, n, 1)
+        _check("every horse in the field is sold", bidding.unsold_horses() == [])
+        r = client.post("/la-subasta/api/admin/lock")
+        _check("the lock with nothing unsold needs no confirm",
+               r.status_code == 200 and r.get_json()["state"] == "LOCKED", f"body={r.get_json()}")
+        _check("...and froze all twenty",
+               get_conn().execute("SELECT COUNT(*) AS c FROM ownership").fetchone()["c"] == 20)
+    finally:
+        _done_with_events()
+
+
+def test_cap_exempt_bidder_holds_more_than_the_cap():
+    """The admin can mark one bidder (the host) exempt from the max-horses
+    cap; it still applies to everyone else."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        def bid(bidder, horse):
+            return client.post("/la-subasta/api/bid",
+                               json={"bidder_id": bidder["id"], "horse_id": horse, "amount": 1})
+
+        for n in (1, 2, 3):
+            assert bid(alice, n).status_code == 200
+        r = bid(alice, 4)
+        _check("Alice, at the cap of 3, is refused a fourth",
+               r.status_code == 400 and r.get_json()["error"] == "Max 3 horses per bidder", f"body={r.get_json()}")
+
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": carol["id"], "exempt": True})
+        _check("marking Carol exempt: 200, with the flag", r.status_code == 200
+               and r.get_json() == {"success": True, "bidder_id": carol["id"], "cap_exempt": True},
+               f"body={r.get_json()}")
+        for n in range(5, 10):
+            assert bid(carol, n).status_code == 200, n
+        _check("the exempt Carol leads five horses", len(bidding.horses_leading_by(carol["id"])) == 5)
+        _check("...while Alice is still capped at three", bid(alice, 4).status_code == 400)
+        for n in (10, 11, 12):
+            assert bid(bob, n).status_code == 200
+        _check("...and so is Bob", bid(bob, 13).status_code == 400)
+        flags = {b["identity"]: b["cap_exempt"] for b in client.get("/la-subasta/api/bidders").get_json()["bidders"]}
+        _check("GET /api/bidders carries the mark",
+               flags == {"Alice 🌮": 0, "Bob 🐴": 0, "Carol 💃": 1}, f"got {flags}")
+
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": carol["id"], "exempt": False})
+        _check("taking the mark off: 200, flag false", r.status_code == 200 and r.get_json()["cap_exempt"] is False)
+        r = bid(carol, 13)
+        _check("Carol keeps her five but takes no sixth: the cap is back",
+               r.status_code == 400 and r.get_json()["error"] == "Max 3 horses per bidder"
+               and len(bidding.horses_leading_by(carol["id"])) == 5, f"body={r.get_json()}")
+
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": 9999, "exempt": True})
+        _check("an unknown bidder: 404", r.status_code == 404 and r.get_json()["error"] == "Unknown bidder")
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": carol["id"], "exempt": "yes"})
+        _check("exempt must be true or false: 400", r.status_code == 400)
+        r = client.post("/la-subasta/api/admin/cap-exempt", json={"exempt": True})
+        _check("bidder_id must be there: 400", r.status_code == 400)
+    finally:
+        _done_with_events()
 
 
 # -----------------------------------------------------------------------------
@@ -880,7 +1106,7 @@ def test_payout_uses_current_preset():
         bid(carol, 3, 1); bid(alice, 3, 2)
 
         pot = bidding.total_pot()
-        app_client.post("/la-subasta/api/admin/lock")
+        app_client.post("/la-subasta/api/admin/lock", json={"confirm": True})
         r = app_client.post("/la-subasta/api/admin/results",
                             json={"win": 1, "place": 2, "show": 3})
         data = r.get_json()
@@ -1209,7 +1435,7 @@ def test_field_21_to_24_accepted():
     _check("pot counts 22 and 23", bidding.total_pot() == 9, f"got {bidding.total_pot()}")
     _check("Alice leads 22", bidding.horses_leading_by(alice["id"]) == [22])
     _check("Bob leads 1 and 23", bidding.horses_leading_by(bob["id"]) == [1, 23])
-    r = client.post("/la-subasta/api/admin/lock")
+    r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     assert r.status_code == 200, r.get_json()
     owned = sorted(o["horse_id"] for o in (payouts.get_owner(n) for n in (1, 22, 23)) if o)
     _check("22 and 23 frozen into ownership", owned == [1, 22, 23], f"got {owned}")
@@ -1258,7 +1484,7 @@ def test_field_bid_on_absent_horse_rejected():
     status, error = bid(22)
     _check("bid on 22 accepted", status == 200, f"got {status} {error!r}")
     # Results can only name horses in the field
-    client.post("/la-subasta/api/admin/lock")
+    client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     r = client.post("/la-subasta/api/admin/results", json={"win": 9, "place": 22, "show": 1})
     _check("results naming 9 rejected", r.status_code == 400
            and "#9 is not in the field" in r.get_json().get("error", ""), f"body={r.get_json()}")
@@ -1472,15 +1698,14 @@ def test_scratch_store_listener_direct():
 def test_scratch_after_lock():
     """A scratch after the lock: the ownership row is voided the same way,
     the owner's total owed drops by that winning bid, the horse cannot pay
-    out, a paid owner shows the refund owed, and the House rule does not
-    apply."""
+    out, and a paid owner shows the refund owed."""
     app, client, ev, (alice, bob, carol) = _scratch_rig()
     try:
         _bid(client, alice, 2, 5)          # Albus
         _bid(client, alice, 3, 2)          # Intrepido
         _bid(client, bob, 5, 4)
         _bid(client, carol, 8, 3)
-        r = client.post("/la-subasta/api/admin/lock")
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
         assert r.status_code == 200, r.get_json()
         _check("locked: Alice owns 2 and 3 and owes 7", bidding.bidder_portfolio(alice["id"])["total"] == 7)
         r = client.post("/la-subasta/api/admin/paid", json={"bidder_id": alice["id"]})
@@ -1511,7 +1736,7 @@ def test_scratch_after_lock():
                f"got {ev.named('horse_scratched')}")
 
         r = client.post("/la-subasta/api/admin/results", json={"win": 2, "place": 3, "show": 5})
-        _check("results naming the scratched 2 are refused (it cannot pay out, not even to the House)",
+        _check("results naming the scratched 2 are refused (it cannot pay out)",
                r.status_code == 400 and r.get_json()["error"] == "#2 is not in the field: scratched",
                f"body={r.get_json()}")
         r = client.post("/la-subasta/api/admin/results", json={"win": 3, "place": 5, "show": 8})
@@ -1519,8 +1744,8 @@ def test_scratch_after_lock():
         _check("results 3 / 5 / 8 accepted", r.status_code == 200 and data.get("success"), f"body={data}")
         _check("the pot leaves out the scratched 5: 2 + 4 + 3 = 9", data["total_pot"] == 9,
                f"got {data.get('total_pot')}")
-        _check("nobody's payout is the House's",
-               not any(p["is_house"] for p in data["payouts"]))
+        _check("every paying slot has an owner: nothing is unowned",
+               data["unowned"] == [] and not any(p["unowned"] for p in data["payouts"]))
         _check("no payout row names 2", all(p["horse_id"] != 2 for p in payouts.list_payouts()))
     finally:
         _done_with_events()
@@ -1555,33 +1780,170 @@ def test_scratch_replacement_adds_fresh_horse():
         _done_with_events()
 
 
-def test_scratch_undo_restores_field_not_bids():
-    """Undo on the LQ admin page puts the horse back in the field; it does
-    not un-void its bids. Undoing a replacement takes the stand-in out
-    again, and its bids are voided the same way."""
+def test_scratch_undo_restores_everything():
+    """Undo on the LQ admin page restores everything: the horse is back in
+    the field and what its scratch voided comes back with it, its bids and,
+    after the lock, its ownership row, so the owner owes again. Only what the
+    scratch voided: a bid an admin voided stays voided."""
     app, client, ev, (alice, bob, carol) = _scratch_rig()
     try:
-        _bid(client, alice, 11, 4)
-        _lq_scratch(client, 11)
+        # --- before the lock ------------------------------------------------
+        a = _bid(client, alice, 11, 4)
+        b = _bid(client, bob, 11, 7)
+        c = _bid(client, carol, 11, 9)
+        r = client.post("/la-subasta/api/admin/void", json={"bid_id": c, "reason": "Carol will not pay"})
+        assert r.status_code == 200, r.get_json()
+        d = _bid(client, alice, 11, 10)                 # placed, then taken back inside the 10 s window
+        r = client.post("/la-subasta/api/bid/undo", json={"bid_id": d, "bidder_id": alice["id"]})
+        assert r.status_code == 200, r.get_json()
+        _check("before: Bob leads 11 at 7", bidding.current_high_bid(11)["bidder_id"] == bob["id"])
+        r = _lq_scratch(client, 11)
+        assert r.status_code == 200, r.get_json()
+        _check("scratched: Alice's and Bob's bids are voided 'scratched'",
+               [(x["id"], x["voided_reason"]) for x in _bids_on(11)]
+               == [(a, "scratched"), (b, "scratched"), (c, "Carol will not pay"), (d, "undo")],
+               f"got {_bids_on(11)}")
+        _check("...and Bob owes nothing for 11", bidding.bidder_portfolio(bob["id"])["total"] == 0)
+
+        ev.events.clear()
         r = client.post("/api/quiniela/unscratch", json={"horse": 11})
         _check("LQ admin: undo 11", r.status_code == 200, f"body={r.get_json()}")
+        _check("the bids the scratch voided are back",
+               [(x["id"], x["voided"], x["voided_reason"]) for x in _bids_on(11)[:2]]
+               == [(a, 0, None), (b, 0, None)], f"got {_bids_on(11)}")
+        _check("...a bid an admin voided stays voided, so does one the bidder took back",
+               [(x["voided"], x["voided_reason"]) for x in _bids_on(11)[2:]]
+               == [(1, "Carol will not pay"), (1, "undo")], f"got {_bids_on(11)}")
         horses = {h["horse_id"]: h for h in client.get("/la-subasta/api/horses").get_json()["horses"]}
-        _check("11 is back in the list", 11 in horses)
-        _check("...with no bids: its old bid stays voided",
-               horses[11]["current_high_bid"] is None
-               and [b["voided"] for b in _bids_on(11)] == [1], f"got {_bids_on(11)}")
-        _check("Alice is not charged for 11", bidding.bidder_portfolio(alice["id"])["total"] == 0)
-        _bid(client, bob, 11, 2)
-        _check("11 can be bid on again", bidding.current_high_bid(11)["bidder_id"] == bob["id"])
+        _check("11 is back on the list with Bob leading at 7",
+               11 in horses and horses[11]["current_high_bid"]["bidder_id"] == bob["id"]
+               and horses[11]["current_high_bid"]["amount"] == 7, f"got {horses.get(11)}")
+        _check("Bob is charged 7 for it again", bidding.bidder_portfolio(bob["id"])["total"] == 7)
+        _check("the undo pushed field_changed (phones read the list again)",
+               len(ev.named("field_changed")) == 1 and 11 in ev.named("field_changed")[0]["horses"],
+               f"got {ev.events}")
+        before = [tuple(x.values()) for x in _bids_on(11)]
+        client.get("/la-subasta/api/horses"); client.get("/la-subasta/api/state")
+        ls_scratches.sync(force=True)
+        _check("a second look changes nothing (idempotent)",
+               [tuple(x.values()) for x in _bids_on(11)] == before)
+        _bid(client, carol, 11, 8)
+        _check("11 can be bid on again, on top of what came back", bidding.current_high_bid(11)["amount"] == 8)
 
-        # A replacement undone: 22 leaves again and its bid goes with it
+        # --- a replacement made, and undone ---------------------------------
+        _bid(client, alice, 9, 3); _bid(client, bob, 9, 5)
         _lq_scratch(client, 9, 22, "Ocelli")
         _bid(client, carol, 22, 3)
         client.post("/api/quiniela/unscratch", json={"horse": 9})
         numbers = [h["horse_id"] for h in client.get("/la-subasta/api/horses").get_json()["horses"]]
-        _check("after undoing 9 -> 22: 9 back, 22 gone", 9 in numbers and 22 not in numbers, f"got {numbers}")
-        _check("Carol's bid on 22 voided 'scratched'",
-               [b["voided_reason"] for b in _bids_on(22)] == ["scratched"])
+        _check("undoing 9 -> 22: 9 is back and 22 is gone", 9 in numbers and 22 not in numbers, f"got {numbers}")
+        _check("...9's bids are back", [x["voided"] for x in _bids_on(9)] == [0, 0]
+               and bidding.current_high_bid(9)["bidder_id"] == bob["id"])
+        _check("...Carol's bid on 22 is voided 'scratched' with it",
+               [x["voided_reason"] for x in _bids_on(22)] == ["scratched"])
+        _lq_scratch(client, 9, 22, "Ocelli")
+        _check("the replacement made again: 9's bids are voided once more and 22's come back",
+               [x["voided_reason"] for x in _bids_on(9)] == ["scratched", "scratched"]
+               and [x["voided"] for x in _bids_on(22)] == [0]
+               and bidding.current_high_bid(22)["bidder_id"] == carol["id"], f"got {_bids_on(9)} {_bids_on(22)}")
+    finally:
+        _done_with_events()
+
+
+def test_scratch_undo_after_the_lock_restores_the_owner():
+    """The owner comes back: undo after the lock un-voids the ownership row,
+    so the owner owes the winning bid again, the refund owed to a paid owner
+    goes, and the horse can pay out. Nothing is left ownerless."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 2, 5)          # Albus
+        _bid(client, alice, 3, 2)          # Intrepido
+        _bid(client, bob, 5, 4)
+        _bid(client, carol, 8, 3)
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        r = client.post("/la-subasta/api/admin/paid", json={"bidder_id": alice["id"]})
+        assert r.status_code == 200 and r.get_json()["amount"] == 7, r.get_json()
+        _lq_scratch(client, 2)
+        ledger = lambda: {b["id"]: b for b in client.get("/la-subasta/api/bidders").get_json()["bidders"]}[alice["id"]]
+        _check("scratched after the lock: Alice owes 2 and is owed 5 back",
+               ledger()["owed"] == 2 and ledger()["refund_owed"] == 5, f"got {ledger()}")
+        _check("...and 2 has no owner", payouts.get_owner(2) is None)
+
+        ev.events.clear()
+        r = client.post("/api/quiniela/unscratch", json={"horse": 2})
+        _check("LQ admin: undo 2 after the lock", r.status_code == 200, f"body={r.get_json()}")
+        own = _ownership(2)
+        _check("2's ownership row is un-voided, the owner and the bid as they were",
+               own["voided"] == 0 and own["voided_reason"] is None and own["voided_at"] is None
+               and own["bidder_id"] == alice["id"] and own["winning_bid"] == 5, f"got {own}")
+        _check("...and so is the bid", [(x["voided"], x["voided_reason"]) for x in _bids_on(2)] == [(0, None)])
+        _check("Alice owes 7 again, and no refund is owed",
+               ledger()["owed"] == 7 and ledger()["refund_owed"] == 0, f"got {ledger()}")
+        _check("her portfolio no longer lists 2 as scratched",
+               bidding.bidder_portfolio(alice["id"])["scratched"] == [])
+        _check("2 has its owner again", (payouts.get_owner(2) or {}).get("bidder_id") == alice["id"])
+        _check("the undo pushed field_changed", len(ev.named("field_changed")) == 1, f"got {ev.events}")
+
+        r = client.post("/la-subasta/api/admin/results", json={"win": 2, "place": 5, "show": 8})
+        data = r.get_json()
+        by = {p["finish"]: p for p in data["payouts"]}
+        _check("2 can win: results naming it settle, paid to Alice, nothing unowned",
+               r.status_code == 200 and by["win"]["bidder_id"] == alice["id"] and data["unowned"] == []
+               and data["total_pot"] == 5 + 4 + 3 + 2, f"body={data}")
+    finally:
+        _done_with_events()
+
+
+def test_scratch_undo_after_the_lock_of_a_scratch_before_it():
+    """A horse scratched before the lock and undone after it: the lock froze
+    ownership without it, so its bids come back to a horse with no owner.
+    Undo freezes it from them, so that no horse is left ownerless by an undo
+    (there is no House to take it)."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 12, 4)
+        _bid(client, bob, 13, 3)
+        _lq_scratch(client, 12)                                  # open: Alice's bid is voided
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        _check("locked without 12: it has no ownership row", _ownership(12) is None
+               and (_ownership(13) or {}).get("bidder_id") == bob["id"])
+        client.post("/api/quiniela/unscratch", json={"horse": 12})
+        own = _ownership(12)
+        _check("undo after the lock: 12's bids are back and it is frozen into ownership from them",
+               [x["voided"] for x in _bids_on(12)] == [0] and own is not None
+               and own["voided"] == 0 and own["bidder_id"] == alice["id"] and own["winning_bid"] == 4,
+               f"got {own}, {_bids_on(12)}")
+        _check("...so Alice owes 4 for it and it has an owner",
+               bidding.bidder_portfolio(alice["id"])["total"] == 4
+               and (payouts.get_owner(12) or {}).get("bidder_id") == alice["id"])
+        _check("the pot counts it: 4 + 3", payouts.compute_and_persist_payouts(12, 13, 1)["total_pot"] == 7)
+    finally:
+        _done_with_events()
+
+
+def test_scratch_undo_after_a_lock_that_froze_nothing():
+    """The lock with no ownership row at all (every horse unsold): an undo
+    must not freeze a lone horse, because payouts freezes everything itself
+    when it finds no row. Here it does, and the horse is paid."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 12, 4)
+        _lq_scratch(client, 12)
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        _check("locked with no ownership row at all",
+               _ownership(12) is None and _ownership(13) is None)
+        client.post("/api/quiniela/unscratch", json={"horse": 12})
+        _check("undo brings the bids back and freezes no lone row",
+               [x["voided"] for x in _bids_on(12)] == [0] and _ownership(12) is None)
+        r = client.post("/la-subasta/api/admin/results", json={"win": 12, "place": 13, "show": 14})
+        data = r.get_json()
+        by = {p["finish"]: p for p in data["payouts"]}
+        _check("results then freeze everything from the bids: 12 pays Alice, 13 and 14 are unowned",
+               r.status_code == 200 and by["win"]["bidder_id"] == alice["id"]
+               and data["unowned"] == ["place", "show"] and data["total_pot"] == 4, f"body={data}")
     finally:
         _done_with_events()
 
@@ -1651,6 +2013,93 @@ def test_scratch_restart_does_not_double_void():
         _check("...and a second start does nothing more",
                sum(1 for e, _ in ev.events if e == "horse_scratched") == n
                and [b["voided_reason"] for b in _bids_on(15)] == ["scratched"])
+    finally:
+        ls_field.set_store_source(None)
+        ls_scratches.forget()
+        nots.init_notifications(None)
+        db.close()
+
+
+def test_scratch_undo_survives_a_restart():
+    """Undo is idempotent across a restart, as apply() is. pi5 restarts over a
+    store on disk: what was restored stays restored, nothing changes twice
+    and nothing is pushed; an undo recorded while La Subasta was not
+    listening is applied at the next start, once."""
+    from la_quiniela.models import LqDb
+    from la_subasta import notifications as nots
+    from la_subasta.models import get_conn
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    db = LqDb(_TMP_DB)
+    db.init_schema()
+    try:
+        store = HorseStore(db)
+        store.set_names({n: name for n, name in enumerate(DERBY_2026, 1)})
+        ls_field.set_store_source(lambda: store)
+        ls_scratches.forget()
+        ls_scratches.follow_la_quiniela()
+        transition(AuctionState.OPEN)
+        alice = client.post("/la-subasta/api/register",
+                            json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+        bob = client.post("/la-subasta/api/register",
+                          json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
+        _bid(client, alice, 14, 2); _bid(client, bob, 14, 4); _bid(client, alice, 15, 1)
+        _bid(client, bob, 16, 3)
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        store.scratch_gateway(14)                        # after the lock: bids and ownership voided
+        _check("14 scratched after the lock: its ownership is voided",
+               _ownership(14)["voided"] == 1 and payouts.get_owner(14) is None)
+        _check("...then undone through the store: the bids and the owner are back",
+               store.unscratch_gateway(14) is True
+               and [b["voided"] for b in _bids_on(14)] == [0, 0]
+               and _ownership(14)["voided"] == 0 and _ownership(14)["bidder_id"] == bob["id"])
+
+        def snapshot():
+            return [[tuple(r) for r in get_conn().execute(sql).fetchall()] for sql in (
+                "SELECT id, horse_id, voided, voided_reason FROM bids ORDER BY id",
+                "SELECT id, horse_id, bidder_id, winning_bid, voided, voided_reason, voided_at "
+                "FROM ownership ORDER BY id")]
+
+        before = snapshot()
+        ev = _Events()
+        nots.init_notifications(ev)
+        store2 = HorseStore(db)                          # pi5 restarts: the store read back from disk
+        ls_field.set_store_source(lambda: store2)
+        ls_scratches.forget()
+        _check("restart: the store came back with 14 in the field", 14 in ls_field.current())
+        _check("restart: follow_la_quiniela() at start", ls_scratches.follow_la_quiniela() is True)
+        client.get("/la-subasta/api/horses")
+        ls_scratches.sync(force=True)
+        _check("restart: no bid and no ownership row changed", snapshot() == before)
+        _check("restart: nothing pushed", ev.events == [], f"got {ev.events}")
+
+        # A scratch applied, then undone while La Subasta was not listening
+        # (another process, or a listener that failed): restored at the next
+        # start, once.
+        ls_scratches.sync(force=True)
+        HorseStore(db).scratch_gateway(15)               # nobody here hears it
+        store3 = HorseStore(db)
+        ls_field.set_store_source(lambda: store3)
+        ls_scratches.forget()
+        ls_scratches.follow_la_quiniela()
+        _check("a scratch recorded while down is applied at start",
+               [b["voided_reason"] for b in _bids_on(15)] == ["scratched"] and _ownership(15)["voided"] == 1)
+        HorseStore(db).unscratch_gateway(15)             # undone while down again
+        store4 = HorseStore(db)
+        ls_field.set_store_source(lambda: store4)
+        ls_scratches.forget()
+        ev.events.clear()
+        ls_scratches.follow_la_quiniela()
+        _check("an undo recorded while down is restored at the next start",
+               [b["voided"] for b in _bids_on(15)] == [0] and _ownership(15)["voided"] == 0
+               and _ownership(15)["bidder_id"] == alice["id"], f"got {_bids_on(15)} {_ownership(15)}")
+        after = snapshot()
+        ls_scratches.forget()
+        ls_scratches.follow_la_quiniela()
+        _check("...and a second start changes nothing more", snapshot() == after)
+        _check("...nor is anything pushed for it twice", ev.named("horse_scratched") == [])
     finally:
         ls_field.set_store_source(None)
         ls_scratches.forget()
@@ -1834,7 +2283,7 @@ def test_degraded_store_voids_nothing():
         _bid(client, alice, 22, 3)
         _bid(client, bob, 22, 5)
         _bid(client, carol, 4, 2)
-        r = client.post("/la-subasta/api/admin/lock")
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
         assert r.status_code == 200, r.get_json()
         _check("before: Bob owns 22 and Carol 4",
                (_ownership(22) or {}).get("bidder_id") == bob["id"] and (_ownership(4) or {}).get("voided") == 0)
@@ -1959,7 +2408,7 @@ def test_paid_twice_keeps_the_refund():
 
         _bid(client, alice, 2, 5)
         _bid(client, alice, 3, 2)
-        r = client.post("/la-subasta/api/admin/lock")
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
         assert r.status_code == 200, r.get_json()
         _check("Alice is marked paid 7", tap(alice) == 7)
         first = bidding.get_bidder(alice["id"])
@@ -2019,6 +2468,90 @@ def test_ownership_migration():
                 pass
 
 
+def test_house_and_payouts_migration():
+    """A database from before the House went: its payouts table (bidder_id
+    NOT NULL, the House its fallback payee) is rebuilt so that a slot can have
+    no owner, every row kept; the House's payout becomes an unowned slot and
+    its sentinel bidder row goes; bidders gains cap_exempt. A House row that
+    somehow has a bid is left alone."""
+    import sqlite3
+    path = tempfile.mktemp(prefix="la_subasta_old_house_", suffix=".db")
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE bidders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, emoji TEXT NOT NULL,
+            identity TEXT UNIQUE NOT NULL, push_endpoint TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), paid INTEGER NOT NULL DEFAULT 0,
+            paid_at TEXT, paid_amount REAL, event_year INTEGER NOT NULL);
+        INSERT INTO bidders (id, name, emoji, identity, event_year)
+            VALUES (1, 'The House', '\U0001F3A9', 'The House \U0001F3A9', 2026),
+                   (2, 'Alice', '\U0001F32E', 'Alice \U0001F32E', 2026);
+        CREATE TABLE payouts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, bidder_id INTEGER NOT NULL REFERENCES bidders(id),
+            horse_id INTEGER NOT NULL,
+            finish TEXT NOT NULL CHECK (finish IN ('win','place','show')),
+            amount REAL NOT NULL, paid_out INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), event_year INTEGER NOT NULL,
+            UNIQUE(finish, event_year));
+        INSERT INTO payouts (bidder_id, horse_id, finish, amount, paid_out, event_year)
+            VALUES (1, 3, 'win', 6, 0, 2026), (2, 1, 'place', 2.5, 1, 2026);
+    """)
+    conn.commit()
+    conn.close()
+    try:
+        c = init_db(path)
+        info = {r["name"]: r for r in c.execute("PRAGMA table_info(payouts)").fetchall()}
+        _check("payouts gains pays_horse_id, and its bidder_id can now be NULL",
+               "pays_horse_id" in info and info["bidder_id"]["notnull"] == 0, f"got {list(info)}")
+        rows = {r["finish"]: dict(r) for r in c.execute("SELECT * FROM payouts").fetchall()}
+        _check("the place row is kept as it was",
+               rows["place"]["bidder_id"] == 2 and rows["place"]["horse_id"] == 1
+               and rows["place"]["amount"] == 2.5 and rows["place"]["paid_out"] == 1
+               and rows["place"]["pays_horse_id"] is None, f"got {rows['place']}")
+        _check("the House's win payout is now a slot nobody owns",
+               rows["win"]["bidder_id"] is None and rows["win"]["horse_id"] == 3
+               and rows["win"]["amount"] == 6, f"got {rows['win']}")
+        _check("the House's bidder row is gone and Alice stays",
+               [r["identity"] for r in c.execute("SELECT identity FROM bidders").fetchall()] == ["Alice \U0001F32E"])
+        _check("bidders gained cap_exempt, 0 for Alice",
+               c.execute("SELECT cap_exempt FROM bidders").fetchone()["cap_exempt"] == 0)
+        try:
+            c.execute("INSERT INTO payouts (bidder_id, horse_id, finish, amount, event_year) "
+                      "VALUES (NULL, 9, 'win', 1, 2026)")
+            _check("the rebuilt table still has UNIQUE(finish, event_year)", False, "a second win row went in")
+        except sqlite3.IntegrityError:
+            _check("the rebuilt table still has UNIQUE(finish, event_year)", True)
+        before = [dict(r) for r in c.execute("SELECT * FROM payouts ORDER BY id").fetchall()]
+        c = init_db(path)
+        _check("the migration is idempotent",
+               [dict(r) for r in c.execute("SELECT * FROM payouts ORDER BY id").fetchall()] == before)
+
+        # A House row that has a bid is not removed
+        path2 = tempfile.mktemp(prefix="la_subasta_old_house2_", suffix=".db")
+        try:
+            c2 = init_db(path2)
+            c2.execute("INSERT INTO bidders (id, name, emoji, identity, event_year) "
+                       "VALUES (1, 'The House', '\U0001F3A9', 'The House \U0001F3A9', 2026)")
+            c2.execute("INSERT INTO bids (bidder_id, horse_id, amount, event_year) VALUES (1, 3, 1, 2026)")
+            c2 = init_db(path2)
+            _check("a House row that somehow has a bid is left alone",
+                   c2.execute("SELECT COUNT(*) AS c FROM bidders").fetchone()["c"] == 1)
+        finally:
+            init_db(_TMP_DB)
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(path2 + suffix)
+                except OSError:
+                    pass
+    finally:
+        init_db(_TMP_DB)
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.remove(path + suffix)
+            except OSError:
+                pass
+
+
 def test_guest_js_follows_the_field():
     """Guest phones drop a scratched horse and pick up a replacement
     without a reload: guest.js drops the horse on horse_scratched (closing a
@@ -2030,7 +2563,9 @@ def test_guest_js_follows_the_field():
     saddle-cloth digits in the cloth's own colour (#2: black on white)."""
     _reset()
     app = _make_app()
-    js = app.test_client().get("/la-subasta/static/js/guest.js").get_data(as_text=True)
+    # A Windows checkout writes guest.js with CRLF (core.autocrlf), and the
+    # checks below match source that spans lines: compare it as LF.
+    js = app.test_client().get("/la-subasta/static/js/guest.js").get_data(as_text=True).replace("\r\n", "\n")
     hs = js[js.index("socket.on('horse_scratched'"):]
     hs = hs[:hs.index("});")]
     _check("horse_scratched drops the horse from the list", "delete state.horses[payload.horse_id]" in hs)
@@ -2296,6 +2831,103 @@ def test_dev_panel_markup_and_gating():
     _check("guest.js has no scratch action", "'unscratch'" not in js and "'scratch'" not in js)
 
 
+def _static(client, path):
+    """A static file as the app serves it, with LF line endings: a Windows
+    checkout writes these with CRLF, and the checks match source that spans
+    lines."""
+    r = client.get(path)
+    assert r.status_code == 200, (path, r.status_code)
+    return r.get_data(as_text=True).replace("\r\n", "\n")
+
+
+def test_admin_page():
+    """GET /la-subasta/admin is a page now, not the Phase 3 JSON placeholder:
+    the auction's controls with the lock's unsold-horse warning and its
+    confirm button, the bidders (paid; the cap exemption) and the payout
+    ledger (the picker for an unowned slot). No JS engine in this harness, so
+    this checks the markup and the script's wiring; the page itself was
+    driven in a browser."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    r = client.get("/la-subasta/admin")
+    html = r.get_data(as_text=True)
+    _check("GET /la-subasta/admin is 200 HTML", r.status_code == 200 and "text/html" in r.content_type,
+           f"status={r.status_code} type={r.content_type}")
+    _check("...no longer the JSON placeholder", "Phase 3 UI pending" not in html)
+    for marker, label in (
+            ('id="ls-admin-state"', "the state pill"),
+            ('id="ls-admin-lock"', "the lock button"),
+            ('data-admin-action="lock"', "the lock button's action"),
+            ('id="ls-admin-unsold"', "the unsold-horse warning"),
+            ('id="ls-admin-unsold-list"', "its list of horses"),
+            ('id="ls-admin-unsold-confirm"', "its confirm button"),
+            ('id="ls-admin-unsold-cancel"', "its cancel button"),
+            ('id="ls-admin-results"', "the results form"),
+            ('id="ls-admin-bidders-list"', "the bidders list"),
+            ('id="ls-admin-payouts"', "the payout ledger")):
+        _check(f"the admin page has {label}", marker in html, f"missing {marker}")
+    _check("the unsold-horse warning is hidden until the lock answers 409",
+           '<div id="ls-admin-unsold" class="adm-warn" role="alert" hidden>' in html)
+    _check("the page links its own script and stylesheet",
+           "/la-subasta/static/js/admin.js" in html and "/la-subasta/static/css/la-subasta-admin.css" in html)
+
+    js = _static(client, "/la-subasta/static/js/admin.js")
+    for marker, label in (
+            ("ADMIN + 'lock'", "the lock route"),
+            ("{ confirm: true }", "the lock's confirm"),
+            ("Array.isArray(r.data.unsold)", "the 409's unsold list"),
+            ("ADMIN + 'cap-exempt'", "the cap exemption route"),
+            ("ADMIN + 'payout-slot'", "the payout slot route"),
+            ("ADMIN + 'paid'", "mark paid"),
+            ("ADMIN + 'results'", "the results route"),
+            ("ADMIN + 'payouts'", "the payout ledger"),
+            ("API + 'bidders'", "the bidders"),
+            ("p.unowned", "the unowned flag"),
+            ("aria-pressed", "the cap toggle's state")):
+        _check(f"admin.js wires {label}", marker in js, f"missing {marker!r}")
+    _check("admin.js sets text with textContent and never innerHTML (names are what guests typed)",
+           "textContent" in js and "innerHTML" not in js)
+    css = client.get("/la-subasta/static/css/la-subasta-admin.css")
+    _check("the admin stylesheet is served", css.status_code == 200 and b".adm-warn" in css.data)
+
+
+def test_guest_toast_has_its_own_element():
+    """A horse scratched out from under an open bid dialog is told to the
+    guest in a toast of its own (#ls-toast), not in the dev panel's."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    html = client.get("/la-subasta/").get_data(as_text=True)
+    js = _static(client, "/la-subasta/static/js/guest.js")
+    css = _static(client, "/la-subasta/static/css/la-subasta-mobile.css")
+    _check("guest.html has #ls-toast, hidden until used",
+           '<div id="ls-toast" class="ls-toast" role="status" aria-live="polite" hidden></div>' in html)
+    _check("...and the dev panel keeps its own toast", 'id="ls-dev-toast"' in html)
+    _check("the stylesheet styles .ls-toast, and hides it while hidden",
+           ".ls-toast {" in css and ".ls-toast[hidden] { display: none; }" in css)
+    body = js[js.index("function showNotice(msg) {"):]
+    body = body[:body.index("\n    }\n")]
+    _check("showNotice writes to #ls-toast and not to the dev panel's toast",
+           "getElementById('ls-toast')" in body and "ls-dev-toast" not in body, f"got {body}")
+
+
+def test_dev_panel_lock_asks_before_locking_unsold_horses():
+    """The dev panel's Lock button follows the lock's 409: it names the horses
+    nobody bid on, asks, and only a yes sends the confirm."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    js = _static(client, "/la-subasta/static/js/guest.js")
+    lock = js[js.index("action === 'lock'"):]
+    lock = lock[:lock.index("action === 'results'")]
+    _check("the dev panel's lock reads the 409's unsold list",
+           "Array.isArray(r.data.unsold)" in lock)
+    _check("...asks with the numbers, and cancelling stops there",
+           "window.confirm(" in lock and "Lock cancelled" in lock)
+    _check("...and a yes locks again with confirm: true", "{ confirm: true }" in lock)
+
+
 def test_own_scratch_route_gone():
     """La Subasta's own scratch and unscratch routes are gone, and so is its
     horse_state table: a scratch is entered on the LQ admin page."""
@@ -2377,7 +3009,7 @@ def test_state_includes_bidder_and_bid_counts():
                 json={"bidder_id": alice["id"], "horse_id": 2, "amount": 1})
 
     data = client.get("/la-subasta/api/state").get_json()
-    _check("num_bidders == 2 after 2 registrations (House excluded)",
+    _check("num_bidders == 2 after 2 registrations",
            data.get("num_bidders") == 2, f"got {data.get('num_bidders')}")
     _check("num_bids == 3 after 3 bids", data.get("num_bids") == 3,
            f"got {data.get('num_bids')}")
@@ -2425,7 +3057,7 @@ def test_auction_state_changed_broadcast():
 
     # FINAL_HOUR → LOCKED (also emits auction_locked, so expect both)
     events.clear()
-    r = client.post("/la-subasta/api/admin/lock")
+    r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     _check("admin/lock returns 200", r.status_code == 200)
     _check("lock fired auction_state_changed with new_state=LOCKED",
            any(e[0] == "auction_state_changed"
@@ -2438,7 +3070,7 @@ def test_auction_state_changed_broadcast():
     events.clear()
     # Need at least one owned horse for payouts to work; but since the
     # admin/results requires LOCKED state and we're already there, just
-    # drive it straight through with zero bids (House takes everything).
+    # drive it straight through with zero bids (every slot comes back unowned).
     r = client.post("/la-subasta/api/admin/results",
                     json={"win": 1, "place": 2, "show": 3})
     _check("admin/results returns 200", r.status_code == 200,
@@ -2740,7 +3372,7 @@ def _populate_for_reset_test(client):
     r = _lq_scratch(client, 7)  # on the LQ admin page; La Subasta's reset never touches it
     assert r.status_code == 200, r.get_json()
     # Lock + enter results so ownership + payouts rows exist
-    r = client.post("/la-subasta/api/admin/lock")
+    r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     assert r.status_code == 200, r.get_json()
     r = client.post("/la-subasta/api/admin/results",
                     json={"win": 1, "place": 2, "show": 3})
@@ -2818,8 +3450,8 @@ def test_reset_bids_wipes_state_data_keeps_bidders():
     _check("setup placed >0 bids", bids_before > 0, f"got {bids_before}")
     _check("setup created ownership rows", own_before > 0)
     _check("setup created payout rows", pay_before > 0)
-    _check("setup created >=2 real bidders + House",
-           bidders_before >= 3, f"got {bidders_before}")
+    _check("setup created 2 bidders",
+           bidders_before >= 2, f"got {bidders_before}")
 
     r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=TESTING")
     _check("scope=bids returns 200", r.status_code == 200, f"body={r.get_json()}")
@@ -2857,43 +3489,27 @@ def test_reset_bids_wipes_state_data_keeps_bidders():
            7 not in ls_field.current())
 
 
-def test_reset_full_removes_everything_keeps_house():
+def test_reset_full_removes_everything():
     _reset()
     app = _make_app()
     client = app.test_client()
     alice, bob = _populate_for_reset_test(client)
 
-    real_bidders_before = len(bidding.list_bidders(include_house=False))
-    _check("real bidders >= 2 before reset", real_bidders_before >= 2,
-           f"got {real_bidders_before}")
+    bidders_before = len(bidding.list_bidders())
+    _check("bidders >= 2 before reset", bidders_before >= 2,
+           f"got {bidders_before}")
 
     r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
     _check("scope=full returns 200", r.status_code == 200, f"body={r.get_json()}")
     body = r.get_json()
     _check("scope=full response.scope = 'full'", body.get("scope") == "full")
-    _check("scope=full response.deleted.bidders == real bidder count",
-           body["deleted"]["bidders"] == real_bidders_before,
-           f"got {body['deleted']['bidders']} expected {real_bidders_before}")
+    _check("scope=full response.deleted.bidders == the bidder count",
+           body["deleted"]["bidders"] == bidders_before,
+           f"got {body['deleted']['bidders']} expected {bidders_before}")
 
-    _check("no real bidders left after scope=full",
-           len(bidding.list_bidders(include_house=False)) == 0)
-    # House row survives
-    all_bidders = bidding.list_bidders(include_house=True)
-    identities = {b["identity"] for b in all_bidders}
-    _check("House bidder identity present after scope=full",
-           "The House 🎩" in identities, f"got {identities}")
-    _check("exactly 1 bidder (House) after scope=full",
-           len(all_bidders) == 1, f"got {len(all_bidders)}")
-
-    # The cached house_bidder_id() must still resolve to a real row
-    from la_subasta.models import house_bidder_id, get_conn
-    hid = house_bidder_id()
-    row = get_conn().execute(
-        "SELECT id, identity FROM bidders WHERE id = ?", (hid,),
-    ).fetchone()
-    _check("house_bidder_id() resolves to surviving House row after reset_full",
-           row is not None and row["identity"] == "The House 🎩",
-           f"got {dict(row) if row else None}")
+    # No House row to keep: the table is simply empty
+    _check("no bidders left after scope=full",
+           len(bidding.list_bidders()) == 0 and _row_count("bidders") == 0)
 
     # Bids/ownership/payouts also gone (reset_full calls reset_bids first)
     _check("bids empty after scope=full", _row_count("bids") == 0)
@@ -3068,7 +3684,16 @@ def main():
     _run("bid validation", test_bid_validation)
     _run("bid undo (10s window)", test_bid_undo)
     _run("payout computation", test_payouts)
-    _run("House payout (zero-bid horse wins)", test_house_payout)
+    _run("no House - no sentinel row, no House payout, no is_house", test_no_house)
+    _run("no House - a paying horse nobody owns is a flagged slot; the admin names the payer",
+         test_unowned_win_is_a_flagged_slot)
+    _run("no House - the payout slot picker needs results", test_payout_slot_needs_results)
+    _run("no House - a void with no second bidder leaves the horse unsold",
+         test_void_with_no_second_bidder_leaves_the_horse_unsold)
+    _run("lock - warns about unsold horses; confirm locks anyway", test_lock_warns_about_unsold_horses)
+    _run("lock - no confirm needed when every horse is sold", test_lock_needs_no_confirm_when_every_horse_is_sold)
+    _run("cap - an exempt bidder holds more than the cap, the rest do not",
+         test_cap_exempt_bidder_holds_more_than_the_cap)
 
     # Phase 1.5
     _run("settings — defaults", test_settings_get_defaults)
@@ -3095,14 +3720,22 @@ def main():
     _run("scratch — applied by the store's listener", test_scratch_store_listener_direct)
     _run("scratch — after the lock: ownership voided, owed drops, refund", test_scratch_after_lock)
     _run("scratch — replacement: 22 enters with no bids", test_scratch_replacement_adds_fresh_horse)
-    _run("scratch — undo restores the field, not the bids", test_scratch_undo_restores_field_not_bids)
+    _run("scratch — undo restores everything: the bids, not an admin's void",
+         test_scratch_undo_restores_everything)
+    _run("scratch — undo after the lock restores the owner", test_scratch_undo_after_the_lock_restores_the_owner)
+    _run("scratch — undo after the lock of a scratch before it: frozen from the bids",
+         test_scratch_undo_after_the_lock_of_a_scratch_before_it)
+    _run("scratch — undo after a lock that froze nothing", test_scratch_undo_after_a_lock_that_froze_nothing)
     _run("scratch — a restart does not double-void", test_scratch_restart_does_not_double_void)
+    _run("scratch — undo survives a restart, and an undo made while down is restored",
+         test_scratch_undo_survives_a_restart)
     _run("scratch — never waits on a bid holding sqlite (lock order)",
          test_scratch_never_waits_on_a_bid_holding_sqlite)
     _run("scratch — a degraded store voids nothing", test_degraded_store_voids_nothing)
     _run("scratch — a failed push is retried, nothing voided twice", test_failed_scratch_push_is_retried)
     _run("paid — a second tap keeps the refund owed", test_paid_twice_keeps_the_refund)
     _run("scratch — old ownership table migrated", test_ownership_migration)
+    _run("migration — the House's row and an old payouts table", test_house_and_payouts_migration)
     _run("scratch — guest page follows the field live", test_guest_js_follows_the_field)
     _run("guest UI — /api/horses scratched flag round-trip (regression)",
          test_horses_scratched_flag_roundtrip)
@@ -3115,6 +3748,10 @@ def main():
          test_guest_2027_pesos_button_format)
     _run("dev panel — markup present + hidden-by-default + JS gating",
          test_dev_panel_markup_and_gating)
+    _run("admin page — controls, the lock's warning, bidders, the payout ledger", test_admin_page)
+    _run("guest UI — the toast for a scratched horse is its own element", test_guest_toast_has_its_own_element)
+    _run("dev panel — Lock asks before locking unsold horses",
+         test_dev_panel_lock_asks_before_locking_unsold_horses)
     _run("dev panel — La Subasta's own scratch route is gone",
          test_own_scratch_route_gone)
     _run("dev panel — /api/admin/transition endpoint",
@@ -3137,8 +3774,8 @@ def main():
     _run("reset — invalid scope rejected", test_reset_invalid_scope)
     _run("reset — scope=bids wipes state data, keeps bidders",
          test_reset_bids_wipes_state_data_keeps_bidders)
-    _run("reset — scope=full removes everything except House",
-         test_reset_full_removes_everything_keeps_house)
+    _run("reset — scope=full removes everything (there is no House row to keep)",
+         test_reset_full_removes_everything)
     _run("reset — scope=state only flips auction_state",
          test_reset_state_only_changes_auction_state)
     _run("reset — preserves settings overrides + audit log",

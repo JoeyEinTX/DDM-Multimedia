@@ -13,13 +13,19 @@
 #     row stays, as the record of what was refunded), and so are the bids, so
 #     the owner's total owed drops by the winning bid, the horse is out of the
 #     pot and it cannot pay out. If the owner had already been marked paid,
-#     the bidders' ledger shows the refund owed (bidding.ledger()). The House
-#     rule is for unsold horses, never for a scratched one.
+#     the bidders' ledger shows the refund owed (bidding.ledger()).
 #   - A replacement scratch (9 -> 22) does both halves at once: 9 as above,
 #     and 22 enters the list as a fresh horse with no bids.
-#   - Undo on the LQ admin page puts the field back; it does not un-void
-#     bids (9 comes back with none). Undoing a replacement takes the stand-in
-#     out of the field again, and its bids are voided the same way.
+#   - Undo on the LQ admin page restores everything (restore()): the horse is
+#     back in the field and what its scratch voided comes back with it, its
+#     bids and, after the lock, its ownership row, so the owner owes again.
+#     There is no House to take a horse an undo would leave ownerless, so an
+#     undo never leaves one: a horse scratched before the lock and undone
+#     after it is frozen into ownership from the bids that come back. Only
+#     what the scratch voided returns (voided_reason 'scratched'): a bid an
+#     admin voided for any other reason stays voided. Undoing a replacement
+#     takes the stand-in out of the field again, and its bids are voided the
+#     same way (they come back if the replacement is made again).
 #
 # When: on change, never on a timer. sync() runs from the store's change
 # listener (HorseStore.add_listener: every names / scratch write, on the
@@ -27,8 +33,9 @@
 # after the board exists), and before a La Subasta request if names_rev has
 # moved since the last sync (a listener that failed is caught up there).
 # It is idempotent: it voids only what is still active on a horse that is
-# not in the field, so a restart, a second listener call or a request finds
-# nothing left to do and voids nothing twice.
+# not in the field and restores only what a scratch voided on a horse that is
+# in it, so a restart, a second listener call or a request finds nothing left
+# to do and changes nothing twice.
 #
 # Live: each horse that left the field is announced with horse_scratched and
 # the new field with field_changed (SocketIO), and the guest page re-reads
@@ -52,6 +59,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 from la_subasta import field, notifications
 from la_subasta.config import EVENT_YEAR
 from la_subasta.models import write_txn
+from la_subasta.state_machine import AuctionState, get_state
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +115,75 @@ def apply(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int, D
     return out
 
 
+_LOCKED_ON = (AuctionState.LOCKED, AuctionState.RACE_COMPLETE, AuctionState.SETTLED)
+
+
+def restore(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int, Dict[str, Any]]:
+    """Undo of a scratch: whatever a scratch voided on a horse that is in the
+    field again comes back, its bids and its ownership row (the owner owes
+    again). Only rows voided 'scratched' are touched, never one an admin
+    voided. A horse scratched before the lock and undone after it has its
+    bids back but was never frozen into ownership (the lock froze the field
+    without it), so it is frozen now from those bids and the horse is not left
+    without an owner. Returns {horse: {"bids": how many restored, "owner":
+    {"bidder_id", "winning_bid"} or None}} for the horses it touched; {} when
+    there was nothing to do. One transaction."""
+    numbers = set(the_field.numbers())
+    out: Dict[int, Dict[str, Any]] = {}
+    with write_txn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT horse_id FROM bids "
+            "WHERE voided = 1 AND voided_reason = ? AND event_year = ?",
+            (SCRATCHED, event_year),
+        ).fetchall()
+        for horse in sorted(r["horse_id"] for r in rows if r["horse_id"] in numbers):
+            cur = conn.execute(
+                "UPDATE bids SET voided = 0, voided_reason = NULL "
+                "WHERE horse_id = ? AND voided = 1 AND voided_reason = ? AND event_year = ?",
+                (horse, SCRATCHED, event_year),
+            )
+            out.setdefault(horse, {"bids": 0, "owner": None})["bids"] = cur.rowcount or 0
+        rows = conn.execute(
+            "SELECT id, horse_id, bidder_id, winning_bid FROM ownership "
+            "WHERE voided = 1 AND voided_reason = ? AND event_year = ?",
+            (SCRATCHED, event_year),
+        ).fetchall()
+        for row in rows:
+            if row["horse_id"] not in numbers:
+                continue
+            conn.execute(
+                "UPDATE ownership SET voided = 0, voided_reason = NULL, voided_at = NULL "
+                "WHERE id = ?",
+                (row["id"],),
+            )
+            out.setdefault(row["horse_id"], {"bids": 0, "owner": None})["owner"] = {
+                "bidder_id": row["bidder_id"], "winning_bid": row["winning_bid"]}
+        # Locked, and the lock did freeze ownership (a row exists, voided or
+        # not: with none at all payouts freezes everything itself): a returned
+        # horse that has bids but no owner is frozen from them.
+        if out and get_state(event_year) in _LOCKED_ON and conn.execute(
+                "SELECT COUNT(*) AS c FROM ownership WHERE event_year = ?",
+                (event_year,)).fetchone()["c"]:
+            for horse, done in sorted(out.items()):
+                if done["owner"] is not None:
+                    continue
+                top = conn.execute(
+                    "SELECT bidder_id, amount FROM bids "
+                    "WHERE horse_id = ? AND voided = 0 AND event_year = ? "
+                    "ORDER BY amount DESC, bid_time ASC, id ASC LIMIT 1",
+                    (horse, event_year),
+                ).fetchone()
+                if top is None:
+                    continue
+                conn.execute(
+                    "INSERT OR REPLACE INTO ownership (horse_id, bidder_id, winning_bid, event_year) "
+                    "VALUES (?, ?, ?, ?)",
+                    (horse, top["bidder_id"], top["amount"], event_year),
+                )
+                done["owner"] = {"bidder_id": top["bidder_id"], "winning_bid": top["amount"]}
+    return out
+
+
 def _results_name(horses: Set[int], event_year: int) -> Set[int]:
     from la_subasta.models import get_conn
     rows = get_conn().execute(
@@ -133,10 +210,11 @@ def _listen(store: Any) -> None:
 def sync(force: bool = False) -> Optional[Dict[str, Any]]:
     """Bring the auction in line with La Quiniela's field. Cheap when
     nothing has changed (names_rev is where it was at the last sync).
-    Returns {"applied": apply()'s result, "left": horses that left the field
-    since the last sync, "field": the numbers} when it looked, None when it
-    did not (no La Quiniela board, nothing changed, or a store that could not
-    read its database: see the header)."""
+    Returns {"applied": apply()'s result, "restored": restore()'s (an undo),
+    "left": horses that left the field since the last sync, "field": the
+    numbers} when it looked, None when it did not (no La Quiniela board,
+    nothing changed, or a store that could not read its database: see the
+    header)."""
     global _seen, _signature, _degraded_logged
     store = field.lq_store()
     if store is None:
@@ -160,6 +238,11 @@ def sync(force: bool = False) -> Optional[Dict[str, Any]]:
             log.info("La Subasta: La Quiniela's field applied (names_rev %s): %s", the_field.names_rev,
                      ", ".join(f"#{h} {d['bids']} bid(s) voided" + (", ownership voided" if d["owner"] else "")
                                for h, d in sorted(applied.items())))
+        restored = restore(the_field)
+        if restored:
+            log.info("La Subasta: back in La Quiniela's field (names_rev %s), restored: %s", the_field.names_rev,
+                     ", ".join(f"#{h} {d['bids']} bid(s)" + (", ownership" if d["owner"] else "")
+                               for h, d in sorted(restored.items())))
         signature = tuple((h["horse_id"], h["name"]) for h in the_field.horses)
         before = _signature
         numbers = the_field.numbers()
@@ -171,10 +254,12 @@ def sync(force: bool = False) -> Optional[Dict[str, Any]]:
             done = applied.get(horse) or {"bids": 0, "owner": None}
             notifications.horse_scratched(horse, refund_count=done["bids"],
                                           ownership_voided=done["owner"] is not None)
-        if applied or (before is not None and before != signature):
+        # field_changed after an undo too: the phones read the list again and
+        # find the horse's bids and leader back.
+        if applied or restored or (before is not None and before != signature):
             notifications.field_changed(the_field.names_rev, numbers)
         _seen, _signature = (store, the_field.names_rev), signature
-    return {"applied": applied, "left": left, "field": numbers}
+    return {"applied": applied, "restored": restored, "left": left, "field": numbers}
 
 
 def follow_la_quiniela() -> bool:

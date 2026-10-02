@@ -109,6 +109,12 @@ def transition(new_state: AuctionState, event_year: int = EVENT_YEAR,
     return new_state
 
 
+def can_transition(new_state: AuctionState, event_year: int = EVENT_YEAR) -> bool:
+    """True iff transition(new_state) would be accepted without force from
+    where the auction is now (the lock guard asks before it warns)."""
+    return new_state in _TRANSITIONS.get(get_state(event_year), set())
+
+
 def is_biddable(event_year: int = EVENT_YEAR) -> bool:
     """True iff bids are currently accepted."""
     return get_state(event_year) in BIDDABLE_STATES

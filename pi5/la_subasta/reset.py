@@ -11,8 +11,8 @@
 
 from typing import Dict
 
-from la_subasta.config import EVENT_YEAR, HOUSE_BIDDER_IDENTITY
-from la_subasta.models import _ensure_house_bidder, write_txn
+from la_subasta.config import EVENT_YEAR
+from la_subasta.models import write_txn
 from la_subasta.state_machine import AuctionState
 
 
@@ -70,8 +70,8 @@ def _do_reset_bids(conn, event_year: int) -> Dict[str, int]:
 def reset_bids(event_year: int = EVENT_YEAR) -> Dict[str, int]:
     """
     Wipe bids, ownership, payouts. Reset auction_state to
-    NOT_STARTED with total_pot = 0. Bidders (including The House) are kept.
-    Single atomic transaction.
+    NOT_STARTED with total_pot = 0. Bidders are kept (with their cap
+    exemption). Single atomic transaction.
     """
     with write_txn() as conn:
         return _do_reset_bids(conn, event_year)
@@ -79,20 +79,15 @@ def reset_bids(event_year: int = EVENT_YEAR) -> Dict[str, int]:
 
 def reset_full(event_year: int = EVENT_YEAR) -> Dict[str, int]:
     """
-    Everything reset_bids does, plus delete all bidders except The House.
-    Re-verifies the House row is present at the end so payouts that
-    fall back to House have a valid FK target. Single atomic transaction.
+    Everything reset_bids does, plus delete all bidders. Single atomic
+    transaction.
     """
     with write_txn() as conn:
         result = _do_reset_bids(conn, event_year)
         bd_cur = conn.execute(
-            "DELETE FROM bidders WHERE identity != ? AND event_year = ?",
-            (HOUSE_BIDDER_IDENTITY, event_year),
+            "DELETE FROM bidders WHERE event_year = ?", (event_year,),
         )
         result["bidders"] = bd_cur.rowcount or 0
-        # Defensive: re-insert House if somehow missing, and refresh the
-        # models-level cached id so house_bidder_id() returns the right row.
-        _ensure_house_bidder(conn)
     return result
 
 
