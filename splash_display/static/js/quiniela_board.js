@@ -310,7 +310,9 @@
     let visible = false;       // board layer shown
     let frozen = false;        // betting is closed: rows/pot/prizes are the figures at the post
     let closingKey = null;     // the closing figures on the board (their JSON), null when they are not
-    let countedOn = false;     // the pot is the host's hand count: its tag is up
+    let countedWanted = false; // pi5 says the pot is the host's hand count
+    let countedFaceReady = false;   // the face the tag is lettered in has loaded (without document.fonts: always)
+    let countedOn = false;     // ... and its tag is up (wanted, and its face is there)
     let renderedOnce = false;  // rows have been painted at least once
     let es = null;
     let reconnectTimer = null;
@@ -464,14 +466,36 @@
     // follows the model's hand_counted alone: pi5 says it only while the pot
     // shown is the count's (the frozen board and the results screen), never
     // for a live pot.
+    //
+    // It is lettered in Impact in every look: the board's own stack, Impact
+    // where installed and Anton from static/fonts where not, which the
+    // stylesheet gives it like any label. Anton is a web font, so the text
+    // is laid out in the fallback until it has arrived; a width measured then
+    // would pick the wrong text. The tag therefore stays down until the face
+    // has loaded (countedFaceReady, once document.fonts.load() has settled for
+    // the tag's own font), and is measured again whenever a font finishes
+    // loading and whenever the window is resized.
     function renderCounted(on) {
+        countedWanted = on;
+        syncCounted();
+    }
+
+    function syncCounted() {
         if (!countedEl) return;
-        if (on !== countedOn) {
-            countedOn = on;
-            countedEl.classList.toggle('is-on', on);
-            countedEl.setAttribute('aria-hidden', on ? 'false' : 'true');
+        const show = countedWanted && countedFaceReady;
+        if (show !== countedOn) {
+            countedOn = show;
+            countedEl.classList.toggle('is-on', show);
+            countedEl.setAttribute('aria-hidden', show ? 'false' : 'true');
         }
         placeCounted();
+    }
+
+    // The tag's face is ready: loaded, or not coming (a face that fails to
+    // load is what the tag has to be set in, so it is shown all the same).
+    function countedFaceArrived() {
+        countedFaceReady = true;
+        syncCounted();
     }
 
     function placeCounted() {
@@ -776,7 +800,7 @@
     function refitAll() {
         layoutStrips();
         refitNames();
-        placeCounted();
+        placeCounted();            // the dotted POT figure changed width: its tag follows
         if (crawlHtml != null) applyCrawl(crawlHtml);
     }
 
@@ -1404,14 +1428,27 @@
     }
 
     // ---- Boot --------------------------------------------------------
+    // The tag's face (see renderCounted): load whatever its own computed font
+    // names, so that a page that is told "hand counted" on its first message
+    // still measures the tag in the right face. Without document.fonts there
+    // is nothing to wait for.
+    if (countedEl && document.fonts && document.fonts.load) {
+        const tagStyle = getComputedStyle(countedEl);
+        document.fonts.load(tagStyle.font || (tagStyle.fontSize + ' ' + tagStyle.fontFamily), COUNTED_LONG)
+            .then(countedFaceArrived, countedFaceArrived);
+    } else {
+        countedFaceReady = true;
+    }
     fetchOnce();
     connect();
     setInterval(updateNoLink, 1000);
     setInterval(tickCloses, CLOSES_TICK_MS);
     setInterval(tickLive, LIVE_TICK_MS);
-    // Anton arrives late where Impact is missing: the names' widths change.
-    // So does every dotted width when the tote face arrives.
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(refitNames);
+    // Anton arrives late where Impact is missing: the names' widths change,
+    // and the tag is measured again. So does every dotted width when the tote
+    // face arrives.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { refitNames(); placeCounted(); });
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { placeCounted(); });
     // A window that changes size moves the POT figure, and its tag with it.
     window.addEventListener('resize', () => { placeCounted(); });
     // In "dots" a window that changes size (a kiosk settling into full

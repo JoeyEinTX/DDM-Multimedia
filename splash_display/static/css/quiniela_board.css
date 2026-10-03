@@ -168,10 +168,15 @@
 
 /* The hand count's tag: HAND COUNTED (the JS makes it COUNTED when that does
    not fit), by the POT figure while the pot and the prizes are the host's
-   count of the cash box. Out of the flow: the JS puts its left and top where
+   count of the cash box. Lettered in Impact in every look: it takes the
+   board's own face from .qb (Impact where installed, Anton from static/fonts
+   where not) and no rule of the tote look gives it another. 26 px, caps about
+   21 px, 203 px wide. Out of the flow: the JS puts its left and top where
    the figure's left edge less a gap meets the figure's middle, and the
    transform hangs it to the left of that point, so the figure, the prizes
-   and the header's columns stand where they do without it. */
+   and the header's columns stand where they do without it. The rule itself is
+   the Impact look's, a gold-outlined pill; the tote looks take the pill off
+   further down. */
 .qb-counted {
     display: none;
     position: absolute;
@@ -877,7 +882,6 @@
 
 .qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"],
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-text,
-.qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted,
 .qb[data-look="dots"] [data-tote="name"] {
     font-family: "DDM Tote", Impact, "Anton", sans-serif;
     font-variant-numeric: normal;
@@ -914,16 +918,16 @@
     font-size: 40px;
 }
 
-/* The hand count's tag in the dot face: a small sign at a 3 px pitch, HAND
-   COUNTED twelve tiles of 18 px, in the figure's amber, left of it. Its box,
-   border and padding go (the tiles are its box), the rest is the shared
-   tote rule above. */
+/* The hand count's tag in the tote looks: the same Impact lettering as in
+   impact (the face and the size are the base rule's; this is not a tote field
+   and is not set in dots), in the figure's amber, left of it, with no pill:
+   a plain label like the ones around it. */
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted {
     padding: 0;
     border: 0;
     border-radius: 0;
-    background-color: transparent;
-    font-size: 24px;
+    background: none;
+    color: var(--qb-amber);
 }
 
 /* Rows in "dots": one strip of tiles that fills the room from just right

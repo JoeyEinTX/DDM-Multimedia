@@ -501,21 +501,36 @@ tag, `HAND COUNTED`, to the left of the POT figure, at its middle: the pot
 and the three prizes on the board (and on the results screen, whose header
 keeps the pot) are the host's count of the cash box, not the scales'
 estimate. It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
+
+It is **lettered in Impact in every look**: the stack the board itself
+declares (Impact where installed, `static/fonts/Anton-Regular.ttf` where
+not), upper case, 26 px with 4 px between the letters, so the capitals are
+about 21 px tall (Impact 20.5, Anton 22.4), the height of the dot-matrix
+tag it replaced, and the text is 203 px wide (190 in Anton), narrower than
+that tag's 216. No rule of the tote look gives it a face or tiles: it is
+not a tote field. The looks differ only in its box and colour: in `impact`
+a gold pill (a 3 px gold outline, 237 px wide), in `dots` and `numbers`
+plain amber letters, the figure's colour, with no pill.
+
 The tag is out of the flow, so the figure, its label, the prize tiles, the
 banner and the logo stand exactly where they do without it (measured at
-1920 x 1080 in all three looks: 0 px; the limit is 2); it follows the
-figure when its width changes (`$99` to `$100`), when the window is
-resized and when the tote face arrives late. It reads `COUNTED` instead
-when `HAND COUNTED` would not fit between the logo and the figure; with the
-logo's 480 px cell there is room at every width the header itself fits in,
-so that is a safety net, and the tests make it happen by widening the logo.
-In `dots` and `numbers` it is set in the dot face at pitch 3 (twelve tiles
-of 18 px, amber like the figure); in `impact` it is a gold-outlined pill in
-Impact. Every character of both texts is in the face (the tests check its
-character map), so no glyph falls back to Impact. It is up only while the
-pot shown is the count: never in betting (1, 2), where the pot is live
-whatever a held count says, and never on a model without `hand_counted` (an
-older pi5).
+1920 x 1080 in all three looks and at 1680 x 1050 in `dots`: 0 px; the
+limit is 2); it follows the figure when its width changes (`$99` to
+`$100`), when the window is resized and when the tote face arrives late.
+Anton is a web font: where Impact is missing the text is laid out in the
+browser's plain sans-serif (257 px wide) until it has arrived, and a width
+measured then would pick the wrong text. So the tag stays down until
+`document.fonts.load()` has settled for its own computed font, and is
+measured again whenever a font finishes loading and whenever the window
+is resized. It reads `COUNTED` instead when `HAND COUNTED` would not fit
+between the logo and the figure; with the logo's 480 px cell there is room
+at every width the header itself fits in (at 1680 px the tag stands 289 px
+clear of the logo, crossing the logo cell's right edge by 41 px of empty
+space, where the dot tag crossed it by 54), so that is a safety net, and
+the tests make it happen by widening the logo. It is up only while the pot
+shown is the count: never in betting (1, 2), where the pot is live whatever
+a held count says, and never on a model without `hand_counted` (an older
+pi5).
 
 Either freeze only holds while the board is up. A board coming up already
 in 3, 4 or 5 — a page loaded mid-race, or the server restarted during the
@@ -671,14 +686,15 @@ logged once. The page carries the look in the board's `data-look`.
 - a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at the crawl's 120 px/s until its last character is in the area's last tile, held 1 s, back to the start;
 - whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again, as are the strips when the window is resized.
 
-- **Dotted** in `dots`: the pot, its `HAND COUNTED` tag, the three prizes,
+- **Dotted** in `dots`: the pot, the three prizes,
   every row's name and bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
   dots, a struck name and `TOKENS REFUNDED` dimmed), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
   number, as on the dashboard's results tote (cloth, then the dotted
   name), the crawl's badges included; the state banner and the toast,
-  which are signs, not tote fields; every label (`POT`, `WIN`, `HORSE`,
+  which are signs, not tote fields; the `HAND COUNTED` tag, a label in
+  Impact in every look; every label (`POT`, `WIN`, `HORSE`,
   `BETS`, the results' `WIN / PLACE / SHOW`, the line under them) and the
   `CLOSES IN` clock.
 - **One layout.** Every box of the Impact look is where it was: header,
@@ -725,7 +741,7 @@ pitches, which keeps every dot on the pixel grid:
 | Field | Impact | Tote look |
 | --- | --- | --- |
 | Pot | 104 px | pitch 12 (96 px) |
-| `HAND COUNTED` tag | 26 px, gold-outlined pill | pitch 3 (24 px), twelve tiles of 18 px |
+| `HAND COUNTED` tag | 26 px, gold-outlined pill | 26 px, plain amber: still Impact, not a tote field, so no pitch |
 | Header prizes | 40 px | pitch 5 |
 | Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles filling the row (20 of 40.25 px at 1920 px); a long name scrolls; a dim `0` |
 | Row bets (`numbers`) | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
@@ -999,13 +1015,19 @@ Chrome or Chromium and reads the figures off the page: once betting has
 closed it must show `closing`, not the live fields. It finds `chromium`,
 `chromium-browser` or Chrome by itself (`DDM_CHROME` names another) and is
 skipped where there is none. `HandCountTagTests` does the same for the hand
-count's tag, at 1920 x 1080 in all three looks: it is up with a count and down
-without, the pot, its label, the prize tiles, the banner and the logo do not
-move by more than 2 px (they do not move at all), it hangs left of the figure
-at its middle and clear of the logo, it wears the look's face, it follows a
-figure that changes width, a resized window and a face that arrives late, it
-is there on the results screen and not in FINAL CALL, and it gives way to
-`COUNTED` when the room is short.
+count's tag, at 1920 x 1080 in all three looks (and at 1680 x 1050 in
+`dots`): it is up with a count and down without, the pot, its label, the
+prize tiles, the banner and the logo do not move by more than 2 px (they do
+not move at all), it hangs left of the figure at its middle and clear of the
+logo, it is lettered in Impact in every look (the board's own stack, never a
+face of its own: its text is as wide as the same text in Impact, or in Anton
+where Impact is not installed, and not as wide as the plain sans-serif;
+capitals within 2 px of the old dot tag's 21; no wider than that tag; amber
+and plain in the tote looks, a gold pill in `impact`), it is measured only
+after its face has loaded (a slow Anton, and a room that only Anton's real
+width fits), it follows a figure that changes width, a resized window and a
+tote face that arrives late, it is there on the results screen and not in
+FINAL CALL, and it gives way to `COUNTED` when the room is short.
 
 ---
 

@@ -1095,13 +1095,19 @@ class LookTests(RouteCase):
                        "function placeCounted", "m.hand_counted === true", "'HAND COUNTED'", "'COUNTED'"):
             self.assertIn(needle, js)
         # the hand count's tag: one element in the template, no tote field of its own (the count of those above stands),
-        # the dot face in the tote looks through the shared rule, a gold pill in impact
+        # lettered in Impact in every look: no rule hands it a face, a tile or a glow, the tote look only colours it
         with server.app.test_request_context("/"):
             html = server.render_template("splash/quiniela_live.html")
         self.assertEqual(html.count('id="qb-counted"'), 1)
         self.assertRegex(html, r'<div class="qb-counted" id="qb-counted" aria-hidden="true">HAND COUNTED</div>')
         self.assertIn('.qb:is([data-look="dots"], [data-look="numbers"]) .qb-counted', css)
         self.assertIn(".qb-counted.is-on { display: block; }", css)
+        bare = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        tag_rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", bare) if ".qb-counted" in sel]
+        self.assertEqual(len(tag_rules), 3, "the base rule, .is-on and the tote looks' colour: " + str([r[0] for r in tag_rules]))
+        for selector, body in tag_rules:
+            for prop in ("font-family", "background-image", "text-shadow"):
+                self.assertNotIn(prop, body, f"{selector}: the tag takes the board's own face, as every label does")
         self.assertNotRegex(js, r"\bNAME_PITCH\b", "the rows' pitch-shrinking fit is gone (the results screen keeps its own)")
         # impact and numbers: the strip's wrappers are no boxes, outside the tote section
         self.assertIn(".qb-strip-cell,\n.qb-strip,\n.qb-namebox { display: contents; }", css.replace("\r\n", "\n"))
@@ -1232,8 +1238,30 @@ BOARD_PROBE_JS = r"""
         const header = { pot: box('#qb-pot'), figure: [r2(fb.left), r2(fb.top), r2(fb.width), r2(fb.height)],
                          label: box('.qb-pot-label'), win: box('.qb-prize--win'), place: box('.qb-prizes .qb-prize:nth-child(2)'),
                          show: box('.qb-prizes .qb-prize:nth-child(3)'), banner: box('#qb-banner'), logo: box('.qb-logo') };
-        const counted = { on: tag.classList.contains('is-on'), text: tag.textContent.trim(), display: getComputedStyle(tag).display,
-                          hidden: tag.getAttribute('aria-hidden'), rect: box('#qb-counted'), font: getComputedStyle(tag).fontFamily };
+        // The tag's lettering: its computed face, size, colour and box; the width of its text (a Range, so the pill's
+        // padding is not in it) against the same text set in Impact, in Anton and in the browser's plain sans-serif at
+        // the tag's own size and spacing; and the height of its capitals (a canvas in the tag's own font).
+        const tagCs = getComputedStyle(tag);
+        const faceWidth = (family) => {
+            const s = document.createElement('span');
+            s.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;text-transform:uppercase;font-family:' + family
+                + ';font-size:' + tagCs.fontSize + ';letter-spacing:' + tagCs.letterSpacing;
+            s.textContent = 'HAND COUNTED';
+            board.appendChild(s);
+            const w = s.getBoundingClientRect().width;
+            board.removeChild(s);
+            return r2(w);
+        };
+        const textRange = document.createRange();
+        textRange.selectNodeContents(tag);
+        const canvas = document.createElement('canvas').getContext('2d');
+        canvas.font = tagCs.fontSize + ' ' + tagCs.fontFamily;
+        const counted = { on: tag.classList.contains('is-on'), text: tag.textContent.trim(), display: tagCs.display,
+                          hidden: tag.getAttribute('aria-hidden'), rect: box('#qb-counted'), font: tagCs.fontFamily,
+                          boardFont: getComputedStyle(board).fontFamily, color: tagCs.color, background: tagCs.backgroundImage,
+                          border: tagCs.borderTopWidth, size: tagCs.fontSize, spacing: tagCs.letterSpacing,
+                          textWidth: r2(textRange.getBoundingClientRect().width), cap: r2(canvas.measureText('H').actualBoundingBoxAscent),
+                          faces: { impact: faceWidth('Impact'), anton: faceWidth('Anton'), generic: faceWidth('sans-serif') } };
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
@@ -1275,7 +1303,7 @@ BOARD_PROBE_JS = r"""
 
 def run_board(models: List[dict], look: str = "impact", styled: bool = False,
               stage: Tuple[int, int] = (1920, 1080), roster: bool = False, css: str = "",
-              slow_face: float = 0.0) -> List[dict]:
+              slow_face: float = 0.0, slow: Optional[Dict[str, float]] = None) -> List[dict]:
     """The board's real template and script in a page of their own, fed
     `models` in turn; what the board showed after each. Styled, the page is
     served over loopback with the board's stylesheet and fonts, the board on
@@ -1285,7 +1313,8 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
     in a slide layer of its own under the board, as on the TV. css: extra
     rules after the stylesheet (styled), to put the page in a corner of
     its own. slow_face: seconds the tote face takes to arrive (styled), a
-    kiosk loading cold, so a model comes before it."""
+    kiosk loading cold, so a model comes before it. slow: the same for any
+    static file, {"Anton-Regular.ttf": 1.5}."""
     with server.app.test_request_context("/"):
         board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
         roster_html = server.render_template("splash/horse_roster.html") if roster else ""
@@ -1307,11 +1336,15 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
                     + '</script>\n<script src="/static/js/quiniela_board.js"></script>\n</body></html>\n')
             app = Flask("board_page", static_folder=str(HERE / "static"), static_url_path="/static")
             app.add_url_rule("/", "page", lambda: page)
+            delays = dict(slow or {})
             if slow_face:
+                delays["DDMTote.ttf"] = slow_face
+            if delays:
                 @app.before_request
-                def _slow_face():
-                    if request.path.endswith("DDMTote.ttf"):
-                        time.sleep(slow_face)
+                def _slow_files():
+                    for name, seconds in delays.items():
+                        if request.path.endswith(name):
+                            time.sleep(seconds)
             logging.getLogger("werkzeug").setLevel(logging.ERROR)      # no line per request
             srv = make_server("127.0.0.1", 0, app, threaded=True)
             thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -1432,15 +1465,23 @@ class BoardPageTests(unittest.TestCase):
 class HandCountTagTests(unittest.TestCase):
     """The tag by the POT figure while the pot is the host's hand count of the
     cash box (pi5's hand_counted), in headless Chrome with the stylesheet and
-    the face at 1920x1080, in all three looks: HAND COUNTED, in the dot face
-    in the tote looks and a gold pill in impact, hung to the left of the
-    figure out of the flow, so the figure, the prizes and the header's columns
-    stay where they are. The feed is tools/fake_pi5.py's counted pot: the 2026
-    race, scale pot $154."""
+    the face at 1920x1080, in all three looks: HAND COUNTED, lettered in
+    Impact in every look (the board's own stack, Anton where Impact is not
+    installed; amber and plain in the tote looks, a gold pill in impact), hung
+    to the left of the figure out of the flow, so the figure, the prizes and
+    the header's columns stay where they are. The feed is tools/fake_pi5.py's
+    counted pot: the 2026 race, scale pot $154."""
 
     LOOKS = ("impact", "dots", "numbers")
     SCALE = ["$92", "$39", "$23"]
     COUNTED = ["$91", "$38", "$23"]          # a count of $152
+    GOLD = "rgb(232, 197, 58)"               # --qb-gold: the impact look's tag
+    AMBER = "rgb(212, 160, 0)"               # --qb-amber: the tote looks' (the figure's colour)
+    # The dot tag the Impact lettering replaced: twelve tiles of 18 px, capitals of 7 dots at a
+    # 3 px pitch (21 px); the impact look's pill, which did not change, was 236.73 px.
+    OLD_DOT_WIDTH = 216
+    OLD_PILL_WIDTH = 236.73
+    OLD_CAP_HEIGHT = 21
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1506,12 +1547,72 @@ class HandCountTagTests(unittest.TestCase):
             self.assertLess(width, 300, f"{look}: a small tag")
             self.assertLess(height, 50, look)
 
-    def test_the_tag_wears_the_looks_face(self) -> None:
-        tags = {look: run_board([self.counted], look=look, styled=True)[0]["counted"] for look in self.LOOKS}
-        for look in ("dots", "numbers"):
-            self.assertIn("DDM Tote", tags[look]["font"], look)
-            self.assertEqual(tags[look]["rect"][2:], [216, 24], f"{look}: twelve tiles of 18 px, the face at a 3 px pitch")
-        self.assertNotIn("DDM Tote", tags["impact"]["font"])
+    def test_the_tag_is_lettered_in_impact_in_every_look(self) -> None:
+        for look in self.LOOKS:
+            [seen] = run_board([self.counted], look=look, styled=True)
+            tag = seen["counted"]
+            self.assertEqual((tag["on"], tag["text"]), (True, "HAND COUNTED"), look)
+            # the board's own stack, not a face of its own: Impact, Anton behind it
+            self.assertEqual(tag["font"], tag["boardFont"], f"{look}: the tag takes the face the board declares")
+            self.assertIn("Impact", tag["font"], look)
+            self.assertNotIn("DDM Tote", tag["font"], f"{look}: no dot face")
+            self.assertEqual(tag["background"], "none", f"{look}: no tile behind the letters")
+            # and the glyphs really are that stack's: the text's width is the one set in Impact, or in Anton where
+            # Impact is not installed, never the browser's plain sans-serif
+            faces = tag["faces"]
+            nearest = min(abs(tag["textWidth"] - faces["impact"]), abs(tag["textWidth"] - faces["anton"]))
+            self.assertLess(nearest, 0.6, f"{look}: {tag['textWidth']} px against {faces}")
+            self.assertGreater(abs(tag["textWidth"] - faces["generic"]), 5, f"{look}: not the fallback face")
+            # 26 px letters: capitals about the height of the dot tag's (21 px), and the tag no wider than it was
+            self.assertEqual(tag["size"], "26px", look)
+            self.assertLessEqual(abs(tag["cap"] - self.OLD_CAP_HEIGHT), 2, f"{look}: capitals {tag['cap']} px")
+            if look == "impact":
+                self.assertEqual((tag["color"], tag["border"]), (self.GOLD, "3px"), "the impact look's gold pill, as it was")
+                self.assertLessEqual(tag["rect"][2], self.OLD_PILL_WIDTH + 0.5, look)
+            else:
+                self.assertEqual((tag["color"], tag["border"]), (self.AMBER, "0px"), f"{look}: the figure's amber, no pill")
+                self.assertLessEqual(tag["rect"][2], self.OLD_DOT_WIDTH, f"{look}: no wider than the dot tag was")
+
+    def test_at_1680_wide_in_dots(self) -> None:
+        """The screen DevPi's report fits: the header's middle cell is 656 px
+        there. Nothing moves with the tag, and it stays clear of the logo."""
+        without, tagged = run_board([self.plain, self.same], look="dots", styled=True, stage=(1680, 1050))
+        self.assertEqual((without["counted"]["on"], tagged["counted"]["on"], tagged["counted"]["text"]), (False, True, "HAND COUNTED"))
+        for part in ("pot", "figure", "label", "win", "place", "show", "banner", "logo"):
+            for a, b in zip(without["header"][part], tagged["header"][part]):
+                self.assertLessEqual(abs(a - b), 2, f"1680: the {part} moved from {without['header'][part]} to {tagged['header'][part]}")
+        left, top, width, height = tagged["counted"]["rect"]
+        logo = tagged["header"]["logo"]
+        self.assertAlmostEqual(left + width, tagged["header"]["figure"][0] - 22, delta=1, msg="the 22 px gap to the figure")
+        self.assertGreaterEqual(left, logo[0] + logo[2] + 24, "clear of the logo")
+        self.assertLessEqual(width, self.OLD_DOT_WIDTH, "no wider than the dot tag was")
+
+    def test_the_tag_is_measured_after_its_face_has_loaded(self) -> None:
+        """Where Impact is not installed the tag is lettered in Anton, a web
+        font: until it arrives the text is laid out in the browser's plain
+        sans-serif, which is wider. Here the room beside the figure (a wide
+        logo) is between the two widths, so a measure on the fallback would
+        pick COUNTED; with the face slow to arrive the tag must still end up
+        HAND COUNTED, decided with Anton's real width."""
+        anton = '.qb-counted { font-family: "Anton", sans-serif !important; }'
+        [probe] = run_board([self.counted], look="dots", styled=True, css=anton)
+        faces = probe["counted"]["faces"]
+        self.assertGreater(faces["generic"] - faces["anton"], 40, str(faces))
+        self.assertEqual(probe["counted"]["text"], "HAND COUNTED")
+        room = (faces["anton"] + faces["generic"]) / 2           # more than Anton needs, less than the fallback does
+        logo_w = round(probe["header"]["figure"][0] - 22 - 24 - probe["header"]["logo"][0] - room)
+        css = anton + " .qb-logo { width: %dpx !important; }" % logo_w
+        [tight] = run_board([self.counted], look="dots", styled=True, css=css)
+        self.assertEqual(tight["counted"]["text"], "HAND COUNTED", "Anton fits the room")
+        early, slow = run_board([self.counted, {"__wait": 3500}], look="dots", styled=True, css=css, slow={"Anton-Regular.ttf": 2.0})
+        self.assertGreater(early["counted"]["faces"]["anton"], faces["anton"] + 40, "the first reading is taken before Anton has arrived")
+        self.assertEqual((early["counted"]["on"], early["counted"]["display"]), (False, "none"),
+                         "the tag stays down while its face is on the way, instead of being measured in the fallback")
+        self.assertEqual((slow["counted"]["on"], slow["counted"]["text"]), (True, "HAND COUNTED"),
+                         "decided with the real width once the face had arrived, not with the fallback's")
+        self.assertAlmostEqual(slow["counted"]["textWidth"], faces["anton"], delta=0.6)
+        [too_tight] = run_board([self.counted], look="dots", styled=True, css=css.replace("%dpx" % logo_w, "%dpx" % (logo_w + 60)))
+        self.assertEqual(too_tight["counted"]["text"], "COUNTED", "a room Anton does not fill gives way, face loaded or not")
 
     def test_the_results_screen_and_the_race_in_progress(self) -> None:
         results, running = run_board([self.results, self.running], look="dots", styled=True)
@@ -1540,8 +1641,9 @@ class HandCountTagTests(unittest.TestCase):
             self.assertAlmostEqual(left + width, after["header"]["figure"][0] - 22, delta=1, msg=look)
 
     def test_a_late_face_takes_the_tag_along(self) -> None:
-        """The dot face arrives after the first model (a kiosk loading cold):
-        the figure changes width when it does, and the tag follows."""
+        """The tote face arrives after the first model (a kiosk loading cold):
+        the dotted figure changes width when it does, and the tag, which is
+        not set in that face, follows its left edge."""
         before, after = run_board([self.counted, {"__wait": 3000}], look="dots", styled=True, slow_face=1.5)
         self.assertEqual((before["pot"], after["pot"], after["counted"]["on"]), ("$152", "$152", True))
         for seen in (before, after):
@@ -1913,9 +2015,7 @@ class ToteFontTests(unittest.TestCase):
             self.assertIn(ord(ch), self.cmap, repr(ch))
         for low, up in (("a", "A"), ("z", "Z"), ("\u00f1", "N"), ("\u00c9", "E"), ("\u2019", "'"), ("\u2013", "-")):
             self.assertEqual(self.cmap[ord(low)], self.cmap[ord(up)], f"{low!r} is drawn as {up!r}")
-        # the hand count's tag: HAND COUNTED, or COUNTED when that does not fit (every character must be a glyph)
-        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234",
-                                             "HAND COUNTED", "COUNTED"]:
+        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234"]:
             for ch in line:
                 self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
 
