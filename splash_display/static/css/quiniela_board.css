@@ -21,7 +21,9 @@
 
    Motion budget (Pi 5, kiosk Chromium): every animation and transition
    here is transform or opacity only. Nothing loops except the chyron
-   crawl and the FINAL CALL banner pulse.
+   crawl and the FINAL CALL banner pulse; in "dots" the crawl is not an
+   animation at all, a fixed row of tiles that the script steps (the tote
+   look's section, at the end).
 
    Designed for 1920x1080 seen from across a room: header 196 px, two
    columns of ten row slots (the field, in numeric order), a 50 px chyron
@@ -713,7 +715,9 @@
 /* ---------------------------------------------------------------------
    Chyron: a continuous crawl edge to edge inside the band (a track whose
    content is repeated, translateX 0 -> -50 %, duration set by the JS from
-   the track's width at ~120 px/s). No tab: the band is all crawl.
+   the track's width at ~120 px/s). No tab: the band is all crawl. That is
+   the track of "impact" and "numbers"; "dots" has no track (the tote
+   look's section, at the end, hides it and puts a row of tiles in its place).
    --------------------------------------------------------------------- */
 .qb-foot {
     flex: 0 0 50px;
@@ -878,6 +882,7 @@
     --qb-amber: #d4a000;
     --qb-amber-glow: 0 0 0.07em rgba(212, 160, 0, 0.8), 0 0 0.14em rgba(212, 160, 0, 0.4);
     --qb-tote-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 6 8' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cpattern id='d' x='.5' y='.5' width='1' height='1' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='.5' cy='.5' r='.36' fill='%232a2a2a'/%3E%3C/pattern%3E%3C/defs%3E%3Crect x='.07' y='.07' width='5.86' height='7.86' rx='.3' fill='%231a1a1a' stroke='%23333' stroke-width='.08'/%3E%3Crect x='.5' y='.5' width='5' height='7' fill='url(%23d)'/%3E%3C/svg%3E");
+    --qb-strip-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='d' x='.5' y='.5' width='1' height='1' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='.5' cy='.5' r='.36' fill='%232a2a2a'/%3E%3C/pattern%3E%3C/defs%3E%3Csvg width='100%25' height='100%25' viewBox='0 0 6 8' preserveAspectRatio='none'%3E%3Crect x='.07' y='.07' width='5.86' height='7.86' rx='.3' fill='%231a1a1a' stroke='%23333' stroke-width='.08'/%3E%3C/svg%3E%3Csvg width='100%25' height='100%25' viewBox='.5 0 5 8'%3E%3Crect x='.5' y='.5' width='5' height='7' fill='url(%23d)'/%3E%3C/svg%3E%3C/svg%3E");
 }
 
 .qb:is([data-look="dots"], [data-look="numbers"]) [data-tote="num"],
@@ -967,10 +972,11 @@
     min-width: 0;
 }
 
-/* The tile here is --qb-tote-tile made to stretch: the tile itself drawn
-   to the image's width (viewBox 6 x 8, no aspect), the 35 bulbs in a
-   viewBox of their own that keeps its aspect and is centred, so they stay
-   at the pitch in a tile a few pixels wider or narrower. */
+/* The tile here is --qb-tote-tile made to stretch (--qb-strip-tile, above,
+   which the crawl's tiles use too): the tile itself drawn to the image's
+   width (viewBox 6 x 8, no aspect), the 35 bulbs in a viewBox of their own
+   that keeps its aspect and is centred, so they stay at the pitch in a tile
+   a few pixels wider or narrower. */
 .qb[data-look="dots"] .qb-strip {
     display: block;
     position: relative;
@@ -978,7 +984,7 @@
     font-size: calc(var(--qb-strip-pitch, 7px) * 8);
     width: calc(var(--qb-strip-tiles, 20) * var(--qb-strip-tile-w, 0.75em));
     height: 1em;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cpattern id='d' x='.5' y='.5' width='1' height='1' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='.5' cy='.5' r='.36' fill='%232a2a2a'/%3E%3C/pattern%3E%3C/defs%3E%3Csvg width='100%25' height='100%25' viewBox='0 0 6 8' preserveAspectRatio='none'%3E%3Crect x='.07' y='.07' width='5.86' height='7.86' rx='.3' fill='%231a1a1a' stroke='%23333' stroke-width='.08'/%3E%3C/svg%3E%3Csvg width='100%25' height='100%25' viewBox='.5 0 5 8'%3E%3Crect x='.5' y='.5' width='5' height='7' fill='url(%23d)'/%3E%3C/svg%3E%3C/svg%3E");
+    background-image: var(--qb-strip-tile);
     background-size: var(--qb-strip-tile-w, 0.75em) 1em;
     background-repeat: repeat-x;
     background-position: left top;
@@ -1078,6 +1084,94 @@
 
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-was,
 .qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-note { opacity: 0.5; }
+
+/* The crawl in "dots", which has no track (the rule below hides it; the
+   dotted text moving on it is what "numbers" keeps): a fixed row of tiles
+   across the band, built once by the JS (layoutCrawl: the rows' fill rule at
+   the crawl's own 4 px pitch, --qb-ct-pitch and --qb-ct-w) and the message
+   stepping across them, a character a tile (stepCrawl). Nothing in these
+   rules moves: no transform, no animation, no transition. A tile is the
+   rows' (the dark tile and its 35 bulbs at the pitch, as wide as the fill
+   rule made it) with one character of the face in it, set in by half of
+   what the tile has over the cell's 0.75em so that its dots sit on the
+   bulbs. The row is its own box (contain) so that a step touches nothing
+   outside it. */
+.qb[data-look="dots"] .qb-crawl-track { display: none; }
+
+.qb[data-look="dots"] .qb-crawl-tiles {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    font-size: calc(var(--qb-ct-pitch, 4px) * 8);
+    contain: strict;
+}
+
+.qb[data-look="dots"] .qb-ct {
+    position: relative;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--qb-ct-w, 0.75em);
+    height: 1em;
+    font-family: "DDM Tote", Impact, "Anton", sans-serif;
+    font-variant-numeric: normal;
+    line-height: 1;
+    letter-spacing: 0;
+    text-indent: calc((var(--qb-ct-w, 0.75em) - 0.75em) / 2);
+    white-space: pre;
+    color: var(--qb-amber);
+    text-shadow: var(--qb-amber-glow);
+    background-image: var(--qb-strip-tile);
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+}
+
+/* SCRATCHED in red dots; a struck name and TOKENS REFUNDED dim, the name
+   with a line across its tiles (they touch, so it is one line). */
+.qb[data-look="dots"] .qb-ct.is-lbl {
+    color: var(--qb-red);
+    text-shadow: 0 0 0.07em rgba(227, 24, 55, 0.8), 0 0 0.14em rgba(227, 24, 55, 0.4);
+}
+
+.qb[data-look="dots"] .qb-ct.is-dim {
+    color: rgba(212, 160, 0, 0.5);
+    text-shadow: 0 0 0.07em rgba(212, 160, 0, 0.4), 0 0 0.14em rgba(212, 160, 0, 0.2);
+}
+
+.qb[data-look="dots"] .qb-ct.is-strike::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: currentColor;
+}
+
+/* A saddle-cloth badge: its number's digits on solid cloth tiles, in Impact
+   as the cloths are everywhere (the cloth's colours are set on the tile by
+   the JS). One digit is one tile; two are a left and a right one with the
+   digits meeting at the seam. */
+.qb[data-look="dots"] .qb-ct.is-cloth {
+    padding: 0 1px;
+    font-family: Impact, "Anton", sans-serif;
+    font-size: calc(var(--qb-ct-pitch, 4px) * 6);
+    height: calc(var(--qb-ct-pitch, 4px) * 8);      /* the tile's own: 1em is this smaller size here */
+    line-height: calc(var(--qb-ct-pitch, 4px) * 8);
+    text-indent: 0;
+    text-align: center;
+    text-shadow: none;
+    background-image: none;
+}
+
+.qb[data-look="dots"] .qb-ct.is-cs { border-radius: 5px; }
+.qb[data-look="dots"] .qb-ct.is-cl { border-radius: 5px 0 0 5px; text-align: right; }
+.qb[data-look="dots"] .qb-ct.is-cr { border-radius: 0 5px 5px 0; text-align: left; }
+.qb[data-look="dots"] .qb-ct.is-cm { padding: 0; }                /* a third digit, which no horse number has */
 
 /* The results screen: names from a 12 px pitch down, the bets at 10, the
    prize at 18 (the JS steps all three down until they fit). */

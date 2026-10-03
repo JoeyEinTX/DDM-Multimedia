@@ -615,10 +615,12 @@ the live board follows pixel for pixel where practical):
   move, so a token dropped in that cup is not a bet), on a renumber (pi5
   produces no event for one), while the board is hidden, or while the
   picture is frozen.
-- Chyron: a 50 px band along the bottom, a continuous right-to-left
-  crawl edge to edge at ~120 px/s (one CSS transform animation over a
-  track whose content is repeated; the duration is computed from the
-  track's width after layout). Content, in order: `chyron[0]`; the live
+- Chyron: a 50 px band along the bottom. In `impact` and `numbers` a
+  continuous right-to-left crawl edge to edge at ~120 px/s (one CSS
+  transform animation over a track whose content is repeated; the
+  duration is computed from the track's width after layout); `dots` is a
+  dot-matrix sign of fixed tiles (the next section). Content, in order:
+  `chyron[0]`; the live
   items: the time of day on the race's clock (`7:42 PM`), the time to post
   (`POST IN 1:14`, hours and minutes; under ten minutes `POST IN 9:42`,
   minutes and seconds; gone once the post time has passed or while there
@@ -640,14 +642,92 @@ the live board follows pixel for pixel where practical):
   length (`9:59 PM` to `10:00 PM`, new weather), is a rebuild like any
   other, at the loop boundary.
 
+**The crawl of `dots`** is a dot-matrix sign, not a track: the tiles
+stand still and the message steps across them, a character a tile.
+
+- *A fixed row of tiles across the band*, built once by the rows' fill
+  rule at the crawl's own 4 px pitch: as many 24 px tiles as the band
+  holds, or one more when each is still 94 % of 24 px, every tile the
+  band's width / N and 32 px tall (78 tiles of 23.74 px in the 1852 px
+  band of a 1920 px screen, 68 of 23.71 px at 1680 px), the bulbs at the
+  pitch and a character's dots on them. The tile elements never move: no
+  transform, no animation and no transition touches the row or a tile
+  (sampled every frame for five seconds, every tile's x differs from its
+  first by 0 px). They are added or taken away only when the window
+  changes size, and the message goes on through it.
+- *The message is a loop of cells, one character a tile.* Tile `i`
+  shows cell `offset + i`; each **step** `offset` goes up by one, so the
+  whole message is one tile to the left, the next character comes in on
+  the right and the left tile's is gone. Stepped, not smooth: one step is
+  one tile and there is nothing in between. The loop is the track's items
+  in the same order, each followed by the gap (one blank tile, `◆`, one
+  blank tile: the track's 34 px each side, in tiles, `CRAWL_PAD_TILES`),
+  the last item too, so the end of the message and its start again are
+  one gap apart, and a message shorter than the band shows itself more
+  than once. A message that starts (the board comes up, or a rebuild that
+  did not have to wait) starts from blank tiles and comes in on the
+  right.
+- *The rate* is `CRAWL_TILES_PER_SEC`, a named constant at the top of
+  the script: 8 tiles a second, 190 px/s at 1920 px (the track ran at
+  120). `?crawl_tps=` on the URL overrides it for that page, for tuning on
+  the TV (`/?crawl_tps=6`; from 0.25 to 60, and anything that is not a
+  number is the default); `window.ddmQuiniela.crawl()`, a read-only
+  snapshot of the sign (`tps`, `tiles`, `tile`, `offset`, `length`,
+  `generation`, `pending`, `items`, `text`; null in the other looks), says
+  what is in force. The steps come from `requestAnimationFrame`
+  timestamps, not a timer: step n is due n / rate after the crawl started,
+  so a late frame makes the next one take two steps and the rate does not
+  drift (8.01 steps a second over 5.9 s of headless Chrome, one step every
+  117 to 133 ms, a frame either side of 125; 4.00 at `crawl_tps=4`, 16.01
+  at 16); a stall of more than half a second is not made up for. A step
+  writes only the tiles whose character or look changed, and nothing is
+  rebuilt.
+- *The content* is the track's: the same items in the same order with
+  the same separators, in capitals, a character a tile. The face's own
+  characters stay as they are (it draws a lower-case letter, an accented
+  one, a curly quote or a dash as the plain capital or mark, `SEÑOR` as
+  `SENOR`). **A character the face lacks** is its base letter when it
+  has one in the face (`Ž` is `Z`, `Ā` is `A`), else a blank tile;
+  a run of blanks is one blank, a zero-width character or a combining
+  mark is nothing, and none falls back to Impact (`toteChar`, from the
+  script's own list of the face's characters, which a test holds equal to
+  the face's character map). The default content is all in the face: the
+  middle dot, the diamond, the arrow and the degree sign included. The
+  badges are the one thing that is not dots: a saddle cloth is its
+  number's digits on solid cloth tiles in Impact, one tile for `9`, two
+  touching for `22`; `SCRATCHED` is red dots, a struck name dim with a
+  line across its tiles, `TOKENS REFUNDED` dim.
+- *Live updates* keep the track's rule (`f1a86e9`). A refresh that
+  keeps an item's length (the clock's minute, the countdown's minute or
+  second) is written into the message where it stands, at once, on the
+  tiles that show it, and the crawl goes on. Anything that changes the
+  message (a scratch added or undone, the weather text, an item coming
+  or going, a text of another length) waits for the loop boundary, the
+  message's start reaching the left edge, where the new message takes over
+  from its first cell; while it waits the live items are kept up to date
+  in it. Nothing an update does starts the crawl again from the
+  beginning (against the fake, a scratch added mid-loop at 30 tiles a
+  second showed `pending` for the rest of the loop and the offsets ran
+  311, 312, 0, 1 with the new message from 0). The crawl is paused while
+  the board is hidden (no animation frame is asked for) and goes on where
+  it was.
+- `numbers` and `impact` keep the track as it was: compared pixel for
+  pixel with the build before, whole board, animations frozen at the same
+  time, both are identical and `dots` is identical everywhere but the
+  band. `?crawl_tps=` does nothing there.
+
 **Motion.** A changed count ticks to the new value over ~500 ms (a
 `requestAnimationFrame` tween writing the number) and the row pulses
 once, ~400 ms (scale 1.015 plus a white overlay's opacity). The toast and
-the crawl are transform / opacity too, and so is a scrolling name in
-`dots`. Everything is transform / opacity only so it stays smooth on a
-Pi 5 in kiosk Chromium; nothing loops except the crawl, the FINAL CALL
-pulse and, in `dots`, a name too long for its row (the crawl is paused
-while the board is hidden, the names too, and under the results screen).
+the crawl (the track of `impact` and `numbers`) are transform / opacity
+too, and so is a scrolling name in `dots`. Everything is transform /
+opacity only so it stays smooth on a Pi 5 in kiosk Chromium, except
+the crawl of `dots`, which is not an animation at all: the script
+writes the tiles whose character changed, eight times a second (above).
+Nothing loops
+except the crawl, the FINAL CALL pulse and, in `dots`, a name too long
+for its row (the crawl is paused while the board is hidden, the names
+too, and under the results screen).
 
 **What the board reads.** Of the model: `race_state`, `board_states`,
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
@@ -672,6 +752,7 @@ shows.
 http://joeydevpi.local:5001/                the tote look (the default)
 http://joeydevpi.local:5001/?look=impact    Impact, the board as it was before the tote look
 http://joeydevpi.local:5001/?look=numbers   the tote look's figures, the names left in Impact
+http://joeydevpi.local:5001/?crawl_tps=6    the tote look with its crawl at 6 tiles a second (8 is the default)
 ```
 
 `config.QUINIELA_LOOK` is the default (`"dots"` as shipped, and `dots`
@@ -683,11 +764,12 @@ logged once. The page carries the look in the board's `data-look`.
 *A row in `dots`* is one strip of tiles that fills the row from just right of the cloth to its right padding, the same 22 px as the gap after the cloth:
 - every row the same: the pitch from the row's height (7, a 56 px tile in the 64 px row at 1080 lines); N from its width, as many 6-pitch tiles as fit, or one more when each is still 94 % of 6 pitches, every tile then the room / N (20 of 40.25 px at 1920 px, 17 of 40.29 px at 1680 px), its bulbs and a character's dots at the pitch, centred;
 - the bets in the strip's last tiles, one a digit, a dim `0` for an empty cup; the name left in the rest but one dark tile (`tiles - digits - 1`);
-- a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at the crawl's 120 px/s until its last character is in the area's last tile, held 1 s, back to the start;
+- a name longer than that scrolls in its area only: its start held 2 s, a tile at a time at 120 px/s (`CRAWL_PX_S`, the speed of the track of `impact` and `numbers`) until its last character is in the area's last tile, held 1 s, back to the start;
 - whole tiles, never a slide, so a character always sits on the tiles' bulbs, like the dashboard's ticker; a count reaching 10 takes a tile from the name and the scroll is measured again, as are the strips when the window is resized.
 
 - **Dotted** in `dots`: the pot, the three prizes,
-  every row's name and bets, the crawl (its text, its diamonds, its arrows; `SCRATCHED` in red
+  every row's name and bets, the crawl (a fixed row of tiles with the message stepping across it:
+  its text, its diamonds, its arrows; `SCRATCHED` in red
   dots, a struck name and `TOKENS REFUNDED` dimmed), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
@@ -714,6 +796,9 @@ bitmap lives in the splash, and the TV's dots are the dashboard's dots. No
 element per dot and nothing for the JS to draw. Behind the text the
 stylesheet lays one tile a character, the black tile and its 35 unlit
 bulbs (an SVG background, 0.75em x 1em), and the glow is a text shadow.
+The one place with an element per tile is the crawl of `dots`: 78 of them
+across a 1920 px board, built once, each holding one character of the
+face, which is what lets the tiles stand still while the message moves.
 
 ```bash
 cd splash_display
@@ -726,7 +811,8 @@ The face covers A-Z, 0-9 and the punctuation in the table, the degree
 sign included (the crawl's `88°F`); lower case and
 accented letters are drawn with the plain capital (a 5x7 matrix has no
 room for an accent: `SEÑOR` prints `SENOR`), curly quotes and dashes with
-the straight ones. A character it lacks falls back to Impact. The file is
+the straight ones. A character it lacks falls back to Impact (not in the
+crawl of `dots`: there it is its base letter or a blank tile, above). The file is
 written by hand, table by table (no font library is needed to build it),
 and is the same bytes on every run. The root `.gitignore` ignores `*.ttf`
 and excepts this one. The page's `?v=` stamping (`static_url()`) does not
@@ -745,7 +831,7 @@ pitches, which keeps every dot on the pixel grid:
 | Header prizes | 40 px | pitch 5 |
 | Row (`dots`) | name 38 px, down to 20; bets 58 px; `NO BETS` 22 px | one strip, pitch from the row's height (7 at 1080 lines), tiles filling the row (20 of 40.25 px at 1920 px); a long name scrolls; a dim `0` |
 | Row bets (`numbers`) | 58 px; `NO BETS` 22 px | pitch 7 on three tiles; `NO BETS` pitch 3, dim |
-| Crawl | 26 px | pitch 4 |
+| Crawl | 26 px | pitch 4 (`numbers`: the dotted text on the track; `dots`: a row of 24 x 32 px tiles, 78 across 1920 px) |
 | Results name | 100 px, down to 44 | pitch 12, down to 4 |
 | Results bets | 88 px | pitch 10, down to 5 |
 | Results prize | 150 px, down to 80 | pitch 18, down to 8 |
@@ -776,6 +862,14 @@ transform, run by the compositor (the trace shows no compositing
 failure); they pause while the board is hidden or the results screen
 covers the rows.
 
+The crawl of `dots` is the main thread's, not the compositor's: a row of
+tiles written by the script eight times a second where the track was
+moved by the compositor. The same feed, 12 s, headless Chrome at
+1920x1080, the CPU throttled over the DevTools protocol: worst frame
+5.8 ms unthrottled, 5.7 ms at 4x slower, 16.6 ms at 6x, 16.8 ms at 6x
+with software raster (60 Hz), none over 34 ms and no page error. A Shop
+PC's Chrome, not a Pi's (below).
+
 *Why not DOM dots.* The dashboard and the countdown slide's digits draw
 their dots as elements, 35 to a character, from two separate copies of the
 glyph table (the roster slide had a third until it became the board's own
@@ -799,8 +893,10 @@ The face costs what Impact costs; DOM dots stall the compositor for some
 80 ms at every bet on a desktop GPU, and need ten times the raster work.
 So the face draws every tote field, the header included: DOM dots in the
 header alone would have been cheap enough, but two renderers on one board
-make two kinds of dot. Two frames of the tote look's crawl taken 1.146 s
-apart are the same picture moved 138 px, 120.4 px/s. (Chrome's
+make two kinds of dot. Two frames of the tote look's crawl (as it was,
+and still in `numbers`) taken 1.146 s apart are the same picture moved
+138 px, 120.4 px/s; two of the `dots` crawl one step apart are the
+message moved one tile with every tile where it was. (Chrome's
 dropped-frame marker is no use here: it flags most frames of the untouched
 Impact board, because the slideshow's FPS counter asks for a frame on
 every refresh and gets none.) None of this is a Pi: the check that counts
@@ -816,7 +912,8 @@ except this one). To get the real Impact on the Pi: copy
 `fc-cache -f`; Chromium picks it up on the next launch. Names are
 re-fitted when the web font arrives. The tote look's face is the
 splash's own and is served with the page; when it arrives every dotted
-field is fitted again and the crawl is measured again.
+field is fitted again and the crawl's track is measured again (the tiles
+of `dots` do not depend on the face).
 
 **NO LINK mark.** A small dim `NO LINK` mark sits in the top-right corner
 of the board (above the banner, never over a row) when no SSE message of
@@ -1028,6 +1125,24 @@ after its face has loaded (a slow Anton, and a room that only Anton's real
 width fits), it follows a figure that changes width, a resized window and a
 tote face that arrives late, it is there on the results screen and not in
 FINAL CALL, and it gives way to `COUNTED` when the room is short.
+`StepCrawlTests` reads the crawl of `dots` frame by frame under the same
+headless Chrome's virtual clock: the row fills the band by the rows' rule
+(78 tiles at 1920 px, 68 at 1680), no tile is ever anywhere but where it
+started (0 px over every frame of five seconds), a step is the whole
+message one tile to the left, the rate is `CRAWL_TILES_PER_SEC` and
+`?crawl_tps=` overrides it (4, 60; not a number is the default; the rate
+stays from 0.25 to 60), the window equals the loop at every step across
+two seams and the loop ends in its gap, a live item that keeps its
+length is written where it stands (on the tiles at once, the message not
+rebuilt, the crawl not restarted), a scratch added waits for the loop
+boundary and the offsets run on through it, the row follows a resized
+window, `numbers` and `impact` keep the track and say the same items, and
+a character the face lacks is its base letter or a blank (every character
+on the tiles is one the face draws). `StepCrawlSourceTests` reads the
+source: the rate is a constant above the script's first function, the
+steps come from animation frames and no timer, and no rule of the tiles
+moves anything; `ToteFontTests` holds the script's list of the face's
+characters to the face's own character map.
 
 ---
 

@@ -16,6 +16,7 @@ Flask's test client; none of its servers is started.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import html
 import importlib.util
@@ -1142,8 +1143,16 @@ CHROME = find_chrome()
 # the tote look's rows); pulses: the rows that pulsed since the last reading.
 # A "model" {"__stage": [w, h]} is no model: the page's stage takes that
 # size and the window says it was resized, as a TV's would; {"__wait": ms}
-# only lets time pass. crawl: the crawl's items, one copy; the live ones
-# carry their kind. roster: the roster slide's rows when the page has one
+# only lets time pass; {"__feed": model} is a model that is read in the same turn
+# it arrives, not after a wait; {"__stall": ms} makes the crawl's next frame that late;
+# {"__sample": ms} runs the page that long and reports it
+# frame by frame: how far any tile of the dots crawl ever was from where it
+# started (drift) and, each time the sign steps, [ms, offset, generation,
+# pending, what the tiles read]. crawl: the crawl's items, one copy, the live
+# ones carrying their kind (the dots crawl has no track: its items are
+# window.ddmQuiniela.crawl()'s, with its tiles, and what they read), and
+# whether the track is there and animated. roster: the roster slide's rows
+# when the page has one
 # (filled by window.ddmQuiniela.fillRoster after each model, as the
 # slideshow does when the slide loads).
 BOARD_PROBE_JS = r"""
@@ -1156,7 +1165,13 @@ BOARD_PROBE_JS = r"""
     // count's tween runs as it does on a screen. CSS animations still do not
     // run, so a row's pulse shows as its is-pulse class, which the probe
     // takes off after each reading as the pulse's end would.
-    window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+    // {"__stall": ms}: the crawl's next frame comes that late, as after a stalled main thread.
+    let stallNext = 0;
+    window.requestAnimationFrame = (cb) => {
+        const late = cb.name === 'crawlFrame' && stallNext ? stallNext : 16;
+        if (cb.name === 'crawlFrame') stallNext = 0;
+        return setTimeout(() => cb(performance.now()), late);
+    };
     window.cancelAnimationFrame = (id) => clearTimeout(id);
     const text = (sel) => { const el = document.querySelector(sel); return el ? el.textContent.trim() : null; };
     const r2 = (v) => Math.round(v * 100) / 100;
@@ -1185,13 +1200,23 @@ BOARD_PROBE_JS = r"""
         };
     }
     function crawl() {
+        const snapshot = window.ddmQuiniela && window.ddmQuiniela.crawl ? window.ddmQuiniela.crawl() : null;
+        const track = document.getElementById('qb-track');
+        const tiles = [...document.querySelectorAll('.qb-ct')];
+        const first = tiles.length ? tiles[0].getBoundingClientRect() : null;
+        const base = { snapshot: snapshot, tiles: tiles.length, text: tiles.map((t) => t.textContent || ' ').join(''),
+                       room: r2(document.querySelector('.qb-crawl').getBoundingClientRect().width),
+                       tileW: first ? r2(first.width) : null, tileH: first ? r2(first.height) : null,
+                       classes: tiles.map((t) => t.className), colors: tiles.map((t) => t.style.backgroundColor + '|' + t.style.color),
+                       animation: getComputedStyle(track).animationName, trackDisplay: getComputedStyle(track).display };
+        if (snapshot) return Object.assign(base, { items: snapshot.items, marks: [] });
         const items = [...document.querySelectorAll('#qb-track .qb-crawl-item')].map((el) => {
             const live = el.querySelector('[data-live]');
             return live ? live.dataset.live + ':' + live.textContent : el.textContent.trim();
         });
         const again = items.indexOf(items[0], 1);
         const marks = [...document.querySelectorAll('#qb-track [data-live="post"]')].map((el) => el.dataset.mark || '');
-        return { items: again > 0 ? items.slice(0, again) : items, marks };
+        return Object.assign(base, { items: again > 0 ? items.slice(0, again) : items, marks });
     }
     function roster() {
         const root = document.querySelector('[data-roster="board"]');
@@ -1265,10 +1290,38 @@ BOARD_PROBE_JS = r"""
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
-                 rows: rows, strips: strips, results: results, pulses: pulses, crawl: crawl(), roster: roster(),
+                 rows: rows, strips: strips, results: results, pulses: pulses, crawl: crawl(), sample: takeSample(), roster: roster(),
                  header: header, counted: counted,
                  toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
+    // {"__sample": ms}: for that long, every frame, how far any tile of the dots crawl is from where it
+    // started (drift), and each time the sign steps (the snapshot's offset changes) what the tiles read.
+    let sampled = null;
+    async function sample(ms) {
+        const tiles = [...document.querySelectorAll('.qb-ct')];
+        const lefts = tiles.map((t) => t.getBoundingClientRect().left);
+        const textOf = () => tiles.map((t) => t.textContent || ' ').join('');
+        const first = window.ddmQuiniela.crawl();
+        const startText = textOf();
+        let offset = first.offset, drift = 0, frames = 0;
+        const steps = [];
+        const t0 = performance.now();
+        await new Promise((resolve) => {
+            const tick = () => {
+                frames++;
+                for (let i = 0; i < tiles.length; i++) drift = Math.max(drift, Math.abs(tiles[i].getBoundingClientRect().left - lefts[i]));
+                const s = window.ddmQuiniela.crawl();
+                if (s.offset !== offset) {
+                    offset = s.offset;
+                    steps.push([Math.round(performance.now() - t0), s.offset, s.generation, s.pending, textOf()]);
+                }
+                if (performance.now() - t0 < ms) requestAnimationFrame(tick); else resolve();
+            };
+            requestAnimationFrame(tick);
+        });
+        sampled = { frames: frames, drift: r2(drift), tiles: tiles.length, start: [first.offset, first.generation, startText], steps: steps };
+    }
+    function takeSample() { const s = sampled; sampled = null; return s; }
     let stream = null;
     window.fetch = () => new Promise(() => {});
     window.ddmSlideshow = { hold() {}, release() {} };
@@ -1286,6 +1339,14 @@ BOARD_PROBE_JS = r"""
                 window.dispatchEvent(new Event('resize'));
             } else if (m.__wait) {
                 await new Promise((resolve) => setTimeout(resolve, m.__wait));
+            } else if (m.__feed) {
+                stream.onmessage({ data: JSON.stringify(m.__feed) });
+                out.push(read());                      // in the same turn: nothing has had a frame to catch up
+                continue;
+            } else if (m.__stall) {
+                stallNext = m.__stall;
+            } else if (m.__sample) {
+                await sample(m.__sample);
             } else {
                 stream.onmessage({ data: JSON.stringify(m) });
                 const root = document.querySelector('[data-roster="board"]');
@@ -1303,7 +1364,7 @@ BOARD_PROBE_JS = r"""
 
 def run_board(models: List[dict], look: str = "impact", styled: bool = False,
               stage: Tuple[int, int] = (1920, 1080), roster: bool = False, css: str = "",
-              slow_face: float = 0.0, slow: Optional[Dict[str, float]] = None) -> List[dict]:
+              slow_face: float = 0.0, slow: Optional[Dict[str, float]] = None, query: str = "") -> List[dict]:
     """The board's real template and script in a page of their own, fed
     `models` in turn; what the board showed after each. Styled, the page is
     served over loopback with the board's stylesheet and fonts, the board on
@@ -1314,7 +1375,8 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
     rules after the stylesheet (styled), to put the page in a corner of
     its own. slow_face: seconds the tote face takes to arrive (styled), a
     kiosk loading cold, so a model comes before it. slow: the same for any
-    static file, {"Anton-Regular.ttf": 1.5}."""
+    static file, {"Anton-Regular.ttf": 1.5}. query: the URL's query string
+    ("crawl_tps=60"), which the page's script reads."""
     with server.app.test_request_context("/"):
         board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
         roster_html = server.render_template("splash/horse_roster.html") if roster else ""
@@ -1349,7 +1411,7 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
             srv = make_server("127.0.0.1", 0, app, threaded=True)
             thread = threading.Thread(target=srv.serve_forever, daemon=True)
             thread.start()
-            url = f"http://127.0.0.1:{srv.server_port}/"
+            url = f"http://127.0.0.1:{srv.server_port}/" + ("?" + query if query else "")
         else:
             script = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
             page = ('<!doctype html><html><head><meta charset="utf-8"></head><body>\n' + board_html
@@ -1357,10 +1419,11 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
                     + '</script>\n</body></html>\n')
             path = tmp / "board.html"
             path.write_text(page, encoding="utf-8")
-            url = path.resolve().as_uri()
+            url = path.resolve().as_uri() + ("?" + query if query else "")
         cmd = [CHROME, "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                "--hide-scrollbars", "--window-size=1920,1080", "--user-data-dir=" + str((tmp / "profile").resolve()),
-               "--virtual-time-budget=" + str(1000 + 900 * len(models) + sum(int(m.get("__wait", 0)) for m in models)),
+               "--virtual-time-budget=" + str(1000 + 900 * len(models) + sum(int(m.get("__wait", 0)) + int(m.get("__sample", 0))
+                                                                  for m in models)),
                "--dump-dom", url]
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             cmd.insert(1, "--no-sandbox")
@@ -1877,19 +1940,58 @@ class RosterSlideTests(unittest.TestCase):
         self.assertEqual(len(rows), 19)
 
 
+CRAWL_NOW = 1_809_218_520.0          # 2027-05-01 7:42 PM CDT (00:42 UTC on the 2nd), pi5's clock
+
+
+def crawl_model(post_in: Optional[float] = 74 * 60, weather: bool = True, now: float = CRAWL_NOW) -> dict:
+    """The 2026 field as tools/fake_pi5.py's redesign feed serves it (three
+    scratches with a replacement, one without) with its race and Dallas'
+    weather, on pi5's clock `now`, the post `post_in` seconds on from it
+    (None: no post time)."""
+    m = redesign_model(post_at=(now + post_in) if post_in is not None else None,
+                       weather=dict(fake_pi5.DEFAULT_WEATHER) if weather else None)
+    m["now"] = now
+    return m
+
+
+def run_boards(jobs: Dict[str, Tuple[List[dict], Dict[str, Any]]]) -> Dict[str, Any]:
+    """Several run_board calls at once, each its own Chrome: name -> its
+    readings, or the exception it raised (the test that wanted it raises it)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(job: Tuple[List[dict], Dict[str, Any]]) -> Any:
+        try:
+            return run_board(job[0], **job[1])
+        except Exception as err:                # noqa: BLE001 - handed to the test that asked
+            return err
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {name: pool.submit(one, job) for name, job in jobs.items()}
+        return {name: future.result() for name, future in futures.items()}
+
+
+def crawl_window(loop: str, offset: int, tiles: int) -> str:
+    """What the tiles read with the loop's cell `offset` on the first one
+    (blank before the message starts)."""
+    return "".join(" " if offset + i < 0 else loop[(offset + i) % len(loop)] for i in range(tiles))
+
+
+def tote_chars() -> set:
+    """Every character DDMTote.ttf draws."""
+    data = (HERE / "static" / "fonts" / "DDMTote.ttf").read_bytes()
+    return {chr(code) for code in _cmap(data, _sfnt(data)["tables"])}
+
+
 @unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
 class CrawlLiveTests(unittest.TestCase):
     """The crawl's live items, after its first line: the time of day on the
     race's clock, the time to post, the weather; in place as time passes,
     left out when there is nothing to say."""
 
-    NOW = 1_809_218_520.0        # 2027-05-01 7:42 PM CDT (00:42 UTC on the 2nd), pi5's clock
+    NOW = CRAWL_NOW
 
     def model(self, post_in: Optional[float], weather: bool = True) -> dict:
-        m = redesign_model(post_at=(self.NOW + post_in) if post_in is not None else None,
-                           weather=dict(fake_pi5.DEFAULT_WEATHER) if weather else None)
-        m["now"] = self.NOW
-        return m
+        return crawl_model(post_in, weather)
 
     def items(self, seen: dict) -> List[str]:
         return seen["crawl"]["items"]
@@ -1908,8 +2010,10 @@ class CrawlLiveTests(unittest.TestCase):
         post = self.items(later)[2]
         self.assertRegex(post, r"^post:Post in 9:[34]\d$")
         self.assertLess(post, "post:Post in 9:42", "it counted down")
-        self.assertTrue(later["crawl"]["marks"] and all(m == "1" for m in later["crawl"]["marks"]),
-                        "the same elements: changed in place, the crawl not rebuilt")
+        before, after = first["crawl"]["snapshot"], later["crawl"]["snapshot"]
+        self.assertEqual(after["generation"], before["generation"],
+                         "the same message: changed in place, the crawl not rebuilt")
+        self.assertGreater(after["offset"], before["offset"], "and it went on from where it was")
 
     def test_after_the_post_and_without_weather_they_are_left_out(self) -> None:
         past, no_post = run_board([self.model(-60, weather=False), self.model(None, weather=False)],
@@ -1923,6 +2027,308 @@ class CrawlLiveTests(unittest.TestCase):
     def test_impact_too(self) -> None:
         [seen] = run_board([self.model(74 * 60)], look="impact", styled=True)
         self.assertEqual(self.items(seen)[1:4], ["time:7:42 PM", "post:Post in 1:14", "weather:Dallas 88°F Sunny"])
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class StepCrawlTests(unittest.TestCase):
+    """The crawl of "dots" in headless Chrome, with the stylesheet and the
+    face, at 1920x1080: a row of tiles that never moves, built by the rows'
+    fill rule at the crawl's pitch, and the message stepping across it a tile
+    at a time, at CRAWL_TILES_PER_SEC or ?crawl_tps=, from animation-frame
+    timestamps. The page is read frame by frame ({"__sample": ms}), under a
+    virtual clock, so every number here is the page's own, not the machine's."""
+
+    JS = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+    GAP = " ◆ "                          # a blank, the diamond, a blank: the track's 34 px each side, in tiles
+    TILES = 78                                # 1852 px of band, 24 px tiles: 77 fit, 78 are each 23.74 px (98.9 %)
+    # What a scratch the crawl has never met looks like: a horse with no replacement.
+    EXTRA_SCRATCH = {"was": {"number": 14, "name": "POTENTE"}, "now": None}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        plain = dict(look="dots", styled=True)
+        # The post is 74 and a half minutes on, so "Post in 1:14" stands for the half minute these runs last and
+        # only the jobs that mean it see a live item change.
+        m = crawl_model(post_in=74 * 60 + 30)
+        minute_on = crawl_model(post_in=73 * 60 + 30, now=CRAWL_NOW + 60)   # the same post time, a minute later
+        longer = crawl_model(post_in=74 * 60 + 30)
+        longer["scratches"] = longer["scratches"] + [cls.EXTRA_SCRATCH]
+        longer["names_rev"] += 1
+        reordered = crawl_model(post_in=74 * 60 + 30)               # the same scratches, each record's keys the other way round
+        reordered["scratches"] = [{"now": s["now"], "was": s["was"]} for s in reordered["scratches"]]
+        exotic = crawl_model(post_in=74 * 60 + 30)
+        exotic["chyron"] = ["Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 \u2019 "
+                            "\u2014\u00a0\u00e9\u200b\u00e4 \U0001f642 end", "second"]
+        cls.runs = run_boards({
+            "default": ([m, {"__sample": 5000}], plain),
+            "slow": ([m, {"__sample": 5000}], dict(plain, query="crawl_tps=4")),
+            "fast": ([m, {"__sample": 12000}], dict(plain, query="crawl_tps=60")),
+            "bad": ([m], dict(plain, query="crawl_tps=abc")),
+            "huge": ([m], dict(plain, query="crawl_tps=500")),
+            "tiny": ([m], dict(plain, query="crawl_tps=0.01")),
+            "narrow": ([m, {"__stage": [1680, 1050]}], plain),
+            # at 20 a second the clock and the countdown are on the tiles when the minute turns
+            "inplace": ([m, {"__wait": 3500}, {"__feed": minute_on}], dict(plain, query="crawl_tps=20")),
+            "longer": ([m, {"__wait": 1300}, longer, {"__sample": 5500}], dict(plain, query="crawl_tps=60")),
+            # at 60 a second the scratches are on the tiles: SCRATCHED and the first replacement at offset 102, the last two
+            # scratches, the refund note and the next line at 222
+            "styled": ([m, {"__wait": 1600}, {"__wait": 1300}], dict(plain, query="crawl_tps=60")),
+            "reordered": ([m, {"__wait": 1300}, {"__feed": reordered}], plain),
+            "stall": ([m, {"__stall": 1500}, {"__sample": 3000}], plain),
+            "hidden": ([m, dict(m, race_state=0, race_state_name="PRE_RACE"), {"__sample": 2000}, m, {"__sample": 1500}], plain),
+            "numbers": ([m], dict(look="numbers", styled=True)),
+            "impact": ([m], dict(look="impact", styled=True)),
+            "exotic": ([exotic], plain),
+        })
+
+    def got(self, name: str) -> List[dict]:
+        result = self.runs[name]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def sample(self, name: str) -> dict:
+        return self.got(name)[-1]["sample"]
+
+    def test_the_row_is_the_rows_fill_rule_at_the_crawls_pitch(self) -> None:
+        # 24 x 32 px tiles (pitch 4, the crawl's size in the tote look all along), as many as the band holds or one
+        # more at 94 % of that, each the band's width / N: 1852 px at 1920 x 1080, 1612 at 1680 x 1050.
+        wide, narrow = self.got("narrow")
+        for reading, (tiles, room) in ((wide, (78, 1852.0)), (narrow, (68, 1612.0))):
+            c = reading["crawl"]
+            snap = c["snapshot"]
+            self.assertEqual((snap["tiles"], c["tiles"], c["room"], c["tileH"]), (tiles, tiles, room, 32.0), f"{room} px")
+            self.assertAlmostEqual(snap["tile"] * tiles, room, places=2, msg=f"{room} px: the tiles fill the band edge to edge")
+            self.assertAlmostEqual(c["tileW"], snap["tile"], places=1)
+            self.assertGreaterEqual(snap["tile"], 0.94 * 24, "one more tile only while each is still 94 % of 24 px")
+            self.assertLess(snap["tile"], 25)
+        self.assertEqual(wide["crawl"]["snapshot"]["generation"], narrow["crawl"]["snapshot"]["generation"],
+                         "a resize measures again: the message goes on")
+        self.assertGreater(narrow["crawl"]["snapshot"]["offset"], wide["crawl"]["snapshot"]["offset"])
+
+    def test_the_cells_are_styled_like_the_tracks_items(self) -> None:
+        # SCRATCHED red; a cloth its number's digits on the cloth's colours, one tile or two touching; the replaced
+        # horse's name dim and struck (the blank between its words too); the arrow and the new name plain; TOKENS
+        # REFUNDED dim and not struck.
+        _first, early, late = self.got("styled")
+        c = early["crawl"]
+        text, classes, colors = c["text"], c["classes"], c["colors"]
+        label = text.index("SCRATCHED")
+        self.assertEqual({classes[label + i] for i in range(9)}, {"qb-ct is-lbl"}, "SCRATCHED in red dots")
+        self.assertEqual(text[label + 9:label + 12], " 5 ")
+        self.assertEqual((classes[label + 10], colors[label + 10]), ("qb-ct is-cloth is-cs", "rgb(0, 132, 61)|rgb(255, 255, 255)"),
+                         "5: its cloth, one tile, the number in the cloth's other colour")
+        name = text.index("RIGHT TO PARTY")
+        self.assertEqual({classes[name + i] for i in range(len("RIGHT TO PARTY"))}, {"qb-ct is-dim is-strike"},
+                         "the replaced horse's name: dim, struck, the blank between its words too")
+        arrow = text.index("\u25b6", name)
+        self.assertEqual(classes[arrow], "qb-ct", "the arrow: plain")
+        two = text.index("21", arrow)
+        self.assertEqual([classes[two], classes[two + 1]], ["qb-ct is-cloth is-cl", "qb-ct is-cloth is-cr"], "21: two touching cloth tiles")
+        self.assertEqual((colors[two], colors[two + 1]), ("rgb(255, 218, 185)|rgb(0, 0, 0)",) * 2)
+        self.assertEqual({classes[text.index("GREAT WHITE") + i] for i in range(11)}, {"qb-ct"}, "the new horse's name: plain")
+        c = late["crawl"]
+        note = c["text"].index("TOKENS REFUNDED")
+        self.assertEqual({c["classes"][note + i] for i in range(15)}, {"qb-ct is-dim"}, "TOKENS REFUNDED dim, not struck")
+
+    def test_the_same_scratches_in_another_key_order_are_no_update(self) -> None:
+        # The model a page gets when it loads (the relay's, sorted keys) and pi5's stream (its own order) carry the same
+        # record: that is not a new message, which would wait for the loop boundary and, hidden, start it again.
+        first, waited, again = (r["crawl"]["snapshot"] for r in self.got("reordered"))
+        self.assertEqual((again["generation"], again["pending"]), (first["generation"], False))
+        self.assertEqual(again["items"], first["items"])
+        self.assertGreater(again["offset"], first["offset"])
+
+    def test_a_stall_is_not_made_up_for(self) -> None:
+        # The main thread is away for a second and a half: the next frame is owed a dozen steps at 8 a second and
+        # takes none of them, so the crawl goes on from where it was and never jumps.
+        s = self.sample("stall")
+        offsets = [s["start"][0]] + [step[1] for step in s["steps"]]
+        self.assertTrue(all(b - a == 1 for a, b in zip(offsets, offsets[1:])), "a step is a tile, never a jump: " + str(offsets))
+        self.assertLessEqual(len(s["steps"]), 19, "the steps of the stall were not made up for (24 without it)")
+        self.assertGreaterEqual(len(s["steps"]), 8, "and the crawl went on")
+
+    def test_the_crawl_is_paused_while_the_board_is_hidden_and_goes_on_where_it_was(self) -> None:
+        shown, hidden, asleep, back, going = self.got("hidden")
+        self.assertEqual((shown["visible"], hidden["visible"], back["visible"]), (True, False, True))
+        self.assertEqual(asleep["sample"]["steps"], [], "no step while nobody sees the board")
+        self.assertEqual(asleep["sample"]["drift"], 0)
+        snaps = [r["crawl"]["snapshot"] for r in (shown, hidden, asleep, back, going)]
+        self.assertEqual(snaps[2]["offset"], snaps[1]["offset"], "where it stood")
+        self.assertEqual(len({s["generation"] for s in snaps}), 1, "the same message: hiding and showing are no update")
+        self.assertGreaterEqual(len(going["sample"]["steps"]), 10, "it went on")
+        self.assertGreater(snaps[4]["offset"], snaps[0]["offset"])
+
+    def test_a_message_comes_in_from_the_right(self) -> None:
+        first = self.got("default")[0]["crawl"]
+        self.assertLess(first["snapshot"]["offset"], 0, "it starts from blank tiles")
+        self.assertTrue(first["text"].startswith(" " * 60), "the left of the band is blank: " + repr(first["text"]))
+        self.assertTrue(first["text"].rstrip(" ").strip(), "and the message is on its way in")
+
+    def test_the_tiles_never_move(self) -> None:
+        s = self.sample("default")
+        self.assertGreaterEqual(s["frames"], 250, "every frame of five seconds")
+        self.assertEqual(s["tiles"], self.TILES)
+        self.assertEqual(s["drift"], 0, "no tile was ever anywhere but where it started")
+        self.assertGreaterEqual(len(s["steps"]), 38, "and the message stepped all the while")
+
+    def test_a_step_moves_the_whole_message_one_tile_left(self) -> None:
+        s = self.sample("default")
+        before = s["start"][2]
+        for _t, offset, _generation, _pending, text in s["steps"]:
+            self.assertEqual(text[:-1], before[1:], f"offset {offset}: every character one tile to the left")
+            before = text
+        self.assertNotEqual(s["start"][2].strip(), "", "the message was coming in")
+
+    def test_the_rate_is_the_constant_and_the_url_overrides_it(self) -> None:
+        match = re.search(r"const CRAWL_TILES_PER_SEC = ([\d.]+);", self.JS)
+        self.assertTrue(match, "a named constant")
+        self.assertEqual(float(match.group(1)), 8.0, "a default of 8 tiles a second")
+        for name, tps, seconds in (("default", 8, 5), ("slow", 4, 5), ("fast", 60, 12)):
+            s = self.sample(name)
+            self.assertEqual(self.got(name)[-1]["crawl"]["snapshot"]["tps"], tps, name)
+            self.assertLessEqual(abs(len(s["steps"]) - tps * seconds), 1, f"{name}: {tps} tiles a second for {seconds} s")
+        for name in ("default", "slow"):
+            gaps = [b[0] - a[0] for a, b in zip(self.sample(name)["steps"], self.sample(name)["steps"][1:])]
+            tps = self.got(name)[-1]["crawl"]["snapshot"]["tps"]
+            self.assertTrue(all(abs(g - 1000 / tps) <= 17 for g in gaps), f"{name}: a step every {1000 / tps:.0f} ms, give or take a frame: {gaps}")
+        for name, tps in (("bad", 8), ("huge", 60), ("tiny", 0.25)):
+            self.assertEqual(self.got(name)[0]["crawl"]["snapshot"]["tps"], tps,
+                             f"crawl_tps={name}: not a number is the default, and the rate stays between 0.25 and 60")
+
+    def test_a_loop_wraps_with_the_gap_and_no_tile_sticks_at_the_seam(self) -> None:
+        reading = self.got("fast")[-1]
+        s, snap = reading["sample"], reading["crawl"]["snapshot"]
+        loop, tiles = snap["text"], snap["tiles"]
+        self.assertEqual(len(loop), snap["length"])
+        self.assertTrue(loop.endswith(self.GAP), "the loop ends in the gap: a blank, the diamond, a blank")
+        self.assertEqual(loop.count(self.GAP), len(snap["items"]), "one gap after every item, the last one the seam's")
+        frames = [(s["start"][0], s["start"][2])] + [(offset, text) for _t, offset, _g, _p, text in s["steps"]]
+        for offset, text in frames:
+            self.assertEqual(text, crawl_window(loop, offset, tiles), f"offset {offset}: the loop from that cell on, wrapped")
+        wraps = 0
+        for (offset, _), (after, _) in zip(frames, frames[1:]):
+            if after == 0 and offset > 0:
+                wraps += 1
+                self.assertEqual(offset, snap["length"] - 1, "the loop wraps from its last cell to its first")
+            else:
+                self.assertEqual(after, offset + 1, "a step is one cell")
+        self.assertGreaterEqual(wraps, 2, "the sample went round the seam twice")
+        self.assertGreater(len(frames), 700)
+
+    def test_a_live_item_that_keeps_its_length_is_written_where_it_stands(self) -> None:
+        first, waited, later = (r["crawl"] for r in self.got("inplace"))
+        a, b, c = first["snapshot"], waited["snapshot"], later["snapshot"]
+        self.assertEqual(a["items"][1:3], ["time:7:42 PM", "post:Post in 1:14"])
+        self.assertEqual(c["items"][1:3], ["time:7:43 PM", "post:Post in 1:13"], "a minute on, the same lengths")
+        self.assertEqual((b["generation"], c["generation"], c["pending"]), (a["generation"], a["generation"], False),
+                         "the same message: written in place, not rebuilt, and nothing waits for the loop boundary")
+        self.assertEqual(c["length"], a["length"])
+        self.assertGreater(c["offset"], a["offset"], "and the crawl went on: nothing started it again")
+        self.assertIn("7:42 PM", waited["text"], "on the tiles")
+        self.assertIn("7:43 PM", later["text"], "on the tiles at once: read in the turn the model came in")
+        self.assertIn("POST IN 1:13", later["text"])
+        self.assertNotIn("7:42 PM", later["text"])
+
+    def test_a_longer_message_waits_for_the_loop_boundary_and_nothing_restarts_the_crawl(self) -> None:
+        first, waited, offered, sampled = self.got("longer")
+        before, mid, old = first["crawl"]["snapshot"], waited["crawl"]["snapshot"], offered["crawl"]["snapshot"]
+        self.assertTrue(old["pending"], "a scratch is a new message: it waits")
+        self.assertEqual((old["items"], old["length"], old["generation"]), (mid["items"], mid["length"], before["generation"]),
+                         "the old message is still the one on the tiles")
+        self.assertGreater(mid["offset"], 0, "the crawl is mid-loop")
+        self.assertGreater(old["offset"], mid["offset"], "and going on: the offer did not start it again")
+        s, final = sampled["sample"], sampled["crawl"]["snapshot"]
+        steps = s["steps"]
+        swap = next(i for i, step in enumerate(steps) if step[1] == 0)
+        self.assertEqual(steps[swap - 1][1], old["length"] - 1, "at the boundary: the old message's last cell, then its first")
+        for t, offset, generation, pending, text in steps[:swap]:
+            self.assertEqual((generation, pending), (old["generation"], True), f"offset {offset}: waiting")
+        for t, offset, generation, pending, text in steps[swap:]:
+            self.assertEqual((generation, pending), (old["generation"] + 1, False), f"offset {offset}: swapped in")
+        offsets = [steps[0][1]] + [step[1] for step in steps[1:swap]]
+        self.assertEqual(offsets, list(range(offsets[0], offsets[0] + len(offsets))), "one cell a step right up to the boundary")
+        self.assertEqual([step[1] for step in steps[swap:swap + 5]], [0, 1, 2, 3, 4], "and on from the start of the new message")
+        self.assertIn("POTENTE", "".join(final["items"]).upper(), "the scratch is in the new message")
+        self.assertGreater(final["length"], old["length"])
+        for t, offset, generation, pending, text in steps[swap:swap + 20]:
+            self.assertEqual(text, crawl_window(final["text"], offset, final["tiles"]), "the tiles read the new message")
+
+    def test_impact_and_numbers_keep_the_track_and_say_the_same(self) -> None:
+        said = self.got("default")[0]["crawl"]["items"]
+        self.assertEqual(said[0], fake_pi5.CHYRON_LINES[0])
+        for look in ("numbers", "impact"):
+            c = self.got(look)[0]["crawl"]
+            self.assertIsNone(c["snapshot"], f"{look}: no tiles, nothing to snapshot")
+            self.assertEqual((c["tiles"], c["animation"], c["trackDisplay"]), (0, "qbCrawl", "flex"),
+                             f"{look}: the track is there and animated, as it was")
+            self.assertEqual(c["items"], said, f"{look}: the same items, in the same order, with the same separators")
+        dots = self.got("default")[0]["crawl"]
+        self.assertEqual((dots["trackDisplay"], dots["animation"]), ("none", "qbCrawl"), "dots: the track is out of the way")
+
+    def test_a_character_the_face_lacks_is_its_base_letter_or_a_blank(self) -> None:
+        # "Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 ...": capitals; the face's own
+        # accented letters, quotes and dashes as they are (it draws them as the plain ones); a letter it has
+        # no accented form of, its base letter; a snowman, brackets, a half, an eszett and an emoji: a blank
+        # each; runs of blanks one blank; a zero-width space nothing at all.
+        loop = self.got("exotic")[0]["crawl"]["snapshot"]["text"]
+        expected = "SE\u00d1OR OCELLI X Y \u00ff Z A \u2019 \u2014 \u00c9\u00c4 END"
+        self.assertTrue(loop.startswith(expected + self.GAP), repr(loop[:80]))
+        faces = tote_chars()
+        for name in ("default", "exotic"):
+            text = self.got(name)[0]["crawl"]["snapshot"]["text"]
+            self.assertLessEqual(set(text) - {" "}, faces, f"{name}: every character on the tiles is one DDMTote.ttf draws")
+
+
+class StepCrawlSourceTests(unittest.TestCase):
+    """What the crawl of "dots" is made of, read off the source: the rate is a
+    named constant at the top of the script, the steps come from animation
+    frames and not from a timer, and nothing in the stylesheet moves the row
+    or a tile."""
+
+    JS = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+    CSS = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
+
+    def test_the_rate_is_a_constant_at_the_top_and_the_url_can_change_it(self) -> None:
+        self.assertLess(self.JS.index("const CRAWL_TILES_PER_SEC"), self.JS.index("function makeRow"))
+        self.assertIn("get('crawl_tps')", self.JS)
+        self.assertIn("CRAWL_TPS_MIN", self.JS)
+        self.assertIn("CRAWL_TPS_MAX", self.JS)
+
+    def test_the_steps_come_from_animation_frames_not_a_timer(self) -> None:
+        self.assertIn("requestAnimationFrame(crawlFrame)", self.JS)
+        self.assertIn("function crawlFrame(now)", self.JS)
+        timers = re.findall(r"setInterval\((\w+)", self.JS)
+        self.assertEqual(sorted(timers), ["tickCloses", "tickLive", "updateNoLink"], "no timer steps the crawl: " + str(timers))
+        frame = self.JS[self.JS.index("function crawlFrame(now)"):self.JS.index("function crawlStart()")]
+        self.assertNotIn("setTimeout", frame)
+        self.assertIn("(now - crawlClock.t0) / stepMs", frame, "step n is due at n / rate after the crawl started: a late frame does not drift it")
+
+    def test_nothing_in_the_tiles_rules_moves(self) -> None:
+        bare = re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S)
+        rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", bare)
+                 if ".qb-crawl-tiles" in sel or ".qb-ct" in sel]
+        self.assertGreaterEqual(len(rules), 8, [r[0] for r in rules])
+        for selector, body in rules:
+            self.assertIn('[data-look="dots"]', selector, "dots only")
+            for prop in ("transform", "animation", "transition", "translate", "will-change"):
+                self.assertNotIn(prop, body, f"{selector}: the tiles stand still ({prop})")
+        self.assertIn('.qb[data-look="dots"] .qb-crawl-track { display: none; }', self.CSS, "dots has no track")
+
+    def test_every_look_the_script_gives_a_cell_has_a_rule(self) -> None:
+        bare = re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S)
+        for cls in ("is-lbl", "is-dim", "is-strike", "is-cloth", "is-cs", "is-cl", "is-cm", "is-cr"):
+            self.assertIn(".qb-ct." + cls, bare, f"the stylesheet has no rule for {cls}")
+        for needle in ("'qb-ct is-lbl'", "'qb-ct is-dim'", "'qb-ct is-dim is-strike'", "'qb-ct is-cloth is-c' + where"):
+            self.assertIn(needle, self.JS)
+
+    def test_the_other_looks_rules_for_the_track_are_not_touched(self) -> None:
+        for needle in ("animation: qbCrawl 40s linear infinite;", "@keyframes qbCrawl {",
+                       ".qb:not(.is-visible) .qb-crawl-track { animation-play-state: paused; }"):
+            self.assertIn(needle, self.CSS)
+        self.assertIn("animationiteration", self.JS)
+        self.assertIn("function applyCrawl(html)", self.JS)
+        self.assertIn("function buildCrawl(lines, scratches, live)", self.JS)
 
 
 def _sfnt(data: bytes) -> Dict[str, Any]:
@@ -2018,6 +2424,19 @@ class ToteFontTests(unittest.TestCase):
         for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234"]:
             for ch in line:
                 self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
+
+    def test_the_crawls_character_list_is_the_faces(self) -> None:
+        """quiniela_board.js keeps its own list of what the face draws (the
+        crawl's tiles take only those characters): the face's character map,
+        less the every-bulb socket, nothing more and nothing less."""
+        js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
+        block = re.search(r"const TOTE_CHARS = new Set\(\[(.*?)\]\.join\(''\)\);", js, re.S)
+        self.assertTrue(block, "a list of the face's characters in the script")
+        literals = re.findall(r"'((?:[^'\\]|\\.)*)'", block.group(1))
+        listed = "".join(ast.literal_eval("'" + lit + "'") for lit in literals)
+        self.assertEqual(len(listed), len(set(listed)), "no character twice")
+        self.assertEqual(set(listed), {chr(code) for code in self.cmap} - {chr(make_tote_font.SOCKET)},
+                         "the script's list is the face's character map")
 
     def test_the_file_is_a_sound_truetype(self) -> None:
         self.assertEqual(self.font["version"], 0x00010000)

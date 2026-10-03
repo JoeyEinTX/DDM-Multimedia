@@ -85,8 +85,10 @@
    Motion: count changes tween over ~500 ms (requestAnimationFrame writing
    the number) and pulse the row once via a 400 ms CSS animation; the toast
    is a 150 ms pop / 200 ms drop on transform and opacity; the chyron crawl
-   is one CSS transform animation; in "dots" a name too long for its row
-   scrolls by one transform animation of its own. Everything is
+   is one CSS transform animation, except in "dots", where it is a fixed
+   row of tiles that the message steps across (stepCrawl, from
+   requestAnimationFrame timestamps); in "dots" a name too long for its
+   row scrolls by one transform animation of its own. Everything else is
    transform/opacity only (see quiniela_board.css).
 
    Looks. The board's data-look (the server writes it: ?look= on the URL,
@@ -103,7 +105,9 @@
    little wider or narrower than the pitch makes them, so that a whole
    number of them fills the room), the bets in its last tiles and the
    name in the rest but one; a name longer than that does not shrink, it
-   scrolls (updateScroll).
+   scrolls (updateScroll). The crawl of "dots" is a row of tiles of its own
+   at the crawl's pitch, by the same fill rule: the tiles stand still and
+   the message steps across them (The crawl of "dots", below).
 
    The slideshow. slideshow.html loads this script whether the board is
    up or not, and window.ddmQuiniela is what the rest of the page reads
@@ -140,6 +144,18 @@
     const RESULT_COUNT_PITCH = [10, 5];
     const RESULT_PRIZE_PITCH = [18, 8];
     const TOTE_FACE = '56px "DDM Tote"';
+    // Every character DDMTote.ttf draws (its cmap, less the every-bulb socket
+    // at U+E000, which nothing prints): a lower-case letter and an accented
+    // one are drawn as the plain capital, a curly quote and a dash as the
+    // straight one. The tiles of the crawl take only these (toteChar); the
+    // tests keep this list equal to the face's.
+    const TOTE_CHARS = new Set([
+        ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ_`abcdefghijklmnopqrstuvwxyz|',
+        '\u00a0°´·',
+        'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖ×ØÙÚÛÜÝ',
+        'àáâãäåçèéêëìíîïñòóôõöøùúûüýÿ',
+        '–—‘’“”•−▶◆'
+    ].join(''));
     // The rows of "dots": one strip of tiles each (layoutStrips). The pitch
     // comes from the row's height: the tile, 8 pitches tall, clears it by
     // STRIP_CLEAR_PX above and below, whole pitches, never more than
@@ -169,7 +185,20 @@
     const COUNTED_SHORT  = 'COUNTED';
     const COUNTED_GAP_PX = 22;
     const COUNTED_LOGO_GAP_PX = 24;
-    const CRAWL_PX_S     = 120;     // chyron speed
+    const CRAWL_PX_S     = 120;     // chyron speed (impact and numbers: a CSS transform animation)
+    // The crawl of "dots" (stepCrawl): a fixed row of tiles, a character a
+    // tile, the message stepping one tile left CRAWL_TILES_PER_SEC times a
+    // second (?crawl_tps= on the URL overrides it, for tuning on the TV, from
+    // CRAWL_TPS_MIN to CRAWL_TPS_MAX). The tile is the rows' at the crawl's own
+    // pitch, 4 px: 24 x 32 px before the fill rule stretches it, the crawl's
+    // size in the tote look all along. CRAWL_PAD_TILES blank tiles either side
+    // of the diamond between two items, which is also the gap between the end
+    // of the message and its start again (the track's 34 px each side, in tiles).
+    const CRAWL_TILES_PER_SEC = 8;
+    const CRAWL_TPS_MIN       = 0.25;
+    const CRAWL_TPS_MAX       = 60;
+    const CRAWL_PITCH_PX      = 4;
+    const CRAWL_PAD_TILES     = 1;
     const CLOSES_TICK_MS = 250;     // the countdown is checked 4x a second, written once a second
     const LIVE_TICK_MS   = 1000;    // the crawl's clock and time to post, in place
     const POST_SECONDS_UNDER_S = 600;   // under ten minutes to post: minutes and seconds
@@ -220,6 +249,7 @@
     board.dataset.look = look;
     const dottedNames   = look === 'dots';      // names in the dot-matrix face, the rows one strip each
     const dottedFigures = look !== 'impact';    // figures and the crawl
+    const tileCrawl     = look === 'dots';      // the crawl is a row of tiles that stand still (stepCrawl)
 
     const potEl         = $('qb-pot');
     const countedEl     = $('qb-counted');
@@ -233,6 +263,7 @@
     const colEls        = [$('qb-col-left'), $('qb-col-right')];
     const rowTpl        = $('qb-row-tpl');
     const trackEl       = $('qb-track');
+    const crawlEl       = trackEl.parentElement;    // .qb-crawl: the band's room
     const toastEl       = $('qb-toast');
     const toastNumEl    = $('qb-toast-num');
     const toastNameEl   = $('qb-toast-name');
@@ -330,6 +361,8 @@
         board.classList.add('is-visible');
         board.setAttribute('aria-hidden', 'false');
         flushCrawl();              // a swap during the fade-in is invisible
+        layoutCrawl();
+        crawlStart();
         syncScrolls();
         const s = slideshow();
         if (s && typeof s.hold === 'function') s.hold();
@@ -562,10 +595,19 @@
         const pitch = Math.max(STRIP_PITCH_MIN, Math.min(STRIP_PITCH_MAX,
             Math.floor((cell.offsetHeight - 2 * STRIP_CLEAR_PX) / DOT_EM)));
         const room = parseFloat(getComputedStyle(cell).width) || cell.offsetWidth;
+        const fit = tileFit(room, pitch);
+        return { pitch, tiles: fit.tiles, tile: fit.tile };
+    }
+
+    // The fill rule: N = as many tiles 6 pitches wide as a room holds, or N + 1
+    // when that many are each still STRIP_TILE_MIN of 6 pitches, and the tile's
+    // width the room / N. The rows use it (stripFit), and so does the crawl of
+    // "dots" (layoutCrawl) at its own pitch.
+    function tileFit(room, pitch) {
         const nominal = DOT_CELL * pitch;
         let tiles = Math.max(3, Math.floor(room / nominal));
         if (room / (tiles + 1) >= STRIP_TILE_MIN * nominal) tiles++;
-        return { pitch, tiles, tile: room / tiles };
+        return { tiles, tile: room / tiles };
     }
 
     // Puts a fit on its set and the set's root. Returns whether it changed.
@@ -718,11 +760,14 @@
     }
 
     // What the slideshow reads: the race (its countdown slide, the roster's
-    // post time), pi5's clock, and the roster filler.
+    // post time), pi5's clock, and the roster filler. crawl() is a read-only
+    // snapshot of the crawl of "dots" (null in the other looks), for tuning
+    // on the TV and for the tests.
     window.ddmQuiniela = {
         race: () => (model && model.race && typeof model.race === 'object') ? model.race : null,
         now: () => serverNow(),
         fillRoster,
+        crawl: crawlSnapshot,
     };
 
     function fitText(el, maxPx, minPx) {
@@ -796,9 +841,12 @@
     }
 
     // A face that arrives late changes every width: the names are fitted
-    // again and the crawl is measured again (it restarts from its start).
+    // again and the crawl is measured again (the track restarts from its
+    // start; the tiles of "dots" do not depend on the face and keep their
+    // message).
     function refitAll() {
         layoutStrips();
+        layoutCrawl();
         refitNames();
         placeCounted();            // the dotted POT figure changed width: its tag follows
         if (crawlHtml != null) applyCrawl(crawlHtml);
@@ -1187,6 +1235,9 @@
     // Every piece of text in the crawl is a .qb-crawl-text span, so the
     // tote look can set it in dots (and lay its tiles under it); the badges
     // are cloths and stay as they are.
+    // "dots" has no track: it builds the same content, in the same order
+    // with the same separators, as a message of cells for a row of tiles
+    // (tileMessage, The crawl of "dots" below).
     const crawlText = (s, cls) => '<span class="qb-crawl-text' + (cls ? ' ' + cls : '') + '">' + esc(s) + '</span>';
     const SEP = crawlText('◆', 'qb-crawl-sep');
     let crawlKey = null;
@@ -1205,9 +1256,14 @@
         const scratches = Array.isArray(m.scratches) ? m.scratches : [];
         const live = liveItems(m);
         const shape = live.map(([k, t]) => (k === 'weather' ? k + ':' + t : k + ':' + t.length)).join('|');
-        const key = JSON.stringify([lines, scratches, m.names_rev == null ? null : m.names_rev, shape]);
+        // The scratches as the crawl reads them, not as the JSON happened to order their keys: the model the relay
+        // hands a page when it loads and pi5's stream carry the same record with its keys in two orders, and that
+        // is no update.
+        const said = scratches.map((x) => [scratchSide(x && x.was), x && x.now == null ? 'none' : scratchSide(x && x.now)]);
+        const key = JSON.stringify([lines, said, m.names_rev == null ? null : m.names_rev, shape]);
         if (key === crawlKey) { updateLive(live); return; }
         crawlKey = key;
+        if (tileCrawl) { setTileCrawl(tileMessage(lines, scratches, live)); return; }
         const html = buildCrawl(lines, scratches, live);
         crawlHtml = html;
         if (crawlRunning && visible) crawlPending = html;   // swap at the loop boundary
@@ -1229,6 +1285,7 @@
     }
 
     function updateLive(live) {
+        if (tileCrawl) { tileUpdateLive(live); return; }
         for (const [kind, text] of live) {
             if (kind === 'weather') continue;                 // part of the shape: never in place
             for (const el of trackEl.querySelectorAll('[data-live="' + kind + '"]')) {
@@ -1359,10 +1416,326 @@
     }
 
     function flushCrawl() {
+        if (tileCrawl) { if (crawlSign.pending) crawlApply(crawlSign.pending); return; }
         if (crawlPending != null) applyCrawl(crawlPending);
     }
 
     trackEl.addEventListener('animationiteration', flushCrawl);
+
+    // ---- The crawl of "dots": tiles that stand still -------------------
+    // In "dots" the chyron is a dot-matrix sign. A row of tiles across the
+    // band, built once, never moves; the message steps across it, a
+    // character a tile. Tile i shows the loop's cell offset + i, and each
+    // step offset goes up by one: the whole message is a tile to the left,
+    // the next cell comes in at the right and the left tile's is gone. The
+    // loop is the items, each followed by its gap (CRAWL_PAD_TILES blank
+    // tiles, the diamond, as many blank again), so the end of the message
+    // and its start again are one gap apart, and a message shorter than the
+    // band shows itself more than once. A message that starts (the board
+    // comes up, or a rebuild that did not wait) starts from blank tiles,
+    // offset -tiles, and comes in from the right.
+    //
+    // The row is the rows' fill rule at the crawl's own pitch (tileFit): as
+    // many 24 px tiles as the band holds, or one more at 94 % of that, each
+    // the band's width / N, the bulbs at the pitch and the character
+    // centred. layoutCrawl builds the tiles once and adds or takes some away
+    // when the window changes size. A step writes the cells whose character
+    // or style changed and nothing else; there is no transform and no
+    // animation, so no frame ever has a tile anywhere but where it is. The
+    // steps come from requestAnimationFrame timestamps (crawlFrame): step n
+    // is due at n / crawlTps after the crawl started, so a late frame makes
+    // the next one take two steps and the rate does not drift; a stall of
+    // more than half a second is not made up for.
+    //
+    // The content is buildCrawl's, in capitals, a cell a character (one the
+    // face lacks: toteChar). A saddle-cloth badge is its number's digits,
+    // one tile each, on solid cloth tiles in Impact, as the cloths are
+    // everywhere; SCRATCHED is red, a struck name dim with a line across
+    // its tiles, TOKENS REFUNDED dim.
+    //
+    // A live item that keeps its length (the clock's minute, the countdown)
+    // is written into the message where it stands, at once. Anything that
+    // changes the message waits for the loop boundary (offset back at 0, the
+    // message's start at the left edge), as the track's rebuild does: nothing
+    // an update does starts the message again from its start, and while one
+    // waits the live items are kept up to date in it too.
+    const crawlRow  = { el: null, list: [], tile: 0 };       // the row, its tiles {el, node, c, s}, a tile's width
+    const crawlSign = { msg: null, pending: null, offset: 0, generation: 0 };
+    let crawlRaf = 0;          // the step loop's pending frame
+    let crawlClock = null;     // {t0, steps}: step n is due at t0 + n / crawlTps ms
+    const crawlTps = (() => {
+        const v = Number(new URLSearchParams(location.search).get('crawl_tps'));
+        return (Number.isFinite(v) && v > 0) ? Math.min(CRAWL_TPS_MAX, Math.max(CRAWL_TPS_MIN, v)) : CRAWL_TILES_PER_SEC;
+    })();
+
+    // A cell's look, by number: 0 is the plain amber one. The classes and
+    // the cloth's colours go on the tile (paintTile); the stylesheet does
+    // the rest (.qb-ct).
+    const tileStyles = [{ cls: 'qb-ct', bg: '', fg: '' }];
+    const tileStyleIds = new Map([['qb-ct||', 0]]);
+    function tileStyle(cls, bg, fg) {
+        const key = cls + '|' + (bg || '') + '|' + (fg || '');
+        let id = tileStyleIds.get(key);
+        if (id === undefined) {
+            id = tileStyles.length;
+            tileStyles.push({ cls, bg: bg || '', fg: fg || '' });
+            tileStyleIds.set(key, id);
+        }
+        return id;
+    }
+    const TS_LABEL = tileStyle('qb-ct is-lbl');
+    const TS_DIM   = tileStyle('qb-ct is-dim');
+    const TS_WAS   = tileStyle('qb-ct is-dim is-strike');
+
+    // What a character is on the tiles: itself in capitals when the face has
+    // it, else its base letter (an accent is dropped, as the face itself
+    // draws SEÑOR as SENOR), else a blank tile. null: no tile at all (a
+    // combining mark, a zero-width character). The face has no [ ] { } ^ ~ \
+    // and, outside Latin-1, only its dashes, quotes, bullet, minus, arrow and
+    // diamond: those that are not in it, and every emoji, are blanks.
+    function toteChar(ch) {
+        if (/\s/.test(ch)) return ' ';
+        if (/[\u0300-\u036f\u200b-\u200f\u2060\ufe0e\ufe0f]/.test(ch)) return null;
+        const up = ch.toUpperCase();
+        if (up.length === ch.length && TOTE_CHARS.has(up)) return up;
+        if (TOTE_CHARS.has(ch)) return ch;
+        const base = ch.normalize('NFD').charAt(0);
+        if (base && base !== ch && TOTE_CHARS.has(base.toUpperCase())) return base.toUpperCase();
+        return ' ';
+    }
+
+    // A string as cells: one character a tile, '' a blank tile; a run of
+    // blanks is one and there are none at either end (the track's HTML
+    // collapsed white space the same way).
+    function tileChars(s) {
+        const out = [];
+        for (const ch of String(s)) {
+            const c = toteChar(ch);
+            if (c === null) continue;
+            if (c === ' ') { if (out.length && out[out.length - 1] !== '') out.push(''); } else out.push(c);
+        }
+        if (out.length && out[out.length - 1] === '') out.pop();
+        return out;
+    }
+
+    // The loop for a model: buildCrawl's items in the same order with the
+    // same separators, as {ch, st} cells (a character, a look) the same
+    // length, `at` where each live item stands (a kind -> {at, len, item}) and
+    // `items` the items as the track's DOM would read them ("time:7:42 PM").
+    function tileMessage(lines, scratches, live) {
+        const ch = [];
+        const st = [];
+        const at = {};
+        const items = [];
+        let raw = '';              // what the item being built says
+        const cells = (list, style) => { for (const c of list) { ch.push(c); st.push(style); } };
+        const gap = (n) => cells(new Array(n).fill(''), 0);
+        const words = (s, style) => { raw += s; cells(tileChars(s), style || 0); };
+        const cloth = (n) => {
+            raw += n;
+            const c = SADDLE[n] || SADDLE_FALLBACK;
+            const digits = String(n);
+            for (let i = 0; i < digits.length; i++) {
+                const where = digits.length === 1 ? 's' : (i === 0 ? 'l' : (i === digits.length - 1 ? 'r' : 'm'));
+                ch.push(digits.charAt(i));
+                st.push(tileStyle('qb-ct is-cloth is-c' + where, c.bg, c.fg));
+            }
+        };
+        const sep = () => { gap(CRAWL_PAD_TILES); cells(['◆'], 0); gap(CRAWL_PAD_TILES); };
+        const item = (kind, build) => {
+            if (items.length) sep();
+            const from = ch.length;
+            raw = '';
+            build();
+            if (kind) at[kind] = { at: from, len: ch.length - from, item: items.length };
+            items.push(kind ? kind + ':' + raw : raw);
+        };
+        if (lines.length) item(null, () => words(lines[0]));
+        for (const [kind, text] of (live || [])) item(kind, () => words(text));
+        const parts = [];
+        for (const x of scratches) {
+            const was = scratchSide(x && x.was);
+            if (!was) continue;                            // not the record shape: ignored
+            if (x.now == null) {
+                parts.push(() => { cloth(was.n); gap(1); words(was.name); gap(1); words('· Tokens refunded', TS_DIM); });
+                continue;
+            }
+            const now = scratchSide(x.now);
+            if (!now) continue;
+            parts.push(() => {
+                cloth(was.n); gap(1); words(was.name, TS_WAS); gap(1); words('▶'); gap(1); cloth(now.n); gap(1); words(now.name);
+            });
+        }
+        if (parts.length) {
+            item(null, () => {
+                words('Scratched', TS_LABEL);
+                parts.forEach((part, i) => { gap(i ? 2 : 1); part(); });
+            });
+        }
+        for (const l of lines.slice(1)) item(null, () => words(l));
+        if (items.length) sep();                           // the loop's own gap, before its start comes round again
+        return { ch, st, len: ch.length, at, items };
+    }
+
+    // A message: at once when nothing is on the sign yet or the board is
+    // hidden (it starts from blank tiles), else at the loop boundary.
+    function setTileCrawl(msg) {
+        if (crawlSign.msg && crawlSign.msg.len && visible) crawlSign.pending = msg;
+        else crawlApply(msg);
+    }
+
+    function crawlApply(msg) {
+        crawlSign.pending = null;
+        crawlSign.msg = msg;
+        crawlSign.generation++;
+        layoutCrawl();
+        crawlSign.offset = msg.len ? -crawlRow.list.length : 0;
+        drawCrawl();
+        crawlStart();
+    }
+
+    // The live items that keep their length, written where they stand, in the
+    // message on the sign and in the one waiting. A text that has not the
+    // length the message was built with (the key says it has) is not
+    // squeezed in: the message is rebuilt at the next tick.
+    function tileUpdateLive(live) {
+        let drawn = false;
+        for (const [kind, text] of live) {
+            if (kind === 'weather') continue;                // part of the shape: never in place
+            const next = tileChars(text);
+            for (const msg of [crawlSign.msg, crawlSign.pending]) {
+                const w = msg && msg.at[kind];
+                if (!w) continue;
+                if (w.len !== next.length) { crawlKey = null; return; }
+                for (let i = 0; i < w.len; i++) msg.ch[w.at + i] = next[i];
+                msg.items[w.item] = kind + ':' + text;
+                if (msg === crawlSign.msg) drawn = true;
+            }
+        }
+        if (drawn) drawCrawl();
+    }
+
+    function makeTile() {
+        const el = document.createElement('span');
+        el.className = 'qb-ct';
+        const node = document.createTextNode('');
+        el.appendChild(node);
+        return { el, node, c: '', s: 0 };
+    }
+
+    // The row of tiles, measured: built once, then only added to or taken
+    // from when the band's width changes the fill rule's answer. Returns
+    // whether it changed. Nothing while the band has no width to measure.
+    function layoutCrawl() {
+        if (!tileCrawl) return false;
+        const room = parseFloat(getComputedStyle(crawlEl).width) || crawlEl.offsetWidth;
+        if (!room) return false;
+        const fit = tileFit(room, CRAWL_PITCH_PX);
+        if (fit.tiles === crawlRow.list.length && fit.tile === crawlRow.tile) return false;
+        if (!crawlRow.el) {
+            crawlRow.el = document.createElement('div');
+            crawlRow.el.className = 'qb-crawl-tiles';
+            crawlRow.el.setAttribute('aria-hidden', 'true');
+            crawlRow.el.style.setProperty('--qb-ct-pitch', CRAWL_PITCH_PX + 'px');
+            crawlEl.appendChild(crawlRow.el);
+        }
+        crawlRow.tile = fit.tile;
+        crawlRow.el.style.setProperty('--qb-ct-w', fit.tile + 'px');
+        while (crawlRow.list.length < fit.tiles) {
+            const t = makeTile();
+            crawlRow.el.appendChild(t.el);
+            crawlRow.list.push(t);
+        }
+        while (crawlRow.list.length > fit.tiles) crawlRow.el.removeChild(crawlRow.list.pop().el);
+        drawCrawl();
+        return true;
+    }
+
+    function paintTile(el, id) {
+        const style = tileStyles[id];
+        el.className = style.cls;
+        el.style.backgroundColor = style.bg;
+        el.style.color = style.fg;
+    }
+
+    // Each tile shows the loop's cell offset + i (blank before the message
+    // starts); only a tile whose character or look changed is written.
+    function drawCrawl() {
+        const list = crawlRow.list;
+        const msg = crawlSign.msg;
+        const len = msg ? msg.len : 0;
+        const offset = crawlSign.offset;
+        for (let i = 0; i < list.length; i++) {
+            const p = offset + i;
+            let c = '';
+            let s = 0;
+            if (p >= 0 && len) {
+                const k = p < len ? p : p % len;
+                c = msg.ch[k];
+                s = msg.st[k];
+            }
+            const t = list[i];
+            if (t.c !== c) { t.c = c; t.node.data = c; }
+            if (t.s !== s) { t.s = s; paintTile(t.el, s); }
+        }
+    }
+
+    // One step: the message a tile to the left. The loop boundary is the
+    // message's start reaching the left edge (offset back at 0, which is also
+    // where a message that has just come in from the right first gets to): a
+    // message that was waiting takes over there.
+    function stepCrawl() {
+        const msg = crawlSign.msg;
+        if (!msg || !msg.len) return;
+        crawlSign.offset++;
+        if (crawlSign.offset >= msg.len) crawlSign.offset -= msg.len;
+        if (crawlSign.offset === 0 && crawlSign.pending) {
+            crawlSign.msg = crawlSign.pending;
+            crawlSign.pending = null;
+            crawlSign.generation++;
+        }
+    }
+
+    // A frame that finds the board hidden, or nothing to show, does not ask for another: the loop ends by itself,
+    // and a hidden board spends nothing on it. crawlStart (the board comes up, a message arrives) begins it again
+    // on a clock of its own, so the time away is not made up for.
+    function crawlFrame(now) {
+        crawlRaf = 0;
+        const msg = crawlSign.msg;
+        if (!visible || !msg || !msg.len) return;
+        crawlRaf = requestAnimationFrame(crawlFrame);
+        const stepMs = 1000 / crawlTps;
+        if (!crawlClock) { crawlClock = { t0: now, steps: 0 }; return; }
+        const due = Math.floor((now - crawlClock.t0) / stepMs);
+        let owed = due - crawlClock.steps;
+        if (owed <= 0) return;
+        if (owed > Math.max(2, Math.ceil(crawlTps / 2))) {       // a stall: carry on from here, do not catch up
+            crawlClock.t0 = now - crawlClock.steps * stepMs;
+            return;
+        }
+        crawlClock.steps = due;
+        while (owed-- > 0) stepCrawl();
+        drawCrawl();
+    }
+
+    function crawlStart() {
+        if (!tileCrawl || crawlRaf || !visible || !crawlSign.msg || !crawlSign.msg.len) return;
+        crawlClock = null;
+        crawlRaf = requestAnimationFrame(crawlFrame);
+    }
+
+    // window.ddmQuiniela.crawl(): the sign as it stands.
+    function crawlSnapshot() {
+        if (!tileCrawl) return null;
+        const msg = crawlSign.msg;
+        return {
+            tps: crawlTps, tiles: crawlRow.list.length, tile: crawlRow.tile,
+            offset: crawlSign.offset, length: msg ? msg.len : 0, generation: crawlSign.generation,
+            pending: crawlSign.pending !== null,
+            items: msg ? msg.items.slice() : [],
+            text: msg ? msg.ch.map((c) => c || ' ').join('') : '',
+        };
+    }
 
     // ---- NO LINK mark -----------------------------------------------
     function updateNoLink() {
@@ -1439,6 +1812,7 @@
     } else {
         countedFaceReady = true;
     }
+    layoutCrawl();
     fetchOnce();
     connect();
     setInterval(updateNoLink, 1000);
@@ -1452,12 +1826,12 @@
     // A window that changes size moves the POT figure, and its tag with it.
     window.addEventListener('resize', () => { placeCounted(); });
     // In "dots" a window that changes size (a kiosk settling into full
-    // screen) measures the strips again.
+    // screen) measures the strips and the crawl's tiles again.
     if (dottedNames) {
         let resizeRaf = null;
         window.addEventListener('resize', () => {
             if (resizeRaf) return;
-            resizeRaf = requestAnimationFrame(() => { resizeRaf = null; layoutStrips(); });
+            resizeRaf = requestAnimationFrame(() => { resizeRaf = null; layoutStrips(); layoutCrawl(); });
         });
     }
     if (dottedFigures && document.fonts && document.fonts.load) {
