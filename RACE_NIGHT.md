@@ -207,6 +207,10 @@ WIN / PLACE / SHOW, each with the horse's cloth and name, the bets its cup held 
 prize, big, at the right; the pot above. Opening the pickers changes nothing; confirming
 does. (WINNER without results, from **HEARTBEAT** or `ADMIN` → WINNER: the TV says
 `OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.)
+Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to change a
+pick, tap its slot on the right first, then the new horse (its × empties it). A horse
+already in another slot is refused, never moved. Read the three listed over **CONFIRM
+RESULTS** before you press it.
 The results are saved whether or not the LED controller answers: a red `Results set: …
 · LEDs unreachable` means the TV and the cups have them and only the LEDs missed them.
 

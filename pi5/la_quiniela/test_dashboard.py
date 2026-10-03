@@ -14,11 +14,14 @@
 # pickers, the race roster /api/race builds from La Quiniela (Race Setup is
 # gone), the page's versioned CSS and JS, and the one race state (the
 # dashboard's modes set La Quiniela's state; the results make it 5, RESET
-# makes it 6).
+# makes it 6), and the SET WINNERS picker: a tap fills the slot the host meant,
+# however slowly the LED controller answers (the source, and a headless Chrome
+# in pi5/tools/picker_check.py).
 
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -523,6 +526,88 @@ def test_weather_reaches_the_board():
 
 
 # -----------------------------------------------------------------------------
+# The SET WINNERS picker: a tap fills the slot the host meant
+# -----------------------------------------------------------------------------
+# Joey, 2026-10-02: he picked WIN, tapped a horse for PLACE and it landed in WIN,
+# overwriting the first. selectCup used to read "which slot is next" from
+# resultsState.step, wrote the pick and moved step on only after awaiting the LED
+# lock for it, so a second tap inside that answer (a slow or unreachable LED
+# controller: 5 s) read the old step and filled WIN again. The picker is now a state
+# machine only taps move (activeSlot()), and the LED calls follow it.
+
+def _js_function(js, signature):
+    """The body of the JS function that starts with `signature`, braces matched."""
+    start = js.index(signature)
+    open_at = js.index("{", start)
+    depth = 0
+    for k in range(open_at, len(js)):
+        if js[k] == "{":
+            depth += 1
+        elif js[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return js[start:k + 1]
+    raise AssertionError("unbalanced braces after " + signature)
+
+
+def test_picker_is_a_state_machine_only_taps_move():
+    rig = Rig()
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    html = rig.client.get("/", base_url="http://joeydevpi.local:5000").get_data(as_text=True)
+    css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True)
+    region = js[js.index("// Results modal state"):js.index("// Saddle cloth colors and text colors")]
+    pick = _js_function(js, "function selectCup(post, horse)")
+    _check("a pick is decided and written in one turn: selectCup is not async, awaits nothing and does no network call",
+           "async function selectCup" not in js and "await" not in pick and "fetch(" not in pick)
+    for name in ("function chooseSlot(slot)", "function clearSlot(slot)", "function updateResultsModalUI()", "function activeSlot()"):
+        body = _js_function(js, name)
+        _check(f"{name.split('(')[0].replace('function ', '')} reads and writes the picker's state without waiting on anything",
+               "await" not in body and "fetch(" not in body)
+    active = _js_function(js, "function activeSlot()")
+    _check("the slot a tap fills is the chosen one, else the first empty in order WIN, PLACE, SHOW, else none",
+           "resultsState.chosen" in active and "RESULT_SLOTS.find" in active and "|| null" in active
+           and "const RESULT_SLOTS = ['win', 'place', 'show'];" in js)
+    _check("the state has no 'next step' left to go stale", "resultsState.step" not in js and "step: 'win'" not in js)
+    _check("the LEDs follow the picks, one call after another, never ahead of them",
+           "function ledCall(" in js and "ledChain.then(" in js and region.count("fetch(") == 2
+           and "ledCall('/api/cup/lock'" in pick and "ledCall('/api/cup/unlock'" in pick)
+    _check("a tap is one click: no touch, pointer or mouse-down handler in the picker",
+           re.search(r"touchstart|touchend|pointerdown|pointerup|mousedown|mouseup", region) is None
+           and "btn.onclick = () => selectCup(post, horse);" in js)
+    _check("a horse is in one slot: refused with a message, not moved",
+           "is already ${RESULT_SLOT_NAMES[where]}" in pick and "resultsNote(" in pick)
+    _check("the old go-back, which only unlocked a cup and stepped back, is gone", "resultsGoBack" not in js)
+    _check("a stray tap beside the picker does not throw picks away; another device's results event waits while it is up",
+           "event.target === resultsModal && !resultsPicksMade()" in js
+           and "if (resultsModalOpen()) {" in _js_function(js, "function connectResultsStream()"))
+    _check("the confirm waits briefly for the LED calls in flight, then sets the results whatever they did",
+           "await ledDrain(3000);" in js and "win: winHorse" in js and "cup: post" in js)
+    # the page: three tappable slots, each with its x, the note line, the recap over the confirm button
+    _check("three slots you can tap, each with an x, and the note and recap elements",
+           all(f'data-slot="{s}"' in html and f"chooseSlot('{s}')" in html and f"clearSlot('{s}')" in html for s in ("win", "place", "show"))
+           and 'id="results-pick-note"' in html and 'id="results-confirm-summary"' in html)
+    _check("the active slot is lit, the slots' type is big, and taps are plain (touch-action: manipulation)",
+           ".result-slot.is-active" in css and ".slot-clear" in css and ".confirm-row" in css and ".winner-pick-tag" in css
+           and css.count("touch-action: manipulation") >= 4)
+
+
+def test_picker_in_a_browser():
+    """The picker in headless Chrome, over the DevTools protocol (pi5/tools/picker_check.py): the real
+    dashboard over loopback, the LED controller slow on purpose, a mouse session and a touch session
+    (an iPad's 1180 x 820, touch emulation). Skipped where there is no Chrome."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("picker_check", os.path.join(_PI5_DIR, "tools", "picker_check.py"))
+    picker_check = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(picker_check)
+    if not picker_check.available():
+        _check("picker browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    rig = Rig()
+    for name, passed, detail in picker_check.run_checks(rig, quick=True):
+        _check("picker: " + name, passed, detail)
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -537,6 +622,8 @@ def main_():
     _run("results — saved and WINNER with the LED controller down", test_results_stand_without_the_leds)
     _run("results — kept when pi5 starts", test_results_are_kept_when_pi5_starts)
     _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
+    _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)
+    _run("SET WINNERS — a tap lands in the slot meant, in a browser, mouse and touch", test_picker_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

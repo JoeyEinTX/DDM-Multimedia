@@ -227,7 +227,7 @@ const SADDLE_CLOTHS = {
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  CHOOSE WINNER                                             [X]    │
-│  Select the 1st place horse                                       │
+│  Tap the 1st place horse                                          │
 │                                                                   │
 │  [ 1 · DORNOCH ] [ 2 · SIERRA LEONE ] [ 3 · ... ] [ 4 · ... ]   ┌──────────┐
 │  [ 5 · ...     ] [ 6 · ...          ] [ 7 · ... ] [ 8 · ... ]   │ WIN  [--]│
@@ -240,7 +240,16 @@ const SADDLE_CLOTHS = {
 ```
 
 **Features:**
-- **Step-by-step selection:** WIN → PLACE → SHOW
+- **Slot-by-slot selection:** a tap fills the **active slot**: the one the host tapped
+  in the sidebar, or, with none chosen, the next empty one in the order WIN → PLACE →
+  SHOW. A filled slot is never overwritten by a stray tap: to change a pick, tap its slot
+  (it lights up and says `TAP THE NEW HORSE`), then the new horse; tap the slot again to
+  leave it as it was
+- **One horse, one slot:** a horse already in another slot is refused, not moved, with a
+  line under the heading (`7 · HORSE 7 is already WIN. To use it elsewhere, clear WIN
+  first.`); picked horses stay in the grid, outlined in their slot's colour and tagged
+  WIN / PLACE / SHOW
+- **Clear:** the × on a slot empties that slot (its cup unlocks); RESET empties all three
 - **Pickers with names:** one per post in mantle order, 4 across and 5 down,
   each showing the horse that runs from that post as `19 · GOLDEN TEMPO`: the
   number on its saddle cloth, then the name from La Quiniela's names store
@@ -251,7 +260,8 @@ const SADDLE_CLOTHS = {
   with no replacement is not offered (its place in the grid stays empty)
 - **Post and horse:** a pick lights the LED cup of the **post** (9) and records
   the **horse** (22); the results carry horse numbers
-- **Sidebar preview:** Shows selections with saddle cloth badges and names
+- **Sidebar slots:** WIN, PLACE and SHOW, each with its horse's saddle cloth number and
+  name in large type (readable from arm's length on an iPad); the active slot is lit
 - **Live LED preview:** Selected cups light up immediately
   - Win: Gold (#FFD700)
   - Place: Silver (#C0C0C0)
@@ -259,13 +269,29 @@ const SADDLE_CLOTHS = {
 - **Heartbeat animation:** Non-selected cups pulse while selecting
 - **Navigation:**
   - RESET - Clear all and start over
-  - CONFIRM - Apply results and close modal
+  - CANCEL - Close without setting anything
+  - CONFIRM - Apply results and close modal; a recap above it lists the three horses by
+    slot, number and name, the last look before the results are set
 
 **Behavior:**
-- Selected cups are disabled (greyed out)
-- Header changes color based on step (Gold/Silver/Bronze)
-- Confirm button only appears when all 3 selected
-- Closing without confirming unlocks cups and turns off LEDs
+- Which slot a tap fills is decided from the picker's own state, in the moment of the tap;
+  the LED commands (lock, unlock) follow it, one after another, and never decide it. A slow
+  or unreachable LED controller cannot make a tap land in the wrong slot (it used to: a
+  second tap inside the first pick's lock call was read as WIN again and overwrote it)
+- Nothing in the background touches the picks while the modal is open: the mode poll and
+  the field refresh leave them alone, and a `results` event from another device is held
+  (a "Results were set on another device" notice) until the modal is closed
+- Header changes color by the active slot (Gold/Silver/Bronze): CHOOSE WINNER / PLACE /
+  SHOW, CHANGE ... when replacing one, CHECK THE RESULTS when all three are set
+- The confirm section (recap and CONFIRM RESULTS) appears when all 3 are set and no slot is
+  being changed
+- Closing without confirming unlocks cups and turns off LEDs; a tap on the dark backdrop
+  does not close the modal once a pick is made (CANCEL does)
+- Confirming waits at most 3 s for LED commands still in flight, then sets the results,
+  saved and sent exactly as before
+- Tests: `la_quiniela/test_dashboard.py`, which drives the real picker in headless Chrome
+  through `pi5/tools/picker_check.py` (mouse and touch, a slow LED controller, a forced
+  refresh). `python tools/picker_check.py --reproduce` from `pi5/` prints the timing table
 
 ---
 

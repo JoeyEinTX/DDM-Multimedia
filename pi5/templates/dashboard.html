@@ -239,6 +239,8 @@
                 <div class="results-main">
                     <h2 id="results-modal-header">CHOOSE WINNER</h2>
                     <p id="results-modal-subtitle" class="modal-subtitle">HORSE</p>
+                    <!-- What the last tap could not do, in plain words ("19 · GOLDEN TEMPO is already WIN") -->
+                    <p id="results-pick-note" class="results-pick-note" role="status" aria-live="polite"></p>
                     
                     <!-- The pickers: one per post, mantle order, each the horse that runs from it ("19 · GOLDEN TEMPO") -->
                     <div class="saddle-cloth-grid winner-pick-grid" id="saddle-cloth-grid">
@@ -252,23 +254,33 @@
                     </div>
                 </div>
                 
-                <!-- Sidebar with result slots -->
+                <!-- Sidebar with result slots: tap one to make it the slot the next horse fills (the lit one), the x empties it -->
                 <div class="results-sidebar">
-                    <div class="result-slot">
+                    <div class="result-slot" data-slot="win" role="button" tabindex="0" onclick="chooseSlot('win')"
+                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('win'); }">
                         <span class="slot-label win">WIN</span>
+                        <button type="button" class="slot-clear" data-slot="win" aria-label="Clear WIN" onclick="event.stopPropagation(); clearSlot('win')">&times;</button>
                         <div class="slot-value" id="slot-win"></div>
+                        <span class="slot-hint"></span>
                     </div>
-                    <div class="result-slot">
+                    <div class="result-slot" data-slot="place" role="button" tabindex="0" onclick="chooseSlot('place')"
+                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('place'); }">
                         <span class="slot-label place">PLACE</span>
+                        <button type="button" class="slot-clear" data-slot="place" aria-label="Clear PLACE" onclick="event.stopPropagation(); clearSlot('place')">&times;</button>
                         <div class="slot-value" id="slot-place"></div>
+                        <span class="slot-hint"></span>
                     </div>
-                    <div class="result-slot">
+                    <div class="result-slot" data-slot="show" role="button" tabindex="0" onclick="chooseSlot('show')"
+                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('show'); }">
                         <span class="slot-label show">SHOW</span>
+                        <button type="button" class="slot-clear" data-slot="show" aria-label="Clear SHOW" onclick="event.stopPropagation(); clearSlot('show')">&times;</button>
                         <div class="slot-value" id="slot-show"></div>
+                        <span class="slot-hint"></span>
                     </div>
-                    
-                    <!-- Final confirmation (shown after all 3 selected) -->
+
+                    <!-- Final confirmation (shown after all 3 selected): the three, by slot, as they will be set -->
                     <div id="results-confirm-section" class="confirm-section-sidebar" style="display:none;">
+                        <div id="results-confirm-summary" class="confirm-summary"></div>
                         <button id="results-confirm-btn" class="modal-btn btn-confirm-sidebar" onclick="resultsConfirm()">CONFIRM RESULTS</button>
                     </div>
                 </div>

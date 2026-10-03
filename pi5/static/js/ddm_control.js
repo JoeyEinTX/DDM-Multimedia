@@ -1055,7 +1055,8 @@ async function sendReset() {
                 localStorage.removeItem('raceResults');
                 pendingResults = null;
                 justSubmittedResults = false;
-                resultsState = { step: 'win', win: null, place: null, show: null };
+                resultsState = freshResultsState();
+                resultsPosts = { win: null, place: null, show: null };
                 // Clear finish timer if running
                 if (finishTimer) {
                     clearTimeout(finishTimer);
@@ -1321,12 +1322,28 @@ function horseDisplayName(n) {
 }
 
 // Results modal state (win / place / show hold HORSE numbers)
-let resultsState = {
-    step: 'win',  // 'win', 'place', 'show', 'confirm'
-    win: null,
-    place: null,
-    show: null
-};
+// ---------------------------------------------------------------------
+// SET WINNERS is a small state machine that only the host's taps move. It
+// holds the horse in each of the three slots (null: empty) and `chosen`, the
+// slot the host tapped on purpose to change (null: none). The slot the next
+// horse tap fills is activeSlot(): the chosen one, else the first empty one in
+// the order WIN, PLACE, SHOW, else none (all three are set and none was
+// chosen: a horse tap is refused, it never overwrites). A tap works that out
+// from this state alone and writes the state in the same turn; the LED cups
+// follow it afterwards (ledCall), so nothing that runs in the background, no
+// answer from pi5 and no slow LED controller can change which slot a tap
+// fills. (The picker used to move on to the next slot only once the LED lock
+// for the pick had been answered, so a second tap inside that window filled
+// the first slot again: the PLACE horse landed in WIN.) A horse is in one slot
+// only: tapping one that is already placed is refused, with a message, and
+// moves nothing.
+const RESULT_SLOTS = ['win', 'place', 'show'];
+const RESULT_SLOT_NAMES = { win: 'WIN', place: 'PLACE', show: 'SHOW' };
+
+function freshResultsState() {
+    return { chosen: null, win: null, place: null, show: null };
+}
+let resultsState = freshResultsState();
 
 // The posts (LED cups) of the three picks
 let resultsPosts = { win: null, place: null, show: null };
@@ -1335,52 +1352,109 @@ let resultsPosts = { win: null, place: null, show: null };
 const GOLD_RGB = { r: 255, g: 215, b: 0 };
 const SILVER_RGB = { r: 192, g: 192, b: 192 };
 const BRONZE_RGB = { r: 205, g: 127, b: 50 };
+const RESULT_COLOURS = { win: GOLD_RGB, place: SILVER_RGB, show: BRONZE_RGB };
+
+// The slot the next horse tap fills: the one the host chose, else the first
+// empty one in order, else none.
+function activeSlot() {
+    if (resultsState.chosen) return resultsState.chosen;
+    return RESULT_SLOTS.find((slot) => !resultsState[slot]) || null;
+}
+
+// The slot a horse is in, or null
+function slotOfHorse(horse) {
+    return RESULT_SLOTS.find((slot) => resultsState[slot] === horse) || null;
+}
+
+function resultsPicksMade() {
+    return RESULT_SLOTS.some((slot) => resultsState[slot]);
+}
+
+function resultsModalOpen() {
+    const modal = document.getElementById('results-modal');
+    return !!modal && modal.classList.contains('active');
+}
+
+// The picker's LED calls (lock a cup as it is picked, unlock it when its pick
+// is changed or cleared, all of them on RESET and CANCEL) go one after another
+// in the order of the taps and never hold the picker up: the picks are the
+// page's own and the LEDs follow them. A slow or failed call only ends itself.
+let ledChain = Promise.resolve();
+function ledCall(path, body) {
+    const options = { method: 'POST' };
+    if (body !== undefined) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(body);
+    }
+    const call = ledChain.then(() => fetch(path, options)).catch((error) => {
+        console.error('LED call failed:', path, error);
+    });
+    ledChain = call;
+    return call;
+}
+
+// The LED calls in flight, waited for at most `ms`: the results do not wait on
+// the LEDs for longer than that.
+function ledDrain(ms) {
+    return Promise.race([ledChain, new Promise((resolve) => setTimeout(resolve, ms))]);
+}
+
+// A line under the heading for what a tap could not do, in plain words, until
+// the next tap that works.
+function resultsNote(text) {
+    const el = document.getElementById('results-pick-note');
+    if (el) el.textContent = text || '';
+}
+
+// "19 \u00b7 GOLDEN TEMPO"
+function horseLabel(horse) {
+    return `${horse} \u00b7 ${horseDisplayName(horse)}`;
+}
 
 // Show results modal with the pickers
+let resultsModalOpening = false;
 async function showResultsModal() {
     if (raceControlMode === 'auto') return;
+    if (resultsModalOpening || resultsModalOpen()) return;     // a second tap on SET WINNERS: the picker is coming up or is up
+    resultsModalOpening = true;
 
-    // Clear finish timer if running
-    if (finishTimer) {
-        clearTimeout(finishTimer);
-        finishTimer = null;
-    }
-
-    // Stop any running animation first
-    clearActiveButton();
-
-    // Reset state
-    resultsState = {
-        step: 'win',
-        win: null,
-        place: null,
-        show: null
-    };
-    resultsPosts = { win: null, place: null, show: null };
-
-    // Clear sidebar slots
-    updateSlot('win', null);
-    updateSlot('place', null);
-    updateSlot('show', null);
-
-    // Start RESULTS_ENTRY animation (clears cup locks internally)
     try {
-        await fetch('/api/animation/RESULTS_ENTRY', { method: 'POST' });
-    } catch (error) {
-        console.error('Error starting results entry animation:', error);
+        // Clear finish timer if running
+        if (finishTimer) {
+            clearTimeout(finishTimer);
+            finishTimer = null;
+        }
+
+        // Stop any running animation first
+        clearActiveButton();
+
+        // Reset state
+        resultsState = freshResultsState();
+        resultsPosts = { win: null, place: null, show: null };
+
+        // Clear sidebar slots
+        updateSlot('win', null);
+        updateSlot('place', null);
+        updateSlot('show', null);
+        resultsNote('');
+
+        // Start RESULTS_ENTRY animation (clears cup locks internally)
+        await ledCall('/api/animation/RESULTS_ENTRY');
+
+        // The field as La Quiniela has it now: names, replacements, scratches
+        await loadQuinielaField();
+        generateSaddleClothGrid();
+        updateResultsModalUI();
+
+        const modal = document.getElementById('results-modal');
+        modal.classList.add('active');
+    } finally {
+        resultsModalOpening = false;
     }
-
-    // The field as La Quiniela has it now: names, replacements, scratches
-    await loadQuinielaField();
-    generateSaddleClothGrid();
-    updateResultsModalUI();
-
-    const modal = document.getElementById('results-modal');
-    modal.classList.add('active');
 }
 
 // Generate the pickers: one per post, in mantle order (4 columns x 5 rows).
-// Each shows the horse that runs from that post as "19 · GOLDEN TEMPO": the
+// Each shows the horse that runs from that post as "19 \u00b7 GOLDEN TEMPO": the
 // number on its saddle cloth, then La Quiniela's name (HORSE n without one).
 // A post whose horse was replaced shows the replacement's number and name;
 // a post whose horse was scratched with no replacement is left blank.
@@ -1424,9 +1498,14 @@ function generateSaddleClothGrid() {
         label.className = 'winner-pick-name';
         label.textContent = name;
 
+        // Which slot the horse is in, once it is in one
+        const tag = document.createElement('span');
+        tag.className = 'winner-pick-tag';
+
         btn.appendChild(num);
         btn.appendChild(sep);
         btn.appendChild(label);
+        btn.appendChild(tag);
         btn.onclick = () => selectCup(post, horse);
 
         grid.appendChild(btn);
@@ -1450,163 +1529,186 @@ function updateSlot(slot, horseNum) {
     }
 }
 
-// Select a post's horse in the current step. The horse number is what the
-// results say; the post is the LED cup that lights.
-async function selectCup(post, horse) {
-    const step = resultsState.step;
-    resultsState[step] = horse;
-    resultsPosts[step] = post;
-    updateSlot(step, horse);
+// A tap on a horse: the horse number is what the results say; the post is the
+// LED cup that lights. It fills the active slot, in this turn, from the state
+// and nothing else.
+function selectCup(post, horse) {
+    const slot = activeSlot();
+    const where = slotOfHorse(horse);
 
-    // Lock cup to winner color (while heartbeat continues on others)
-    const colorMap = { win: GOLD_RGB, place: SILVER_RGB, show: BRONZE_RGB };
-
-    try {
-        await fetch('/api/cup/lock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                cup: post,
-                r: colorMap[step].r,
-                g: colorMap[step].g,
-                b: colorMap[step].b
-            })
-        });
-    } catch (error) {
-        console.error('Error locking cup:', error);
+    if (where) {
+        // One horse, one slot. The horse is in the slot being changed: nothing to do but
+        // stop changing it; in another slot: refused.
+        if (where === slot) {
+            resultsState.chosen = null;
+            resultsNote('');
+        } else {
+            resultsNote(`${horseLabel(horse)} is already ${RESULT_SLOT_NAMES[where]}. `
+                + `To use it elsewhere, clear ${RESULT_SLOT_NAMES[where]} first.`);
+        }
+        updateResultsModalUI();
+        return;
+    }
+    if (!slot) {
+        resultsNote('WIN, PLACE and SHOW are all set. Tap one of them to change it.');
+        updateResultsModalUI();
+        return;
     }
 
-    // Move to next step
-    if (step === 'win') {
-        resultsState.step = 'place';
-    } else if (step === 'place') {
-        resultsState.step = 'show';
-    }
+    const replaced = resultsPosts[slot];            // the post whose cup this pick replaces, on a change on purpose
+    resultsState[slot] = horse;
+    resultsPosts[slot] = post;
+    resultsState.chosen = null;
+    updateSlot(slot, horse);
+    resultsNote('');
+    updateResultsModalUI();
 
-    // Update UI
+    // The LEDs follow the pick: the replaced horse's cup back to the animation, the new one locked to the slot's color
+    if (replaced !== null && replaced !== post) {
+        ledCall('/api/cup/unlock', { cup: replaced });
+    }
+    const colour = RESULT_COLOURS[slot];
+    ledCall('/api/cup/lock', {
+        cup: post,
+        r: colour.r,
+        g: colour.g,
+        b: colour.b
+    });
+}
+
+// A tap on a slot: the next horse tap fills that slot (and replaces what is
+// in it); tapping it again goes back to the next empty one.
+function chooseSlot(slot) {
+    resultsState.chosen = (resultsState.chosen === slot) ? null : slot;
+    resultsNote('');
     updateResultsModalUI();
 }
 
-// Update modal UI based on state
+// The x on a filled slot: empty it, and the next horse tap fills it
+function clearSlot(slot) {
+    if (!resultsState[slot]) return;
+    const post = resultsPosts[slot];
+    resultsState[slot] = null;
+    resultsPosts[slot] = null;
+    resultsState.chosen = slot;
+    updateSlot(slot, null);
+    resultsNote('');
+    updateResultsModalUI();
+    if (post !== null) {
+        ledCall('/api/cup/unlock', { cup: post });
+    }
+}
+
+// Update modal UI from the state
 function updateResultsModalUI() {
     const header = document.getElementById('results-modal-header');
     const subtext = document.getElementById('results-modal-subtitle');
     const confirmSection = document.getElementById('results-confirm-section');
+    const slot = activeSlot();
+    const changing = !!resultsState.chosen && !!resultsState[resultsState.chosen];
+    const complete = RESULT_SLOTS.every((s) => resultsState[s]) && !resultsState.chosen;
 
-    // Update header and subtext based on step (with null checks)
+    // Heading and subtext: what the next horse tap does
+    const heads = {
+        win:   { text: 'CHOOSE WINNER', change: 'CHANGE WINNER', color: '#FFD700', sub: 'Tap the 1st place horse' },
+        place: { text: 'CHOOSE PLACE',  change: 'CHANGE PLACE',  color: '#C0C0C0', sub: 'Tap the 2nd place horse' },
+        show:  { text: 'CHOOSE SHOW',   change: 'CHANGE SHOW',   color: '#CD7F32', sub: 'Tap the 3rd place horse' }
+    };
     if (header) {
-        if (resultsState.step === 'win') {
-            header.textContent = 'CHOOSE WINNER';
-            header.style.color = '#FFD700';  // Gold
-        } else if (resultsState.step === 'place') {
-            header.textContent = 'CHOOSE PLACE';
-            header.style.color = '#C0C0C0';  // Silver
-        } else if (resultsState.step === 'show') {
-            header.textContent = 'CHOOSE SHOW';
-            header.style.color = '#CD7F32';  // Bronze
+        if (slot) {
+            header.textContent = changing ? heads[slot].change : heads[slot].text;
+            header.style.color = heads[slot].color;
+        } else {
+            header.textContent = 'CHECK THE RESULTS';
+            header.style.color = '#FFFFFF';
         }
     }
-
     if (subtext) {
-        if (resultsState.step === 'win') {
-            subtext.textContent = 'Select the 1st place horse';
-        } else if (resultsState.step === 'place') {
-            subtext.textContent = 'Select the 2nd place horse';
-        } else if (resultsState.step === 'show') {
-            subtext.textContent = 'Select the 3rd place horse';
+        if (slot) {
+            subtext.textContent = changing
+                ? `${RESULT_SLOT_NAMES[slot]} is ${horseLabel(resultsState[slot])}. Tap the horse that replaces it, or tap ${RESULT_SLOT_NAMES[slot]} again to leave it.`
+                : heads[slot].sub;
+        } else {
+            subtext.textContent = 'Tap WIN, PLACE or SHOW to change one, or CONFIRM RESULTS.';
         }
     }
 
-    // Update button states in grid
+    // The three slots: the one the next tap fills is lit
+    RESULT_SLOTS.forEach((s) => {
+        const card = document.querySelector(`.result-slot[data-slot="${s}"]`);
+        if (!card) return;
+        card.classList.toggle('is-active', s === slot);
+        card.classList.toggle('is-filled', !!resultsState[s]);
+        const hint = card.querySelector('.slot-hint');
+        if (hint) hint.textContent = (s === slot) ? (resultsState[s] ? 'TAP THE NEW HORSE' : 'TAP A HORSE') : '';
+    });
+
+    // Update button states in grid: a placed horse says which slot it is in
     const buttons = document.querySelectorAll('.winner-pick-btn');
     buttons.forEach(btn => {
         const horse = parseInt(btn.dataset.horse);
+        const where = slotOfHorse(horse);
 
         // Remove all selection classes
-        btn.classList.remove('selected-win', 'selected-place', 'selected-show');
-        btn.disabled = false;
+        btn.classList.remove('selected-win', 'selected-place', 'selected-show', 'is-picked');
+        const tag = btn.querySelector('.winner-pick-tag');
+        if (tag) tag.textContent = '';
 
-        // Mark selected horses
-        if (horse === resultsState.win) {
-            btn.classList.add('selected-win');
-            btn.disabled = true;
-        } else if (horse === resultsState.place) {
-            btn.classList.add('selected-place');
-            btn.disabled = true;
-        } else if (horse === resultsState.show) {
-            btn.classList.add('selected-show');
-            btn.disabled = true;
+        if (where) {
+            btn.classList.add(`selected-${where}`, 'is-picked');
+            if (tag) tag.textContent = RESULT_SLOT_NAMES[where];
         }
     });
 
-    // Show confirm button if all selected (with null check)
+    // The confirm step: all three set (and none being changed), listed by slot with the number and the name
     if (confirmSection) {
-        if (resultsState.win && resultsState.place && resultsState.show) {
-            confirmSection.style.display = 'block';
-        } else {
-            confirmSection.style.display = 'none';
+        confirmSection.style.display = complete ? 'block' : 'none';
+        const summary = document.getElementById('results-confirm-summary');
+        if (summary) {
+            summary.textContent = '';
+            if (complete) {
+                RESULT_SLOTS.forEach((s) => {
+                    const horse = resultsState[s];
+                    const colors = SADDLE_CLOTHS[horse] || { bg: '#808080', text: '#FFFFFF' };
+                    const row = document.createElement('div');
+                    row.className = 'confirm-row';
+                    row.dataset.slot = s;
+                    const label = document.createElement('span');
+                    label.className = `confirm-row-slot ${s}`;
+                    label.textContent = RESULT_SLOT_NAMES[s];
+                    const num = document.createElement('span');
+                    num.className = 'confirm-row-num';
+                    num.style.background = colors.bg;
+                    num.style.color = colors.text;
+                    num.textContent = String(horse);
+                    const name = document.createElement('span');
+                    name.className = 'confirm-row-name';
+                    name.textContent = horseDisplayName(horse);
+                    row.appendChild(label);
+                    row.appendChild(num);
+                    row.appendChild(name);
+                    summary.appendChild(row);
+                });
+            }
         }
     }
-}
-
-// Go back to previous step
-async function resultsGoBack() {
-    if (resultsState.step === 'place') {
-        // Unlock win cup and go back
-        if (resultsPosts.win) {
-            await fetch('/api/cup/unlock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cup: resultsPosts.win })
-            });
-        }
-        resultsState.win = null;
-        resultsPosts.win = null;
-        resultsState.step = 'win';
-    } else if (resultsState.step === 'show') {
-        // Unlock place cup and go back
-        if (resultsPosts.place) {
-            await fetch('/api/cup/unlock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cup: resultsPosts.place })
-            });
-        }
-        resultsState.place = null;
-        resultsPosts.place = null;
-        resultsState.step = 'place';
-    }
-
-    updateResultsModalUI();
 }
 
 // Reset selection
 async function resultsReset() {
-    // Unlock all selected cups
-    try {
-        await fetch('/api/cup/unlock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cup: 'ALL' })
-        });
-    } catch (error) {
-        console.error('Error unlocking cups:', error);
-    }
+    // The page's own state first, in this turn; the LEDs follow
+    resultsState = freshResultsState();
+    resultsPosts = { win: null, place: null, show: null };
 
     // Clear all slots
     updateSlot('win', null);
     updateSlot('place', null);
     updateSlot('show', null);
-
-    resultsState = {
-        step: 'win',
-        win: null,
-        place: null,
-        show: null
-    };
-    resultsPosts = { win: null, place: null, show: null };
-
+    resultsNote('');
     updateResultsModalUI();
+
+    // Unlock all selected cups
+    await ledCall('/api/cup/unlock', { cup: 'ALL' });
 }
 
 // Close results modal
@@ -1616,20 +1718,11 @@ async function closeResultsModal(keepAnimation = false) {
 
     // Only unlock cups and stop animation if NOT confirmed
     if (!keepAnimation) {
-        try {
-            await fetch('/api/cup/unlock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cup: 'ALL' })
-            });
-            await fetch('/api/command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: 'LED:ALL_OFF' })
-            });
-        } catch (error) {
-            console.error('Error stopping animation on modal close:', error);
-        }
+        // Results another device set while the picker was up are shown now
+        if (pendingResults) showResultsRevealModal();
+
+        await ledCall('/api/cup/unlock', { cup: 'ALL' });
+        await ledCall('/api/command', { command: 'LED:ALL_OFF' });
     }
 }
 
@@ -1641,12 +1734,17 @@ async function resultsConfirm() {
     const winHorse = resultsState.win;
     const placeHorse = resultsState.place;
     const showHorse = resultsState.show;
+    if (!winHorse || !placeHorse || !showHorse || new Set([winHorse, placeHorse, showHorse]).size !== 3) return;
 
     // Set flag to skip reveal popup on this device
     justSubmittedResults = true;
 
     showLoader();
     try {
+        // The cups were locked as they were picked: let those calls finish first (not for long: the results
+        // are facts about the race, not about the LEDs)
+        await ledDrain(3000);
+
         const response = await fetch('/api/results', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1669,6 +1767,7 @@ async function resultsConfirm() {
             localStorage.setItem('raceResults', JSON.stringify({
                 win: winHorse, place: placeHorse, show: showHorse
             }));
+            pendingResults = null;           // these are the results now, whatever another device had said
             showResultsBanner(winHorse, placeHorse, showHorse);
 
             // /api/results set the race state (WINNER, with the results): show it
@@ -1939,6 +2038,12 @@ function connectResultsStream() {
         
         // Show dramatic reveal popup for other devices
         pendingResults = data;
+        if (resultsModalOpen()) {
+            // The picker is up: the popup would take a tap meant for a horse, so it waits until the picker
+            // closes (closeResultsModal), and the host is told now
+            showNotification('Results were set on another device', 'error');
+            return;
+        }
         showResultsRevealModal();
     });
     
@@ -2528,8 +2633,9 @@ window.onclick = function(event) {
     const resultsModal = document.getElementById('results-modal');
     const animationsModal = document.getElementById('animations-modal');
 
-    // Close results modal if clicking outside
-    if (event.target === resultsModal) {
+    // Close results modal if clicking outside, while nothing is picked: a stray tap on the dark edge of the
+    // screen must not throw the picks away (CANCEL and the x are there to leave on purpose)
+    if (event.target === resultsModal && !resultsPicksMade()) {
         closeResultsModal();
     }
 
