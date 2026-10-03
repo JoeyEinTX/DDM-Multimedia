@@ -668,18 +668,20 @@ stand still and the message steps across them, a character a tile.
   did not have to wait) starts from blank tiles and comes in on the
   right.
 - *The rate* is `CRAWL_TILES_PER_SEC`, a named constant at the top of
-  the script: 8 tiles a second, 190 px/s at 1920 px (the track ran at
-  120). `?crawl_tps=` on the URL overrides it for that page, for tuning on
-  the TV (`/?crawl_tps=6`; from 0.25 to 60, and anything that is not a
-  number is the default); `window.ddmQuiniela.crawl()`, a read-only
+  the script: 5 tiles a second, 119 px/s at 1920 px, the speed of the
+  track the sign replaced (120; 8 tiles a second, tried first on DevPi,
+  was far too fast). `?crawl_tps=` on the URL overrides it for that page,
+  for tuning on the TV (`/?crawl_tps=4` slower, `/?crawl_tps=8` the first
+  speed; from 0.25 to 60, and anything that is not a number is the
+  default); `window.ddmQuiniela.crawl()`, a read-only
   snapshot of the sign (`tps`, `tiles`, `tile`, `offset`, `length`,
   `generation`, `pending`, `items`, `text`; null in the other looks), says
   what is in force. The steps come from `requestAnimationFrame`
   timestamps, not a timer: step n is due n / rate after the crawl started,
   so a late frame makes the next one take two steps and the rate does not
-  drift (8.01 steps a second over 5.9 s of headless Chrome, one step every
-  117 to 133 ms, a frame either side of 125; 4.00 at `crawl_tps=4`, 16.01
-  at 16); a stall of more than half a second is not made up for. A step
+  drift (5.00 steps a second over 5.8 s of headless Chrome, one step every
+  200 ms to the frame; 2.00 at `crawl_tps=2`, 8.01 at 8); a stall of more
+  than half a second is not made up for. A step
   writes only the tiles whose character or look changed, and nothing is
   rebuilt.
 - *The content* is the track's: the same items in the same order with
@@ -723,7 +725,7 @@ the crawl (the track of `impact` and `numbers`) are transform / opacity
 too, and so is a scrolling name in `dots`. Everything is transform /
 opacity only so it stays smooth on a Pi 5 in kiosk Chromium, except
 the crawl of `dots`, which is not an animation at all: the script
-writes the tiles whose character changed, eight times a second (above).
+writes the tiles whose character changed, five times a second (above).
 Nothing loops
 except the crawl, the FINAL CALL pulse and, in `dots`, a name too long
 for its row (the crawl is paused while the board is hidden, the names
@@ -752,7 +754,7 @@ shows.
 http://joeydevpi.local:5001/                the tote look (the default)
 http://joeydevpi.local:5001/?look=impact    Impact, the board as it was before the tote look
 http://joeydevpi.local:5001/?look=numbers   the tote look's figures, the names left in Impact
-http://joeydevpi.local:5001/?crawl_tps=6    the tote look with its crawl at 6 tiles a second (8 is the default)
+http://joeydevpi.local:5001/?crawl_tps=8    the tote look with its crawl at 8 tiles a second (5 is the default)
 ```
 
 `config.QUINIELA_LOOK` is the default (`"dots"` as shipped, and `dots`
@@ -863,10 +865,10 @@ failure); they pause while the board is hidden or the results screen
 covers the rows.
 
 The crawl of `dots` is the main thread's, not the compositor's: a row of
-tiles written by the script eight times a second where the track was
+tiles written by the script five times a second where the track was
 moved by the compositor. The same feed, 12 s, headless Chrome at
 1920x1080, the CPU throttled over the DevTools protocol: worst frame
-5.8 ms unthrottled, 5.7 ms at 4x slower, 16.6 ms at 6x, 16.8 ms at 6x
+5.7 ms unthrottled, 11.0 ms at 4x slower, 16.7 ms at 6x, 16.8 ms at 6x
 with software raster (60 Hz), none over 34 ms and no page error. A Shop
 PC's Chrome, not a Pi's (below).
 
@@ -1129,9 +1131,10 @@ FINAL CALL, and it gives way to `COUNTED` when the room is short.
 headless Chrome's virtual clock: the row fills the band by the rows' rule
 (78 tiles at 1920 px, 68 at 1680), no tile is ever anywhere but where it
 started (0 px over every frame of five seconds), a step is the whole
-message one tile to the left, the rate is `CRAWL_TILES_PER_SEC` and
-`?crawl_tps=` overrides it (4, 60; not a number is the default; the rate
-stays from 0.25 to 60), the window equals the loop at every step across
+message one tile to the left, the rate is `CRAWL_TILES_PER_SEC` (5: the
+old track's 120 px/s to within 3 %) and `?crawl_tps=` overrides it (2,
+60; not a number is the default; the rate stays from 0.25 to 60), the
+window equals the loop at every step across
 two seams and the loop ends in its gap, a live item that keeps its
 length is written where it stands (on the tiles at once, the message not
 rebuilt, the crawl not restarted), a scratch added waits for the loop

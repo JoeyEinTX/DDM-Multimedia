@@ -188,13 +188,16 @@
     const CRAWL_PX_S     = 120;     // chyron speed (impact and numbers: a CSS transform animation)
     // The crawl of "dots" (stepCrawl): a fixed row of tiles, a character a
     // tile, the message stepping one tile left CRAWL_TILES_PER_SEC times a
-    // second (?crawl_tps= on the URL overrides it, for tuning on the TV, from
-    // CRAWL_TPS_MIN to CRAWL_TPS_MAX). The tile is the rows' at the crawl's own
-    // pitch, 4 px: 24 x 32 px before the fill rule stretches it, the crawl's
-    // size in the tote look all along. CRAWL_PAD_TILES blank tiles either side
-    // of the diamond between two items, which is also the gap between the end
-    // of the message and its start again (the track's 34 px each side, in tiles).
-    const CRAWL_TILES_PER_SEC = 8;
+    // second. 5 is the speed of the track the sign replaced, CRAWL_PX_S, in
+    // tiles (5 tiles of 23.7 px at 1920 px are 119 px/s against its 120); 8
+    // was tried on DevPi and was far too fast. ?crawl_tps= on the URL
+    // overrides it, for tuning on the TV, from CRAWL_TPS_MIN to CRAWL_TPS_MAX.
+    // The tile is the rows' at the crawl's own pitch, 4 px: 24 x 32 px before
+    // the fill rule stretches it, the crawl's size in the tote look all along.
+    // CRAWL_PAD_TILES blank tiles either side of the diamond between two
+    // items, which is also the gap between the end of the message and its
+    // start again (the track's 34 px each side, in tiles).
+    const CRAWL_TILES_PER_SEC = 5;
     const CRAWL_TPS_MIN       = 0.25;
     const CRAWL_TPS_MAX       = 60;
     const CRAWL_PITCH_PX      = 4;

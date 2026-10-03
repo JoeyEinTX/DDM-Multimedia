@@ -2061,7 +2061,7 @@ class StepCrawlTests(unittest.TestCase):
                             "\u2014\u00a0\u00e9\u200b\u00e4 \U0001f642 end", "second"]
         cls.runs = run_boards({
             "default": ([m, {"__sample": 5000}], plain),
-            "slow": ([m, {"__sample": 5000}], dict(plain, query="crawl_tps=4")),
+            "slow": ([m, {"__sample": 5000}], dict(plain, query="crawl_tps=2")),
             "fast": ([m, {"__sample": 12000}], dict(plain, query="crawl_tps=60")),
             "bad": ([m], dict(plain, query="crawl_tps=abc")),
             "huge": ([m], dict(plain, query="crawl_tps=500")),
@@ -2140,13 +2140,13 @@ class StepCrawlTests(unittest.TestCase):
         self.assertGreater(again["offset"], first["offset"])
 
     def test_a_stall_is_not_made_up_for(self) -> None:
-        # The main thread is away for a second and a half: the next frame is owed a dozen steps at 8 a second and
+        # The main thread is away for a second and a half: the next frame is owed eight steps at 5 a second and
         # takes none of them, so the crawl goes on from where it was and never jumps.
         s = self.sample("stall")
         offsets = [s["start"][0]] + [step[1] for step in s["steps"]]
         self.assertTrue(all(b - a == 1 for a, b in zip(offsets, offsets[1:])), "a step is a tile, never a jump: " + str(offsets))
-        self.assertLessEqual(len(s["steps"]), 19, "the steps of the stall were not made up for (24 without it)")
-        self.assertGreaterEqual(len(s["steps"]), 8, "and the crawl went on")
+        self.assertLessEqual(len(s["steps"]), 12, "the steps of the stall were not made up for (15 without it)")
+        self.assertGreaterEqual(len(s["steps"]), 6, "and the crawl went on")
 
     def test_the_crawl_is_paused_while_the_board_is_hidden_and_goes_on_where_it_was(self) -> None:
         shown, hidden, asleep, back, going = self.got("hidden")
@@ -2156,7 +2156,7 @@ class StepCrawlTests(unittest.TestCase):
         snaps = [r["crawl"]["snapshot"] for r in (shown, hidden, asleep, back, going)]
         self.assertEqual(snaps[2]["offset"], snaps[1]["offset"], "where it stood")
         self.assertEqual(len({s["generation"] for s in snaps}), 1, "the same message: hiding and showing are no update")
-        self.assertGreaterEqual(len(going["sample"]["steps"]), 10, "it went on")
+        self.assertGreaterEqual(len(going["sample"]["steps"]), 6, "it went on (1.5 s at 5 a second)")
         self.assertGreater(snaps[4]["offset"], snaps[0]["offset"])
 
     def test_a_message_comes_in_from_the_right(self) -> None:
@@ -2170,7 +2170,7 @@ class StepCrawlTests(unittest.TestCase):
         self.assertGreaterEqual(s["frames"], 250, "every frame of five seconds")
         self.assertEqual(s["tiles"], self.TILES)
         self.assertEqual(s["drift"], 0, "no tile was ever anywhere but where it started")
-        self.assertGreaterEqual(len(s["steps"]), 38, "and the message stepped all the while")
+        self.assertGreaterEqual(len(s["steps"]), 23, "and the message stepped all the while (5 a second for five seconds)")
 
     def test_a_step_moves_the_whole_message_one_tile_left(self) -> None:
         s = self.sample("default")
@@ -2183,8 +2183,14 @@ class StepCrawlTests(unittest.TestCase):
     def test_the_rate_is_the_constant_and_the_url_overrides_it(self) -> None:
         match = re.search(r"const CRAWL_TILES_PER_SEC = ([\d.]+);", self.JS)
         self.assertTrue(match, "a named constant")
-        self.assertEqual(float(match.group(1)), 8.0, "a default of 8 tiles a second")
-        for name, tps, seconds in (("default", 8, 5), ("slow", 4, 5), ("fast", 60, 12)):
+        self.assertEqual(float(match.group(1)), 5.0, "a default of 5 tiles a second")
+        # 5 tiles of 23.74 px at 1920 px: the speed of the track the sign replaced (CRAWL_PX_S), which 8 tiles a second,
+        # tried first on DevPi, was far too fast for
+        track = re.search(r"const CRAWL_PX_S\s+= (\d+);", self.JS)
+        self.assertTrue(track and float(track.group(1)) == 120.0)
+        tile = self.got("default")[-1]["crawl"]["snapshot"]["tile"]
+        self.assertAlmostEqual(5 * tile, 120.0, delta=3.6, msg="the default is the old track's px/s, in tiles")
+        for name, tps, seconds in (("default", 5, 5), ("slow", 2, 5), ("fast", 60, 12)):
             s = self.sample(name)
             self.assertEqual(self.got(name)[-1]["crawl"]["snapshot"]["tps"], tps, name)
             self.assertLessEqual(abs(len(s["steps"]) - tps * seconds), 1, f"{name}: {tps} tiles a second for {seconds} s")
@@ -2192,7 +2198,7 @@ class StepCrawlTests(unittest.TestCase):
             gaps = [b[0] - a[0] for a, b in zip(self.sample(name)["steps"], self.sample(name)["steps"][1:])]
             tps = self.got(name)[-1]["crawl"]["snapshot"]["tps"]
             self.assertTrue(all(abs(g - 1000 / tps) <= 17 for g in gaps), f"{name}: a step every {1000 / tps:.0f} ms, give or take a frame: {gaps}")
-        for name, tps in (("bad", 8), ("huge", 60), ("tiny", 0.25)):
+        for name, tps in (("bad", 5), ("huge", 60), ("tiny", 0.25)):
             self.assertEqual(self.got(name)[0]["crawl"]["snapshot"]["tps"], tps,
                              f"crawl_tps={name}: not a number is the default, and the rate stays between 0.25 and 60")
 
