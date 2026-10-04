@@ -15,8 +15,9 @@
 # gone), the page's versioned CSS and JS, and the one race state (the
 # dashboard's modes set La Quiniela's state; the results make it 5, RESET
 # makes it 6), and the SET WINNERS picker: a tap fills the slot the host meant,
-# however slowly the LED controller answers (the source, and a headless Chrome
-# in pi5/tools/picker_check.py).
+# however slowly the LED controller answers, and a horse whose cup held no bets
+# at the post is marked NO BETS from La Quiniela's figures at the post (the
+# source, and a headless Chrome in pi5/tools/picker_check.py).
 
 import io
 import json
@@ -591,10 +592,106 @@ def test_picker_is_a_state_machine_only_taps_move():
            and css.count("touch-action: manipulation") >= 4)
 
 
+# -----------------------------------------------------------------------------
+# SET WINNERS: NO BETS on a horse whose cup held no bets at the post
+# -----------------------------------------------------------------------------
+# The host enters the three horses that pay, not strictly the first three: a
+# finisher whose cup had no bets at the post cannot win a prize (an empty cup has
+# no token to draw), so the next finisher takes its place. The picker marks such a
+# horse from La Quiniela's figures at the post (the model's closing), by horse
+# number, so the host does not have to spot it; unknown figures mark nothing.
+
+def test_bets_at_the_post_for_the_picker():
+    """What the picker reads: GET /api/quiniela's closing. Null before the post; from AT THE GATE every
+    horse "1".."24" with the tokens its cup held then, keyed by horse number (22 running for 9 is "22"),
+    0 for a horse no cup claims; frozen, so a token dropped later does not move it; gone when betting
+    reopens."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    rig.bridge.handle_raw_line(telem(MAC_A, horse=22, count=3))           # the cup that was 9 reports 22
+    rig.bridge.handle_raw_line(telem(MAC_B, horse=4, count=0))            # a cup with nothing in it
+    rig.bridge.handle_raw_line(telem("A0:B7:65:12:34:58", horse=12, count=5))
+    rig.board.refresh()
+    m = rig.model()
+    _check("betting open: no figures at the post (the picker marks nothing then)", m["closing"] is None
+           and m["horses"]["22"]["tokens"] == 3, str(m["closing"]))
+    rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
+    closing = rig.model()["closing"]
+    horses = (closing or {}).get("horses") or {}
+    _check("AT THE GATE: the figures at the post carry every horse 1-24 by its number",
+           sorted(horses, key=int) == [str(n) for n in range(1, 25)], str(sorted(horses)))
+    _check("...22, running from post 9, under 22 with its 3; 12 with 5", horses["22"]["tokens"] == 3 and horses["12"]["tokens"] == 5)
+    _check("...the empty cup's horse 0, a horse with no cup 0, and 9 (no cup claims it now) 0",
+           (horses["4"]["tokens"], horses["7"]["tokens"], horses["9"]["tokens"]) == (0, 0, 0))
+    post9 = rig.client.get("/api/quiniela/field").get_json()["posts"][8]
+    _check("...and the picker's post 9 is horse 22, the key it reads", (post9["post"], post9["horse"]) == (9, 22), str(post9))
+    rig.bridge.handle_raw_line(telem(MAC_B, horse=4, count=2))            # a token after the post
+    rig.board.refresh()
+    m = rig.model()
+    _check("a token dropped after the post: the live count moves, the figures at the post do not",
+           m["horses"]["4"]["tokens"] == 2 and m["closing"]["horses"]["4"]["tokens"] == 0)
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    _check("betting reopened: the figures at the post are gone", rig.model()["closing"] is None)
+
+
+def test_picker_marks_horses_nobody_bet():
+    rig = Rig()
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True)
+    load = _js_function(js, "async function loadBetsAtPost()")
+    _check("the picker reads La Quiniela's figures at the post from its model (closing), beside the field",
+           "fetch('/api/quiniela', { cache: 'no-store' })" in load and "model.closing" in load
+           and js.index("async function loadQuinielaField()") < js.index("async function loadBetsAtPost()") < js.index("// Results modal state"))
+    bets = _js_function(js, "function betsAtPost(closing)")
+    _check("...by horse number; a horse that is missing or held nothing counts 0; no figures at all is null",
+           "closing && closing.horses" in bets and "horses[String(n)]" in bets and "return null;" in bets
+           and "tokens > 0 ? tokens : 0" in bets)
+    _check("...and a failed read is no figures too, said nowhere but the console",
+           "return null;" in load[load.index("catch"):] and "showNotification" not in load)
+    _check("unknown is not zero: with no figures at the post no horse is marked",
+           "resultsBets !== null &&" in _js_function(js, "function hadNoBets(horse)"))
+    open_ = _js_function(js, "async function showResultsModal()")
+    _check("the figures are read as the picker opens, with the field, and only there",
+           "Promise.all([loadQuinielaField(), loadBetsAtPost()])" in open_ and "resultsBets = bets;" in open_)
+    at = js.index("async function showResultsModal()")
+    writes = [w.start() for w in re.finditer(r"\bresultsBets\s*=[^=]", js)]
+    _check("...nothing else writes them (the declaration aside), so the marks cannot change while the picker is open",
+           len(writes) == 2 and "let resultsBets = null;" in js and sum(1 for w in writes if at <= w < at + len(open_)) == 1,
+           str(writes))
+    for name in ("async function loadQuinielaField()", "async function pollRaceMode()", "async function followServerResults()",
+                 "function connectResultsStream()", "function selectCup(post, horse)", "async function resultsConfirm()"):
+        _check(f"{name.split('(')[0].split()[-1]} does not touch the figures at the post", "resultsBets" not in _js_function(js, name))
+    ui = _js_function(js, "function updateResultsModalUI()")
+    _check("every picker is marked from them by its horse: dimmed (no-bets) and tagged NO BETS",
+           "const noBets = hadNoBets(horse);" in ui and "btn.classList.toggle('no-bets', noBets);" in ui
+           and "noBets ? 'NO BETS' : ''" in ui and "none.className = 'winner-pick-nobets';" in js)
+    _check("a pick nobody bet is warned about in the recap over CONFIRM RESULTS, word for word",
+           "`#${horse} ${horseDisplayName(horse)}: nobody bet this horse, so it can't pay. `" in ui
+           and "'Enter the next finisher instead.'" in ui and "warning.className = 'confirm-warning';" in ui)
+    _check("...and its slot card shows the tag", "if (hadNoBets(horseNum))" in _js_function(js, "function updateSlot(slot, horseNum)")
+           and "none.className = 'slot-nobets';" in js)
+    _check("picking it is allowed and CONFIRM RESULTS stays enabled: nothing refuses or disables on NO BETS",
+           "hadNoBets" not in _js_function(js, "function selectCup(post, horse)") and "hadNoBets" not in _js_function(js, "async function resultsConfirm()")
+           and ".disabled" not in ui and "results-confirm-btn').disabled" not in js)
+    _check("the recap appearing brings CONFIRM RESULTS into view (a short screen scrolls the modal)",
+           "complete && !wasShown" in ui and "confirmBtn.scrollIntoView({ block: 'nearest' });" in ui)
+    tag = re.search(r"\n\.winner-pick-nobets \{(.*?)\}", css, re.S)
+    _check("the tag: red, 14 px, its own corner (top left; a slot's tag is top right)",
+           bool(tag) and all(s in tag.group(1) for s in ("background: #D32F2F;", "font-size: 14px;", "left: 6px;")))
+    _check("the picker dimmed but not its tag, the slot card's tag, the warning, a modal that scrolls when taller than the screen",
+           ".winner-pick-btn.no-bets .winner-pick-name" in css and ".winner-pick-btn.no-bets .winner-pick-nobets" in css
+           and ".slot-nobets {" in css and ".confirm-warning {" in css
+           and re.search(r"#results-modal\.active \{[^}]*overflow-y: auto;", css) is not None
+           and "#results-modal.active .results-modal-content {\n    margin: auto;" in css.replace("\r\n", "\n"))
+
+
 def test_picker_in_a_browser():
     """The picker in headless Chrome, over the DevTools protocol (pi5/tools/picker_check.py): the real
     dashboard over loopback, the LED controller slow on purpose, a mouse session and a touch session
-    (an iPad's 1180 x 820, touch emulation). Skipped where there is no Chrome."""
+    (an iPad's 1180 x 820, touch emulation), and the NO BETS marks from figures at the post set up on the
+    server. Skipped where there is no Chrome."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("picker_check", os.path.join(_PI5_DIR, "tools", "picker_check.py"))
     picker_check = importlib.util.module_from_spec(spec)
@@ -623,6 +720,8 @@ def main_():
     _run("results — kept when pi5 starts", test_results_are_kept_when_pi5_starts)
     _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
     _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)
+    _run("SET WINNERS — the figures at the post the picker reads, by horse number", test_bets_at_the_post_for_the_picker)
+    _run("SET WINNERS — NO BETS marks from the frozen figures, a warning, CONFIRM still works", test_picker_marks_horses_nobody_bet)
     _run("SET WINNERS — a tap lands in the slot meant, in a browser, mouse and touch", test_picker_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")

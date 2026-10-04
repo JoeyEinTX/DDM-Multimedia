@@ -1314,6 +1314,37 @@ async function loadQuinielaField() {
     return quinielaField;
 }
 
+// What each horse's cup held at the post, for the SET WINNERS pickers' NO BETS
+// marks: La Quiniela's figures at the post (its model's closing, GET
+// /api/quiniela), taken when betting closed and frozen from then on. They are
+// keyed by horse number, the number the results carry (22 running for 9 is
+// horse 22), and a horse no cup claimed held 0. Returns {horse: tokens}, or
+// null when there are no figures at the post (the race never reached the post,
+// betting reopened, pi5 not answering): unknown is not zero, and nothing is
+// marked then.
+async function loadBetsAtPost() {
+    try {
+        const response = await fetch('/api/quiniela', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const model = await response.json();
+        return betsAtPost(model && model.closing);
+    } catch (error) {
+        console.error('Error loading the figures at the post:', error);
+        return null;
+    }
+}
+
+function betsAtPost(closing) {
+    const horses = closing && closing.horses;
+    if (!horses || typeof horses !== 'object') return null;
+    const bets = {};
+    for (let n = 1; n <= 24; n++) {
+        const tokens = Number(horses[String(n)] && horses[String(n)].tokens);
+        bets[n] = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
+    }
+    return bets;
+}
+
 // The name the tote and the pickers print for a horse: La Quiniela's, or HORSE n.
 function horseDisplayName(n) {
     const names = (quinielaField && quinielaField.names) || {};
@@ -1347,6 +1378,19 @@ let resultsState = freshResultsState();
 
 // The posts (LED cups) of the three picks
 let resultsPosts = { win: null, place: null, show: null };
+
+// The bets at the post by horse (loadBetsAtPost), read once as the picker opens
+// and left alone while it is open: they are frozen figures, so the NO BETS marks
+// cannot move under the host. null: no figures at the post, no marks.
+let resultsBets = null;
+
+// A horse whose cup held no bets at the post. It cannot win a prize (an empty
+// cup has no token to draw), so the host skips it and enters the next finisher
+// in its place. Picking it is allowed; the picker marks it and says so. False
+// whenever the figures at the post are unknown.
+function hadNoBets(horse) {
+    return resultsBets !== null && !(resultsBets[horse] > 0);
+}
 
 // Winner colors for cup locking
 const GOLD_RGB = { r: 255, g: 215, b: 0 };
@@ -1441,8 +1485,11 @@ async function showResultsModal() {
         // Start RESULTS_ENTRY animation (clears cup locks internally)
         await ledCall('/api/animation/RESULTS_ENTRY');
 
-        // The field as La Quiniela has it now: names, replacements, scratches
-        await loadQuinielaField();
+        // The field as La Quiniela has it now (names, replacements, scratches) and its
+        // figures at the post (the NO BETS marks: read here only, so nothing changes
+        // them while the picker is open)
+        const [, bets] = await Promise.all([loadQuinielaField(), loadBetsAtPost()]);
+        resultsBets = bets;
         generateSaddleClothGrid();
         updateResultsModalUI();
 
@@ -1457,7 +1504,8 @@ async function showResultsModal() {
 // Each shows the horse that runs from that post as "19 \u00b7 GOLDEN TEMPO": the
 // number on its saddle cloth, then La Quiniela's name (HORSE n without one).
 // A post whose horse was replaced shows the replacement's number and name;
-// a post whose horse was scratched with no replacement is left blank.
+// a post whose horse was scratched with no replacement is left blank. A horse
+// whose cup held no bets at the post is dimmed and tagged NO BETS.
 function generateSaddleClothGrid() {
     const grid = document.getElementById('saddle-cloth-grid');
     grid.innerHTML = '';
@@ -1502,10 +1550,15 @@ function generateSaddleClothGrid() {
         const tag = document.createElement('span');
         tag.className = 'winner-pick-tag';
 
+        // NO BETS, when nobody bet the horse (updateResultsModalUI)
+        const none = document.createElement('span');
+        none.className = 'winner-pick-nobets';
+
         btn.appendChild(num);
         btn.appendChild(sep);
         btn.appendChild(label);
         btn.appendChild(tag);
+        btn.appendChild(none);
         btn.onclick = () => selectCup(post, horse);
 
         grid.appendChild(btn);
@@ -1522,6 +1575,12 @@ function updateSlot(slot, horseNum) {
         name.className = 'slot-horse-name';
         name.textContent = horseDisplayName(horseNum);
         slotEl.appendChild(name);
+        if (hadNoBets(horseNum)) {
+            const none = document.createElement('div');
+            none.className = 'slot-nobets';
+            none.textContent = 'NO BETS';
+            slotEl.appendChild(none);
+        }
         slotEl.classList.add('filled', 'slot-named');
     } else {
         slotEl.innerHTML = '';
@@ -1643,7 +1702,9 @@ function updateResultsModalUI() {
         if (hint) hint.textContent = (s === slot) ? (resultsState[s] ? 'TAP THE NEW HORSE' : 'TAP A HORSE') : '';
     });
 
-    // Update button states in grid: a placed horse says which slot it is in
+    // Update button states in grid: a placed horse says which slot it is in, a horse
+    // nobody bet says NO BETS (from the figures at the post, which do not change while
+    // the picker is open)
     const buttons = document.querySelectorAll('.winner-pick-btn');
     buttons.forEach(btn => {
         const horse = parseInt(btn.dataset.horse);
@@ -1658,10 +1719,16 @@ function updateResultsModalUI() {
             btn.classList.add(`selected-${where}`, 'is-picked');
             if (tag) tag.textContent = RESULT_SLOT_NAMES[where];
         }
+
+        const noBets = hadNoBets(horse);
+        btn.classList.toggle('no-bets', noBets);
+        const none = btn.querySelector('.winner-pick-nobets');
+        if (none) none.textContent = noBets ? 'NO BETS' : '';
     });
 
     // The confirm step: all three set (and none being changed), listed by slot with the number and the name
     if (confirmSection) {
+        const wasShown = confirmSection.style.display === 'block';
         confirmSection.style.display = complete ? 'block' : 'none';
         const summary = document.getElementById('results-confirm-summary');
         if (summary) {
@@ -1689,7 +1756,25 @@ function updateResultsModalUI() {
                     row.appendChild(name);
                     summary.appendChild(row);
                 });
+                // A pick whose cup held no bets at the post cannot pay: said here, the last look before
+                // CONFIRM RESULTS, which stays enabled (the host may really mean it)
+                RESULT_SLOTS.forEach((s) => {
+                    const horse = resultsState[s];
+                    if (!hadNoBets(horse)) return;
+                    const warning = document.createElement('div');
+                    warning.className = 'confirm-warning';
+                    warning.dataset.slot = s;
+                    warning.textContent = `#${horse} ${horseDisplayName(horse)}: nobody bet this horse, so it can't pay. `
+                        + 'Enter the next finisher instead.';
+                    summary.appendChild(warning);
+                });
             }
+        }
+        // The recap has just appeared: on a short screen it and CONFIRM RESULTS can be below the fold
+        // (the modal scrolls), so bring them into view
+        const confirmBtn = document.getElementById('results-confirm-btn');
+        if (complete && !wasShown && confirmBtn && confirmBtn.scrollIntoView) {
+            confirmBtn.scrollIntoView({ block: 'nearest' });
         }
     }
 }

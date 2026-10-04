@@ -292,7 +292,7 @@ There is no roster line. A v1 `roster` line is ignored.
     place. Example: nobody bet the show horse, so 4th place is entered as SHOW.
   - The TV, the cups and the LEDs then show those three as WIN, PLACE and SHOW.
   - The SET WINNERS picker marks any horse whose cup had no bets at the post, from the
-    figures at the post, so the host does not have to spot it. [DECIDED 2026-09-29, TO BUILD]
+    figures at the post, so the host does not have to spot it. [DECIDED 2026-09-29, BUILT]
 
 ### Betting lock
 
@@ -444,7 +444,7 @@ Rules for either:
 |---|---|
 | LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
 | The mode buttons: LEDs **and** race state | The current race state, read-only [PROPOSED] |
-| SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [TO BUILD] | Figures: pot, prizes, bets |
+| SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [BUILT] | Figures: pot, prizes, bets |
 | RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
 | Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept |
 | | Race info, horse names, scratches and undo, the betting close time |
@@ -539,6 +539,7 @@ gateway says hello.
 - Cup brownout: a cup comes back with its count (cup sketch v0.7, bench-tested 2026-10-01)
 - La Subasta on La Quiniela's store: names, program numbers 1–24, scratches
 - Counted pot: the pot and the prizes come from the host's hand count of the cash box
+- SET WINNERS no-bets marker: the picker tags a horse whose cup held no bets at the post
 
 ### Next
 
@@ -551,7 +552,7 @@ One single-concern Claude Code prompt each, in this order:
    Done (2026-10-01; listed under Done).
 3. ~~**Counted pot** on the admin page; pot and prizes from the hand count.~~ Done
    (2026-10-02; listed under Done).
-4. **SET WINNERS no-bets marker.**
+4. ~~**SET WINNERS no-bets marker.**~~ Done (2026-10-03; listed under Done).
 5. **Remove the admin page's race-state buttons**; show the state read-only; update
    `RACE_NIGHT.md`, which uses them in several places.
 6. **Re-bet wording** for a same-day scratch: the board, `RACE_NIGHT.md`, `pi5/LQ_BRIDGE.md`.

@@ -13,7 +13,11 @@ LED controller answers, whatever the page is doing in the background, and
 whether a touch device fires a touch and a click or just one. The picker used to
 decide "which slot does the next tap fill" only after the LED lock had come back,
 so a second tap inside that window filled the first slot again (see
-la_quiniela/test_dashboard.py and RACE_NIGHT.md section 8).
+la_quiniela/test_dashboard.py and RACE_NIGHT.md section 8). It also checks the
+NO BETS marks: a horse whose cup held no bets at the post (La Quiniela's figures
+at the post, set up on the server through the rig) is dimmed and tagged, a pick of
+it is warned about over CONFIRM RESULTS, and nothing is marked while the figures
+are unknown.
 
     cd pi5
     python tools/picker_check.py                  every scenario, mouse and touch
@@ -51,6 +55,9 @@ if str(PI5_DIR) not in sys.path:
 IPAD = (1180, 820)                        # an iPad's CSS pixels, landscape
 HORSES = {"win": 7, "place": 3, "show": 12}          # the three the scenarios tap, in the order they should fill
 OTHERS = (5, 9, 14)                       # horses for changes of mind (9 is also offered as post 9)
+EMPTY_CUP, NO_CUP = 4, 7                  # the NO BETS scenarios' figures at the post: 4's cup held nothing, 7 had no cup
+NO_BETS = (EMPTY_CUP, NO_CUP)
+REPLACEMENT = (9, 22, 3)                  # 22 runs for 9 (from post 9), and its cup held 3 bets
 
 
 def find_chrome() -> Optional[str]:
@@ -96,6 +103,7 @@ class Server:
         self.rig = rig
         self.led_latency = 0.0
         self.led_log: List[Tuple[float, str, float]] = []
+        self.fail: set = set()                            # paths answered 503, as if pi5 could not
         self.t0 = time.monotonic()
         self._saved = (main.esp32.send_command, main.WEATHER_API_KEY)
         main.WEATHER_API_KEY = ""                          # the page polls /api/weather: never call out
@@ -107,6 +115,9 @@ class Server:
                 start_response("200 OK", [("Content-Type", "application/javascript"),
                                           ("Content-Length", str(len(override))), ("Cache-Control", "no-store")])
                 return [override]
+            if environ.get("PATH_INFO") in self.fail:
+                start_response("503 Service Unavailable", [("Content-Type", "text/plain"), ("Content-Length", "0")])
+                return [b""]
             return main.app(environ, start_response)
 
         import logging
@@ -271,6 +282,24 @@ STATE_JS = """JSON.stringify({
     confirm: document.getElementById('results-confirm-section').style.display !== 'none'
 })"""
 
+# Every picker in the grid as the host sees it: its post and horse, whether it carries the NO BETS class and
+# shows the tag (displayed, with its text), the tag's size and colour, and how bright its name is drawn.
+MARKS_JS = """JSON.stringify([...document.querySelectorAll('.winner-pick-btn')].map((b) => {
+    const tag = b.querySelector('.winner-pick-nobets');
+    const cs = tag ? getComputedStyle(tag) : null;
+    return {post: +b.dataset.post, horse: +b.dataset.horse, cls: b.classList.contains('no-bets'),
+            shown: !!cs && cs.display !== 'none' && tag.innerText.trim() === 'NO BETS',
+            font: cs ? parseFloat(cs.fontSize) : 0, bg: cs ? cs.backgroundColor : '',
+            dim: parseFloat(getComputedStyle(b.querySelector('.winner-pick-name')).opacity)};
+}))"""
+
+# What the picker says about a pick nobody bet: the recap's warnings over CONFIRM RESULTS, and the slot cards
+# that show the tag.
+WARNINGS_JS = """({
+    recap: [...document.querySelectorAll('#results-confirm-summary .confirm-warning')].map((w) => w.innerText.trim()),
+    slots: [...document.querySelectorAll('.result-slot')].filter((s) => s.querySelector('.slot-nobets')).map((s) => s.dataset.slot)
+})"""
+
 
 class Picker:
     """A dashboard page in a Chrome session, with its SET WINNERS picker."""
@@ -325,6 +354,19 @@ class Picker:
 
     def state(self) -> dict:
         return json.loads(self.chrome.eval(STATE_JS))
+
+    def marks(self) -> List[dict]:
+        return json.loads(self.chrome.eval(MARKS_JS))
+
+    def marked(self) -> List[int]:
+        """The horses the grid tags NO BETS (the tag shown, not just the class), in post order."""
+        return [m["horse"] for m in self.marks() if m["shown"]]
+
+    def warnings(self) -> dict:
+        return self.chrome.eval(WARNINGS_JS)
+
+    def note(self) -> str:
+        return self.chrome.eval("(document.getElementById('results-pick-note') || {}).innerText || ''")
 
     def settle(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -567,17 +609,177 @@ def s_backdrop(c: Ctx) -> None:
     c.check("a tap on the dark backdrop with a pick made does not close the picker", still, True)
 
 
+# NO BETS: a horse whose cup held no bets at the post cannot pay (the empty-cup rule: the host enters the
+# next finisher instead), so the picker marks it, from La Quiniela's figures at the post. The scenarios set
+# those figures up on the server through the rig, as the night would: cups that report their horses and
+# counts, then AT THE GATE.
+
+def figures_at_post(server: Server) -> dict:
+    """La Quiniela as the NO BETS scenarios want it: the 2024 field's names, 9 scratched with 22 Ocelli
+    running for it from post 9, a cup with bets for every horse in the field but two (4's cup is empty, 7
+    has no cup at all), then betting reopened (any older figures at the post go) and AT THE GATE, which
+    takes the figures at the post from those cups. Returns the model's closing."""
+    rig = server.rig
+    # The rig's own module (test_dashboard, imported or run as __main__) for its names and its telem lines:
+    # importing test_dashboard again would run its top level, which closes the bridge the rig is using.
+    D = sys.modules[type(rig).__module__]
+    telem = D.telem
+    was, now, bets = REPLACEMENT
+    rig.client.put("/api/quiniela/horses", json={"text": D.NAMES_TEXT})
+    if not rig.model()["horses"][str(now)]["in_field"]:
+        rig.post("/api/quiniela/scratch", {"horse": was, "replacement": {"number": now, "name": "Ocelli"}})
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    for horse in [n for n in range(1, 21) if n not in (was, NO_CUP)] + [now]:
+        count = 0 if horse == EMPTY_CUP else (bets if horse == now else 1 + horse % 4)
+        rig.bridge.handle_raw_line(telem("A0:B7:65:77:00:%02X" % horse, horse=horse, count=count))
+    rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
+    return rig.model()["closing"]
+
+
+def no_figures(server: Server) -> None:
+    """Betting open, so no figures at the post: they are taken at AT THE GATE and dropped when betting reopens."""
+    server.rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+
+
+def warning_for(horse: int, name: str) -> str:
+    return f"#{horse} {name}: nobody bet this horse, so it can't pay. Enter the next finisher instead."
+
+
+def s_unknown(c: Ctx) -> None:
+    """Unknown is not zero: with no figures at the post, or none to be had, nothing is marked and nothing says
+    anything is wrong."""
+    w, pl, sh = HORSES["win"], HORSES["place"], HORSES["show"]
+    no_figures(c.server)
+    c.fresh(0.0)
+    c.check("no figures at the post (betting open): the picker holds none and tags no horse NO BETS",
+            (c.p.chrome.eval("resultsBets"), c.p.marked()), (None, []))
+    for n in (w, pl, sh):
+        c.p.tap_horse(n)
+        time.sleep(0.2)
+    c.check("  ... three picks as ever", c.picks(), (w, pl, sh))
+    c.check("  ... no slot card shows the tag, the recap carries no warning, the note line is empty",
+            (c.p.warnings(), c.p.note()), ({"recap": [], "slots": []}, ""))
+    # Figures at the post on the server that the page cannot read (pi5 not answering the model): the same
+    figures_at_post(c.server)
+    c.server.fail.add("/api/quiniela")
+    try:
+        c.fresh(0.0)
+        c.check("figures at the post the page cannot read: no marks", (c.p.chrome.eval("resultsBets"), c.p.marked()), (None, []))
+        for n in (NO_CUP, pl, sh):
+            c.p.tap_horse(n)
+            time.sleep(0.2)
+        c.check("  ... the horse nobody bet is picked like any other, with no warning",
+                (c.picks(), c.p.warnings(), c.p.note()), ((NO_CUP, pl, sh), {"recap": [], "slots": []}, ""))
+        shown = c.p.chrome.eval("(() => { const n = document.getElementById('notification');"
+                                " return n.classList.contains('show') && n.classList.contains('error') ? n.textContent : ''; })()")
+        c.check("  ... and no error notice", shown, "")
+    finally:
+        c.server.fail.discard("/api/quiniela")
+        no_figures(c.server)
+
+
+def s_marks(c: Ctx) -> None:
+    """Figures at the post where 4's cup held nothing and 7 had no cup: exactly those two are tagged and dimmed."""
+    closing = figures_at_post(c.server)
+    bets = {int(k): v["tokens"] for k, v in closing["horses"].items()}
+    c.check("the figures at the post: 4 and 7 held nothing, 22 (running for 9) held 3, a horse with bets more",
+            (bets[EMPTY_CUP], bets[NO_CUP], bets[REPLACEMENT[1]], bets[HORSES["place"]] > 0), (0, 0, REPLACEMENT[2], True))
+    c.fresh(0.0)
+    marks = c.p.marks()
+    c.check("exactly 4 and 7 are tagged NO BETS", [m["horse"] for m in marks if m["shown"]], list(NO_BETS))
+    c.check("  ... and only they carry the class", [m["horse"] for m in marks if m["cls"]], list(NO_BETS))
+    dim = {m["horse"]: m["dim"] for m in marks}
+    c.add("  ... drawn dimmer than the rest", all(dim[n] <= 0.5 for n in NO_BETS)
+          and all(v == 1 for h, v in dim.items() if h not in NO_BETS), str(dim))
+    post9 = next(m for m in marks if m["post"] == REPLACEMENT[0])
+    c.check("22 runs from post 9 and its cup held bets: not tagged", (post9["horse"], post9["shown"], post9["cls"]),
+            (REPLACEMENT[1], False, False))
+    tag = next(m for m in marks if m["horse"] == NO_CUP)
+    c.add("a horse with no cup at all counts as no bets (7)", tag["shown"] and tag["cls"], str(tag))
+    c.add("  ... the tag is red and big enough to read at arm's length (14 px or more)",
+          tag["bg"] == "rgb(211, 47, 47)" and tag["font"] >= 14, str(tag))
+    c.check("  ... nothing is picked and the note line is empty", (c.picks(), c.p.note()), ((None, None, None), ""))
+    read = c.p.chrome.eval("JSON.stringify([betsAtPost(null), betsAtPost({pot: 3}), "
+                           "betsAtPost({horses: {'1': {tokens: 2}, '2': {tokens: 'x'}, '3': {tokens: -1}, '4': {}}})])")
+    none, no_horses, some = json.loads(read)
+    c.check("the page's reading of closing: none, or no horses in it, is no figures (null); a horse missing, without a "
+            "count or with a junk one held 0", (none, no_horses, some),
+            (None, None, {str(n): (2 if n == 1 else 0) for n in range(1, 25)}))
+
+
+def s_marks_frozen(c: Ctx) -> None:
+    """The marks are the figures as the picker opened: a forced refresh, another device's results event and the
+    figures going on the server move neither them nor the picks; the picker opened again reads them afresh."""
+    first, second, third = HORSES["place"], EMPTY_CUP, HORSES["show"]
+    figures_at_post(c.server)
+    c.fresh(c.slow)
+    c.p.tap_horse(first)
+    c.p.tap_horse(second)                         # nobody bet 4: picked for PLACE all the same
+    c.p.settle(c.slow * 2 + 0.3)
+    c.check("a horse nobody bet can be picked: WIN 3, PLACE 4", c.picks(), (first, second, None))
+    c.check("  ... and its slot card shows the tag", c.p.warnings()["slots"], ["place"])
+    no_figures(c.server)                          # betting reopened from another device: the figures at the post go
+    c.add("the figures at the post dropped on the server", c.server.rig.model()["closing"] is None)
+    c.p.chrome.eval("pollRaceMode(); loadQuinielaField(); followServerResults(); 1")           # the page's own refreshes, now
+    c.server.main.broadcast_sse("results", {"win": 1, "place": 2, "show": 5})                  # another device sets results
+    time.sleep(0.4)
+    c.p.chrome.eval("pollRaceMode(); loadQuinielaField(); 1")
+    time.sleep(0.3)
+    c.check("  ... after a forced refresh and another device's results event: still exactly 4 and 7 tagged",
+            c.p.marked(), list(NO_BETS))
+    c.check("  ... the picks and the slot card's tag as they were", (c.picks(), c.p.warnings()["slots"]),
+            ((first, second, None), ["place"]))
+    c.p.tap_horse(third)
+    c.p.settle(c.slow * 2 + 0.3)
+    c.check("  ... the next tap fills SHOW, and the marks stay", (c.picks(), c.p.marked()), ((first, second, third), list(NO_BETS)))
+    c.check("  ... the recap names the horse nobody bet", c.p.warnings()["recap"], [warning_for(second, "CATCHING FREEDOM")])
+    c.fresh(0.0)                                  # closed (another device's reveal dismissed) and opened again
+    c.check("opened again, with no figures at the post now: no marks", c.p.marked(), [])
+    c.server.led_latency = 0.0
+
+
+def s_nobets_confirm(c: Ctx) -> None:
+    """Horses nobody bet, picked anyway (7 for WIN, 4 for PLACE): their slot cards and the recap say so,
+    CONFIRM RESULTS stays on screen and enabled, and pressing it sets the results as picked."""
+    sh = HORSES["show"]
+    figures_at_post(c.server)
+    c.fresh(0.0)
+    try:
+        for n in (NO_CUP, EMPTY_CUP, sh):
+            c.p.tap_horse(n)
+            time.sleep(0.25)
+        c.check("7 (no cup) picked for WIN, 4 (an empty cup) for PLACE, then SHOW", c.picks(), (NO_CUP, EMPTY_CUP, sh))
+        seen = c.p.warnings()
+        c.check("  ... the WIN and PLACE slot cards show the tag", seen["slots"], ["win", "place"])
+        c.check("  ... the recap over CONFIRM RESULTS names both, word for word, in slot order", seen["recap"],
+                [warning_for(NO_CUP, "HONOR MARIE"), warning_for(EMPTY_CUP, "CATCHING FREEDOM")])
+        button = c.p.chrome.eval("(() => { const b = document.getElementById('results-confirm-btn'); const r = b.getBoundingClientRect();"
+                                 " return {disabled: b.disabled, on_screen: r.height > 0 && r.top >= 0 && r.bottom <= innerHeight}; })()")
+        c.check("  ... CONFIRM RESULTS is enabled and on screen without scrolling (the recap is taller now)",
+                button, {"disabled": False, "on_screen": True})
+        c.p.chrome.tap("#results-confirm-btn")
+        c.p.chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
+        saved = (c.server.rig.client.get("/api/results").get_json() or {}).get("results") or {}
+        c.check("  ... and pressing it sets the results as picked", [saved.get(k) for k in ("win", "place", "show")],
+                [NO_CUP, EMPTY_CUP, sh])
+    finally:
+        c.server.rig.post("/api/results/clear")   # as the other scenarios expect the server: no results...
+        no_figures(c.server)                      # ...and no figures at the post
+
+
 SCENARIOS: List[Tuple[str, Callable[[Ctx], None]]] = [
     ("order", s_order), ("refresh", s_refresh), ("together", s_together), ("twice", s_twice),
     ("change", s_change), ("clear", s_clear), ("backdrop", s_backdrop),
+    ("unknown", s_unknown), ("marks", s_marks), ("frozen", s_marks_frozen), ("confirm", s_nobets_confirm),
 ]
+QUICK_TOUCH = ("order", "together", "confirm")     # what the suite's quick run does in the touch session
 
 
 def run_checks(rig: Any, js: Optional[str] = None, modes=("mouse", "touch"), quick: bool = False) -> List[Result]:
     """Every scenario in each session; (name, passed, detail) for each. A scenario that cannot even run
     (an element it needs is not there) is one failure and the rest go on. quick: the shorter run the test
     suite makes: the LED controller's slow answer 0.4 s, two gaps, and in the touch session only the
-    ordering and the touch-and-click scenarios."""
+    ordering, the touch-and-click and the NO BETS confirm scenarios (QUICK_TOUCH)."""
     results: List[Result] = []
     server = Server(rig, js)
     try:
@@ -588,7 +790,7 @@ def run_checks(rig: Any, js: Optional[str] = None, modes=("mouse", "touch"), qui
                 ctx.gaps = (0.0,)
             try:
                 for key, scenario in SCENARIOS:
-                    if quick and mode == "touch" and key not in ("order", "together"):
+                    if quick and mode == "touch" and key not in QUICK_TOUCH:
                         continue
                     try:
                         scenario(ctx)
@@ -631,6 +833,14 @@ def shots(rig: Any, directory: Path, js: Optional[str] = None) -> None:
             picker.chrome.shot(directory / "4_changing_win.png")
         except LookupError:
             pass
+        figures_at_post(server)                   # 4's cup empty, 7 with no cup: NO BETS on both
+        picker.open()
+        picker.chrome.shot(directory / "5_no_bets.png")
+        for n in (NO_CUP, HORSES["place"], HORSES["show"]):
+            picker.tap_horse(n)
+            time.sleep(0.3)
+        time.sleep(0.3)
+        picker.chrome.shot(directory / "6_no_bets_picked.png")
         print("screenshots in", directory)
     finally:
         picker.close()

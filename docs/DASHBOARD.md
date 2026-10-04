@@ -260,6 +260,15 @@ const SADDLE_CLOTHS = {
   with no replacement is not offered (its place in the grid stays empty)
 - **Post and horse:** a pick lights the LED cup of the **post** (9) and records
   the **horse** (22); the results carry horse numbers
+- **NO BETS:** a horse whose cup held no bets at the post is dimmed and tagged `NO BETS`
+  (red, top left; a slot's tag is top right). It cannot pay (an empty cup has no token to
+  draw), so the host enters the next finisher in its place. The marks come from La
+  Quiniela's figures at the post (`closing` in `GET /api/quiniela`), by **horse** number
+  (22 running for 9 is horse 22); a horse no cup claimed counts as no bets. Picking one is
+  allowed: its slot card shows the tag, and the recap over CONFIRM RESULTS says
+  `#7 SO HAPPY: nobody bet this horse, so it can't pay. Enter the next finisher instead.`
+  CONFIRM RESULTS stays enabled. With no figures at the post (the race never reached the
+  post, betting reopened, pi5 not answering) nothing is marked and nothing says so
 - **Sidebar slots:** WIN, PLACE and SHOW, each with its horse's saddle cloth number and
   name in large type (readable from arm's length on an iPad); the active slot is lit
 - **Live LED preview:** Selected cups light up immediately
@@ -281,6 +290,12 @@ const SADDLE_CLOTHS = {
 - Nothing in the background touches the picks while the modal is open: the mode poll and
   the field refresh leave them alone, and a `results` event from another device is held
   (a "Results were set on another device" notice) until the modal is closed
+- The figures at the post are read once, with the field, as the modal opens, and the NO
+  BETS marks stay as they were while it is open (they are frozen figures; nothing in the
+  background re-reads them); opening the modal again reads them again
+- A modal taller than the screen (NO BETS warnings on a short screen, Safari's bars)
+  scrolls instead of running off the top and bottom, and when the recap appears CONFIRM
+  RESULTS is scrolled into view
 - Header changes color by the active slot (Gold/Silver/Bronze): CHOOSE WINNER / PLACE /
   SHOW, CHANGE ... when replacing one, CHECK THE RESULTS when all three are set
 - The confirm section (recap and CONFIRM RESULTS) appears when all 3 are set and no slot is
@@ -291,7 +306,9 @@ const SADDLE_CLOTHS = {
   saved and sent exactly as before
 - Tests: `la_quiniela/test_dashboard.py`, which drives the real picker in headless Chrome
   through `pi5/tools/picker_check.py` (mouse and touch, a slow LED controller, a forced
-  refresh). `python tools/picker_check.py --reproduce` from `pi5/` prints the timing table
+  refresh, NO BETS marks from figures at the post set up on the server). `python
+  tools/picker_check.py --reproduce` from `pi5/` prints the timing table, `--shots DIR`
+  takes screenshots (the NO BETS marks among them)
 
 ---
 
