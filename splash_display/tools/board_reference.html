@@ -106,7 +106,7 @@ document.querySelectorAll('.name').forEach(el=>{
 });
 
 // crawl content: fine-print lines + scratched horses, duplicated once so the loop is seamless
-const LINES=['TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED','NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS'];
+const LINES=['TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED','NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS'];
 const SCRATCHES=[{horse:9,was:'ENCINO',now:'EPIC RIDE'},{horse:14,was:'ENDLESSLY',now:'MUGATU'}];
 function crawlHtml(){ const items=[];
   items.push(`<span class="item">${LINES[0]}</span>`);

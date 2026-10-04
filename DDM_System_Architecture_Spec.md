@@ -336,7 +336,7 @@ There is no roster line. A v1 `roster` line is ignored.
   shows at the top right. [BUILT]
 - **The crawl** carries the disclaimer lines from `LQ_CHYRON_LINES`, the time, time to post
   and the weather. [BUILT; the disclaimer is DECIDED]
-  - `TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED`
+  - `TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED`
   - `NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS`
 - **Any screen can show the board** at `joeydevpi.local:5001/`: a phone, a laptop, a second
   TV.

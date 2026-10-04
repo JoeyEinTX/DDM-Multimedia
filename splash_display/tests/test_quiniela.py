@@ -2431,6 +2431,28 @@ class ToteFontTests(unittest.TestCase):
             for ch in line:
                 self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
 
+    @unittest.skipUnless((HERE.parent / "pi5" / "config.py").exists(), "pi5/ is not in this checkout")
+    def test_the_crawls_lines_are_pi5s(self) -> None:
+        """The disclaimer lines the crawl carries are pi5's LQ_CHYRON_LINES: pi5/config.py's, which are in
+        force, and la_quiniela/betting.py's default, the same. The fake serves those very lines, so the check
+        above covers what the TV prints. The first line's separator is a hyphen with a space each side (Joey,
+        2026-10-03: a dash, not a dot; the face draws every dash as this one glyph)."""
+        def value_of(path: Path, name: str) -> Any:
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                    return ast.literal_eval(node.value)
+                if isinstance(node, ast.Dict):
+                    for key, value in zip(node.keys, node.values):
+                        if isinstance(key, ast.Constant) and key.value == name:
+                            return ast.literal_eval(value)
+            raise AssertionError(f"no {name} in {path}")
+        pi5 = HERE.parent / "pi5"
+        in_force = value_of(pi5 / "config.py", "LQ_CHYRON_LINES")
+        self.assertEqual(value_of(pi5 / "la_quiniela" / "betting.py", "LQ_CHYRON_LINES"), in_force,
+                         "pi5/config.py and betting.py's default say the same")
+        self.assertEqual(fake_pi5.CHYRON_LINES, in_force, "the fake serves pi5's lines")
+        self.assertEqual(in_force[0], "TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED")
+
     def test_the_crawls_character_list_is_the_faces(self) -> None:
         """quiniela_board.js keeps its own list of what the face draws (the
         crawl's tiles take only those characters): the face's character map,

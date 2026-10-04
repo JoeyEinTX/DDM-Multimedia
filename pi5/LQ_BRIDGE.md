@@ -882,7 +882,7 @@ rewrites `Cache-Control`.
  "closes_at": 1777664400.0,
  "prizes": {"win": 20, "place": 8, "show": 5},
  "split": {"win": 0.6, "place": 0.25, "show": 0.15},
- "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
+ "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED",
             "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
  "names_rev": 4,
  "scratches": [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}},

@@ -160,7 +160,7 @@ DEFAULTS: Dict[str, Any] = {
     "LQ_SPLIT_PLACE": 0.25,                   # the PLACE prize's share, rounded half up to whole dollars
     "LQ_SPLIT_SHOW": 0.15,                    # the SHOW prize's share, likewise
     "LQ_CHYRON_LINES": [                      # what crawls along the bottom of the board
-        "TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
+        "TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED",
         "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS",
     ],
     "LQ_RACE_TZ": racetime.DEFAULT_TZ,        # the race's clock: the post time is entered and shown in it

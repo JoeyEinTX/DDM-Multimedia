@@ -274,7 +274,7 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "closes_at": 1695400900.0,
   "prizes": {"win": 89, "place": 38, "show": 23},
   "split": {"win": 0.60, "place": 0.25, "show": 0.15},
-  "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS · FINAL RESULTS HAND COUNTED",
+  "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED",
              "NOT AFFILIATED WITH CHURCHILL DOWNS OR ANYONE WITH LAWYERS"],
   "names_rev": 3,
   "scratches": [ {"was": {"number": 9,  "name": "THE PUMA"},   "now": {"number": 22, "name": "OCELLI"}},
