@@ -211,8 +211,9 @@ Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to cha
 pick, tap its slot on the right first, then the new horse (its × empties it). A horse
 already in another slot is refused, never moved. A horse dimmed and tagged red `NO BETS`
 had nothing in its cup at the post and can't pay: skip it and tap the next finisher in
-its place (nobody bet the show horse: 4th place is SHOW). Read the three listed over
-**CONFIRM RESULTS** before you press it.
+its place (nobody bet the show horse: 4th place is SHOW). The three slot cards on the
+right are the check: read them before you press **CONFIRM RESULTS**. If a horse you picked
+had no bets, a red warning above the button says so.
 The results are saved whether or not the LED controller answers: a red `Results set: …
 · LEDs unreachable` means the TV and the cups have them and only the LEDs missed them.
 

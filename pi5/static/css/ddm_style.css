@@ -2935,7 +2935,7 @@ a.drawer-link {
     color: #dddddd;
     text-align: center;
     text-transform: uppercase;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;      /* only between words; a word too wide shrinks (fitSlotName) */
 }
 
 /* SET WINNERS: the slots are cards you can tap. The one the next horse tap
@@ -3067,7 +3067,7 @@ a.drawer-link {
    picker is dimmed and carries a red tag at the top left (a slot's tag sits at
    the top right), big enough to read at arm's length on an iPad; the tag
    itself is not dimmed. A pick of it is allowed: its slot card shows the tag
-   too and the recap over CONFIRM RESULTS says what it means. */
+   too and a warning over CONFIRM RESULTS says what it means. */
 .winner-pick-nobets {
     display: none;
     position: absolute;
@@ -3116,6 +3116,7 @@ a.drawer-link {
     font-weight: 700;
     line-height: 1.25;
     text-align: left;
+    overflow-wrap: normal;      /* wrapped only between words */
 }
 
 /* SET WINNERS taller than the screen (NO BETS warnings over CONFIRM RESULTS,
@@ -3147,49 +3148,25 @@ a.drawer-link {
     color: #ffb74d;
 }
 
-/* The confirm step: the three by slot, as they will be set, over the button */
-.confirm-summary {
+/* The confirm step: the slot cards above are the check (the picks are not
+   listed again), so CONFIRM RESULTS sits one card gap under SHOW, with no
+   divider, and a warning for a pick nobody bet goes between them; with no
+   warning the box takes no room. */
+.results-modal-named .confirm-section-sidebar {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.confirm-warnings {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
 
-.confirm-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 1.05em;
-    font-weight: 800;
-    line-height: 1.15;
-}
-
-.confirm-row-slot {
-    flex: 0 0 56px;
-    font-size: 0.78em;
-    letter-spacing: 1px;
-    text-align: left;
-}
-
-.confirm-row-slot.win   { color: #FFD700; }
-.confirm-row-slot.place { color: #C0C0C0; }
-.confirm-row-slot.show  { color: #CD7F32; }
-
-.confirm-row-num {
-    flex: 0 0 auto;
-    min-width: 38px;
-    padding: 2px 4px;
-    border-radius: 4px;
-    text-align: center;
-    font-weight: 900;
-}
-
-.confirm-row-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    color: #ffffff;
-    text-transform: uppercase;
-    overflow-wrap: anywhere;
+.confirm-warnings:empty {
+    display: none;
 }
 
 .results-modal-named .btn-confirm-sidebar {

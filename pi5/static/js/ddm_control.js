@@ -1565,6 +1565,21 @@ function generateSaddleClothGrid() {
     }
 }
 
+// A slot card's name wraps only between words. A word wider than the card
+// (none in a real field at the card's size, but a name is free text) takes a
+// smaller size, a pixel at a time, until it fits: a name is never broken
+// inside a word.
+const SLOT_NAME_MIN_PX = 12;
+function fitSlotName(el) {
+    el.style.fontSize = '';
+    const room = el.parentElement.clientWidth;      // the card's width for it: a long word can make the name wider
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    while (el.scrollWidth > room + 0.5 && size > SLOT_NAME_MIN_PX) {
+        size -= 1;
+        el.style.fontSize = size + 'px';
+    }
+}
+
 // Update slot with saddle cloth and name (animated)
 function updateSlot(slot, horseNum) {
     const slotEl = document.getElementById(`slot-${slot}`);
@@ -1582,6 +1597,7 @@ function updateSlot(slot, horseNum) {
             slotEl.appendChild(none);
         }
         slotEl.classList.add('filled', 'slot-named');
+        fitSlotName(name);
     } else {
         slotEl.innerHTML = '';
         slotEl.classList.remove('filled', 'slot-named');
@@ -1726,36 +1742,15 @@ function updateResultsModalUI() {
         if (none) none.textContent = noBets ? 'NO BETS' : '';
     });
 
-    // The confirm step: all three set (and none being changed), listed by slot with the number and the name
+    // The confirm step: all three set (and none being changed). The three slot cards are the check (the
+    // picks are not listed a second time); over CONFIRM RESULTS only a warning for a pick nobody bet.
     if (confirmSection) {
         const wasShown = confirmSection.style.display === 'block';
         confirmSection.style.display = complete ? 'block' : 'none';
-        const summary = document.getElementById('results-confirm-summary');
-        if (summary) {
-            summary.textContent = '';
+        const warnings = document.getElementById('results-confirm-warnings');
+        if (warnings) {
+            warnings.textContent = '';
             if (complete) {
-                RESULT_SLOTS.forEach((s) => {
-                    const horse = resultsState[s];
-                    const colors = SADDLE_CLOTHS[horse] || { bg: '#808080', text: '#FFFFFF' };
-                    const row = document.createElement('div');
-                    row.className = 'confirm-row';
-                    row.dataset.slot = s;
-                    const label = document.createElement('span');
-                    label.className = `confirm-row-slot ${s}`;
-                    label.textContent = RESULT_SLOT_NAMES[s];
-                    const num = document.createElement('span');
-                    num.className = 'confirm-row-num';
-                    num.style.background = colors.bg;
-                    num.style.color = colors.text;
-                    num.textContent = String(horse);
-                    const name = document.createElement('span');
-                    name.className = 'confirm-row-name';
-                    name.textContent = horseDisplayName(horse);
-                    row.appendChild(label);
-                    row.appendChild(num);
-                    row.appendChild(name);
-                    summary.appendChild(row);
-                });
                 // A pick whose cup held no bets at the post cannot pay: said here, the last look before
                 // CONFIRM RESULTS, which stays enabled (the host may really mean it)
                 RESULT_SLOTS.forEach((s) => {
@@ -1766,12 +1761,12 @@ function updateResultsModalUI() {
                     warning.dataset.slot = s;
                     warning.textContent = `#${horse} ${horseDisplayName(horse)}: nobody bet this horse, so it can't pay. `
                         + 'Enter the next finisher instead.';
-                    summary.appendChild(warning);
+                    warnings.appendChild(warning);
                 });
             }
         }
-        // The recap has just appeared: on a short screen it and CONFIRM RESULTS can be below the fold
-        // (the modal scrolls), so bring them into view
+        // The confirm step has just appeared: on a short screen it can be below the fold (the modal
+        // scrolls), so bring CONFIRM RESULTS and any warning over it into view
         const confirmBtn = document.getElementById('results-confirm-btn');
         if (complete && !wasShown && confirmBtn && confirmBtn.scrollIntoView) {
             confirmBtn.scrollIntoView({ block: 'nearest' });

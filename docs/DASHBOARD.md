@@ -265,12 +265,14 @@ const SADDLE_CLOTHS = {
   draw), so the host enters the next finisher in its place. The marks come from La
   Quiniela's figures at the post (`closing` in `GET /api/quiniela`), by **horse** number
   (22 running for 9 is horse 22); a horse no cup claimed counts as no bets. Picking one is
-  allowed: its slot card shows the tag, and the recap over CONFIRM RESULTS says
+  allowed: its slot card shows the tag, and a warning above CONFIRM RESULTS says
   `#7 SO HAPPY: nobody bet this horse, so it can't pay. Enter the next finisher instead.`
   CONFIRM RESULTS stays enabled. With no figures at the post (the race never reached the
   post, betting reopened, pi5 not answering) nothing is marked and nothing says so
 - **Sidebar slots:** WIN, PLACE and SHOW, each with its horse's saddle cloth number and
-  name in large type (readable from arm's length on an iPad); the active slot is lit
+  name in large type (readable from arm's length on an iPad); the active slot is lit. They
+  are the check before CONFIRM RESULTS: the picks are not listed a second time. A name
+  wraps only between words; a word too wide for the card takes a smaller size until it fits
 - **Live LED preview:** Selected cups light up immediately
   - Win: Gold (#FFD700)
   - Place: Silver (#C0C0C0)
@@ -279,8 +281,8 @@ const SADDLE_CLOTHS = {
 - **Navigation:**
   - RESET - Clear all and start over
   - CANCEL - Close without setting anything
-  - CONFIRM - Apply results and close modal; a recap above it lists the three horses by
-    slot, number and name, the last look before the results are set
+  - CONFIRM - Apply results and close modal; it sits one card gap under the SHOW card, with
+    a warning above it for any pick nobody bet (the slot cards are the last look)
 
 **Behavior:**
 - Which slot a tap fills is decided from the picker's own state, in the moment of the tap;
@@ -294,19 +296,20 @@ const SADDLE_CLOTHS = {
   BETS marks stay as they were while it is open (they are frozen figures; nothing in the
   background re-reads them); opening the modal again reads them again
 - A modal taller than the screen (NO BETS warnings on a short screen, Safari's bars)
-  scrolls instead of running off the top and bottom, and when the recap appears CONFIRM
-  RESULTS is scrolled into view
+  scrolls instead of running off the top and bottom, and when the confirm section appears
+  CONFIRM RESULTS is scrolled into view
 - Header changes color by the active slot (Gold/Silver/Bronze): CHOOSE WINNER / PLACE /
   SHOW, CHANGE ... when replacing one, CHECK THE RESULTS when all three are set
-- The confirm section (recap and CONFIRM RESULTS) appears when all 3 are set and no slot is
-  being changed
+- The confirm section (any NO BETS warnings and CONFIRM RESULTS) appears when all 3 are set
+  and no slot is being changed
 - Closing without confirming unlocks cups and turns off LEDs; a tap on the dark backdrop
   does not close the modal once a pick is made (CANCEL does)
 - Confirming waits at most 3 s for LED commands still in flight, then sets the results,
   saved and sent exactly as before
 - Tests: `la_quiniela/test_dashboard.py`, which drives the real picker in headless Chrome
   through `pi5/tools/picker_check.py` (mouse and touch, a slow LED controller, a forced
-  refresh, NO BETS marks from figures at the post set up on the server). `python
+  refresh, NO BETS marks from figures at the post set up on the server, the right column
+  at 1554 x 1116, 1180 x 820, 820 x 1180 and a 740 px tall view, in a wide font too). `python
   tools/picker_check.py --reproduce` from `pi5/` prints the timing table, `--shots DIR`
   takes screenshots (the NO BETS marks among them)
 

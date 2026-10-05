@@ -583,12 +583,12 @@ def test_picker_is_a_state_machine_only_taps_move():
            and "if (resultsModalOpen()) {" in _js_function(js, "function connectResultsStream()"))
     _check("the confirm waits briefly for the LED calls in flight, then sets the results whatever they did",
            "await ledDrain(3000);" in js and "win: winHorse" in js and "cup: post" in js)
-    # the page: three tappable slots, each with its x, the note line, the recap over the confirm button
-    _check("three slots you can tap, each with an x, and the note and recap elements",
+    # the page: three tappable slots, each with its x, the note line, the warnings box over the confirm button
+    _check("three slots you can tap, each with an x, and the note and warning elements",
            all(f'data-slot="{s}"' in html and f"chooseSlot('{s}')" in html and f"clearSlot('{s}')" in html for s in ("win", "place", "show"))
-           and 'id="results-pick-note"' in html and 'id="results-confirm-summary"' in html)
+           and 'id="results-pick-note"' in html and 'id="results-confirm-warnings"' in html)
     _check("the active slot is lit, the slots' type is big, and taps are plain (touch-action: manipulation)",
-           ".result-slot.is-active" in css and ".slot-clear" in css and ".confirm-row" in css and ".winner-pick-tag" in css
+           ".result-slot.is-active" in css and ".slot-clear" in css and ".winner-pick-tag" in css
            and css.count("touch-action: manipulation") >= 4)
 
 
@@ -667,15 +667,16 @@ def test_picker_marks_horses_nobody_bet():
     _check("every picker is marked from them by its horse: dimmed (no-bets) and tagged NO BETS",
            "const noBets = hadNoBets(horse);" in ui and "btn.classList.toggle('no-bets', noBets);" in ui
            and "noBets ? 'NO BETS' : ''" in ui and "none.className = 'winner-pick-nobets';" in js)
-    _check("a pick nobody bet is warned about in the recap over CONFIRM RESULTS, word for word",
+    _check("a pick nobody bet is warned about over CONFIRM RESULTS, word for word",
            "`#${horse} ${horseDisplayName(horse)}: nobody bet this horse, so it can't pay. `" in ui
-           and "'Enter the next finisher instead.'" in ui and "warning.className = 'confirm-warning';" in ui)
+           and "'Enter the next finisher instead.'" in ui and "warning.className = 'confirm-warning';" in ui
+           and "warnings.appendChild(warning);" in ui)
     _check("...and its slot card shows the tag", "if (hadNoBets(horseNum))" in _js_function(js, "function updateSlot(slot, horseNum)")
            and "none.className = 'slot-nobets';" in js)
     _check("picking it is allowed and CONFIRM RESULTS stays enabled: nothing refuses or disables on NO BETS",
            "hadNoBets" not in _js_function(js, "function selectCup(post, horse)") and "hadNoBets" not in _js_function(js, "async function resultsConfirm()")
            and ".disabled" not in ui and "results-confirm-btn').disabled" not in js)
-    _check("the recap appearing brings CONFIRM RESULTS into view (a short screen scrolls the modal)",
+    _check("the confirm step appearing brings CONFIRM RESULTS into view (a short screen scrolls the modal)",
            "complete && !wasShown" in ui and "confirmBtn.scrollIntoView({ block: 'nearest' });" in ui)
     tag = re.search(r"\n\.winner-pick-nobets \{(.*?)\}", css, re.S)
     _check("the tag: red, 14 px, its own corner (top left; a slot's tag is top right)",
@@ -685,6 +686,41 @@ def test_picker_marks_horses_nobody_bet():
            and ".slot-nobets {" in css and ".confirm-warning {" in css
            and re.search(r"#results-modal\.active \{[^}]*overflow-y: auto;", css) is not None
            and "#results-modal.active .results-modal-content {\n    margin: auto;" in css.replace("\r\n", "\n"))
+
+
+# Joey, 2026-10-05 (DevPi): with all three slots filled the modal showed the picks three times (the grid, the slot
+# cards, and a small list over CONFIRM RESULTS whose names broke mid-word, COMMANDMEN / T), and the right column was
+# crowded. The slot cards are the check; the list is gone, the NO BETS warnings and CONFIRM RESULTS stay.
+
+def test_confirm_step_lists_no_picks():
+    rig = Rig()
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True).replace("\r\n", "\n")
+    html = rig.client.get("/").get_data(as_text=True)
+    _check("nothing builds a list of the picks over CONFIRM RESULTS any more (script, page, stylesheet)",
+           not any(s in text for s in ("confirm-row", "confirm-summary") for text in (js, css, html)))
+    section = html[html.index('id="results-confirm-section"'):]
+    section = section[:section.index("</button>")]
+    _check("the confirm step holds the warnings box and CONFIRM RESULTS, nothing else",
+           re.findall(r'id="([^"]+)"', section) == ["results-confirm-section", "results-confirm-warnings", "results-confirm-btn"],
+           str(re.findall(r'id="([^"]+)"', section)))
+    ui = _js_function(js, "function updateResultsModalUI()")
+    _check("...which is filled with the warnings only", "getElementById('results-confirm-warnings')" in ui
+           and ui.count("appendChild(") == 1 and "warnings.appendChild(warning);" in ui)
+    _check("an empty warnings box takes no room; CONFIRM RESULTS sits one card gap under SHOW, no divider",
+           ".confirm-warnings:empty {\n    display: none;\n}" in css
+           and ".results-modal-named .confirm-section-sidebar {\n    margin-top: 0;\n    padding-top: 0;\n    border-top: 0;\n}" in css
+           and "margin-bottom: 14px;" in css[css.index(".confirm-warnings {"):][:200])
+    name_rule = re.search(r"\n\.slot-horse-name \{(.*?)\}", css, re.S).group(1)
+    warning_rule = re.search(r"\n\.confirm-warning \{(.*?)\}", css, re.S).group(1)
+    _check("a slot card's name and a warning line wrap only between words",
+           "overflow-wrap: normal;" in name_rule and "anywhere" not in name_rule and "overflow-wrap: normal;" in warning_rule
+           and "word-break" not in name_rule + warning_rule)
+    fit = _js_function(js, "function fitSlotName(el)")
+    _check("...and a word too wide for the card shrinks, a pixel at a time, never below 12 px",
+           "fitSlotName(name);" in _js_function(js, "function updateSlot(slot, horseNum)")
+           and "el.scrollWidth > room + 0.5" in fit and "el.parentElement.clientWidth" in fit and "size -= 1;" in fit
+           and "const SLOT_NAME_MIN_PX = 12;" in js)
 
 
 def test_picker_in_a_browser():
@@ -722,6 +758,7 @@ def main_():
     _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)
     _run("SET WINNERS — the figures at the post the picker reads, by horse number", test_bets_at_the_post_for_the_picker)
     _run("SET WINNERS — NO BETS marks from the frozen figures, a warning, CONFIRM still works", test_picker_marks_horses_nobody_bet)
+    _run("SET WINNERS — the slot cards are the check: no list of the picks over CONFIRM", test_confirm_step_lists_no_picks)
     _run("SET WINNERS — a tap lands in the slot meant, in a browser, mouse and touch", test_picker_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
