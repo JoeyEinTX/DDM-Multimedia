@@ -2813,11 +2813,19 @@ def test_admin_page():
     _check("viewport meta for phones", 'name="viewport"' in html)
     _check("talks to the routes", all(path in html for path in ("/api/quiniela/horses", "/api/quiniela/scratch",
                                                                 "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela",
-                                                                "/api/quiniela/cmd", "/api/quiniela/reset")))
+                                                                "/api/quiniela/reset")))
     _check("no CDN, no external script", "<script src=" not in html and "https://" not in html and "http://" not in html)
-    _check("the seven state buttons, sending the state command",
-           all(s in html for s in ("PRE-RACE", "BETTING OPEN", "FINAL CALL", "AT THE POST", "RUNNING", "WINNER", "AFTER PARTY"))
-           and 'cmd: "state " + n' in html and "data-state" in html)
+    # Build-order item 5: the race state changes on the Control Center only (its buttons run the LEDs with it).
+    _check("no state buttons and nothing that sets a state: no data-state, no state command, no cmd route",
+           not any(s in html for s in ("data-state", 'cmd: "state', "/api/quiniela/cmd", 'id="states"', "state-status")))
+    _check("the race state, read-only, from the model's race_state: number and name, all seven names",
+           'id="state-now"' in html and "stateLine(model.race_state)" in html and 'n + " · " + STATES[n]' in html
+           and all(s in html for s in ('"PRE-RACE"', '"BETTING OPEN"', '"FINAL CALL"', '"AT THE POST"', '"RUNNING"', '"WINNER"',
+                                       '"AFTER PARTY"')))
+    _check("...and a model that cannot be read says so on that line, never an old state as the live one",
+           'renderState("cannot reach pi5", false)' in html and "renderState(why, false)" in html)
+    _check("a plain link to the Control Center", '<a id="state-link" class="state-link" href="/"' in html
+           and ">Change the race state on the Control Center</a>" in html)
     _check("the figures and Reset betting behind a confirm()",
            all(s in html for s in ("fig-pot", "fig-win", "fig-place", "fig-show", "fig-bets", "reset-betting"))
            and 'confirm("Reset betting?' in html and "horses_with_tokens" in html)
@@ -3071,15 +3079,15 @@ def test_modes_set_the_race_state():
     _check("a second mode of the same state sends nothing and keeps the rev; the mode is the newer one (case forgiven)",
            r.status_code == 200 and r.get_json()["rev"] == rev and r.get_json()["mode"] == "BETTING_30"
            and port.written == [] and client.get("/api/quiniela/mode").get_json()["mode"] == "BETTING_30")
-    # The cmd route and the admin page's buttons are the same path and the same value.
+    # The state-only route (tests, the simulator, a curl) is the same path and the same value as a mode.
     port.written.clear()
     r = client.post("/api/quiniela/cmd", json={"cmd": "state 3"})
     info = client.get("/api/quiniela/mode").get_json()
-    _check("cmd state 3 (what the admin page's AT THE POST button sends): the same state, set directly",
+    _check("cmd state 3 (the state-only route): the same state, set directly",
            r.status_code == 200 and r.get_json() == {"ok": True, "rev": rev + 1, "phase": 3, "gateway_online": False}
            and (info["state"], info["state_name"], info["mode"], info["label"], info["source"])
            == (3, "AT_THE_POST", None, None, "cmd") and port.lines() == [state_line(rev + 1, 3)], str(info))
-    _check("...and the model the admin page lights its button from follows", client.get("/api/quiniela").get_json()["race_state"] == 3)
+    _check("...and the model the admin page reads its state line from follows", client.get("/api/quiniela").get_json()["race_state"] == 3)
     r = client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
     info = client.get("/api/quiniela/mode").get_json()
     _check("the dashboard's AT THE GATE on top of it: the same state, no line, the mode named",
@@ -3088,8 +3096,8 @@ def test_modes_set_the_race_state():
     info = client.get("/api/quiniela/mode").get_json()
     _check("a mode is only named while it explains the state", (info["state"], info["mode"]) == (1, None))
     html = client.get("/quiniela/admin").get_data(as_text=True)
-    _check("the admin page's seven buttons send state N to the cmd route and light from the model's race_state",
-           'cmd: "state " + n' in html and "/api/quiniela/cmd" in html and "=== model.race_state" in html)
+    _check("the admin page sets no state: it shows the model's race_state, read-only",
+           "/api/quiniela/cmd" not in html and 'cmd: "state' not in html and "stateLine(model.race_state)" in html)
     # Something the bridge was told behind the board's back: the mode no longer explains the state.
     client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL"})
     b.set_state(phase=4)

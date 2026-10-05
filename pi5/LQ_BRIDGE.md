@@ -368,8 +368,9 @@ protocol version to the header's `DDM_MAX_HORSE`, `DDM_RENUM_SLOTS`,
 
 None of them needs a flag. The v1 dev routes (`/api/lq/dev/state`,
 `/dev/roster`, `/dev/roster/adopt`, `/dev/roster/clear`, `/dev/reset`,
-`/dev/debug`) are gone and answer 404; the race state is set through the
-betting board's `POST /api/quiniela/cmd`, scratches through
+`/dev/debug`) are gone and answer 404; the race state is set by the
+dashboard's modes (`POST /api/quiniela/mode`), or by `state N` on the betting
+board's `POST /api/quiniela/cmd` (tests, the simulator, a curl), scratches through
 `POST /api/quiniela/scratch`, and there is nothing to adopt or clear.
 
 ## Tests
@@ -542,7 +543,7 @@ through WINNER, the moment the prizes are needed, and hands it back to the
 slideshow in 0 (PRE_RACE) and 6 (AFTER_PARTY). What it shows in WINNER
 depends on `results` alone:
 
-- `null` (HEARTBEAT, or the admin page's WINNER button, before SET WINNERS):
+- `null` (HEARTBEAT, or a `state 5` curl, before SET WINNERS):
   the betting board with the figures at the post (below), under the banner
   `OFFICIAL RESULTS COMING`.
 - all three named: the results screen, `OFFICIAL RESULTS`. Three rows, WIN /
@@ -573,9 +574,9 @@ betting closed, and **pi5 holds them**, not the page: the model's `closing`.
   restart of pi5 (the store loads them).
 - **Dropped** by Reset betting and by a state that reopens betting: 0
   PRE_RACE or 1 BETTING_OPEN (the dashboard's WELCOME, TEST, STANDBY, 60 MIN,
-  30 MIN; the admin page's PRE-RACE and BETTING OPEN). Logged as
+  30 MIN). Logged as
   `{"closing": null}`. To take them again after a mistaken close, reopen
-  with 60 MIN (or BETTING OPEN) and close again.
+  with 60 MIN and close again.
 
 The live fields keep following the cups underneath (that is the truth about
 the cups, and what the admin page shows: the tokens always, the pot and the
@@ -635,16 +636,19 @@ It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
 ### Admin page
 
 `GET /quiniela/admin` (on pi5, port 5000, so `http://joeydevpi.local:5000/quiniela/admin`)
-is one plain page for a phone and the race-night control surface:
-`RACE_NIGHT.md` runs the night from it and keeps the curls for its appendix.
-Top to bottom:
+is one plain page for a phone or the iPad, the race-night surface for
+everything but the race state, which changes on the dashboard (the Control
+Center): `RACE_NIGHT.md` runs the night from both and keeps the curls for
+its appendix. Top to bottom:
 
-- **Race**: `LINK OK` / `NO LINK` and the cups online; the seven state
-  buttons (PRE-RACE · BETTING OPEN · FINAL CALL · AT THE POST · RUNNING ·
-  WINNER · AFTER PARTY), the current one lit, each sending the same `state N`
-  to `POST /api/quiniela/cmd` and reporting the reply on the line under the
-  buttons (the state name in green, `(gateway offline ...)` appended when pi5
-  kept it for later, the server's error verbatim in red); the figures, Pot /
+- **Race**: `LINK OK` / `NO LINK` and the cups online; the race state,
+  read-only, as `3 · AT THE POST` (PRE-RACE · BETTING OPEN · FINAL CALL · AT
+  THE POST · RUNNING · WINNER · AFTER PARTY) from the model's `race_state` on
+  the page's 5 s refresh, and `cannot reach pi5` (or pi5's error) instead
+  when the model cannot be read, never the last state; under it a link to
+  the Control Center (`/`), where the state is changed, its mode buttons
+  running the LEDs with it (build-order item 5 took off the page's seven
+  state buttons, which set the state alone); the figures, Pot /
   WIN / PLACE / SHOW / Bets, big enough to read at arm's length (Bets is the
   tokens in the pot; tokens in scratched cups are counted beside the label);
   **Reset betting** behind a `confirm()`, calling `POST /api/quiniela/reset`
@@ -1049,8 +1053,8 @@ has no after-party mode, so RESET, which ends the race and clears the
 results, is AFTER_PARTY.
 
 **One path.** Every change goes through `BettingBoard.set_race_state()`: a
-mode (`set_mode()`), the admin page's seven buttons and `state N` on `POST
-/api/quiniela/cmd`. The shared value is the bridge's phase, the one that is
+mode (`set_mode()`) and `state N` on `POST /api/quiniela/cmd` (tests, the
+simulator, a curl). The shared value is the bridge's phase, the one that is
 persisted and whose rev the gateway acknowledges; the mode that set it is
 kept beside it (in memory) and named only while it still explains the state.
 One state line goes down per change, carrying the state together with
@@ -1071,11 +1075,12 @@ Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
   (`Error: ERROR:TIMEOUT · FINAL CALL`). Nor do the results: SET WINNERS
   saves them and sets WINNER first, and says `· LEDs unreachable` after
   (the LED rule, under Results).
-- The admin page's seven buttons set the same value directly (they start no
-  LED animation) and light the current one from the model's `race_state`
-  within its 5 s refresh; the dashboard reads the state back every 5 s and
-  shows it on its ticker, so a state set on the phone shows on the
-  touchscreen and the other way round.
+- The admin page shows the state read-only, from the model's `race_state`
+  within its 5 s refresh, with a link to the dashboard to change it. `state
+  N` on the cmd route sets the same value directly and starts no LED
+  animation: the simulator, the tests and a last-resort curl use it. The
+  dashboard reads the state back every 5 s and shows it on its ticker, so a
+  state set by a curl shows there too.
 - `closes_at` is untouched by all of it: the countdown is still manual.
 - Not part of it: the mock racing service (`/api/racing/*`, the dashboard's
   AUTO / MANUAL switch, states DORMANT .. OFFICIAL). In AUTO it drives the
@@ -1205,7 +1210,7 @@ says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
 the names text parser for 24 lines, the closing time, the between-races
 one race state (each of the dashboard's thirteen modes against the table,
-byte-exact lines, the cmd route and the admin page's buttons setting the
+byte-exact lines, the cmd route setting the
 same value, WINNER and the results in one line), the between-races
 reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
 results cleared, the ticker and `closes_at` zeroed, the tokens still in the
@@ -1227,8 +1232,9 @@ WINNER after the cups were emptied (a new bridge and board over the same
 database and results file: WINNER, the results and the closing figures as
 they were, the hello answered with them), the `now` stamp, the three tables
 with the `lq_horses` and `lq_scratches` migrations and every route on a
-Flask test app, the admin page's Race section included (the seven state
-buttons, the figures, Reset betting behind a confirm, the Horses list with
+Flask test app, the admin page's Race section included (the race state
+read-only and no state buttons, the link to the Control Center, the figures,
+Reset betting behind a confirm, the Horses list with
 its four statuses and no cup controls, and the Race info section), that the
 v1 dev routes are gone, and the race and the odds: the race info through
 its routes, the model and the database (5:57 PM CDT in May and CST in

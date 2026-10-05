@@ -723,15 +723,83 @@ def test_confirm_step_lists_no_picks():
            and "const SLOT_NAME_MIN_PX = 12;" in js)
 
 
+def _picker_check():
+    """pi5/tools/picker_check.py, the headless Chrome harness (its Server and Chrome serve any page of the app)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("picker_check", os.path.join(_PI5_DIR, "tools", "picker_check.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# -----------------------------------------------------------------------------
+# The LQ admin page shows the race state, read-only (build-order item 5)
+# -----------------------------------------------------------------------------
+# The race state changes in one place, the Control Center, whose mode buttons run the LEDs with it; the
+# admin page's seven state buttons set the state alone, so the TV and the cups could disagree with the
+# mantle. They are gone; the page shows the state from the model it polls, with a link to the Control
+# Center. The state-only route stays (tests, the simulator, a curl).
+
+ADMIN_STATE_NAMES = ["PRE-RACE", "BETTING OPEN", "FINAL CALL", "AT THE POST", "RUNNING", "WINNER", "AFTER PARTY"]
+
+
+def test_admin_state_line_in_a_browser():
+    """The admin page in headless Chrome at an iPad's size: the state line follows the model for every state
+    0-6 (set through the state-only route, which still works), the link goes to the Control Center, there are
+    no state buttons, and a model that cannot be read is said, never shown as the last state. Skipped where
+    there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("admin page browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    rig = Rig()
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True)
+    live = ("(() => { const e = document.getElementById('state-now');"
+            " return e && !e.classList.contains('unknown') ? e.textContent : ''; })()")
+    try:
+        seen, answers = [], []
+        for n in range(7):
+            r = rig.post("/api/quiniela/cmd", {"cmd": f"state {n}"})
+            answers.append(r.status_code == 200 and r.get_json()["phase"] == n)
+            chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            seen.append(chrome.wait_for(live, timeout=15))
+        _check("the state-only route still sets each state 0-6", all(answers), str(answers))
+        _check("the state line shows the model's state, its number and name, for each of 0-6",
+               seen == [f"{n} · {name}" for n, name in enumerate(ADMIN_STATE_NAMES)], str(seen))
+        page = chrome.eval("({buttons: document.querySelectorAll('[data-state], #states').length,"
+                           " href: document.getElementById('state-link').getAttribute('href'),"
+                           " text: document.getElementById('state-link').textContent})")
+        _check("no state buttons; a link to the Control Center (/)",
+               page == {"buttons": 0, "href": "/", "text": "Change the race state on the Control Center"}, str(page))
+        rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
+        _check("a Control Center button's state reaches the line on the page's own poll",
+               chrome.wait_for(live + " === '3 · AT THE POST'", timeout=12) is True)
+        stale = ("(() => { const e = document.getElementById('state-now');"
+                 " return e.classList.contains('unknown') ? e.textContent : ''; })()")
+        server.fail.add("/api/quiniela")
+        why = chrome.wait_for(stale, timeout=12)
+        _check("pi5 answering an error: the line says so on the next poll, not the last state",
+               why.startswith("pi5: ") and "AT THE POST" not in why, why)
+        server.fail.discard("/api/quiniela")
+        chrome.wait_for(live, timeout=12)
+        server.close()
+        server = None
+        _check("pi5 gone: the line says it cannot reach pi5", chrome.wait_for(stale, timeout=12) == "cannot reach pi5")
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        if server is not None:
+            server.close()
+
+
 def test_picker_in_a_browser():
     """The picker in headless Chrome, over the DevTools protocol (pi5/tools/picker_check.py): the real
     dashboard over loopback, the LED controller slow on purpose, a mouse session and a touch session
     (an iPad's 1180 x 820, touch emulation), and the NO BETS marks from figures at the post set up on the
     server. Skipped where there is no Chrome."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("picker_check", os.path.join(_PI5_DIR, "tools", "picker_check.py"))
-    picker_check = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(picker_check)
+    picker_check = _picker_check()
     if not picker_check.available():
         _check("picker browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
         return
@@ -759,6 +827,7 @@ def main_():
     _run("SET WINNERS — the figures at the post the picker reads, by horse number", test_bets_at_the_post_for_the_picker)
     _run("SET WINNERS — NO BETS marks from the frozen figures, a warning, CONFIRM still works", test_picker_marks_horses_nobody_bet)
     _run("SET WINNERS — the slot cards are the check: no list of the picks over CONFIRM", test_confirm_step_lists_no_picks)
+    _run("admin page — the race state read-only, in a browser", test_admin_state_line_in_a_browser)
     _run("SET WINNERS — a tap lands in the slot meant, in a browser, mouse and touch", test_picker_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")

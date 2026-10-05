@@ -1,12 +1,13 @@
 # La Quiniela — Race Night Runbook
 
-One action per line. Do them in order. The night is run from two pages:
+One action per line. Do them in order. The night is run from two pages, open on the iPad
+as two tabs (section 2):
 
-- `DASH`, the dashboard at `http://joeydevpi.local:5000/` (the touchscreen). Its buttons
-  run the LEDs **and** the race.
-- `ADMIN`, the page at `http://joeydevpi.local:5000/quiniela/admin`, on a phone: names,
-  scratches, the closing time, **Reset betting**, the Horses list. It is also in the
-  dashboard's menu (☰ → La Quiniela Admin).
+- `DASH`, the Control Center at `http://joeydevpi.local:5000/`. Its buttons run the LEDs
+  **and** the race: it is the one place the race state changes.
+- `ADMIN`, the page at `http://joeydevpi.local:5000/quiniela/admin`: names, scratches,
+  the closing time, the counted pot, **Reset betting**, the Horses list, and the race
+  state, read-only. It is also in the dashboard's menu (☰ → La Quiniela Admin).
 
 Commands are typed on DevPi only in the appendix (if the pages are down).
 
@@ -22,10 +23,10 @@ There is **one race state**. A dashboard button sets it, the cups and the TV fol
 | SET WINNERS (once confirmed) · HEARTBEAT | 5 WINNER |
 | RESET | 6 AFTER PARTY |
 
-The seven buttons under `ADMIN` → Race set the same state, the current one lit; they are
-the same thing without the LEDs. Whichever you press, the other page shows it within five
-seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV in 1–5
-(in WINNER it is the **results board**, prizes and all) and hands it back in 0 and 6.
+`ADMIN` → Race shows the state read-only (`3 · AT THE POST`) and follows `DASH` within five
+seconds. To change it, use `DASH`: the link under the state on `ADMIN` takes you there (if
+`DASH` is down, the appendix). The board owns the TV in 1–5 (in WINNER it is the **results
+board**, prizes and all) and hands it back in 0 and 6.
 
 ---
 
@@ -40,7 +41,7 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       board on the TV uses Impact, not the fallback.
 - [ ] The board on the TV is the tote look (`dots`, the default: amber dots on black
       tiles, each row one strip with the bets at its end, a long name scrolling). Check it
-      on the TV itself: with betting open (`ADMIN` → Race → **BETTING OPEN**) and names
+      on the TV itself: with betting open (`DASH` → **60 MIN**) and names
       that scroll on the board, drop a token while you watch: the count must tick and the
       crawl and the names keep moving without a hitch (`d` on the kiosk's keyboard shows
       the FPS). `impact` (the board before the tote look) and `numbers` (the tote look's
@@ -107,6 +108,11 @@ seconds (the lit button on `ADMIN`, the ticker on `DASH`). The board owns the TV
       → `SET`. A `NO LINK` badge in a corner means that cup can't hear the gateway (not up
       yet, or too far).
 - [ ] Gateway plugged into DevPi.
+- [ ] The iPad, in Safari: open `ADMIN`, then tap **Change the race state on the Control
+      Center** under its race state: `DASH` opens in a second tab, and from then on that
+      link brings it back (to get to `ADMIN`, tap its tab).
+- [ ] Optional: on `DASH`, Share → **Add to Home Screen** for a full-screen shortcut to
+      the Control Center (it opens outside Safari: switch apps instead of tabs).
 - [ ] Once the apps are up (section 3), watch the TV's slideshow for a lap: the countdown
       slide counts down to today's post under `KENTUCKY DERBY 2027`, and the roster slide
       lists the field by number, replacements under their own numbers, with the odds (a dim
@@ -129,7 +135,7 @@ cd ~/DDM-Multimedia/splash_display && python3 server.py
 ```
 Wait for `pi5 link up`.
 
-Check: open `ADMIN` on the phone. Race says `LINK OK` and `20 cups online`.
+Check: open `ADMIN` on the iPad. Race says `LINK OK` and `20 cups online`.
 `NO LINK`, or fewer cups: stop here and fix that first (table at the end).
 
 ### 4. Clean slate
@@ -162,10 +168,7 @@ notification says `Animation: BETTING_60 · BETTING OPEN` and the board takes th
 set all the same; `race state not set (…)` means pi5's La Quiniela side refused, and says
 why.
 
-From the phone instead: `ADMIN` → Race → **BETTING OPEN**. The button lights and the line
-under the buttons says `BETTING OPEN`. Red text on that line: the reason, verbatim, from
-pi5. `(gateway offline …)` after the state: pi5 kept it and sends it when the gateway is
-back.
+`ADMIN` → Race says `1 · BETTING OPEN` within five seconds.
 
 While open:
 - Tokens go **in** by tipping them onto the sleeve. Don't fling.
@@ -194,8 +197,8 @@ are estimates, so the pot you pay from is your count of the BETS compartment.
 They're off: `DASH` → **THEY'RE OFF!** (then **CHAOS**, **FINISH** as the race runs: all
 three are RUNNING).
 
-(`ADMIN` → Race has the same states under their own names: FINAL CALL, AT THE POST,
-RUNNING.)
+(`ADMIN` → Race shows them under their own names: `2 · FINAL CALL`, `3 · AT THE POST`,
+`4 · RUNNING`.)
 
 ## 8. Results and the draw
 
@@ -205,7 +208,7 @@ RESULTS**. That is WINNER: the LEDs light the three cups, the three cups' screen
 PLACE, SHOW, and the TV flips to the **results board**, `OFFICIAL RESULTS`: three rows,
 WIN / PLACE / SHOW, each with the horse's cloth and name, the bets its cup held and its
 prize, big, at the right; the pot above. Opening the pickers changes nothing; confirming
-does. (WINNER without results, from **HEARTBEAT** or `ADMIN` → WINNER: the TV says
+does. (WINNER without results, from **HEARTBEAT**: the TV says
 `OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.)
 Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to change a
 pick, tap its slot on the right first, then the new horse (its × empties it). A horse
@@ -241,9 +244,7 @@ The results are saved whether or not the LED controller answers: a red `Results 
 
 Then, with the count entered and the prizes paid: `DASH` → **RESET** → OK (clears the
 results, LEDs off): AFTER PARTY, and the TV goes back to the slideshow. The saved
-count stays and shows read-only on `ADMIN` until **Reset betting**. Or `ADMIN` → Race →
-**AFTER PARTY**, which hands the TV back too and leaves the results and the LEDs as
-they are.
+count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 ## 9. Another race on the same night
 
@@ -280,19 +281,19 @@ they are.
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | No Counted pot box on `ADMIN`, or Save answers `The count can only be entered after betting closes …` | the box shows from AT THE POST to WINNER; before that betting is still open (nothing to count against yet), after it (AFTER PARTY) a saved count is read-only | Close betting first (section 7: `DASH` → **AT THE GATE**); the box appears within five seconds. |
 | A count typed wrong, or the cash changed after a late bet | the count is whatever was saved last | `ADMIN` → Race → Counted pot → type it again → **Save count** (it overwrites), or **Clear** to go back to the scales' figures. |
-| The count is wrong or missing and **RESET** was already pressed | AFTER PARTY makes the box read-only | `ADMIN` → Race → **WINNER**: the box is back (the results board is gone after RESET; `ADMIN`'s figures carry the prizes). Enter it and pay from those. |
+| The count is wrong or missing and **RESET** was already pressed | AFTER PARTY makes the box read-only | `DASH` → **HEARTBEAT** (WINNER again; the TV says `OFFICIAL RESULTS COMING`): the box is back on `ADMIN`, whose figures carry the prizes. Enter it, pay from those, then `DASH` → **RESET** again. |
 | The scales and the count differ by a few dollars | the scales are estimates ("totals based on cheap Chinese electronics") | Nothing: pay from the count. The difference is shown for information, nothing blocks. |
 | `Saved: … NOT stored: pi5 could not write it…` in red under Save count | pi5 holds the count but its database refused the write | Pay from it. If pi5 restarts before the draw is paid, enter the count again. |
-| Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: the lit button is the state pi5 holds (the ticker on `DASH` says the same). Press the right one, on either page, and read what it answers. |
+| Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: its state line is the state pi5 holds (the ticker on `DASH` says the same). Press the right button on `DASH` and read what it answers. |
 | TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: results not saved …` (pi5 could not write the file; the LED controller has nothing to do with it) | `DASH` → **SET WINNERS** → confirm again. Meanwhile the prizes are in the board's header (WIN / PLACE / SHOW under the pot, the figures at the post); draw and pay from those. |
 | `Results set: … · LEDs unreachable` in red on `DASH` | the results are saved, on the TV and on the cups; only the LED controller missed them | Nothing for the results. The LEDs: check the LED controller (the device icon, top left of `DASH`). |
 | pi5 restarted, or the TV reloaded, during the draw | nothing is lost: pi5 keeps the results and the figures at the post | Nothing. The TV finds pi5 again by itself and shows the results board as it was. |
-| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid (a `DASH` WELCOME / TEST / STANDBY / 60 MIN / 30 MIN, `ADMIN` PRE-RACE / BETTING OPEN, or Reset betting): pi5 dropped the figures at the post, and a later close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held and count the cash again (the hand count went with the figures). |
+| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid (a `DASH` WELCOME / TEST / STANDBY / 60 MIN / 30 MIN, or Reset betting): pi5 dropped the figures at the post, and a later close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held and count the cash again (the hand count went with the figures). |
 | `DASH` button says `Error: …` | the LED controller didn't answer | If the text goes on `· BETTING OPEN` (the state's name), the race state was set and only the LEDs are missing: check the LED controller (the device icon, top left of `DASH`). |
-| A button's line is red | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the phone's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
+| A button's line is red, or `ADMIN`'s state says `cannot reach pi5` | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the iPad's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
-| `ADMIN` doesn't load | pi5 down, or the phone isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: restart pi5 (Terminal 1). Yes: the phone. Meanwhile, the appendix. |
+| `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: restart pi5 (Terminal 1). Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
 
 ## The rules, for anyone who asks
 
@@ -309,17 +310,36 @@ they are.
 
 ## Appendix — if the page is down
 
-The same actions as curls, typed on DevPi. State numbers are the ones at the top.
+The same actions as curls, typed on DevPi.
 
-A state (0–6), what an `ADMIN` button does:
+### If `DASH` is down
+
+A `DASH` button does two things, and so do these. The race state, by the button's mode
+(`WELCOME`, `BETTING_60`, `BETTING_30`, `FINAL_CALL`, `AT_THE_GATE`, `GATES_BURST` for
+THEY'RE OFF!, `CHAOS`, `FINISH`, `HEARTBEAT_COOLDOWN`), on the route the button itself
+uses: the cups and the TV follow, `ADMIN` shows it, and it does nothing to the LEDs:
 ```bash
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
+curl -s -X POST localhost:5000/api/quiniela/mode -H 'Content-Type: application/json' -d '{"mode":"AT_THE_GATE"}'
 ```
+The LEDs, the button's other half (the same name; skip it if the LED controller is the
+trouble):
+```bash
+curl -s -X POST localhost:5000/api/animation/AT_THE_GATE
+```
+**RESET** (AFTER PARTY: clears the results, LEDs off, the TV back to the slideshow):
+```bash
+curl -s -X POST localhost:5000/api/results/clear
+```
+**SET WINNERS** is the results curl below. `{"cmd":"state 3"}` on `/api/quiniela/cmd` sets a
+state by its number alone (the simulator and the tests use it); prefer the mode.
 
-The state now, and the `DASH` button that set it (`mode` is null when `ADMIN` or a curl did):
+The state now, and the `DASH` button that set it (`mode` is null when a `state N` curl or
+**Reset betting** did):
 ```bash
 curl -s localhost:5000/api/quiniela/mode
 ```
+
+### The other actions
 
 The results, what `DASH` → SET WINNERS → CONFIRM RESULTS does (horse numbers; it sets WINNER, and the TV flips to the results board; the reply's `leds` says whether the LED controller took them, the results are saved either way):
 ```bash

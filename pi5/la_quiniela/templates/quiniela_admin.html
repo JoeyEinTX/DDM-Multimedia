@@ -44,13 +44,13 @@
   .empty { color: var(--dim); padding: 6px 0; }
   .pill { display: inline-block; padding: 0 8px; border-radius: 999px; background: #2c2c22; margin-right: 6px; }
   .pill.up { background: var(--green); } .pill.down { background: var(--rose); }
-  /* Race section: seven state buttons two abreast, the current one lit; the
-     figures big enough to read at arm's length; the cups two table rows each. */
+  /* Race section: the race state, read-only, like the figures and as easy to read at
+     arm's length (it is changed on the Control Center, whose buttons run the LEDs with
+     it), with a link there; the figures; the cups two table rows each. */
   .pills { margin-bottom: 10px; line-height: 1.8; }
-  .states { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .states button { min-height: 56px; font-size: 17px; letter-spacing: .03em; }
-  .states button.lit { background: var(--gold); border-color: var(--gold); color: #14140f; }
-  .states button:last-child { grid-column: 1 / -1; }
+  .figure.state .val { font-size: 34px; color: var(--fg); letter-spacing: .02em; }
+  .figure.state .val.unknown { font-size: 20px; line-height: 1.6; color: var(--dim); }
+  .state-link { display: inline-block; padding: 12px 0; color: var(--gold); font-weight: 600; }
   .figures { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 4px; }
   .figure { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
   .figure .lbl { color: var(--dim); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
@@ -95,8 +95,11 @@
 <section id="race">
   <h2>Race</h2>
   <div id="pills" class="pills">loading…</div>
-  <div id="states" class="states"></div>
-  <div id="state-status" class="status"></div>
+  <div class="figure state">
+    <div class="lbl">Race state</div>
+    <div class="val unknown" id="state-now" aria-live="polite">loading…</div>
+  </div>
+  <a id="state-link" class="state-link" href="/" target="ddm-control-center">Change the race state on the Control Center</a>
   <div class="figures">
     <div class="figure pot"><div class="lbl" id="fig-pot-lbl">Pot</div><div class="val" id="fig-pot">$0</div></div>
     <div class="figure"><div class="lbl">Win</div><div class="val" id="fig-win">$0</div></div>
@@ -235,25 +238,29 @@
   function storedName(n) { return (horses[n] && horses[n].name) || ""; }
   function label(n) { var s = storedName(n); return "#" + n + (s ? " " + s.toUpperCase() : ""); }
 
-  // ---- race: pills, the seven state buttons, the figures ----------------------
+  // ---- race: pills, the race state (read-only), the figures -------------------
   // Everything here reads the model the 5 s refresh (and every action's
-  // reload) already fetches; the buttons send the same "state N" command
-  // the curls in RACE_NIGHT.md's appendix send, and report the reply under
-  // the buttons: the state name in green, the server's error verbatim in red.
-  $("states").innerHTML = STATES.map(function (name, i) {
-    return '<button data-state="' + i + '">' + esc(name) + "</button>";
-  }).join("");
+  // reload) already fetches. The race state is shown, not set: it changes on
+  // the Control Center, whose mode buttons run the LEDs together with it (a
+  // state set here alone left the LEDs telling another story).
+  function renderState(text, live) {
+    var el = $("state-now");
+    el.textContent = text;
+    el.classList.toggle("unknown", !live);
+  }
+  function stateLine(n) {
+    return (typeof n === "number" && n >= 0 && n < STATES.length && n === Math.floor(n)) ? n + " · " + STATES[n] : null;
+  }
   function renderStatus() {
-    if (!model) { $("pills").textContent = "no model"; return; }
+    if (!model) { $("pills").textContent = "no model"; renderState("no model", false); return; }
     var bets = 0, n, m;
     for (n in model.horses) { m = model.horses[n]; if (!m.scratched) { bets += m.tokens || 0; } }
     $("pills").innerHTML =
       '<span class="pill ' + (model.link_ok ? "up" : "down") + '">' + (model.link_ok ? "LINK OK" : "NO LINK") + "</span>" +
       '<span class="pill">' + (model.cups_online || 0) + " cups online</span>" +
       (model.closes_at != null ? '<span class="pill">closes set</span>' : "");
-    Array.prototype.forEach.call($("states").querySelectorAll("button"), function (b) {
-      b.classList.toggle("lit", Number(b.getAttribute("data-state")) === model.race_state);
-    });
+    var line = stateLine(model.race_state);
+    renderState(line || "unknown state", !!line);
     var p = model.prizes || {}, refunded = (model.total_tokens || 0) - bets;
     $("fig-pot").textContent = money(model.pot);
     $("fig-win").textContent = money(p.win); $("fig-place").textContent = money(p.place); $("fig-show").textContent = money(p.show);
@@ -273,16 +280,6 @@
       ? "The pot and prizes come from your hand count" + (model.pot_scale != null ? " (the scales said " + money(model.pot_scale) + " at the post)." : ".")
       : (st >= 3 && st <= 5 ? "These are the scales' figures, live from the cups. Count the cash box and enter it below." : "");
   }
-  $("states").addEventListener("click", function (ev) {
-    var btn = ev.target.closest("button[data-state]"); if (!btn) { return; }
-    var n = Number(btn.getAttribute("data-state"));
-    say("state-status", STATES[n] + "…");
-    api("POST", "/api/quiniela/cmd", { cmd: "state " + n }).then(function (r) {
-      if (!r.ok) { say("state-status", r.body.error || ("error " + r.status), "err"); return; }
-      say("state-status", STATES[n] + (r.body.gateway_online ? "" : " (gateway offline: pi5 keeps it and re-sends when it is back)"), "ok");
-      loadModel();
-    }).catch(fail("state-status"));
-  });
   // Reset betting: back to PRE-RACE with the names and scratches kept (the cups
   // keep their numbers, which are theirs); the results are cleared, the counts
   // now in the cups are the baseline, and the reply says what the pot reads.
@@ -368,11 +365,18 @@
   // GET /api/quiniela is the one thing this page reads (at load, every 5 s and
   // after every action); every section renders from it. force rebuilds the
   // scratch rows even while the operator is in them (after their own action).
+  // A model that cannot be read leaves the figures as they were, but the race
+  // state line says so: never an old state shown as the live one.
   function loadModel(force) {
     return api("GET", "/api/quiniela").then(function (r) {
-      if (!r.ok) { $("pills").textContent = "pi5: " + (r.body.error || ("error " + r.status)); return; }
+      if (!r.ok) {
+        var why = "pi5: " + (r.body.error || ("error " + r.status));
+        $("pills").textContent = why; renderState(why, false); return;
+      }
       model = r.body; renderStatus(); renderScratches(force === true);
-    }).catch(function () { $("pills").textContent = "cannot reach pi5 (/api/quiniela)"; });
+    }).catch(function () {
+      $("pills").textContent = "cannot reach pi5 (/api/quiniela)"; renderState("cannot reach pi5", false);
+    });
   }
 
   // ---- horses ----------------------------------------------------------------
@@ -644,9 +648,8 @@
 
   loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
   loadRace().catch(fail("race-status"));
-  // The state buttons, Reset betting, the race info, the names, Set/Clear and
-  // Scratch/Undo each report into their own status line; nothing on this page
-  // fails silently.
+  // Reset betting, the race info, the names, Set/Clear and Scratch/Undo each
+  // report into their own status line; nothing on this page fails silently.
   setInterval(function () { loadModel(false); }, 5000);
 })();
 </script>

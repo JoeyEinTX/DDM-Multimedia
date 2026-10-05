@@ -443,13 +443,13 @@ Rules for either:
 | DDM Control Center (touchscreen, `joeydevpi.local:5000/`) | LQ admin page (phone, `joeydevpi.local:5000/quiniela/admin`) |
 |---|---|
 | LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
-| The mode buttons: LEDs **and** race state | The current race state, read-only [PROPOSED] |
+| The mode buttons: LEDs **and** race state | The current race state, read-only [DECIDED 2026-10-02, BUILT] |
 | SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [BUILT] | Figures: pot, prizes, bets |
 | RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
 | Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept |
 | | Race info, horse names, scratches and undo, the betting close time |
 
-- **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, TO BUILD]
+- **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, BUILT]
 - **Two different resets.** RESET on the dashboard ends a race. Reset betting on the admin
   page prepares the next one. The runbook says which to use when.
 - **No PIN.** [DECIDED 2026-09-29] The dashboard, the admin page and La Subasta's guest
@@ -540,6 +540,7 @@ gateway says hello.
 - La Subasta on La Quiniela's store: names, program numbers 1–24, scratches
 - Counted pot: the pot and the prizes come from the host's hand count of the cash box
 - SET WINNERS no-bets marker: the picker tags a horse whose cup held no bets at the post
+- The admin page shows the race state read-only; its race-state buttons are gone
 
 ### Next
 
@@ -553,8 +554,8 @@ One single-concern Claude Code prompt each, in this order:
 3. ~~**Counted pot** on the admin page; pot and prizes from the hand count.~~ Done
    (2026-10-02; listed under Done).
 4. ~~**SET WINNERS no-bets marker.**~~ Done (2026-10-03; listed under Done).
-5. **Remove the admin page's race-state buttons**; show the state read-only; update
-   `RACE_NIGHT.md`, which uses them in several places.
+5. ~~**Remove the admin page's race-state buttons**; show the state read-only; update
+   `RACE_NIGHT.md`, which uses them in several places.~~ Done (2026-10-05; listed under Done).
 6. **Re-bet wording** for a same-day scratch: the board, `RACE_NIGHT.md`, `pi5/LQ_BRIDGE.md`.
 
 ### Later
