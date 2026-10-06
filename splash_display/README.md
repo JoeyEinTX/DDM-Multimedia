@@ -310,8 +310,8 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   mantle), 9 leaves the field (`in_field` false, `cup` null) and 22 joins
   it with `replaced` `"THE PUMA"`. The pot does not move. Without a
   replacement, `scratched` is true, the horse is out of the field and
-  **its tokens are out of `pot` and `prizes`** (refunds are settled by
-  hand); `total_tokens` stays the sum of every cup. Neither kind produces
+  **its tokens are out of `pot` and `prizes`** (they are handed back to
+  be re-bet); `total_tokens` stays the sum of every cup. Neither kind produces
   an event. `scratches` is one record per scratch, ordered by
   `was.number`: `{"was": {"number", "name"}, "now": {"number", "name"}}`
   for a replacement, `"now": null` for a gateway scratch, names
@@ -629,8 +629,8 @@ the live board follows pixel for pixel where practical):
   `scratches` is not empty, one `SCRATCHED` item with every scratch, a gap
   between them: a replacement reads `[9] THE PUMA ▶ [22] OCELLI` (both
   badges in their cloth colours, the old name struck through, the gold
-  arrow), a scratch with no replacement reads `[20] FULLEFFORT · TOKENS
-  REFUNDED` (badge, name, the note muted); an unnamed horse prints
+  arrow), a scratch with no replacement reads `[20] FULLEFFORT · RE-BET YOUR
+  TOKENS` (badge, name, the note muted); an unnamed horse prints
   `HORSE n`, and an entry that is not a record (the older string shape) is
   ignored; then the remaining `chyron` lines, gold diamonds between items.
   It is rebuilt when `chyron`, `scratches` or `names_rev` change, swapping
@@ -698,7 +698,7 @@ stand still and the message steps across them, a character a tile.
   badges are the one thing that is not dots: a saddle cloth is its
   number's digits on solid cloth tiles in Impact, one tile for `9`, two
   touching for `22`; `SCRATCHED` is red dots, a struck name dim with a
-  line across its tiles, `TOKENS REFUNDED` dim.
+  line across its tiles, `RE-BET YOUR TOKENS` dim.
 - *Live updates* keep the track's rule (`f1a86e9`). A refresh that
   keeps an item's length (the clock's minute, the countdown's minute or
   second) is written into the message where it stands, at once, on the
@@ -772,7 +772,7 @@ logged once. The page carries the look in the board's `data-look`.
 - **Dotted** in `dots`: the pot, the three prizes,
   every row's name and bets, the crawl (a fixed row of tiles with the message stepping across it:
   its text, its diamonds, its arrows; `SCRATCHED` in red
-  dots, a struck name and `TOKENS REFUNDED` dimmed), and the results
+  dots, a struck name and `RE-BET YOUR TOKENS` dimmed), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
   number, as on the dashboard's results tote (cloth, then the dotted
@@ -1034,7 +1034,7 @@ served it since protocol v2; a renumbered cup keeps its MAC. In `redesign` the c
 that were 5, 9 and 13 carry 21, 22 and 23 with their tokens (the count
 that was on 9 is on 22), so the field reads 1-4, 6-8, 10-12 down the left
 and 14-19, 21-23 down the right with the last slot blank; the chyron
-carries the three replacements and `[20] FULLEFFORT · TOKENS REFUNDED`.
+carries the three replacements and `[20] FULLEFFORT · RE-BET YOUR TOKENS`.
 
 Open the printed URL (`http://127.0.0.1:5077/display`) in a browser; add
 `?look=dots` (or `impact`, `numbers`) to see a look. The

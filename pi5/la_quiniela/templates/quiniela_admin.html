@@ -261,11 +261,11 @@
       (model.closes_at != null ? '<span class="pill">closes set</span>' : "");
     var line = stateLine(model.race_state);
     renderState(line || "unknown state", !!line);
-    var p = model.prizes || {}, refunded = (model.total_tokens || 0) - bets;
+    var p = model.prizes || {}, outOfPot = (model.total_tokens || 0) - bets;
     $("fig-pot").textContent = money(model.pot);
     $("fig-win").textContent = money(p.win); $("fig-place").textContent = money(p.place); $("fig-show").textContent = money(p.show);
     $("fig-bets").textContent = String(bets);
-    $("fig-bets-lbl").textContent = "Bets" + (refunded > 0 ? " (+" + refunded + " in scratched cups)" : "");
+    $("fig-bets-lbl").textContent = "Bets" + (outOfPot > 0 ? " (+" + outOfPot + " in scratched cups)" : "");
     renderFigureLabels();
     renderCounted();
     renderCloses();
@@ -538,7 +538,7 @@
           '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
           '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">' +
           '<button class="danger" data-scratch>Scratch</button>' +
-          '<label><input type="checkbox" data-norepl> No replacement (the horse is out, its tokens refunded)</label>' +
+          '<label><input type="checkbox" data-norepl> No replacement (the horse is out: its tokens are handed back to re-bet)</label>' +
           '<div class="status rowstatus" data-rowstatus></div>' +
         "</div></div>";
     }

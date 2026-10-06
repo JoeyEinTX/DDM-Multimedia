@@ -1011,7 +1011,7 @@ class BettingBoard:
             token_value = self._token_value()
             # The pot is what the prizes are drawn from: a horse scratched
             # with no replacement is out of the game and its tokens are
-            # refunded by hand, so they leave the pot; total_tokens still
+            # handed back to be re-bet, so they leave the pot; total_tokens still
             # counts every cup. A replacement scratch keeps the cup counting
             # under its new number, so a renumber never changes the pot.
             live = sum(h["tokens"] for h in horses.values() if not h["scratched"])

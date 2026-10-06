@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS lq_horses (
 -- One row per scratch: horse `was` left the field and the cup that was
 -- `was` now reports horse `now` (a renumber pair the gateway sends until the
 -- record is undone), or, with now NULL, `was` was scratched with no
--- replacement (its tokens refunded; its bit in the gateway's scratched mask
+-- replacement (its tokens handed back to re-bet; its bit in the gateway's scratched mask
 -- follows from the record). A table created with now NOT NULL (c70d894,
 -- live on DevPi) is rebuilt by init_schema() (see _migrate_lq_scratches).
 CREATE TABLE IF NOT EXISTS lq_scratches (

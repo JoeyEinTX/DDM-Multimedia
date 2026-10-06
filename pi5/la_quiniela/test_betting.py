@@ -1668,7 +1668,7 @@ def test_no_replacement_scratch_is_about_the_horse():
     r = client.post("/api/quiniela/scratch", json={"horse": 8, "replacement": {"number": 20, "name": "x"}})
     _check("20 as somebody's replacement -> 400 in use", r.status_code == 400 and r.get_json()["error"] == "20 is in use", str(r.get_json()))
     # A cup set to 20 on its own screen later: the bit is already in the line, so it draws its X at once.
-    b.handle_raw_line(telem(MAC_B, horse=20, count=4))               # four tokens, to be refunded
+    b.handle_raw_line(telem(MAC_B, horse=20, count=4))               # four tokens, to be handed back
     get_board().refresh()
     m = client.get("/api/quiniela").get_json()
     _check("20 on its cup, scratched, its 4 tokens out of the pot: pot 3, total 7",

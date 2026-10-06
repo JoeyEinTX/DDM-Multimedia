@@ -177,7 +177,8 @@ While open:
 - Someone takes a token back out: the count drops and the pot drops. That's correct.
 - A same-day scratch (vet scratch, gate scratch): `ADMIN` → Scratches → In the field →
   that horse's row → tick *No replacement* → Scratch. The row leaves the board, the crawl
-  says `TOKENS REFUNDED`, its tokens leave the pot. Empty that cup and hand the tokens back.
+  says `RE-BET YOUR TOKENS`, its tokens leave the pot. Empty that cup and hand the tokens
+  back to re-drop in other cups; one not re-bet is settled by the counted pot.
 - Something's wrong with a count: pull the tokens, count by hand, put them back in one
   motion. The settled weight is the truth and the board follows it (it shows that as a
   drop to 0 and then a `+N BETS` toast; that's fine).
@@ -303,7 +304,7 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 - Prizes are 60 / 25 / 15 percent of the pot, whole dollars, WIN takes the rounding.
 - Fewer tokens in a cup, better shot at the draw.
 - Scratched before Friday: the alternate takes over, with its own number.
-  Scratched on Saturday: tokens refunded.
+  Scratched on Saturday: your tokens come back to you; re-bet them on another horse.
 - Totals based on cheap Chinese electronics. Final results hand counted.
 
 ---

@@ -98,7 +98,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `events` | audit log: `ts`, `type`, `horse` (nullable), `detail` (JSON) |
 | `lq_link_state` | one row: `state_rev`, `state_json` (`{"phase","scratched","renum","results"}`); how the bridge answers a `hello` after a restart |
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
-| `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are refunded). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
+| `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are handed back to be re-bet). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
 | `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes. While the host's hand count is held it is one more key of this JSON, `pot_counted` (whole dollars), so the count is saved, held and dropped exactly as the figures are ("The counted pot", below); no schema change |
 | `lq_race` | one row, the race: `name` (as typed, `''` for the default KENTUCKY DERBY), `year`, `post_at` (unix time; NULL while unset), `migrated` (1 once the old Race Setup file has been looked at). Reset betting never touches it. Added at start like `lq_closing` |
@@ -472,7 +472,9 @@ is not in the field.
    whose horse is 9 draws its X, now or whenever a cup is set to 9. `unscratch`
    mirrors it: the record goes and the bit leaves the line. A repeat scratch
    is a 400 `horse 9 is already scratched`. **Its tokens are excluded from
-   the pot and the prizes**; Joey refunds them by hand. `total_tokens` still
+   the pot and the prizes**; Joey hands them back to be re-bet in other cups
+   (the crawl says `· RE-BET YOUR TOKENS`), and a token not re-bet is settled by
+   the counted pot. `total_tokens` still
    counts every cup. This pot rule is an assumption about how a
    no-replacement scratch is settled; if the tokens should stay in the pot
    instead, it is the one `if not h["scratched"]` in `apply_snapshot()`.

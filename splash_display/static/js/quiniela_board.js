@@ -1221,7 +1221,7 @@
     // (DALLAS 88°F SUNNY; left out when there is none); SCRATCHED and every
     // scratch when there are any (a replacement: the scratched horse's
     // badge and name struck through, the arrow, the replacement's badge and
-    // name; no replacement: badge, name and a muted "· TOKENS REFUNDED"; an
+    // name; no replacement: badge, name and a muted "· RE-BET YOUR TOKENS"; an
     // unnamed horse prints HORSE n); the remaining chyron lines. Gold
     // diamonds between items.
     // The live items change in place, every second (tickLive), a text for
@@ -1378,7 +1378,7 @@
             if (x.now == null) {
                 parts.push(crawlBadge(was.n)
                     + crawlText(was.name)
-                    + crawlText('· Tokens refunded', 'qb-crawl-note'));
+                    + crawlText('· RE-BET YOUR TOKENS', 'qb-crawl-note'));
                 continue;
             }
             const now = scratchSide(x.now);
@@ -1454,7 +1454,7 @@
     // face lacks: toteChar). A saddle-cloth badge is its number's digits,
     // one tile each, on solid cloth tiles in Impact, as the cloths are
     // everywhere; SCRATCHED is red, a struck name dim with a line across
-    // its tiles, TOKENS REFUNDED dim.
+    // its tiles, RE-BET YOUR TOKENS dim.
     //
     // A live item that keeps its length (the clock's minute, the countdown)
     // is written into the message where it stands, at once. Anything that
@@ -1560,7 +1560,7 @@
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
-                parts.push(() => { cloth(was.n); gap(1); words(was.name); gap(1); words('· Tokens refunded', TS_DIM); });
+                parts.push(() => { cloth(was.n); gap(1); words(was.name); gap(1); words('· RE-BET YOUR TOKENS', TS_DIM); });
                 continue;
             }
             const now = scratchSide(x.now);

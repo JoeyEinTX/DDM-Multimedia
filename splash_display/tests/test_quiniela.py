@@ -2059,6 +2059,9 @@ class StepCrawlTests(unittest.TestCase):
         exotic = crawl_model(post_in=74 * 60 + 30)
         exotic["chyron"] = ["Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 \u2019 "
                             "\u2014\u00a0\u00e9\u200b\u00e4 \U0001f642 end", "second"]
+        # Spec section 6: only a scratch with no replacement says RE-BET YOUR TOKENS; the replacements say neither.
+        replaced_only = crawl_model(post_in=74 * 60 + 30)
+        replaced_only["scratches"] = [s for s in replaced_only["scratches"] if s.get("now") is not None]
         cls.runs = run_boards({
             "default": ([m, {"__sample": 5000}], plain),
             "slow": ([m, {"__sample": 5000}], dict(plain, query="crawl_tps=2")),
@@ -2071,7 +2074,7 @@ class StepCrawlTests(unittest.TestCase):
             "inplace": ([m, {"__wait": 3500}, {"__feed": minute_on}], dict(plain, query="crawl_tps=20")),
             "longer": ([m, {"__wait": 1300}, longer, {"__sample": 5500}], dict(plain, query="crawl_tps=60")),
             # at 60 a second the scratches are on the tiles: SCRATCHED and the first replacement at offset 102, the last two
-            # scratches, the refund note and the next line at 222
+            # scratches, the re-bet note and the next line at 222
             "styled": ([m, {"__wait": 1600}, {"__wait": 1300}], dict(plain, query="crawl_tps=60")),
             "reordered": ([m, {"__wait": 1300}, {"__feed": reordered}], plain),
             "stall": ([m, {"__stall": 1500}, {"__sample": 3000}], plain),
@@ -2079,6 +2082,8 @@ class StepCrawlTests(unittest.TestCase):
             "numbers": ([m], dict(look="numbers", styled=True)),
             "impact": ([m], dict(look="impact", styled=True)),
             "exotic": ([exotic], plain),
+            "replaced-only": ([replaced_only], plain),
+            "replaced-only-impact": ([replaced_only], dict(look="impact", styled=True)),
         })
 
     def got(self, name: str) -> List[dict]:
@@ -2108,8 +2113,8 @@ class StepCrawlTests(unittest.TestCase):
 
     def test_the_cells_are_styled_like_the_tracks_items(self) -> None:
         # SCRATCHED red; a cloth its number's digits on the cloth's colours, one tile or two touching; the replaced
-        # horse's name dim and struck (the blank between its words too); the arrow and the new name plain; TOKENS
-        # REFUNDED dim and not struck.
+        # horse's name dim and struck (the blank between its words too); the arrow and the new name plain; RE-BET
+        # YOUR TOKENS dim and not struck.
         _first, early, late = self.got("styled")
         c = early["crawl"]
         text, classes, colors = c["text"], c["classes"], c["colors"]
@@ -2128,8 +2133,8 @@ class StepCrawlTests(unittest.TestCase):
         self.assertEqual((colors[two], colors[two + 1]), ("rgb(255, 218, 185)|rgb(0, 0, 0)",) * 2)
         self.assertEqual({classes[text.index("GREAT WHITE") + i] for i in range(11)}, {"qb-ct"}, "the new horse's name: plain")
         c = late["crawl"]
-        note = c["text"].index("TOKENS REFUNDED")
-        self.assertEqual({c["classes"][note + i] for i in range(15)}, {"qb-ct is-dim"}, "TOKENS REFUNDED dim, not struck")
+        note = c["text"].index("RE-BET YOUR TOKENS")
+        self.assertEqual({c["classes"][note + i] for i in range(18)}, {"qb-ct is-dim"}, "RE-BET YOUR TOKENS dim, not struck")
 
     def test_the_same_scratches_in_another_key_order_are_no_update(self) -> None:
         # The model a page gets when it loads (the relay's, sorted keys) and pi5's stream (its own order) carry the same
@@ -2272,6 +2277,30 @@ class StepCrawlTests(unittest.TestCase):
         dots = self.got("default")[0]["crawl"]
         self.assertEqual((dots["trackDisplay"], dots["animation"]), ("none", "qbCrawl"), "dots: the track is out of the way")
 
+    def test_a_same_day_scratch_says_re_bet_your_tokens_in_every_look(self) -> None:
+        # Spec section 6, kind 2: a scratch with no replacement (20 FULLEFFORT in the redesign feed) is handed back
+        # to be re-bet; nothing is refunded. Every look says so after that horse, once, and REFUND nowhere; on the
+        # dots tiles every character of it is its own (none a blank or a base letter).
+        for name in ("default", "numbers", "impact"):
+            items = self.got(name)[0]["crawl"]["items"]
+            scratch = next(i for i in items if i.upper().startswith("SCRATCHED"))
+            self.assertEqual(scratch.count('\u00b7 RE-BET YOUR TOKENS'), 1, f'{name}: {scratch!r}')
+            self.assertLess(scratch.index('FULLEFFORT'), scratch.index('\u00b7 RE-BET YOUR TOKENS'), name)
+            self.assertNotIn("REFUND", " ".join(items).upper(), name)
+        loop = self.got("default")[0]["crawl"]["snapshot"]["text"]
+        self.assertIn('FULLEFFORT \u00b7 RE-BET YOUR TOKENS', loop, 'dots: on the tiles, each character its own')
+        self.assertNotIn("REFUND", loop)
+        self.assertNotIn("refund", json.dumps(redesign_model()).lower(), "the served model says nothing of a refund")
+
+    def test_a_replacement_scratch_says_neither(self) -> None:
+        # 9 -> 22 and the like: nothing to re-bet, so neither phrase, on the tiles or on the track.
+        for name in ("replaced-only", "replaced-only-impact"):
+            items = self.got(name)[0]["crawl"]["items"]
+            scratch = next(i for i in items if i.upper().startswith("SCRATCHED"))
+            self.assertIn('\u25b6', scratch, f'{name}: the replacements are there')
+            self.assertNotIn("RE-BET", scratch.upper(), name)
+            self.assertNotIn("REFUND", " ".join(items).upper(), name)
+
     def test_a_character_the_face_lacks_is_its_base_letter_or_a_blank(self) -> None:
         # "Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 ...": capitals; the face's own
         # accented letters, quotes and dashes as they are (it draws them as the plain ones); a letter it has
@@ -2294,6 +2323,14 @@ class StepCrawlSourceTests(unittest.TestCase):
 
     JS = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
     CSS = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
+
+    def test_the_board_says_refund_nowhere(self) -> None:
+        # A same-day scratch's tokens are handed back to be re-bet (spec section 6): no word of a refund in the
+        # board's script, stylesheet or page, and the crawl's note is the new wording.
+        page = (HERE / "templates" / "splash" / "quiniela_live.html").read_text(encoding="utf-8")
+        for name, text in (("script", self.JS), ("stylesheet", self.CSS), ("page", page)):
+            self.assertNotIn("refund", text.lower(), name)
+        self.assertEqual(self.JS.count("'\u00b7 RE-BET YOUR TOKENS'"), 2, "the track and the tiles")
 
     def test_the_rate_is_a_constant_at_the_top_and_the_url_can_change_it(self) -> None:
         self.assertLess(self.JS.index("const CRAWL_TILES_PER_SEC"), self.JS.index("function makeRow"))
@@ -2427,7 +2464,7 @@ class ToteFontTests(unittest.TestCase):
             self.assertIn(ord(ch), self.cmap, repr(ch))
         for low, up in (("a", "A"), ("z", "Z"), ("\u00f1", "N"), ("\u00c9", "E"), ("\u2019", "'"), ("\u2013", "-")):
             self.assertEqual(self.cmap[ord(low)], self.cmap[ord(up)], f"{low!r} is drawn as {up!r}")
-        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 TOKENS REFUNDED", "NO BETS", "$1,234"]:
+        for line in fake_pi5.CHYRON_LINES + ["SCRATCHED", "\u00b7 RE-BET YOUR TOKENS", "NO BETS", "$1,234"]:
             for ch in line:
                 self.assertIn(ord(ch), self.cmap, f"{ch!r} in {line!r}")
 

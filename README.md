@@ -8,7 +8,7 @@ Race night: see `RACE_NIGHT.md` (the La Quiniela checklist, one action per line)
 
 **Event Context:** La Quiniela is a drawing, not a betting pool. A token is $1: drop it in the cup of the horse you like and keep the other half.
 After the race one token is drawn from the WIN cup, one from PLACE, one from SHOW, and the drawn token's owner takes that prize: 60 / 25 / 15 percent of the pot, whole dollars, WIN takes the rounding.
-Twenty cups on the mantle, one per post position, count their tokens; a horse scratched before the day is replaced by an also-eligible under its own number, a same-day scratch has its tokens refunded.
+Twenty cups on the mantle, one per post position, count their tokens; a horse scratched before the day is replaced by an also-eligible under its own number, a same-day scratch has its tokens handed back to be re-bet.
 
 ## System Architecture
 

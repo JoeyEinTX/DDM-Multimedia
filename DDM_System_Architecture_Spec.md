@@ -120,10 +120,13 @@ Each of the dashboard's mode buttons starts its LED animation and also sets the 
   scratches, renumber pairs and results, so a cup never shows WINNER before it knows who won.
 - **The LEDs are the button's own request**, not fanned out from the race state. The race
   state never waits on the LEDs, and the results never wait on the LEDs.
-- **Admin page state buttons: removed.** [DECIDED 2026-09-29, TO BUILD] They changed the
+- **Admin page state buttons: removed.** [DECIDED 2026-09-29, BUILT] They changed the
   state without the LEDs, so the cups and TV could disagree with the mantle. The admin page
-  keeps showing the current state, read-only. [PROPOSED] The `state N` command on
-  `POST /api/quiniela/cmd` stays as the runbook appendix's emergency curl. [PROPOSED]
+  keeps showing the current state, read-only. [DECIDED 2026-10-02, BUILT] If the dashboard
+  is down, the runbook appendix's fallback is the dashboard's own two routes: the mode
+  (`POST /api/quiniela/mode`, the state) and the animation (`POST /api/animation/<MODE>`,
+  the LEDs). The `state N` command on `POST /api/quiniela/cmd` stays for the tests and the
+  simulator. [BUILT]
 - Consequence: AFTER_PARTY is reached by the dashboard's RESET (which also clears the results
   and turns the LEDs off), or by the curl.
 - The mock racing service's AUTO mode (`/api/racing/*`) is not part of any of this.
@@ -313,9 +316,8 @@ There is no roster line. A v1 `roster` line is ignored.
      in other cups. The pot climbs back as they do.
    - Anyone who takes a token back and does not re-bet is settled by the counted pot.
    - **The `TOKENS REFUNDED` wording goes**, from the TV board, `RACE_NIGHT.md` and
-     `pi5/LQ_BRIDGE.md`. [DECIDED 2026-09-29, TO BUILD] Replacement wording on the board,
-     such as `· RE-BET YOUR TOKENS`. [PROPOSED] Every character must exist in the tote
-     look's dot font.
+     `pi5/LQ_BRIDGE.md`. [DECIDED 2026-09-29, BUILT] Replacement wording on the board:
+     `· RE-BET YOUR TOKENS`, every character in the tote look's dot font. [BUILT]
 
 - A scratch of either kind is entered once, on the admin page, and can be undone (a chain
   undoes last record first). [BUILT]
@@ -498,7 +500,8 @@ Rules for either:
    the plan, or is a second, always-La-Quiniela screen still wanted?
 2. **JoeyAI for 2027?** Build it as an odds and names source (section 8A), or leave the
    Claude odds poller as is?
-3. **Same-day scratch wording** on the board, replacing `TOKENS REFUNDED`.
+3. ~~**Same-day scratch wording** on the board, replacing `TOKENS REFUNDED`.~~ Resolved
+   2026-10-05: `· RE-BET YOUR TOKENS` (section 6).
 4. ~~**Scale drift across a power cycle.**~~ Resolved 2026-10-01: the brownout bench test
    read a drift of −5 counts (≈0.001 token at ≈6004 counts per token) across a power
    cycle; the saved empty reading is good enough on its own.
@@ -509,7 +512,8 @@ Rules for either:
 Resolved since v0.9: cup counting (the cup counts; the settled weight decides), odds on
 the board (none; bets only), LED sub-phases (the mode table), display transport (HTTP and
 an event stream), La Subasta migration (yes, section 8), admin PIN (no), cups showing
-CLOSED (no), scale drift across a power cycle (−5 counts; the saved zero is enough).
+CLOSED (no), scale drift across a power cycle (−5 counts; the saved zero is enough),
+same-day scratch wording (`· RE-BET YOUR TOKENS`).
 
 ---
 
@@ -541,6 +545,7 @@ gateway says hello.
 - Counted pot: the pot and the prizes come from the host's hand count of the cash box
 - SET WINNERS no-bets marker: the picker tags a horse whose cup held no bets at the post
 - The admin page shows the race state read-only; its race-state buttons are gone
+- Re-bet wording for a same-day scratch: the crawl says `· RE-BET YOUR TOKENS`
 
 ### Next
 
@@ -556,7 +561,8 @@ One single-concern Claude Code prompt each, in this order:
 4. ~~**SET WINNERS no-bets marker.**~~ Done (2026-10-03; listed under Done).
 5. ~~**Remove the admin page's race-state buttons**; show the state read-only; update
    `RACE_NIGHT.md`, which uses them in several places.~~ Done (2026-10-05; listed under Done).
-6. **Re-bet wording** for a same-day scratch: the board, `RACE_NIGHT.md`, `pi5/LQ_BRIDGE.md`.
+6. ~~**Re-bet wording** for a same-day scratch: the board, `RACE_NIGHT.md`, `pi5/LQ_BRIDGE.md`.~~
+   Done (2026-10-05; listed under Done).
 
 ### Later
 

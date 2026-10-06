@@ -197,7 +197,7 @@ class HorseStore:
 
     A record is was -> now: a replacement scratch (the cup that was `was`
     becomes `now`, through the renumber pair the board sends) or, with now
-    None, a no-replacement scratch (the horse is out, its tokens refunded;
+    None, a no-replacement scratch (the horse is out, its tokens handed back to re-bet;
     its bit goes in the state line from BettingBoard.refresh()). Both kinds
     live in lq_scratches and survive a reset.
 
@@ -524,7 +524,7 @@ class HorseStore:
 
     def scratch_gateway(self, was: Any) -> Dict[str, Any]:
         """Record that horse `was` is scratched with no replacement: out of
-        the field, tokens refunded. The cup carrying it, if any, gets the
+        the field, its tokens handed back to re-bet. The cup carrying it, if any, gets the
         gateway's scratched flag from the caller (board.py) or from the
         board's refresh() when a cup is assigned later. Bumps names_rev once.
         Returns {"was": {"number", "name"}}. ValueError when the horse is

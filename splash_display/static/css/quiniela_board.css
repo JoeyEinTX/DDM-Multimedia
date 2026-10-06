@@ -795,7 +795,7 @@
 
 /* A replacement scratch: badge, the old name struck through, the arrow,
    the new badge and name. A scratch with no replacement: badge, name and
-   a muted "· TOKENS REFUNDED". */
+   a muted "· RE-BET YOUR TOKENS". */
 .qb-crawl-was {
     text-decoration: line-through;
     color: var(--qb-muted);
@@ -1129,7 +1129,7 @@
     background-repeat: no-repeat;
 }
 
-/* SCRATCHED in red dots; a struck name and TOKENS REFUNDED dim, the name
+/* SCRATCHED in red dots; a struck name and RE-BET YOUR TOKENS dim, the name
    with a line across its tiles (they touch, so it is one line). */
 .qb[data-look="dots"] .qb-ct.is-lbl {
     color: var(--qb-red);
