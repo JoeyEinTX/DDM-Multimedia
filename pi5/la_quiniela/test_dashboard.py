@@ -17,7 +17,10 @@
 # makes it 6), and the SET WINNERS picker: a tap fills the slot the host meant,
 # however slowly the LED controller answers, and a horse whose cup held no bets
 # at the post is marked NO BETS from La Quiniela's figures at the post (the
-# source, and a headless Chrome in pi5/tools/picker_check.py).
+# source, and a headless Chrome in pi5/tools/picker_check.py). And the iPad on
+# race night, held in landscape: everything the host presses on the dashboard
+# and the LQ admin page is 44 px or more each way, both pages carry the Home
+# Screen metas, and full screen the links between them open in place.
 
 import io
 import json
@@ -809,6 +812,65 @@ def test_picker_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# Race night on an iPad in landscape: taps big enough, and a Home Screen shortcut
+# -----------------------------------------------------------------------------
+# Joey runs the night from an iPad held in landscape, the two pages open as two Safari tabs. Everything the host
+# presses takes a finger, 44 px or more each way (AT THE GATE and THEY'RE OFF! were 38 px tall and 6 px apart), at
+# an iPad Air's 1180 x 820 and the floor's 1024 x 768. Added to the Home Screen, either page opens full screen (the
+# web-app metas, no manifest), and there the links between the two open in place: full screen has no tabs.
+# Headless Chrome is not iPadOS: it forces navigator.standalone (or the display-mode query) to see the links do
+# that; what the iPad makes of the shortcut is checked on the iPad.
+
+HOME_SCREEN_TITLES = (("/", "DDM"), ("/quiniela/admin", "LQ Admin"))
+
+
+def test_home_screen_metas():
+    """Both pages carry the metas a Home Screen shortcut reads: full screen, a black status bar, and each its own
+    title so the two icons are told apart; and the viewport still lets a pinch zoom."""
+    rig = Rig()
+    for path, title in HOME_SCREEN_TITLES:
+        head = rig.client.get(path).get_data(as_text=True).split("</head>")[0]
+        metas = dict(re.findall(r'<meta name="([^"]+)" content="([^"]*)"\s*/?>', head))
+        want = {"apple-mobile-web-app-capable": "yes", "mobile-web-app-capable": "yes",
+                "apple-mobile-web-app-status-bar-style": "black", "apple-mobile-web-app-title": title}
+        got = {k: metas.get(k) for k in want}
+        _check(f"{path}: full screen from the Home Screen, a black status bar, titled {title}", got == want, str(got))
+        viewport = metas.get("viewport", "")
+        _check(f"{path}: the viewport still lets a pinch zoom",
+               viewport.startswith("width=device-width") and "user-scalable" not in viewport
+               and "maximum-scale" not in viewport, viewport)
+
+
+def test_tap_targets_in_a_browser():
+    """Everything the host presses on race night, in headless Chrome at 1180 x 820 and 1024 x 768 with touch
+    emulation (pi5/tools/picker_check.py, tap_checks): the Control Center's main view, its drawer, SET WINNERS
+    with three horses picked and REVEAL WINNERS; the admin page with the counted pot showing and a scratch to
+    undo. Each control 44 x 44 px or more under a finger, touch-action manipulation; AT THE GATE and THEY'RE OFF!
+    8 px or more from any other mode button; nothing scrolls sideways. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("tap target browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    rig = Rig()
+    for name, passed, detail in picker_check.tap_checks(rig):
+        _check("taps: " + name, passed, detail)
+
+
+def test_full_screen_links_in_a_browser():
+    """The links between the two pages (pi5/tools/picker_check.py, link_checks): in a browser tab as built, the
+    Control Center's opening a new tab and the admin page's its named tab, reused by the next tap; with
+    navigator.standalone forced true, or the display-mode query answering yes, no target, and a tap opens the
+    other page in place. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("full screen link browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    rig = Rig()
+    for name, passed, detail in picker_check.link_checks(rig):
+        _check("links: " + name, passed, detail)
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -829,6 +891,9 @@ def main_():
     _run("SET WINNERS — the slot cards are the check: no list of the picks over CONFIRM", test_confirm_step_lists_no_picks)
     _run("admin page — the race state read-only, in a browser", test_admin_state_line_in_a_browser)
     _run("SET WINNERS — a tap lands in the slot meant, in a browser, mouse and touch", test_picker_in_a_browser)
+    _run("iPad — the Home Screen metas on both pages, pinch zoom kept", test_home_screen_metas)
+    _run("iPad — everything the host presses takes a finger, 44 px, in a browser", test_tap_targets_in_a_browser)
+    _run("iPad — full screen, the links between the two pages open in place, in a browser", test_full_screen_links_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

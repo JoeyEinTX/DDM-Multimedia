@@ -108,11 +108,13 @@ board**, prizes and all) and hands it back in 0 and 6.
       → `SET`. A `NO LINK` badge in a corner means that cup can't hear the gateway (not up
       yet, or too far).
 - [ ] Gateway plugged into DevPi.
-- [ ] The iPad, in Safari: open `ADMIN`, then tap **Change the race state on the Control
-      Center** under its race state: `DASH` opens in a second tab, and from then on that
-      link brings it back (to get to `ADMIN`, tap its tab).
-- [ ] Optional: on `DASH`, Share → **Add to Home Screen** for a full-screen shortcut to
-      the Control Center (it opens outside Safari: switch apps instead of tabs).
+- [ ] The iPad, held in landscape, in Safari (two tabs is the tested way): open `ADMIN`,
+      then tap **Change the race state on the Control Center** under its race state:
+      `DASH` opens in a second tab, and from then on that link brings it back (to get to
+      `ADMIN`, tap its tab).
+- [ ] Optional: on `DASH`, Share → **Add to Home Screen** (its icon says `DDM`). It opens
+      the Control Center full screen, with no tabs: there ☰ → La Quiniela Admin and
+      `ADMIN`'s link back each open the other page in place.
 - [ ] Once the apps are up (section 3), watch the TV's slideshow for a lap: the countdown
       slide counts down to today's post under `KENTUCKY DERBY 2027`, and the roster slide
       lists the field by number, replacements under their own numbers, with the odds (a dim

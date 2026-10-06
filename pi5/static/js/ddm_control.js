@@ -2198,6 +2198,27 @@ function closeDrawer() {
     document.body.style.overflow = '';
 }
 
+// Opened from the iPad's Home Screen, the page runs full screen: no tabs, no
+// second window, so a link to the LQ admin page that opens a new tab would
+// leave it. There a link marked data-in-place-standalone loses its target and
+// opens in place (the admin page's link back does the same), replacing this
+// page rather than stacking on it: a page kept for Back keeps its result
+// streams open, and after a few trips between the two pages the browser has
+// no connection to pi5 left. In a browser tab it keeps its target, as built.
+function linksInPlaceWhenStandalone() {
+    const standalone = navigator.standalone === true ||
+        (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+    if (!standalone) return;
+    document.querySelectorAll('a[data-in-place-standalone]').forEach((a) => {
+        a.removeAttribute('target');
+        a.removeAttribute('rel');
+        a.addEventListener('click', (event) => {
+            event.preventDefault();
+            location.replace(a.href);
+        });
+    });
+}
+
 // =====================================================================
 // Animation Tuning Modal
 // =====================================================================
@@ -3044,6 +3065,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // La Quiniela's names, for the results tote and the pickers
     loadQuinielaField();
+
+    // Full screen from the Home Screen: the link to the admin page opens in place
+    linksInPlaceWhenStandalone();
 
     // Load initial results from server
     loadResultsFromServer();

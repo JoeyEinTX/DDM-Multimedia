@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Added to an iPad's Home Screen, the admin page opens full screen, named LQ Admin under its icon -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="LQ Admin">
 <title>La Quiniela admin</title>
 <style>
   :root { --bg: #14140f; --card: #1f1f18; --line: #3a3a2e; --fg: #f3efe2; --dim: #b9b39f;
@@ -24,6 +29,9 @@
   button.primary { background: var(--green); border-color: var(--green); }
   button.danger { background: var(--rose); border-color: var(--rose); }
   button:disabled { opacity: .5; }
+  /* A quick double tap on a button doesn't zoom the page (pinch zoom still does). Everything the host
+     presses here is at least 44 px each way: la_quiniela/test_dashboard.py measures it. */
+  button, .state-link, .controls label { touch-action: manipulation; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .row > * { flex: 1 1 auto; }
   .status { color: var(--dim); font-size: 15px; margin-top: 8px; min-height: 1.3em; }
@@ -38,7 +46,7 @@
   .note { color: var(--dim); font-size: 14px; }
   .note.scr { color: var(--rose); }
   .controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; gap: 8px; }   /* one column: at half width the picker clipped "#21 GREAT WHITE" on a phone */
-  .controls label { display: flex; gap: 10px; align-items: center; color: var(--dim); min-height: 40px; }
+  .controls label { display: flex; gap: 10px; align-items: center; color: var(--dim); min-height: 44px; }
   .controls input[type=checkbox] { width: 24px; height: 24px; }
   .undo { grid-column: 2; justify-self: start; }
   .empty { color: var(--dim); padding: 6px 0; }
@@ -99,7 +107,7 @@
     <div class="lbl">Race state</div>
     <div class="val unknown" id="state-now" aria-live="polite">loading…</div>
   </div>
-  <a id="state-link" class="state-link" href="/" target="ddm-control-center">Change the race state on the Control Center</a>
+  <a id="state-link" class="state-link" href="/" target="ddm-control-center" data-in-place-standalone>Change the race state on the Control Center</a>
   <div class="figures">
     <div class="figure pot"><div class="lbl" id="fig-pot-lbl">Pot</div><div class="val" id="fig-pot">$0</div></div>
     <div class="figure"><div class="lbl">Win</div><div class="val" id="fig-win">$0</div></div>
@@ -645,6 +653,20 @@
   Array.prototype.forEach.call(document.querySelectorAll("#closes button[data-min]"), function (b) {
     b.onclick = function () { putCloses({ in_minutes: Number(b.getAttribute("data-min")) }); };
   });
+
+  // Opened from the iPad's Home Screen, the page runs full screen: no tabs, so
+  // the link to the Control Center opens in place, not in its named tab, and
+  // replaces this page rather than stacking on it (a Control Center kept for
+  // Back holds its connections to pi5: see linksInPlaceWhenStandalone in
+  // ddm_control.js). In a browser tab it keeps the name, and Safari goes back
+  // to the same tab.
+  if (navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)) {
+    Array.prototype.forEach.call(document.querySelectorAll("a[data-in-place-standalone]"), function (a) {
+      a.removeAttribute("target"); a.removeAttribute("rel");
+      a.addEventListener("click", function (ev) { ev.preventDefault(); location.replace(a.href); });
+    });
+  }
 
   loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
   loadRace().catch(fail("race-status"));

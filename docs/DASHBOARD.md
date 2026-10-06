@@ -578,7 +578,12 @@ eventSource.addEventListener('results', function(e) {
 
 ### Touch-Friendly
 
-- **Minimum button size:** 60px × 60px
+- **Minimum touch target:** 44 × 44 px, padding included, for everything the host presses
+  on race night, here and on the LQ admin page (an iPad in landscape; a small round × takes
+  its taps on an invisible 44 px square), and AT THE GATE and THEY'RE OFF! 8 px or more from
+  any other mode button. `la_quiniela/test_dashboard.py` guards it in headless Chrome with
+  touch at 1180 × 820 and 1024 × 768 (`tap_checks` in `pi5/tools/picker_check.py`; `python
+  tools/picker_check.py --taps` from `pi5/` prints every size at four landscape sizes)
 - **Touch targets:** Spaced 8px apart
 - **Gesture support:** Tap, no hover required
 - **Fullscreen mode:** Touch-optimized for Pi5 touchscreen

@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Added to an iPad's Home Screen, the Control Center opens full screen, named DDM under its icon -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="DDM">
     <title>{{ system_name }}</title>
     <link rel="stylesheet" href="{{ static_url('css/ddm_style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -134,7 +139,7 @@
             <!-- During Race Panel -->
             <div class="panel">
                 <h2>DURING RACE</h2>
-                <div style="display:flex; gap:6px; margin:10px 24px;">
+                <div style="display:flex; gap:10px; margin:10px 24px;">
                     <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" data-mode="AT_THE_GATE" onclick="sendAnimation('AT_THE_GATE', this)">AT THE GATE</button>
                     <button class="btn" style="flex:1; margin:0; width:auto; font-size:0.75em; padding:10px 4px;" data-mode="GATES_BURST" onclick="sendAnimation('GATES_BURST', this)">THEY'RE OFF!</button>
                 </div>
@@ -602,7 +607,7 @@
         </div>
 
         <nav class="drawer-nav">
-            <a class="drawer-item drawer-link" href="/quiniela/admin" target="_blank" rel="noopener" onclick="closeDrawer()">
+            <a class="drawer-item drawer-link" href="/quiniela/admin" target="_blank" rel="noopener" data-in-place-standalone onclick="closeDrawer()">
                 <span class="drawer-icon">🏇</span>
                 <span class="drawer-label">La Quiniela Admin</span>
             </a>

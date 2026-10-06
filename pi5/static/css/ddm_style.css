@@ -3188,3 +3188,69 @@ a.drawer-link {
     display: flex;
     align-items: center;
 }
+
+/* Race night on an iPad in landscape: everything the host presses is at least
+   44 px in both directions, the look kept. AT THE GATE and THEY'RE OFF! share a
+   row (smaller type, inline) and were 38 px tall: every mode button now stands
+   at least as tall as a full-width one (53 px), and the pair sit 10 px apart (the
+   gap in the template). The menu button and the status icon grow to 44 px and a
+   switch keeps its 52 x 26 look inside a 44 px tall label, each giving the space
+   back with its margins, so the bars keep their height; the corner button grows
+   to 44 px; the two round close buttons keep their circles and gain an invisible
+   44 px square to tap. A double tap never zooms the page (pinch zoom still does).
+   la_quiniela/test_dashboard.py measures all of it (pi5/tools/picker_check.py,
+   tap_checks) at 1180 x 820 and 1024 x 768. */
+.panels button.btn {
+    min-height: 53px;
+}
+
+.hamburger-btn {
+    width: 44px;
+    height: 44px;
+    padding: 10px;
+    margin: -2px;
+}
+
+.footer-device {
+    min-height: 44px;
+    margin: -2px 0;
+}
+
+.race-control-switch {
+    height: 44px;
+    margin: -9px 0;
+}
+
+.race-control-slider {
+    top: 9px;
+    bottom: 9px;
+}
+
+.btn-fullscreen-corner {
+    width: 44px;
+    height: 44px;
+}
+
+.drawer-close {
+    position: relative;
+}
+
+.drawer-close::after,
+.modal-close-tab::after {
+    content: "";
+    position: absolute;
+}
+
+.drawer-close::after { inset: -9px; }       /* 28 px with its 1 px border: 26 + 2 x 9 */
+.modal-close-tab::after { inset: -9px; }    /* 30 px with its 2 px border: 26 + 2 x 9 */
+
+button,
+.btn,
+a.drawer-link,
+.footer-device,
+.race-control-switch,
+.modal-close-tab,
+.winner-pick-grid,
+.result-slot {
+    touch-action: manipulation;
+}

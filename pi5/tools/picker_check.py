@@ -19,6 +19,12 @@ at the post, set up on the server through the rig) is dimmed and tagged, a pick 
 it is warned about over CONFIRM RESULTS, and nothing is marked while the figures
 are unknown.
 
+It also has the iPad on race night, held in landscape: everything the host presses on
+the Control Center and the LQ admin page is 44 x 44 px or more under a finger, AT THE
+GATE and THEY'RE OFF! stand 8 px or more from any other mode button, and neither page
+scrolls sideways (`tap_checks`); and the links between the two pages open in place
+when a page runs full screen from the Home Screen (`link_checks`).
+
     cd pi5
     python tools/picker_check.py                  every scenario, mouse and touch
     python tools/picker_check.py --reproduce      the slot a second tap lands in, by
@@ -26,10 +32,13 @@ are unknown.
     python tools/picker_check.py --js OLD.js      run against another copy of ddm_control.js
                                                   (git show HEAD~1:pi5/static/js/ddm_control.js)
     python tools/picker_check.py --shots DIR      screenshots of the picker, for looking at
+    python tools/picker_check.py --taps           the size of everything the host presses, in four
+                                                  iPad landscape sizes, and the scroll each page needs
 
 Needs Chrome or Chromium (DDM_CHROME names one); the DevTools socket is
 simple_websocket's client, which python-engineio already pulls in for pi5's
-Socket.IO. la_quiniela/test_dashboard.py runs `run_checks` when there is a Chrome.
+Socket.IO. la_quiniela/test_dashboard.py runs `run_checks`, `tap_checks` and
+`link_checks` when there is a Chrome.
 """
 
 from __future__ import annotations
@@ -924,6 +933,407 @@ def run_checks(rig: Any, js: Optional[str] = None, modes=("mouse", "touch"), qui
 
 
 # -----------------------------------------------------------------------------
+# --taps: everything the host presses on race night, 44 px each way
+# -----------------------------------------------------------------------------
+# Joey runs the night from an iPad held in landscape, the Control Center and the LQ admin page open as two
+# Safari tabs. A finger needs 44 x 44 px; AT THE GATE and THEY'RE OFF!, the two buttons that matter most, were
+# 38 px tall and 6 px apart. A control passes when it is 44 px or more each way, its box with the padding (for a
+# small round x, the invisible square around it, its ::after), and a finger lands on it: its centre and the
+# middle of each side of a 44 px square centred on it hit the control (document.elementFromPoint, a pixel short
+# of the edge: Chrome hit-tests on whole pixels), so one something covers fails too.
+
+TAP_MIN = 44                                   # px each way, the least a finger needs
+GAP_MIN = 8                                    # px from AT THE GATE and THEY'RE OFF! to any other mode button
+TAP_SIZES = ((1180, 820), (1024, 768))         # the suite's: an iPad Air in landscape, and the floor
+LANDSCAPE = ((1180, 820), (1080, 810), (1024, 768), (1180, 720))   # --taps: and a 9th gen, and Safari's bars showing
+MODE_BUTTONS = (("WELCOME", "WELCOME"), ("TEST", "TEST"), ("STANDBY", "STANDBY"), ("BETTING_60", "60 MIN"),
+                ("BETTING_30", "30 MIN"), ("FINAL_CALL", "FINAL CALL"), ("AT_THE_GATE", "AT THE GATE"),
+                ("GATES_BURST", "THEY'RE OFF!"), ("CHAOS", "CHAOS"), ("FINISH", "FINISH"), ("RESULTS", "SET WINNERS"),
+                ("HEARTBEAT_COOLDOWN", "HEARTBEAT"), ("RESET", "RESET"))
+RACE_PAIR = ("AT_THE_GATE", "GATES_BURST")
+# (where, control, selector, several): with `several` every match is measured and the smallest reported
+TAPS: List[Tuple[str, str, str, bool]] = [
+    ("Control Center", "menu", "#hamburger-btn", False),
+    ("Control Center", "connected devices (the status icon)", "#footer-device", False),
+    ("Control Center", "AUTO / MANUAL switch", "label.race-control-switch:has(#race-control-toggle)", False),
+    ("Control Center", "RACE INFO switch", "label.race-control-switch:has(#race-info-toggle)", False),
+    ("Control Center", "full screen (the corner button)", "#fullscreen-toggle", False),
+] + [("Control Center", label, f".panels button[data-mode='{mode}']", False) for mode, label in MODE_BUTTONS] + [
+    ("drawer", "close x", ".drawer-close", False),
+    ("drawer", "items (La Quiniela Admin and 4 more)", ".drawer-item", True),
+    ("SET WINNERS", "horse buttons (the grid)", ".winner-pick-btn", True),
+    ("SET WINNERS", "slot cards", ".result-slot", True),
+    ("SET WINNERS", "slot clear x", ".slot-clear", True),
+    ("SET WINNERS", "CONFIRM RESULTS", "#results-confirm-btn", False),
+    ("SET WINNERS", "RESET", "#results-reset-btn", False),
+    ("SET WINNERS", "CANCEL", "#results-cancel-btn", False),
+    ("SET WINNERS", "close x", "#results-modal .modal-close-tab", False),
+    ("reveal", "REVEAL WINNERS (results set on another device)", ".btn-reveal-winners", False),
+    ("admin page", "link to the Control Center", "#state-link", False),
+    ("admin page", "Reset betting", "#reset-betting", False),
+    ("admin page", "Counted pot field", "#counted-input", False),
+    ("admin page", "Counted pot Save count", "#counted-save", False),
+    ("admin page", "Counted pot Clear", "#counted-clear", False),
+    ("admin page", "scratch: replacement number", "#scratch-list select", True),
+    ("admin page", "scratch: replacement name", "#scratch-list input[data-repl-name]", True),
+    ("admin page", "scratch: No replacement (its label)", "#scratch-list label:has(input[data-norepl])", True),
+    ("admin page", "scratch: Scratch", "#scratch-list button[data-scratch]", True),
+    ("admin page", "scratch: Undo", "#scratched-list button[data-undo]", True),
+    ("admin page", "names Reload", "#names-reload", False),
+    ("admin page", "names Save names", "#names-save", False),
+    ("admin page", "race info Save race info", "#race-save", False),
+    ("admin page", "close time field", "#closes-input", False),
+    ("admin page", "close time Set", "#closes-set", False),
+    ("admin page", "close time +15 / +30 / +60", "#closes button[data-min]", True),
+    ("admin page", "close time Clear", "#closes-clear", False),
+]
+WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "admin page")
+
+TAP_JS = r"""((sel, several, min) => {
+  const els = (several ? [...document.querySelectorAll(sel)] : [document.querySelector(sel)])
+    .filter((e) => e && e.getClientRects().length);
+  return els.map((el) => {
+    el.scrollIntoView({block: 'center', inline: 'center'});
+    const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const at = (x, y) => document.elementFromPoint(x, y);
+    const on = (x, y) => { const h = at(x, y); return !!h && el.contains(h); };
+    const d = min / 2 - 1;
+    const probes = [[0, 0], [-d, 0], [d, 0], [0, -d], [0, d]];
+    const miss = probes.find(([x, y]) => !on(cx + x, cy + y));
+    // a small round x takes its taps on an invisible square, its ::after (absolute, inset around it)
+    const a = getComputedStyle(el, '::after');
+    const square = a.content !== 'none' && a.position === 'absolute' ? [parseFloat(a.width) || 0, parseFloat(a.height) || 0] : null;
+    const what = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '')
+      + (typeof e.className === 'string' && e.className ? '.' + e.className.split(' ')[0] : '');
+    const top = miss && at(cx + miss[0], cy + miss[1]);
+    return {w: r.width, h: r.height, tw: Math.max(r.width, square ? square[0] : 0), th: Math.max(r.height, square ? square[1] : 0),
+            square: !!square, lands: !miss, covered: !miss ? '' : (top ? what(top) : 'off screen'),
+            field: ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName), touch: getComputedStyle(el).touchAction};
+  });
+})"""
+GAP_JS = r"""((pair) => {
+  const btns = [...document.querySelectorAll('.panels button[data-mode]')];
+  return pair.map((mode) => {
+    const a = document.querySelector(`.panels button[data-mode='${mode}']`).getBoundingClientRect();
+    return btns.filter((b) => b.dataset.mode !== mode).map((b) => {
+      const r = b.getBoundingClientRect();
+      const dx = Math.max(0, r.left - a.right, a.left - r.right), dy = Math.max(0, r.top - a.bottom, a.top - r.bottom);
+      return [mode, b.dataset.mode, Math.round(Math.hypot(dx, dy) * 10) / 10];
+    }).sort((x, y) => x[2] - y[2]).slice(0, 3);
+  }).flat();
+})"""
+PAGE_JS = r"""(() => { const d = document.documentElement;
+  const modes = [...document.querySelectorAll('.panels button[data-mode]')].map((b) => b.getBoundingClientRect());
+  return {sw: d.scrollWidth, cw: d.clientWidth, sh: d.scrollHeight, vh: innerHeight,
+          modes_bottom: modes.length ? Math.round(Math.max(...modes.map((r) => r.bottom + scrollY))) : null}; })()"""
+MODAL_JS = r"""(() => { const m = document.getElementById('results-modal');
+  return {sw: m.scrollWidth, cw: m.clientWidth, sh: m.scrollHeight, vh: m.clientHeight}; })()"""
+
+
+def _measure(chrome: Chrome, where: str) -> List[dict]:
+    rows = []
+    for w, name, sel, several in TAPS:
+        if w != where:
+            continue
+        found = chrome.eval("(%s)(%s, %s, %d)" % (TAP_JS, json.dumps(sel), json.dumps(several), TAP_MIN)) or []
+        rows.append({"where": where, "name": name, "n": len(found),
+                     "w": min((f["w"] for f in found), default=0.0), "h": min((f["h"] for f in found), default=0.0),
+                     "tw": min((f["tw"] for f in found), default=0.0), "th": min((f["th"] for f in found), default=0.0),
+                     "square": any(f["square"] for f in found),
+                     "ok": bool(found) and all(f["tw"] >= TAP_MIN and f["th"] >= TAP_MIN and f["lands"] for f in found),
+                     "covered": sorted({f["covered"] for f in found if f["covered"]}),
+                     # a double tap on a button doesn't zoom the page (a field keeps its own double tap)
+                     "zooms": bool(found) and any(not f["field"] and f["touch"] != "manipulation" for f in found)})
+    return rows
+
+
+def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
+    """Every control the host presses on race night, at each size (landscape, touch): its size and whether a
+    finger lands on it; the gaps around AT THE GATE and THEY'RE OFF!; and the scroll each page needs. The
+    Control Center's main view, its drawer, SET WINNERS with three horses picked, the REVEAL WINNERS popup,
+    and the LQ admin page with the betting closed (the counted pot shows) and a horse scratched (for Undo). A
+    Chrome of its own for each size: one that has left a few Control Centers behind (kept for Back, their result
+    streams open) has no connection to pi5 left (see link_checks)."""
+    server = Server(rig)
+    out = []
+    try:
+        for size in sizes:
+            chrome = Chrome(touch=True, size=size)
+            try:
+                chrome.call("Page.navigate", url=server.url)
+                chrome.wait_for("document.readyState === 'complete' && typeof showResultsModal === 'function'", timeout=30)
+                chrome.wait_for("(() => { const s = document.getElementById('splash-screen');"
+                                " return !s || s.style.display === 'none'; })()", timeout=20)
+                chrome.wait_for("typeof quinielaField !== 'undefined' && quinielaField !== null", timeout=20)
+                chrome.eval("window.scrollTo(0, 0); 1")
+                page = chrome.eval(PAGE_JS)
+                gaps = chrome.eval("(%s)(%s)" % (GAP_JS, json.dumps(RACE_PAIR)))
+                rows = _measure(chrome, "Control Center")
+                # each view opened and closed by script: whether a finger lands on its buttons is what is measured
+                chrome.eval("openDrawer(); 1")
+                chrome.wait_for("document.getElementById('drawer').classList.contains('open')", timeout=10)
+                time.sleep(0.45)                                          # the drawer slides in for 0.3 s
+                rows += _measure(chrome, "drawer")
+                chrome.eval("closeDrawer(); 1")
+                time.sleep(0.45)
+                chrome.eval("showResultsModal(); 1")
+                chrome.wait_for("document.getElementById('results-modal').classList.contains('active') && "
+                                "document.querySelectorAll('.winner-pick-btn').length > 0", timeout=20)
+                time.sleep(0.2)
+                for n in HORSES.values():
+                    chrome.eval("document.querySelector(\".winner-pick-btn[data-horse='%d']\").click(); 1" % n)
+                    time.sleep(0.2)
+                chrome.wait_for("[...document.querySelectorAll('.slot-clear')].filter((b) => b.getClientRects().length).length === 3",
+                                timeout=10)
+                modal = chrome.eval(MODAL_JS)
+                rows += _measure(chrome, "SET WINNERS")
+                chrome.eval("closeResultsModal(); 1")
+                chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
+                time.sleep(0.3)
+                chrome.eval("pendingResults = {win: %d, place: %d, show: %d}; showResultsRevealModal(); 1"
+                            % (HORSES["win"], HORSES["place"], HORSES["show"]))
+                chrome.wait_for("document.getElementById('results-reveal-modal').classList.contains('active')", timeout=10)
+                time.sleep(0.5)
+                rows += _measure(chrome, "reveal")
+                chrome.eval("revealWinners(); 1")
+                # the admin page: betting closed (AT THE GATE), so the counted pot shows; a horse scratched, for Undo
+                rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
+                if not rig.model().get("scratches"):
+                    rig.post("/api/quiniela/scratch", {"horse": 20})
+                chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#scratch-list button[data-scratch]')"
+                                " && !!document.querySelector('#scratched-list button[data-undo]')"
+                                " && !document.getElementById('counted').hidden", timeout=20)
+                time.sleep(0.3)
+                admin = chrome.eval(PAGE_JS)
+                rows += _measure(chrome, "admin page")
+                out.append({"size": size, "rows": rows, "gaps": gaps, "page": page, "modal": modal, "admin": admin,
+                            "errors": chrome.page_errors()})
+            finally:
+                chrome.close()
+    finally:
+        server.close()
+    return out
+
+
+def _px(v: float) -> str:
+    return ("%.1f" % v).rstrip("0").rstrip(".")
+
+
+def tap_checks(rig: Any, sizes=TAP_SIZES) -> List[Result]:
+    """tap_targets as checks: at each size, everything the host presses on each view takes a finger (44 px
+    each way), AT THE GATE and THEY'RE OFF! are 8 px or more from any other mode button, and neither page nor
+    SET WINNERS scrolls sideways."""
+    out: List[Result] = []
+    for m in tap_targets(rig, sizes):
+        tag = "[%dx%d] " % m["size"]
+        for where in WHERE:
+            rows = [r for r in m["rows"] if r["where"] == where]
+            missing = [r["name"] for r in rows if not r["n"]]
+            small = ["%s %s x %s%s" % (r["name"], _px(r["tw"]), _px(r["th"]),
+                                       ", a finger lands on " + ", ".join(r["covered"]) if r["covered"] else "")
+                     for r in rows if r["n"] and not r["ok"]]
+            out.append((tag + f"{where}: every control the host presses there ({len(rows)}) found, {TAP_MIN} x {TAP_MIN} px or more under a finger",
+                        not missing and not small, "; ".join((["not found: " + ", ".join(missing)] if missing else []) + small)))
+            zooms = [r["name"] for r in rows if r["zooms"]]
+            out.append((tag + f"{where}: touch-action manipulation on each (a double tap doesn't zoom, a pinch does)",
+                        not zooms, ", ".join(zooms)))
+        short = [f"{a} to {b} {g} px" for a, b, g in m["gaps"] if g < GAP_MIN]
+        out.append((tag + f"AT THE GATE and THEY'RE OFF! {GAP_MIN} px or more from any other mode button",
+                    len(m["gaps"]) == 2 * 3 and not short, "; ".join(short) or str(m["gaps"])))
+        sideways = [name for name, p in (("Control Center", m["page"]), ("SET WINNERS", m["modal"]), ("admin page", m["admin"]))
+                    if p["sw"] > p["cw"]]
+        out.append((tag + "no sideways scroll: the Control Center, SET WINNERS, the admin page", not sideways,
+                    ", ".join(sideways)))
+        out.append((tag + "no page errors", not m["errors"], "; ".join(m["errors"])[:300]))
+    return out
+
+
+def print_taps(measured: List[dict]) -> None:
+    for m in measured:
+        p, a, mo = m["page"], m["admin"], m["modal"]
+        print("\n=== %d x %d, landscape, touch ===" % m["size"])
+        print("  %-15s %-50s %-24s %s" % ("where", "control", "w x h (px)", "44 px each way"))
+        for r in m["rows"]:
+            size = "%s x %s" % (_px(r["w"]), _px(r["h"])) if r["n"] else "-"
+            if r["square"]:                                               # drawn smaller, taps on a square
+                size = "%s x %s (drawn %s)" % (_px(r["tw"]), _px(r["th"]), size)
+            several = " (%d)" % r["n"] if r["n"] > 1 else ""
+            verdict = ("yes" if r["ok"] else "NOT FOUND" if not r["n"]
+                       else "NO" + (" (a finger lands on %s)" % ", ".join(r["covered"]) if r["covered"] else ""))
+            print("  %-15s %-50s %-24s %s" % (r["where"], r["name"] + several, size, verdict))
+        print("  gaps: " + ", ".join(f"{x} to {y} {g} px" for x, y, g in m["gaps"]))
+        print("  Control Center: %d px wide in %d (%s), %d px tall in %d; the lowest mode button ends at %d (%s)"
+              % (p["sw"], p["cw"], "no sideways scroll" if p["sw"] <= p["cw"] else "SCROLLS SIDEWAYS", p["sh"], p["vh"],
+                 p["modes_bottom"], "on the first screen" if p["modes_bottom"] <= p["vh"] else "scroll to reach it"))
+        print("  SET WINNERS: %d px wide in %d (%s), %d px tall in %d (%s)"
+              % (mo["sw"], mo["cw"], "no sideways scroll" if mo["sw"] <= mo["cw"] else "SCROLLS SIDEWAYS", mo["sh"], mo["vh"],
+                 "fits" if mo["sh"] <= mo["vh"] else "scrolls"))
+        print("  admin page: %d px wide in %d (%s), %d px tall in %d"
+              % (a["sw"], a["cw"], "no sideways scroll" if a["sw"] <= a["cw"] else "SCROLLS SIDEWAYS", a["sh"], a["vh"]))
+        if m["errors"]:
+            print("  page errors: " + "; ".join(m["errors"]))
+
+
+# -----------------------------------------------------------------------------
+# Full screen from the Home Screen: the links between the two pages open in place
+# -----------------------------------------------------------------------------
+# A Home Screen shortcut runs a page full screen (the web-app metas on both pages): no tabs, no second window,
+# so the links between the Control Center and the admin page (data-in-place-standalone) drop their target there,
+# when navigator.standalone or the display-mode: standalone media query says so, and a tap replaces the page in
+# place. Replaces, not stacks: a Control Center kept for Back holds its result streams open (its own and its
+# spectator preview's), and in Chrome the fourth trip back to it found no connection to pi5 left. Headless Chrome
+# is not an iPad: here navigator.standalone is forced true, or the media query answered yes, before the page's
+# scripts run. What iPadOS does with the shortcut is checked on the iPad.
+
+STANDALONE_JS = "Object.defineProperty(Navigator.prototype, 'standalone', {configurable: true, get: () => true});"
+DISPLAY_MODE_JS = r"""(() => { const real = window.matchMedia.bind(window);
+  window.matchMedia = (q) => /display-mode:\s*standalone/.test(q) ? {matches: true, media: q, onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; }}
+    : real(q); })();"""
+# (the link, the page it is on, its selector, its target and rel as built, the path it goes to)
+CROSS_LINKS = (("the Control Center's link to the admin page (the drawer)", "/", "a.drawer-link[href='/quiniela/admin']",
+                "_blank", "noopener", "/quiniela/admin"),
+               ("the admin page's link to the Control Center", "/quiniela/admin", "#state-link",
+                "ddm-control-center", None, "/"))
+ROUND_TRIPS = 4                                # the fourth trip back stalled when the pages stacked
+LINK_JS = "(() => { const a = document.querySelector(%s); return a && [a.getAttribute('target'), a.getAttribute('rel')]; })()"
+ANSWERS_JS = """(async () => { const c = new AbortController(); const k = setTimeout(() => c.abort(), 6000);
+  try { const r = await fetch('/api/quiniela', {signal: c.signal, cache: 'no-store'}); await r.text(); return r.ok; }
+  catch (e) { return false; } finally { clearTimeout(k); } })()"""
+
+
+def _tabs(chrome: Chrome) -> int:
+    return sum(t["type"] == "page" for t in chrome.call("Target.getTargets")["targetInfos"])
+
+
+def _wait_tabs(chrome: Chrome, n: int, timeout: float) -> int:
+    end = time.monotonic() + timeout
+    while _tabs(chrome) != n and time.monotonic() < end:
+        time.sleep(0.1)
+    time.sleep(0.3)
+    return _tabs(chrome)
+
+
+def _arrive(chrome: Chrome, path: str, timeout: float = 20.0) -> bool:
+    """The page at `path` loaded and ready to tap (the Control Center's splash gone); False after `timeout` s."""
+    ready = ("location.pathname === %s && document.readyState === 'complete' && (() => {"
+             " const s = document.getElementById('splash-screen'); return !s || s.style.display === 'none'; })()"
+             % json.dumps(path))
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            if chrome.eval(ready, timeout=5.0):
+                return True
+        except (RuntimeError, TimeoutError):                  # between two documents, or a page that hangs
+            pass
+        time.sleep(0.05)
+    return False
+
+
+def _tap_link(chrome: Chrome, page: str, sel: str) -> None:
+    chrome.call("Page.bringToFront")                          # a tab the last tap opened went in front
+    if page == "/":                                           # the Control Center's is in the drawer
+        chrome.tap("#hamburger-btn")
+        chrome.wait_for("document.getElementById('drawer').classList.contains('open')", timeout=10)
+        time.sleep(0.45)
+    chrome.tap(sel)
+
+
+def link_checks(rig: Any) -> List[Result]:
+    """The links between the two pages, each case in a Chrome of its own. In a browser tab: the target as built,
+    and a tap opens a second tab while the page stays (a named one is reused by the next tap). Full screen by the
+    display-mode query: no target, and a tap replaces the page in place. Full screen by navigator.standalone:
+    ROUND_TRIPS round trips by taps, each page in place without a second tab or a history entry, pi5 answering
+    to the end. A case that cannot run is one failure and the rest go on."""
+    out: List[Result] = []
+    errors: List[str] = []
+    server = Server(rig)
+
+    def case(label: str, script: Optional[str], body: Callable[[Chrome], None]) -> None:
+        chrome = Chrome(touch=True)
+        try:
+            if script:
+                chrome.call("Page.addScriptToEvaluateOnNewDocument", source=script)
+            body(chrome)
+            errors.extend(chrome.page_errors())
+        except Exception as exc:                              # noqa: BLE001 - a case that cannot run is a failure
+            out.append((f"{label}: ran", False, f"{type(exc).__name__}: {exc}"[:300]))
+        finally:
+            chrome.close()
+
+    def open_page(chrome: Chrome, page: str) -> None:
+        chrome.call("Page.navigate", url=server.url + page.lstrip("/"))
+        if not _arrive(chrome, page):
+            raise TimeoutError("the page did not load: " + page)
+
+    try:
+        for name, page, sel, target, rel, dest in CROSS_LINKS:
+            def in_a_tab(chrome: Chrome, name=name, page=page, sel=sel, target=target, rel=rel) -> None:
+                how = "in a browser tab"
+                open_page(chrome, page)
+                got = chrome.eval(LINK_JS % json.dumps(sel))
+                out.append((f"{name}, {how}: target {target}" + (f" rel {rel}" if rel else "") + " as built",
+                            got == [target, rel], str(got)))
+                _tap_link(chrome, page, sel)
+                n = _wait_tabs(chrome, 2, 10.0)
+                stayed = chrome.eval("location.pathname")
+                out.append((f"{name}, {how}: a tap opens a second tab and this page stays",
+                            n == 2 and stayed == page, f"{n} tabs, this page at {stayed}"))
+                if target != "_blank":
+                    _tap_link(chrome, page, sel)
+                    out.append((f"{name}, {how}: a second tap goes back to that tab ({target}), no third",
+                                _wait_tabs(chrome, 2, 2.0) == 2, f"{_tabs(chrome)} tabs"))
+
+            def full_screen(chrome: Chrome, name=name, page=page, sel=sel, dest=dest) -> None:
+                how = "full screen (display-mode: standalone)"
+                open_page(chrome, page)
+                got = chrome.eval(LINK_JS % json.dumps(sel))
+                history = chrome.eval("history.length")
+                out.append((f"{name}, {how}: no target", got == [None, None], str(got)))
+                _tap_link(chrome, page, sel)
+                went = _arrive(chrome, dest)
+                after = (_wait_tabs(chrome, 1, 2.0), chrome.eval("history.length", timeout=5.0) if went else None)
+                out.append((f"{name}, {how}: a tap replaces this page with {dest}, no second tab",
+                            went and after == (1, history), f"at {dest}: {went}; tabs, history {after} (was {history})"))
+
+            case(f"{name}, in a browser tab", None, in_a_tab)
+            case(f"{name}, full screen (display-mode: standalone)", DISPLAY_MODE_JS, full_screen)
+
+        # navigator.standalone: back and forth by taps, as the host would all night
+        def round_trips(chrome: Chrome) -> None:
+            open_page(chrome, "/")
+            history = chrome.eval("history.length")
+            trips: List[tuple] = []
+            for trip in range(ROUND_TRIPS):
+                for name, page, sel, target, rel, dest in CROSS_LINKS:
+                    try:
+                        got = chrome.eval(LINK_JS % json.dumps(sel), timeout=5.0)
+                        _tap_link(chrome, page, sel)
+                        went = _arrive(chrome, dest)
+                        trips.append((trip + 1, dest, got == [None, None], went,
+                                      went and chrome.eval(ANSWERS_JS, timeout=10.0), _tabs(chrome),
+                                      chrome.eval("history.length", timeout=5.0) if went else None))
+                    except (RuntimeError, TimeoutError, LookupError) as exc:
+                        trips.append((trip + 1, dest, None, False, False, None, f"{type(exc).__name__}: {exc}"[:120]))
+                    if not trips[-1][3]:
+                        break
+                if not trips[-1][3]:
+                    break
+            bad = [t for t in trips if not (t[2] and t[3] and t[4] and t[5] == 1 and t[6] == history)]
+            out.append((f"full screen (navigator.standalone): {ROUND_TRIPS} round trips by taps, Control Center to admin page "
+                        "and back: each page in place, its link without a target, no second tab, no history entry, pi5 answering",
+                        len(trips) == 2 * ROUND_TRIPS and not bad,
+                        "trip, at, no target, arrived, pi5 answers, tabs, history (was %s): %s" % (history, bad or trips[-1:])))
+
+        case("full screen (navigator.standalone), round trips", STANDALONE_JS, round_trips)
+        out.append(("no page errors", not errors, "; ".join(errors)[:300]))
+    finally:
+        server.close()
+    return out
+
+
+# -----------------------------------------------------------------------------
 # --shots: the picker, for looking at
 # -----------------------------------------------------------------------------
 
@@ -968,6 +1378,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--mode", choices=("mouse", "touch", "both"), default="both")
     ap.add_argument("--js", help="serve this file as ddm_control.js (another version of it)")
     ap.add_argument("--shots", help="write screenshots of the picker to this directory")
+    ap.add_argument("--taps", action="store_true", help="the size of everything the host presses, iPad landscape")
     args = ap.parse_args(argv)
     if not available():
         print("needs Chrome or Chromium (DDM_CHROME) and simple_websocket")
@@ -977,6 +1388,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     modes = ("mouse", "touch") if args.mode == "both" else (args.mode,)
     if args.shots:
         shots(rig, Path(args.shots), args.js)
+        return 0
+    if args.taps:
+        print_taps(tap_targets(rig, LANDSCAPE))
         return 0
     if args.reproduce:
         print_reproduction(reproduce(rig, args.js, modes=modes))
