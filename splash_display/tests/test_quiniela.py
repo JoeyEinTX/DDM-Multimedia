@@ -1147,13 +1147,15 @@ CHROME = find_chrome()
 # it arrives, not after a wait; {"__stall": ms} makes the crawl's next frame that late;
 # {"__sample": ms} runs the page that long and reports it
 # frame by frame: how far any tile of the dots crawl ever was from where it
-# started (drift) and, each time the sign steps, [ms, offset, generation,
-# pending, what the tiles read]. crawl: the crawl's items, one copy, the live
+# started (drift); each time the sign steps, [ms, offset, generation,
+# pending, what the tiles read]; and cells: every cell of the message it
+# began with, the look of the tile that first showed it (class | inline
+# background | colour | opacity | glow). crawl: the crawl's items, one copy, the live
 # ones carrying their kind (the dots crawl has no track: its items are
 # window.ddmQuiniela.crawl()'s, with its tiles, and what they read), and
-# whether the track is there and animated; each tile's computed look
-# (colour | opacity | glow), and on the track the first re-bet note's
-# beside the horse's name before it and a replaced horse's struck name's.
+# whether the track is there and animated; on the track the first re-bet
+# note's computed look (colour | opacity | glow) beside the horse's name
+# before it and a replaced horse's struck name's.
 # roster: the roster slide's rows
 # when the page has one
 # (filled by window.ddmQuiniela.fillRoster after each model, as the
@@ -1213,7 +1215,6 @@ BOARD_PROBE_JS = r"""
                        room: r2(document.querySelector('.qb-crawl').getBoundingClientRect().width),
                        tileW: first ? r2(first.width) : null, tileH: first ? r2(first.height) : null,
                        classes: tiles.map((t) => t.className), colors: tiles.map((t) => t.style.backgroundColor + '|' + t.style.color),
-                       looks: tiles.map(look),
                        note: note ? { note: look(note), name: look(note.previousElementSibling), text: note.textContent,
                                       struck: look(track.querySelector('.qb-crawl-was')) } : null,
                        animation: getComputedStyle(track).animationName, trackDisplay: getComputedStyle(track).display };
@@ -1313,6 +1314,9 @@ BOARD_PROBE_JS = r"""
         const startText = textOf();
         let offset = first.offset, drift = 0, frames = 0;
         const steps = [];
+        const cells = {};
+        const lookOf = (t) => { const c = getComputedStyle(t);
+                                return [t.className, t.style.backgroundColor, c.color, c.opacity, c.textShadow].join('|'); };
         const t0 = performance.now();
         await new Promise((resolve) => {
             const tick = () => {
@@ -1323,11 +1327,18 @@ BOARD_PROBE_JS = r"""
                     offset = s.offset;
                     steps.push([Math.round(performance.now() - t0), s.offset, s.generation, s.pending, textOf()]);
                 }
+                if (s.generation === first.generation && s.length) {
+                    for (let i = 0; i < tiles.length; i++) {
+                        const k = s.offset + i;
+                        if (k >= 0 && !((k % s.length) in cells)) cells[k % s.length] = lookOf(tiles[i]);
+                    }
+                }
                 if (performance.now() - t0 < ms) requestAnimationFrame(tick); else resolve();
             };
             requestAnimationFrame(tick);
         });
-        sampled = { frames: frames, drift: r2(drift), tiles: tiles.length, start: [first.offset, first.generation, startText], steps: steps };
+        sampled = { frames: frames, drift: r2(drift), tiles: tiles.length, start: [first.offset, first.generation, startText], steps: steps,
+                    cells: cells };
     }
     function takeSample() { const s = sampled; sampled = null; return s; }
     let stream = null;
@@ -1978,6 +1989,13 @@ def run_boards(jobs: Dict[str, Tuple[List[dict], Dict[str, Any]]]) -> Dict[str, 
         return {name: future.result() for name, future in futures.items()}
 
 
+def is_scratch_item(item: str) -> bool:
+    """A scratch among the crawl's items: the same-day ones under SCRATCHED,
+    or in dots a replacement's own line (9 THE PUMA SCRATCHED - 22 OCELLI
+    DRAWS IN)."""
+    return item.upper().startswith("SCRATCHED") or item.upper().endswith(" DRAWS IN")
+
+
 def crawl_window(loop: str, offset: int, tiles: int) -> str:
     """What the tiles read with the loop's cell `offset` on the first one
     (blank before the message starts)."""
@@ -2009,7 +2027,7 @@ class CrawlLiveTests(unittest.TestCase):
         items = self.items(seen)
         self.assertEqual(items[0], fake_pi5.CHYRON_LINES[0])
         self.assertEqual(items[1:4], ["time:7:42 PM", "post:Post in 1:14", "weather:Dallas 88°F Sunny"])
-        self.assertTrue(items[4].startswith("Scratched"), items[4])
+        self.assertTrue(is_scratch_item(items[4]), items[4])
         self.assertEqual(items[-1], fake_pi5.CHYRON_LINES[-1])
 
     def test_under_ten_minutes_the_seconds_tick_in_place(self) -> None:
@@ -2029,7 +2047,7 @@ class CrawlLiveTests(unittest.TestCase):
         for seen in (past, no_post):
             items = self.items(seen)
             self.assertEqual(items[1], "time:7:42 PM")
-            self.assertTrue(items[2].startswith("Scratched"), items)
+            self.assertTrue(is_scratch_item(items[2]), items)
             self.assertFalse(any(i.startswith(("post:", "weather:")) for i in items), items)
 
     def test_impact_too(self) -> None:
@@ -2070,10 +2088,13 @@ class StepCrawlTests(unittest.TestCase):
         # Spec section 6: only a scratch with no replacement says RE-BET YOUR TOKENS; the replacements say neither.
         replaced_only = crawl_model(post_in=74 * 60 + 30)
         replaced_only["scratches"] = [s for s in replaced_only["scratches"] if s.get("now") is not None]
+        undone = crawl_model(post_in=74 * 60 + 30)                  # 9 -> 22 undone on the admin page
+        undone["scratches"] = [s for s in undone["scratches"] if s["was"]["number"] != 9]
+        undone["names_rev"] += 1
         cls.runs = run_boards({
             "default": ([m, {"__sample": 5000}], plain),
             "slow": ([m, {"__sample": 5000}], dict(plain, query="crawl_tps=2")),
-            "fast": ([m, {"__sample": 12000}], dict(plain, query="crawl_tps=60")),
+            "fast": ([m, {"__sample": 14000}], dict(plain, query="crawl_tps=60")),
             "bad": ([m], dict(plain, query="crawl_tps=abc")),
             "huge": ([m], dict(plain, query="crawl_tps=500")),
             "tiny": ([m], dict(plain, query="crawl_tps=0.01")),
@@ -2081,9 +2102,7 @@ class StepCrawlTests(unittest.TestCase):
             # at 20 a second the clock and the countdown are on the tiles when the minute turns
             "inplace": ([m, {"__wait": 3500}, {"__feed": minute_on}], dict(plain, query="crawl_tps=20")),
             "longer": ([m, {"__wait": 1300}, longer, {"__sample": 5500}], dict(plain, query="crawl_tps=60")),
-            # at 60 a second the scratches are on the tiles: SCRATCHED and the first replacement at offset 102, the last two
-            # scratches, the re-bet note and the next line at 222
-            "styled": ([m, {"__wait": 1600}, {"__wait": 1300}], dict(plain, query="crawl_tps=60")),
+            "undo": ([m, {"__wait": 1300}, undone, {"__sample": 6500}], dict(plain, query="crawl_tps=60")),
             "reordered": ([m, {"__wait": 1300}, {"__feed": reordered}], plain),
             "stall": ([m, {"__stall": 1500}, {"__sample": 3000}], plain),
             "hidden": ([m, dict(m, race_state=0, race_state_name="PRE_RACE"), {"__sample": 2000}, m, {"__sample": 1500}], plain),
@@ -2119,35 +2138,64 @@ class StepCrawlTests(unittest.TestCase):
                          "a resize measures again: the message goes on")
         self.assertGreater(narrow["crawl"]["snapshot"]["offset"], wide["crawl"]["snapshot"]["offset"])
 
-    def test_the_cells_are_styled_like_the_tracks_items(self) -> None:
-        # SCRATCHED red; a cloth its number's digits on the cloth's colours, one tile or two touching; the replaced
-        # horse's name dim and struck (the blank between its words too); the arrow and the new name plain; RE-BET
-        # YOUR TOKENS plain like the name before it, not struck.
-        _first, early, late = self.got("styled")
-        c = early["crawl"]
-        text, classes, colors = c["text"], c["classes"], c["colors"]
-        label = text.index("SCRATCHED")
-        self.assertEqual({classes[label + i] for i in range(9)}, {"qb-ct is-lbl"}, "SCRATCHED in red dots")
-        self.assertEqual(text[label + 9:label + 12], " 5 ")
-        self.assertEqual((classes[label + 10], colors[label + 10]), ("qb-ct is-cloth is-cs", "rgb(0, 132, 61)|rgb(255, 255, 255)"),
-                         "5: its cloth, one tile, the number in the cloth's other colour")
-        name = text.index("RIGHT TO PARTY")
-        self.assertEqual({classes[name + i] for i in range(len("RIGHT TO PARTY"))}, {"qb-ct is-dim is-strike"},
-                         "the replaced horse's name: dim, struck, the blank between its words too")
-        arrow = text.index("\u25b6", name)
-        self.assertEqual(classes[arrow], "qb-ct", "the arrow: plain")
-        two = text.index("21", arrow)
-        self.assertEqual([classes[two], classes[two + 1]], ["qb-ct is-cloth is-cl", "qb-ct is-cloth is-cr"], "21: two touching cloth tiles")
-        self.assertEqual((colors[two], colors[two + 1]), ("rgb(255, 218, 185)|rgb(0, 0, 0)",) * 2)
-        self.assertEqual({classes[text.index("GREAT WHITE") + i] for i in range(11)}, {"qb-ct"}, "the new horse's name: plain")
-        c = late["crawl"]
-        note = c["text"].index("RE-BET YOUR TOKENS")
-        self.assertEqual({c["classes"][note + i] for i in range(18)}, {"qb-ct"}, "RE-BET YOUR TOKENS plain, not struck")
+    def loop_cells(self, name: str) -> Tuple[str, List[str]]:
+        """A run's loop as the snapshot reads it, and each cell's look on the tile that showed it (its sample)."""
+        first, reading = self.got(name)[0], self.got(name)[-1]
+        loop, cells = first["crawl"]["snapshot"]["text"], reading["sample"]["cells"]
+        self.assertEqual(len(cells), len(loop), f"{name}: the sample saw every cell of the loop")
+        return loop, [cells[str(k)] for k in range(len(loop))]
+
+    def test_on_the_tiles_only_scratched_is_red_and_nothing_is_a_chip_a_strike_or_an_arrow(self) -> None:
+        # Joey, 2026-10-06: the crawl is one-colour dot-matrix tiles. The whole loop as the tiles showed it, a cell at
+        # a time: the red SCRATCHED over the same-day scratches, and every other cell the plain tile in the lit amber:
+        # no cloth, no colour of its own, nothing struck or dim, no arrow. A replacement's own SCRATCHED is plain like
+        # the rest of its line.
+        loop, looks = self.loop_cells("fast")
+        self.assertIn("SCRATCHED 20 FULLEFFORT", loop, "the same-day scratch, its number plain, right after SCRATCHED")
+        label = loop.index("SCRATCHED 20 FULLEFFORT")
+        red = set(range(label, label + len("SCRATCHED")))
+        self.assertEqual({looks[k].split("|")[0] for k in red}, {"qb-ct is-lbl"}, "SCRATCHED over the same-day scratch: red")
+        self.assertEqual({tuple(looks[k].split("|")[:2]) for k in range(len(loop)) if k not in red}, {("qb-ct", "")},
+                         "every other cell the plain tile: no cloth, no colour of its own, nothing struck or dim")
+        lit = {looks[k] for k in range(len(loop)) if k not in red and loop[k] != " "}
+        self.assertEqual(len(lit), 1, "one look for every character but SCRATCHED's: " + str(lit))
+        self.assertEqual(next(iter(lit)).split("|")[2:4], ["rgb(212, 160, 0)", "1"], "the lit amber, opaque")
+        self.assertNotIn("\u25b6", loop, "no arrow")
+
+    def test_a_replacement_reads_its_own_line_then_the_same_day_scratches(self) -> None:
+        # Joey, 2026-10-06: {old number} {old name} SCRATCHED - {new number} {new name} DRAWS IN, an item of its own,
+        # in number order (the model's); then the same-day scratch under SCRATCHED, as it read before, its number plain.
+        snap = self.got("default")[0]["crawl"]["snapshot"]
+        lines = ["5 RIGHT TO PARTY SCRATCHED - 21 GREAT WHITE DRAWS IN", "9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN",
+                 "13 SILENT TACTIC SCRATCHED - 23 ROBUSTA DRAWS IN"]
+        self.assertEqual([x for x in snap["items"] if is_scratch_item(x)],
+                         lines + ["Scratched20FULLEFFORT\u00b7 RE-BET YOUR TOKENS"], "the scratches, in this order")
+        for line in lines:
+            self.assertIn(self.GAP + line + self.GAP, snap["text"], f"{line}: on the tiles, an item between two diamonds")
+        self.assertIn(self.GAP + "SCRATCHED 20 FULLEFFORT \u00b7 RE-BET YOUR TOKENS" + self.GAP, snap["text"],
+                      "the same-day scratch reads as it did")
+
+    def test_undoing_a_replacement_takes_its_line_away_at_the_next_loop(self) -> None:
+        first, waited, offered, sampled = self.got("undo")
+        line = "9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN"
+        old = offered["crawl"]["snapshot"]
+        self.assertTrue(old["pending"], "the undo is a new message: it waits")
+        self.assertIn(line, old["items"], "the old message, the line in it, is still the one on the tiles")
+        s, final = sampled["sample"], sampled["crawl"]["snapshot"]
+        steps = s["steps"]
+        swap = next(i for i, step in enumerate(steps) if step[1] == 0)
+        self.assertEqual(steps[swap - 1][1], old["length"] - 1, "swapped at the loop boundary")
+        self.assertEqual((steps[swap][2], steps[swap][3]), (old["generation"] + 1, False))
+        self.assertNotIn(line, final["items"])
+        for gone in ("THE PUMA", "OCELLI"):
+            self.assertNotIn(gone, final["text"], "nothing of it left on the tiles")
+        self.assertEqual(final["length"], old["length"] - len(line) - len(self.GAP), "one line and its gap shorter")
+        self.assertIn("5 RIGHT TO PARTY SCRATCHED - 21 GREAT WHITE DRAWS IN", final["items"], "the other lines stay")
 
     def test_the_re_bet_note_is_as_bright_as_the_text_around_it(self) -> None:
         # It tells the bettors what to do, so it is not fine print: in every look its colour, opacity and glow are
-        # the horse's name's before it (in dots the lit tile's, amber), while the struck name of a replaced horse
-        # stays dim.
+        # the horse's name's before it (in dots the lit tile's, amber), while on the track of numbers and impact the
+        # struck name of a replaced horse stays dim (dots has none: it says a replacement in words).
         for run in ("numbers", "impact"):
             n = self.got(run)[-1]["crawl"]["note"]
             self.assertIsNotNone(n, f"{run}: the track carries the note")
@@ -2155,18 +2203,14 @@ class StepCrawlTests(unittest.TestCase):
             self.assertEqual(n["note"], n["name"], f"{run}: the note's colour | opacity | glow against the name's")
             self.assertEqual(n["note"].split("|")[1], "1", f"{run}: opaque")
             self.assertNotEqual(n["struck"], n["name"], f"{run}: a replaced horse's struck name stays muted")
-        early, late = self.got("styled")[1:]
-        c = late["crawl"]
-        text, looks = c["text"], c["looks"]
-        note = text.index("\u00b7 RE-BET YOUR TOKENS")
-        name = text.rindex("FULLEFFORT", 0, note)
+        loop, looks = self.loop_cells("fast")
+        note = loop.index("\u00b7 RE-BET YOUR TOKENS")
+        name = loop.rindex("FULLEFFORT", 0, note)
         lit = {looks[name + i] for i in range(len("FULLEFFORT"))}
         self.assertEqual(len(lit), 1, "dots: the name's tiles, one look")
-        self.assertTrue(next(iter(lit)).startswith("rgb(212, 160, 0)|1|"), "dots: the lit tile, amber and opaque: " + str(lit))
+        self.assertEqual(next(iter(lit)).split("|")[2:4], ["rgb(212, 160, 0)", "1"], "dots: the lit tile, amber and opaque")
         self.assertEqual({looks[note + i] for i, ch in enumerate("\u00b7 RE-BET YOUR TOKENS") if ch != " "}, lit,
                          "dots: every character of the note on a tile lit like the name's")
-        struck = early["crawl"]["text"].index("RIGHT TO PARTY")
-        self.assertNotIn(early["crawl"]["looks"][struck], lit, "dots: a replaced horse's struck name stays dim")
 
     def test_the_same_scratches_in_another_key_order_are_no_update(self) -> None:
         # The model a page gets when it loads (the relay's, sorted keys) and pi5's stream (its own order) carry the same
@@ -2227,7 +2271,7 @@ class StepCrawlTests(unittest.TestCase):
         self.assertTrue(track and float(track.group(1)) == 120.0)
         tile = self.got("default")[-1]["crawl"]["snapshot"]["tile"]
         self.assertAlmostEqual(5 * tile, 120.0, delta=3.6, msg="the default is the old track's px/s, in tiles")
-        for name, tps, seconds in (("default", 5, 5), ("slow", 2, 5), ("fast", 60, 12)):
+        for name, tps, seconds in (("default", 5, 5), ("slow", 2, 5), ("fast", 60, 14)):
             s = self.sample(name)
             self.assertEqual(self.got(name)[-1]["crawl"]["snapshot"]["tps"], tps, name)
             self.assertLessEqual(abs(len(s["steps"]) - tps * seconds), 1, f"{name}: {tps} tiles a second for {seconds} s")
@@ -2297,15 +2341,27 @@ class StepCrawlTests(unittest.TestCase):
         for t, offset, generation, pending, text in steps[swap:swap + 20]:
             self.assertEqual(text, crawl_window(final["text"], offset, final["tiles"]), "the tiles read the new message")
 
-    def test_impact_and_numbers_keep_the_track_and_say_the_same(self) -> None:
+    def test_impact_and_numbers_keep_the_track_and_say_the_same_but_the_scratches(self) -> None:
+        # numbers and impact are as they were: the track, and one SCRATCHED item with the cloths, the struck names and
+        # the arrows. The tiles say everything else the same, in the same order: the scratches they say in words, in
+        # the track's place (one line per replacement, then the same-day ones under SCRATCHED).
         said = self.got("default")[0]["crawl"]["items"]
         self.assertEqual(said[0], fake_pi5.CHYRON_LINES[0])
+        tracks = {}
         for look in ("numbers", "impact"):
             c = self.got(look)[0]["crawl"]
             self.assertIsNone(c["snapshot"], f"{look}: no tiles, nothing to snapshot")
             self.assertEqual((c["tiles"], c["animation"], c["trackDisplay"]), (0, "qbCrawl", "flex"),
                              f"{look}: the track is there and animated, as it was")
-            self.assertEqual(c["items"], said, f"{look}: the same items, in the same order, with the same separators")
+            tracks[look] = c["items"]
+        self.assertEqual(tracks["numbers"], tracks["impact"], "numbers and impact: the same items")
+        track = tracks["impact"]
+        k = next(i for i, x in enumerate(track) if x.startswith("Scratched"))
+        self.assertEqual(track[k], "Scratched5RIGHT TO PARTY\u25b621GREAT WHITE9THE PUMA\u25b622OCELLI13SILENT TACTIC\u25b623ROBUSTA"
+                                   "20FULLEFFORT\u00b7 RE-BET YOUR TOKENS", "the track's scratches as they were")
+        self.assertEqual(track[:k] + track[k + 1:], [x for x in said if not is_scratch_item(x)],
+                         "everything but the scratches: the same items, in the same order, with the same separators")
+        self.assertTrue(all(is_scratch_item(x) for x in said[k:k + 4]), "the tiles' scratches where the track has them")
         dots = self.got("default")[0]["crawl"]
         self.assertEqual((dots["trackDisplay"], dots["animation"]), ("none", "qbCrawl"), "dots: the track is out of the way")
 
@@ -2325,13 +2381,22 @@ class StepCrawlTests(unittest.TestCase):
         self.assertNotIn("refund", json.dumps(redesign_model()).lower(), "the served model says nothing of a refund")
 
     def test_a_replacement_scratch_says_neither(self) -> None:
-        # 9 -> 22 and the like: nothing to re-bet, so neither phrase, on the tiles or on the track.
-        for name in ("replaced-only", "replaced-only-impact"):
-            items = self.got(name)[0]["crawl"]["items"]
-            scratch = next(i for i in items if i.upper().startswith("SCRATCHED"))
-            self.assertIn('\u25b6', scratch, f'{name}: the replacements are there')
-            self.assertNotIn("RE-BET", scratch.upper(), name)
-            self.assertNotIn("REFUND", " ".join(items).upper(), name)
+        # 9 -> 22 and the like: settled before betting opens, nothing to re-bet, so neither phrase, on the tiles or on
+        # the track. With only replacements the tiles have their lines and no SCRATCHED item at all; the track has its
+        # one SCRATCHED item, as it was.
+        dots = self.got("replaced-only")[0]["crawl"]["snapshot"]
+        self.assertEqual([x for x in dots["items"] if is_scratch_item(x)],
+                         ["5 RIGHT TO PARTY SCRATCHED - 21 GREAT WHITE DRAWS IN", "9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN",
+                          "13 SILENT TACTIC SCRATCHED - 23 ROBUSTA DRAWS IN"], "dots: the lines, no SCRATCHED item")
+        for said in (dots["text"], " ".join(dots["items"]).upper()):
+            self.assertNotIn("RE-BET", said)
+            self.assertNotIn("REFUND", said)
+            self.assertNotIn("\u25b6", said)
+        items = self.got("replaced-only-impact")[0]["crawl"]["items"]
+        scratch = next(i for i in items if i.upper().startswith("SCRATCHED"))
+        self.assertIn('\u25b6', scratch, 'impact: the replacements are there, as they were')
+        self.assertNotIn("RE-BET", scratch.upper())
+        self.assertNotIn("REFUND", " ".join(items).upper())
 
     def test_a_character_the_face_lacks_is_its_base_letter_or_a_blank(self) -> None:
         # "Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 ...": capitals; the face's own
@@ -2383,7 +2448,7 @@ class StepCrawlSourceTests(unittest.TestCase):
         bare = re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S)
         rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", bare)
                  if ".qb-crawl-tiles" in sel or ".qb-ct" in sel]
-        self.assertGreaterEqual(len(rules), 8, [r[0] for r in rules])
+        self.assertGreaterEqual(len(rules), 3, [r[0] for r in rules])      # the row, a tile, SCRATCHED's red
         for selector, body in rules:
             self.assertIn('[data-look="dots"]', selector, "dots only")
             for prop in ("transform", "animation", "transition", "translate", "will-change"):
@@ -2391,11 +2456,14 @@ class StepCrawlSourceTests(unittest.TestCase):
         self.assertIn('.qb[data-look="dots"] .qb-crawl-track { display: none; }', self.CSS, "dots has no track")
 
     def test_every_look_the_script_gives_a_cell_has_a_rule(self) -> None:
+        # The tiles have two looks: the plain lit one and SCRATCHED's red. A scratch is said in words, so no cloth, dim
+        # or struck tile is left, in the script or the stylesheet.
         bare = re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S)
-        for cls in ("is-lbl", "is-dim", "is-strike", "is-cloth", "is-cs", "is-cl", "is-cm", "is-cr"):
-            self.assertIn(".qb-ct." + cls, bare, f"the stylesheet has no rule for {cls}")
-        for needle in ("'qb-ct is-lbl'", "'qb-ct is-dim is-strike'", "'qb-ct is-cloth is-c' + where"):
-            self.assertIn(needle, self.JS)
+        self.assertIn(".qb-ct.is-lbl", bare, "the stylesheet has no rule for is-lbl")
+        self.assertIn("'qb-ct is-lbl'", self.JS)
+        for cls in ("is-dim", "is-strike", "is-cloth", "is-cs", "is-cl", "is-cm", "is-cr"):
+            self.assertNotIn(".qb-ct." + cls, bare, f"{cls}: no tile is drawn that way any more")
+            self.assertNotIn(cls, self.JS, f"{cls}: no tile is drawn that way any more")
 
     def test_the_other_looks_rules_for_the_track_are_not_touched(self) -> None:
         for needle in ("animation: qbCrawl 40s linear infinite;", "@keyframes qbCrawl {",

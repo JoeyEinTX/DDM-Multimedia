@@ -634,6 +634,8 @@ the live board follows pixel for pixel where practical):
   bettors what to do); an unnamed horse prints
   `HORSE n`, and an entry that is not a record (the older string shape) is
   ignored; then the remaining `chyron` lines, gold diamonds between items.
+  That is the track of `impact` and `numbers`; `dots` says the scratches
+  in words (the next section).
   It is rebuilt when `chyron`, `scratches` or `names_rev` change, swapping
   the content at the loop boundary so the text never jumps (at once if
   nothing is crawling yet). The live items change **in place**, checked
@@ -686,7 +688,13 @@ stand still and the message steps across them, a character a tile.
   writes only the tiles whose character or look changed, and nothing is
   rebuilt.
 - *The content* is the track's: the same items in the same order with
-  the same separators, in capitals, a character a tile. The face's own
+  the same separators, in capitals, a character a tile, but for the
+  scratches, which the tiles say in words (Joey, 2026-10-06). A
+  replacement is an item of its own, `9 THE PUMA SCRATCHED - 22 OCELLI
+  DRAWS IN` (`{old number} {old name} SCRATCHED - {new number} {new name}
+  DRAWS IN`, in number order), then the same-day scratches under one
+  `SCRATCHED`, each its number, name and note: `SCRATCHED 20 FULLEFFORT ·
+  RE-BET YOUR TOKENS`. The face's own
   characters stay as they are (it draws a lower-case letter, an accented
   one, a curly quote or a dash as the plain capital or mark, `SEÑOR` as
   `SENOR`). **A character the face lacks** is its base letter when it
@@ -695,11 +703,10 @@ stand still and the message steps across them, a character a tile.
   mark is nothing, and none falls back to Impact (`toteChar`, from the
   script's own list of the face's characters, which a test holds equal to
   the face's character map). The default content is all in the face: the
-  middle dot, the diamond, the arrow and the degree sign included. The
-  badges are the one thing that is not dots: a saddle cloth is its
-  number's digits on solid cloth tiles in Impact, one tile for `9`, two
-  touching for `22`; `SCRATCHED` is red dots, a struck name dim with a
-  line across its tiles, `RE-BET YOUR TOKENS` lit like the name before it.
+  middle dot, the diamond, the hyphen and the degree sign included. All of
+  it is the lit amber but `SCRATCHED`, red dots: no saddle cloths, no
+  struck names and no arrows on the tiles (the track keeps them), and
+  `RE-BET YOUR TOKENS` as bright as the name before it.
 - *Live updates* keep the track's rule (`f1a86e9`). A refresh that
   keeps an item's length (the clock's minute, the countdown's minute or
   second) is written into the message where it stands, at once, on the
@@ -772,12 +779,13 @@ logged once. The page carries the look in the board's `data-look`.
 
 - **Dotted** in `dots`: the pot, the three prizes,
   every row's name and bets, the crawl (a fixed row of tiles with the message stepping across it:
-  its text, its diamonds, its arrows; `SCRATCHED` in red
-  dots, a struck name dimmed), and the results
+  its text and its diamonds, a scratch in words, `SCRATCHED` in red
+  dots), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
   number, as on the dashboard's results tote (cloth, then the dotted
-  name), the crawl's badges included; the state banner and the toast,
+  name), and the crawl's badges in `numbers` (the `dots` crawl has none);
+  the state banner and the toast,
   which are signs, not tote fields; the `HAND COUNTED` tag, a label in
   Impact in every look; every label (`POT`, `WIN`, `HORSE`,
   `BETS`, the results' `WIN / PLACE / SHOW`, the line under them) and the

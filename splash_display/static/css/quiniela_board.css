@@ -1127,50 +1127,13 @@
     background-repeat: no-repeat;
 }
 
-/* SCRATCHED in red dots; a struck name dim, with a line across its tiles
-   (they touch, so it is one line). RE-BET YOUR TOKENS is plain lit tiles,
-   like the name before it. */
+/* SCRATCHED in red dots. Everything else on the tiles is the lit amber:
+   the scratches are said in words, with no cloths, struck names or arrows
+   (the track of the other looks keeps those). */
 .qb[data-look="dots"] .qb-ct.is-lbl {
     color: var(--qb-red);
     text-shadow: 0 0 0.07em rgba(227, 24, 55, 0.8), 0 0 0.14em rgba(227, 24, 55, 0.4);
 }
-
-.qb[data-look="dots"] .qb-ct.is-dim {
-    color: rgba(212, 160, 0, 0.5);
-    text-shadow: 0 0 0.07em rgba(212, 160, 0, 0.4), 0 0 0.14em rgba(212, 160, 0, 0.2);
-}
-
-.qb[data-look="dots"] .qb-ct.is-strike::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 2px;
-    margin-top: -1px;
-    background: currentColor;
-}
-
-/* A saddle-cloth badge: its number's digits on solid cloth tiles, in Impact
-   as the cloths are everywhere (the cloth's colours are set on the tile by
-   the JS). One digit is one tile; two are a left and a right one with the
-   digits meeting at the seam. */
-.qb[data-look="dots"] .qb-ct.is-cloth {
-    padding: 0 1px;
-    font-family: Impact, "Anton", sans-serif;
-    font-size: calc(var(--qb-ct-pitch, 4px) * 6);
-    height: calc(var(--qb-ct-pitch, 4px) * 8);      /* the tile's own: 1em is this smaller size here */
-    line-height: calc(var(--qb-ct-pitch, 4px) * 8);
-    text-indent: 0;
-    text-align: center;
-    text-shadow: none;
-    background-image: none;
-}
-
-.qb[data-look="dots"] .qb-ct.is-cs { border-radius: 5px; }
-.qb[data-look="dots"] .qb-ct.is-cl { border-radius: 5px 0 0 5px; text-align: right; }
-.qb[data-look="dots"] .qb-ct.is-cr { border-radius: 0 5px 5px 0; text-align: left; }
-.qb[data-look="dots"] .qb-ct.is-cm { padding: 0; }                /* a third digit, which no horse number has */
 
 /* The results screen: names from a 12 px pitch down, the bets at 10, the
    prize at 18 (the JS steps all three down until they fit). */

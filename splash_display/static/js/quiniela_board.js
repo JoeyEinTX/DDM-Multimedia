@@ -1224,7 +1224,8 @@
     // name; no replacement: badge, name and "· RE-BET YOUR TOKENS", as
     // bright as the name, since it tells the bettors what to do; an
     // unnamed horse prints HORSE n); the remaining chyron lines. Gold
-    // diamonds between items.
+    // diamonds between items. (The dots look says the scratches in words,
+    // without cloths, struck names or arrows: tileMessage.)
     // The live items change in place, every second (tickLive), a text for
     // one of the same length: in the tote look every character is a tile,
     // so the track never changes width and the crawl never restarts. A
@@ -1452,10 +1453,9 @@
     // more than half a second is not made up for.
     //
     // The content is buildCrawl's, in capitals, a cell a character (one the
-    // face lacks: toteChar). A saddle-cloth badge is its number's digits,
-    // one tile each, on solid cloth tiles in Impact, as the cloths are
-    // everywhere; SCRATCHED is red, a struck name dim with a line across
-    // its tiles; RE-BET YOUR TOKENS lit like the name before it.
+    // face lacks: toteChar), all of it the lit amber but SCRATCHED in red,
+    // except that the scratches are said in words, a tile a character like
+    // the rest: no cloths, no struck names, no arrows (tileMessage).
     //
     // A live item that keeps its length (the clock's minute, the countdown)
     // is written into the message where it stands, at once. Anything that
@@ -1472,9 +1472,9 @@
         return (Number.isFinite(v) && v > 0) ? Math.min(CRAWL_TPS_MAX, Math.max(CRAWL_TPS_MIN, v)) : CRAWL_TILES_PER_SEC;
     })();
 
-    // A cell's look, by number: 0 is the plain amber one. The classes and
-    // the cloth's colours go on the tile (paintTile); the stylesheet does
-    // the rest (.qb-ct).
+    // A cell's look, by number: 0 is the plain amber one. Its classes, and
+    // colours when a look has its own, go on the tile (paintTile); the
+    // stylesheet does the rest (.qb-ct).
     const tileStyles = [{ cls: 'qb-ct', bg: '', fg: '' }];
     const tileStyleIds = new Map([['qb-ct||', 0]]);
     function tileStyle(cls, bg, fg) {
@@ -1488,7 +1488,6 @@
         return id;
     }
     const TS_LABEL = tileStyle('qb-ct is-lbl');
-    const TS_WAS   = tileStyle('qb-ct is-dim is-strike');
 
     // What a character is on the tiles: itself in capitals when the face has
     // it, else its base letter (an accent is dropped, as the face itself
@@ -1522,9 +1521,10 @@
     }
 
     // The loop for a model: buildCrawl's items in the same order with the
-    // same separators, as {ch, st} cells (a character, a look) the same
-    // length, `at` where each live item stands (a kind -> {at, len, item}) and
-    // `items` the items as the track's DOM would read them ("time:7:42 PM").
+    // same separators, but for the scratches (below), as {ch, st} cells (a
+    // character, a look) the same length, `at` where each live item stands
+    // (a kind -> {at, len, item}) and `items` the items as the track's DOM
+    // would read them ("time:7:42 PM").
     function tileMessage(lines, scratches, live) {
         const ch = [];
         const st = [];
@@ -1534,16 +1534,6 @@
         const cells = (list, style) => { for (const c of list) { ch.push(c); st.push(style); } };
         const gap = (n) => cells(new Array(n).fill(''), 0);
         const words = (s, style) => { raw += s; cells(tileChars(s), style || 0); };
-        const cloth = (n) => {
-            raw += n;
-            const c = SADDLE[n] || SADDLE_FALLBACK;
-            const digits = String(n);
-            for (let i = 0; i < digits.length; i++) {
-                const where = digits.length === 1 ? 's' : (i === 0 ? 'l' : (i === digits.length - 1 ? 'r' : 'm'));
-                ch.push(digits.charAt(i));
-                st.push(tileStyle('qb-ct is-cloth is-c' + where, c.bg, c.fg));
-            }
-        };
         const sep = () => { gap(CRAWL_PAD_TILES); cells(['◆'], 0); gap(CRAWL_PAD_TILES); };
         const item = (kind, build) => {
             if (items.length) sep();
@@ -1555,24 +1545,27 @@
         };
         if (lines.length) item(null, () => words(lines[0]));
         for (const [kind, text] of (live || [])) item(kind, () => words(text));
-        const parts = [];
+        // The scratches in words, the lit amber like the rest. A replacement
+        // is an item of its own: 9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN,
+        // in the model's order (pi5's: by number). The same-day scratches
+        // follow in one item under a red SCRATCHED, each its number, name and
+        // · RE-BET YOUR TOKENS, a two-tile gap between them.
+        const sameDay = [];
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
-                parts.push(() => { cloth(was.n); gap(1); words(was.name); gap(1); words('· RE-BET YOUR TOKENS'); });
+                sameDay.push(() => { words(String(was.n)); gap(1); words(was.name); gap(1); words('· RE-BET YOUR TOKENS'); });
                 continue;
             }
             const now = scratchSide(x.now);
             if (!now) continue;
-            parts.push(() => {
-                cloth(was.n); gap(1); words(was.name, TS_WAS); gap(1); words('▶'); gap(1); cloth(now.n); gap(1); words(now.name);
-            });
+            item(null, () => words(was.n + ' ' + was.name + ' SCRATCHED - ' + now.n + ' ' + now.name + ' DRAWS IN'));
         }
-        if (parts.length) {
+        if (sameDay.length) {
             item(null, () => {
                 words('Scratched', TS_LABEL);
-                parts.forEach((part, i) => { gap(i ? 2 : 1); part(); });
+                sameDay.forEach((part, i) => { gap(i ? 2 : 1); part(); });
             });
         }
         for (const l of lines.slice(1)) item(null, () => words(l));
