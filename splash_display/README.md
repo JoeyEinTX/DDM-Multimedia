@@ -630,7 +630,8 @@ the live board follows pixel for pixel where practical):
   between them: a replacement reads `[9] THE PUMA ▶ [22] OCELLI` (both
   badges in their cloth colours, the old name struck through, the gold
   arrow), a scratch with no replacement reads `[20] FULLEFFORT · RE-BET YOUR
-  TOKENS` (badge, name, the note muted); an unnamed horse prints
+  TOKENS` (badge, name, the note as bright as the name: it tells the
+  bettors what to do); an unnamed horse prints
   `HORSE n`, and an entry that is not a record (the older string shape) is
   ignored; then the remaining `chyron` lines, gold diamonds between items.
   It is rebuilt when `chyron`, `scratches` or `names_rev` change, swapping
@@ -698,7 +699,7 @@ stand still and the message steps across them, a character a tile.
   badges are the one thing that is not dots: a saddle cloth is its
   number's digits on solid cloth tiles in Impact, one tile for `9`, two
   touching for `22`; `SCRATCHED` is red dots, a struck name dim with a
-  line across its tiles, `RE-BET YOUR TOKENS` dim.
+  line across its tiles, `RE-BET YOUR TOKENS` lit like the name before it.
 - *Live updates* keep the track's rule (`f1a86e9`). A refresh that
   keeps an item's length (the clock's minute, the countdown's minute or
   second) is written into the message where it stands, at once, on the
@@ -772,7 +773,7 @@ logged once. The page carries the look in the board's `data-look`.
 - **Dotted** in `dots`: the pot, the three prizes,
   every row's name and bets, the crawl (a fixed row of tiles with the message stepping across it:
   its text, its diamonds, its arrows; `SCRATCHED` in red
-  dots, a struck name and `RE-BET YOUR TOKENS` dimmed), and the results
+  dots, a struck name dimmed), and the results
   screen's names, bets and prizes. In `numbers` the same without the names.
 - **Not dotted**, in any look: the saddle cloths, solid blocks with their
   number, as on the dashboard's results tote (cloth, then the dotted

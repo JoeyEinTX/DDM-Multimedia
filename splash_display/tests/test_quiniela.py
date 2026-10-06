@@ -1151,7 +1151,10 @@ CHROME = find_chrome()
 # pending, what the tiles read]. crawl: the crawl's items, one copy, the live
 # ones carrying their kind (the dots crawl has no track: its items are
 # window.ddmQuiniela.crawl()'s, with its tiles, and what they read), and
-# whether the track is there and animated. roster: the roster slide's rows
+# whether the track is there and animated; each tile's computed look
+# (colour | opacity | glow), and on the track the first re-bet note's
+# beside the horse's name before it and a replaced horse's struck name's.
+# roster: the roster slide's rows
 # when the page has one
 # (filled by window.ddmQuiniela.fillRoster after each model, as the
 # slideshow does when the slide loads).
@@ -1204,10 +1207,15 @@ BOARD_PROBE_JS = r"""
         const track = document.getElementById('qb-track');
         const tiles = [...document.querySelectorAll('.qb-ct')];
         const first = tiles.length ? tiles[0].getBoundingClientRect() : null;
+        const look = (el) => { if (!el) return null; const s = getComputedStyle(el); return s.color + '|' + s.opacity + '|' + s.textShadow; };
+        const note = track ? track.querySelector('.qb-crawl-note') : null;
         const base = { snapshot: snapshot, tiles: tiles.length, text: tiles.map((t) => t.textContent || ' ').join(''),
                        room: r2(document.querySelector('.qb-crawl').getBoundingClientRect().width),
                        tileW: first ? r2(first.width) : null, tileH: first ? r2(first.height) : null,
                        classes: tiles.map((t) => t.className), colors: tiles.map((t) => t.style.backgroundColor + '|' + t.style.color),
+                       looks: tiles.map(look),
+                       note: note ? { note: look(note), name: look(note.previousElementSibling), text: note.textContent,
+                                      struck: look(track.querySelector('.qb-crawl-was')) } : null,
                        animation: getComputedStyle(track).animationName, trackDisplay: getComputedStyle(track).display };
         if (snapshot) return Object.assign(base, { items: snapshot.items, marks: [] });
         const items = [...document.querySelectorAll('#qb-track .qb-crawl-item')].map((el) => {
@@ -2114,7 +2122,7 @@ class StepCrawlTests(unittest.TestCase):
     def test_the_cells_are_styled_like_the_tracks_items(self) -> None:
         # SCRATCHED red; a cloth its number's digits on the cloth's colours, one tile or two touching; the replaced
         # horse's name dim and struck (the blank between its words too); the arrow and the new name plain; RE-BET
-        # YOUR TOKENS dim and not struck.
+        # YOUR TOKENS plain like the name before it, not struck.
         _first, early, late = self.got("styled")
         c = early["crawl"]
         text, classes, colors = c["text"], c["classes"], c["colors"]
@@ -2134,7 +2142,31 @@ class StepCrawlTests(unittest.TestCase):
         self.assertEqual({classes[text.index("GREAT WHITE") + i] for i in range(11)}, {"qb-ct"}, "the new horse's name: plain")
         c = late["crawl"]
         note = c["text"].index("RE-BET YOUR TOKENS")
-        self.assertEqual({c["classes"][note + i] for i in range(18)}, {"qb-ct is-dim"}, "RE-BET YOUR TOKENS dim, not struck")
+        self.assertEqual({c["classes"][note + i] for i in range(18)}, {"qb-ct"}, "RE-BET YOUR TOKENS plain, not struck")
+
+    def test_the_re_bet_note_is_as_bright_as_the_text_around_it(self) -> None:
+        # It tells the bettors what to do, so it is not fine print: in every look its colour, opacity and glow are
+        # the horse's name's before it (in dots the lit tile's, amber), while the struck name of a replaced horse
+        # stays dim.
+        for run in ("numbers", "impact"):
+            n = self.got(run)[-1]["crawl"]["note"]
+            self.assertIsNotNone(n, f"{run}: the track carries the note")
+            self.assertEqual(n["text"], "\u00b7 RE-BET YOUR TOKENS", run)
+            self.assertEqual(n["note"], n["name"], f"{run}: the note's colour | opacity | glow against the name's")
+            self.assertEqual(n["note"].split("|")[1], "1", f"{run}: opaque")
+            self.assertNotEqual(n["struck"], n["name"], f"{run}: a replaced horse's struck name stays muted")
+        early, late = self.got("styled")[1:]
+        c = late["crawl"]
+        text, looks = c["text"], c["looks"]
+        note = text.index("\u00b7 RE-BET YOUR TOKENS")
+        name = text.rindex("FULLEFFORT", 0, note)
+        lit = {looks[name + i] for i in range(len("FULLEFFORT"))}
+        self.assertEqual(len(lit), 1, "dots: the name's tiles, one look")
+        self.assertTrue(next(iter(lit)).startswith("rgb(212, 160, 0)|1|"), "dots: the lit tile, amber and opaque: " + str(lit))
+        self.assertEqual({looks[note + i] for i, ch in enumerate("\u00b7 RE-BET YOUR TOKENS") if ch != " "}, lit,
+                         "dots: every character of the note on a tile lit like the name's")
+        struck = early["crawl"]["text"].index("RIGHT TO PARTY")
+        self.assertNotIn(early["crawl"]["looks"][struck], lit, "dots: a replaced horse's struck name stays dim")
 
     def test_the_same_scratches_in_another_key_order_are_no_update(self) -> None:
         # The model a page gets when it loads (the relay's, sorted keys) and pi5's stream (its own order) carry the same
@@ -2362,7 +2394,7 @@ class StepCrawlSourceTests(unittest.TestCase):
         bare = re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S)
         for cls in ("is-lbl", "is-dim", "is-strike", "is-cloth", "is-cs", "is-cl", "is-cm", "is-cr"):
             self.assertIn(".qb-ct." + cls, bare, f"the stylesheet has no rule for {cls}")
-        for needle in ("'qb-ct is-lbl'", "'qb-ct is-dim'", "'qb-ct is-dim is-strike'", "'qb-ct is-cloth is-c' + where"):
+        for needle in ("'qb-ct is-lbl'", "'qb-ct is-dim is-strike'", "'qb-ct is-cloth is-c' + where"):
             self.assertIn(needle, self.JS)
 
     def test_the_other_looks_rules_for_the_track_are_not_touched(self) -> None:

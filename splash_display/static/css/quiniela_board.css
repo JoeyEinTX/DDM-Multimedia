@@ -795,15 +795,14 @@
 
 /* A replacement scratch: badge, the old name struck through, the arrow,
    the new badge and name. A scratch with no replacement: badge, name and
-   a muted "· RE-BET YOUR TOKENS". */
+   "· RE-BET YOUR TOKENS" (.qb-crawl-note), as bright as the name in every
+   look: it tells the bettors what to do. */
 .qb-crawl-was {
     text-decoration: line-through;
     color: var(--qb-muted);
 }
 
 .qb-crawl-arrow { color: var(--qb-gold); }
-
-.qb-crawl-note { color: var(--qb-muted); }
 
 .qb-crawl-gap {
     display: inline-block;
@@ -1082,8 +1081,7 @@
     text-shadow: 0 0 0.07em rgba(227, 24, 55, 0.8), 0 0 0.14em rgba(227, 24, 55, 0.4);
 }
 
-.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-was,
-.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-note { opacity: 0.5; }
+.qb:is([data-look="dots"], [data-look="numbers"]) .qb-crawl-was { opacity: 0.5; }
 
 /* The crawl in "dots", which has no track (the rule below hides it; the
    dotted text moving on it is what "numbers" keeps): a fixed row of tiles
@@ -1129,8 +1127,9 @@
     background-repeat: no-repeat;
 }
 
-/* SCRATCHED in red dots; a struck name and RE-BET YOUR TOKENS dim, the name
-   with a line across its tiles (they touch, so it is one line). */
+/* SCRATCHED in red dots; a struck name dim, with a line across its tiles
+   (they touch, so it is one line). RE-BET YOUR TOKENS is plain lit tiles,
+   like the name before it. */
 .qb[data-look="dots"] .qb-ct.is-lbl {
     color: var(--qb-red);
     text-shadow: 0 0 0.07em rgba(227, 24, 55, 0.8), 0 0 0.14em rgba(227, 24, 55, 0.4);
