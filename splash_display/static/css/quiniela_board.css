@@ -110,12 +110,17 @@
 
 /* ---------------------------------------------------------------------
    Header: logo | POT + prizes | banner + CLOSES IN
+   Laid out for the TV (16:9). On a narrower board (an iPad's 4:3) the JS
+   keeps this layout at the width it needs and scales it down as one piece
+   to the frame (fitHeader), about the middle of its left edge; at 16:9 it
+   sets nothing.
    --------------------------------------------------------------------- */
 .qb-header {
     flex: 0 0 196px;
     display: grid;
     grid-template-columns: 480px 1fr 480px;
     align-items: center;
+    transform-origin: 0 50%;
 }
 
 .qb-logo {
@@ -516,6 +521,11 @@
 }
 
 .qb[data-view="results"] .qb-prizes { display: none; }
+
+/* fitHeader measures the width the header needs with the prizes in it in
+   every view, so the header keeps one size when the results screen comes;
+   the class is on for the measurement only, never for a paint. */
+.qb.qb-measuring .qb-prizes { display: flex; }
 
 .qb-results-rows {
     flex: 1 1 auto;

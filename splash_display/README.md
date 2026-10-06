@@ -578,6 +578,11 @@ the live board follows pixel for pixel where practical):
   `CLOSING 0:00`; hidden when `closes_at` is null and in states 3 and
   above. Every message carries a fresh `now` (pi5 and the relay both stamp
   it at serve time), so a page that loads on a quiet board starts right.
+  Tested at 16:9 (1920x1080) and 4:3 (1366x1024, a 12.9-inch iPad Pro in
+  landscape): a board narrower than this layout (any 4:3 iPad, 1280x720)
+  gets the header scaled down as one piece to the frame (`fitHeader`, 81 %
+  at 1366x1024 in dots), never up; at 1680x1050, 1920x1080 and wider, with
+  a pot of three figures, nothing is set and nothing moves.
 - Rows: the field, in two columns of ten slots (22 px gutter, 6 px
   between rows, `HORSE` / `BETS` column headers), filling the height.
   The rows are every horse with `in_field` true, in numeric order, the

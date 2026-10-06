@@ -1269,9 +1269,13 @@ BOARD_PROBE_JS = r"""
         fig.selectNodeContents(document.getElementById('qb-pot'));
         const fb = fig.getBoundingClientRect();
         const tag = document.getElementById('qb-counted');
+        const closes = document.getElementById('qb-closes');
         const header = { pot: box('#qb-pot'), figure: [r2(fb.left), r2(fb.top), r2(fb.width), r2(fb.height)],
                          label: box('.qb-pot-label'), win: box('.qb-prize--win'), place: box('.qb-prizes .qb-prize:nth-child(2)'),
-                         show: box('.qb-prizes .qb-prize:nth-child(3)'), banner: box('#qb-banner'), logo: box('.qb-logo') };
+                         show: box('.qb-prizes .qb-prize:nth-child(3)'), banner: box('#qb-banner'), logo: box('.qb-logo'),
+                         frame: box('#quiniela-board'), closes: closes.classList.contains('is-visible') ? box('#qb-closes') : null,
+                         sign: document.getElementById('qb-banner-text').textContent,
+                         transform: getComputedStyle(document.querySelector('.qb-header')).transform };
         // The tag's lettering: its computed face, size, colour and box; the width of its text (a Range, so the pill's
         // padding is not in it) against the same text set in Impact, in Anton and in the browser's plain sans-serif at
         // the tag's own size and spacing; and the height of its capitals (a canvas in the tag's own font).
@@ -1748,6 +1752,188 @@ class HandCountTagTests(unittest.TestCase):
                 left, _top, width, _height = seen["counted"]["rect"]
                 self.assertAlmostEqual(left + width, seen["header"]["figure"][0] - 22, delta=1, msg=look)
             self.assertGreater(a["header"]["figure"][0], b["header"]["figure"][0], f"{look}: the longer figure starts further left")
+
+
+@unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")
+class HeaderFitTests(unittest.TestCase):
+    """The header off 16:9 (Joey's 12.9-inch iPad Pro in landscape, 1366 x
+    1024, 2026-10-06: the sign read BETTIN). It is laid out for the TV, 480 px
+    side columns and the POT and the prizes between them at their own width;
+    on a narrower board the JS scales it down as one piece to the frame
+    (fitHeader), and at 16:9 it sets nothing. In headless Chrome with the
+    stylesheet and the faces, in all three looks, at 1366 x 1024 and 1920 x
+    1080, through every state that shows the board: BETTING OPEN with the
+    CLOSES IN clock, FINAL CALL, BETTING CLOSED at the post with a hand count,
+    RUNNING, OFFICIAL RESULTS COMING and the results screen. The feed is
+    tools/fake_pi5.py's 2026 race."""
+
+    LOOKS = ("dots", "numbers", "impact")
+    SIZES = ((1366, 1024), (1920, 1080))
+    SIGNS = ["Betting open", "Final call", "Betting closed", "Betting closed", "Official results coming", "Official results"]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.RESULTS_TOKENS,
+                                scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
+                                names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS,
+                                closes_at=time.time() + 15 * 60, names_rev=2)
+        snap = lambda: json.loads(fake.model_json())          # noqa: E731
+        models = [snap()]                                     # 1, CLOSES IN under the sign
+        fake.set_phase(fake_pi5.PHASES["final"])
+        models.append(snap())                                 # 2
+        fake.set_phase(fake_pi5.PHASES["closed"])
+        fake.set_counted(152)
+        models.append(snap())                                 # 3, HAND COUNTED by the figure
+        fake.set_phase(fake_pi5.PHASES["running"])
+        models.append(snap())                                 # 4
+        fake.set_phase(fake_pi5.PHASES["winner"])
+        models.append(snap())                                 # 5, no results yet
+        fake.set_results(*fake_pi5.RESULTS_WPS)
+        models.append(snap())                                 # the results screen
+        cls.models = models
+        jobs = {f"{look} {w}x{h}": (models, dict(look=look, styled=True, stage=(w, h))) for look in cls.LOOKS for w, h in cls.SIZES}
+        # the TV's board, then an iPad's, then the TV's again: the window says it was resized each time
+        jobs["resize"] = ([models[0], {"__stage": [1366, 1024]}, {"__stage": [1920, 1080]}], dict(look="dots", styled=True))
+        # a pot of four figures widens the POT and the prizes: the next model fits the header again
+        big = dict(models[0], pot=1234.0, prizes={"win": 740, "place": 309, "show": 185})
+        jobs["big pot"] = ([models[0], big], dict(look="dots", styled=True, stage=(1366, 1024)))
+        cls.runs = run_boards(jobs)
+
+    def got(self, name: str) -> List[dict]:
+        result = self.runs[name]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def readings(self):
+        """(run, state's name, the reading) for every run and every state."""
+        for look in self.LOOKS:
+            for w, h in self.SIZES:
+                run = f"{look} {w}x{h}"
+                for sign, reading in zip(self.SIGNS, self.got(run)):
+                    yield run, sign, reading
+
+    @staticmethod
+    def edges(b) -> Tuple[float, float, float, float]:
+        return b[0], b[1], b[0] + b[2], b[1] + b[3]
+
+    def inside(self, box, frame) -> bool:
+        l, t, r, b = self.edges(box)
+        fl, ft, fr, fb = self.edges(frame)
+        return l >= fl - 0.5 and t >= ft - 0.5 and r <= fr + 0.5 and b <= fb + 0.5
+
+    def overlap(self, a, b) -> bool:
+        if not a or not b or not (a[2] and a[3] and b[2] and b[3]):
+            return False
+        a, b = self.edges(a), self.edges(b)
+        return min(a[2], b[2]) - max(a[0], b[0]) > 0.5 and min(a[3], b[3]) - max(a[1], b[1]) > 0.5
+
+    @staticmethod
+    def scale(head) -> float:
+        """The header's scale: 1 when it is not transformed."""
+        found = re.match(r"matrix\(([\d.]+), 0, 0, ([\d.]+), 0, 0\)", head["transform"])
+        return float(found.group(1)) if found else 1.0
+
+    @staticmethod
+    def figure(head) -> List[float]:
+        """The POT figure: its text across, its line box down (Impact's text box is taller than the glyphs)."""
+        return [head["figure"][0], head["pot"][1], head["figure"][2], head["pot"][3]]
+
+    def test_the_models_are_what_the_tests_say(self) -> None:
+        self.assertEqual([m["race_state"] for m in self.models], [1, 2, 3, 4, 5, 5])
+        self.assertEqual([m["hand_counted"] for m in self.models], [False, False, True, True, True, True])
+        self.assertIsNotNone(self.models[0]["closes_at"])
+        self.assertEqual((self.models[4]["results"], self.models[5]["results"] is not None), (None, True))
+
+    def test_the_sign_is_whole_inside_the_frame_and_clear_of_the_pot_and_the_prizes(self) -> None:
+        for run, sign, reading in self.readings():
+            head = reading["header"]
+            where = f"{run}, {sign}"
+            self.assertEqual(head["sign"], sign, f"{where}: the sign's label, whole")
+            self.assertTrue(self.inside(head["banner"], head["frame"]), f"{where}: the sign {head['banner']} in the frame {head['frame']}")
+            for name in ("win", "place", "show"):
+                self.assertFalse(self.overlap(head["banner"], head[name]), f"{where}: the sign clear of {name}")
+            self.assertFalse(self.overlap(head["banner"], self.figure(head)), f"{where}: the sign clear of the POT figure")
+
+    def test_the_rest_of_the_header_is_inside_the_frame_and_nothing_overlaps(self) -> None:
+        # The logo, the POT label, the prizes, CLOSES IN under the sign and the HAND COUNTED tag by the figure: each
+        # whole in the frame, and none on another (the tag was placed before the results screen took the prizes away
+        # and narrowed the header's middle column, and stayed on the figure).
+        for run, sign, reading in self.readings():
+            head, where = reading["header"], f"{run}, {sign}"
+            parts = {name: head[name] for name in ("logo", "label", "win", "place", "show") if head[name][2]}
+            parts["figure"] = self.figure(head)
+            parts["sign"] = head["banner"]
+            if head["closes"]:
+                parts["closes in"] = head["closes"]
+            if reading["counted"]["on"]:
+                parts["hand counted"] = reading["counted"]["rect"]
+            for name, box in parts.items():
+                self.assertTrue(self.inside(box, head["frame"]), f"{where}: {name} {box} in the frame {head['frame']}")
+            names = list(parts)
+            for i, a in enumerate(names):
+                for b in names[i + 1:]:
+                    if {a, b} == {"label", "figure"}:
+                        continue                                  # the label sits on the figure's line box by design
+                    self.assertFalse(self.overlap(parts[a], parts[b]), f"{where}: {a} clear of {b}")
+        self.assertTrue(any(r["counted"]["on"] for _run, _sign, r in self.readings()), "the tag was up somewhere")
+
+    def test_the_hand_counted_tag_hangs_off_the_figure_at_the_headers_scale(self) -> None:
+        # Its right edge a 22 px gap (the header's px, so 22 x the scale on the screen) left of the figure, its middle
+        # on the figure's middle, in every state that has it, the results screen too.
+        for run, sign, reading in self.readings():
+            if not reading["counted"]["on"]:
+                continue
+            head, tag, where = reading["header"], reading["counted"]["rect"], f"{run}, {sign}"
+            k = self.scale(head)
+            self.assertAlmostEqual(tag[0] + tag[2], head["figure"][0] - 22 * k, delta=2, msg=f"{where}: the tag's right edge")
+            self.assertAlmostEqual(tag[1] + tag[3] / 2, head["figure"][1] + head["figure"][3] / 2, delta=2,
+                                   msg=f"{where}: the tag's middle")
+
+    def test_a_wider_pot_fits_the_header_again(self) -> None:
+        # $154 and then $1,234: the POT and the prizes take more room, the header is fitted again on that model, a
+        # little smaller, and the sign and the prizes stay whole in the frame.
+        small, big = (reading["header"] for reading in self.got("big pot"))
+        self.assertLess(self.scale(big), self.scale(small) - 0.01, "fitted again, smaller")
+        for name in ("banner", "win", "place", "show", "label"):
+            self.assertTrue(self.inside(big[name], big["frame"]), f"{name} {big[name]} in {big['frame']}")
+
+    def test_at_16_9_nothing_moves(self) -> None:
+        # 1920 x 1080: the header needs no more than it has, so the fit sets nothing and every part stands where the
+        # layout puts it, as before: the POT figure and the prizes centred on the frame, the logo against the left
+        # padding, the sign against the right.
+        for look in self.LOOKS:
+            for sign, reading in zip(self.SIGNS, self.got(f"{look} 1920x1080")):
+                head, where = reading["header"], f"{look} 1920x1080, {sign}"
+                self.assertEqual(head["transform"], "none", f"{where}: not scaled")
+                fig = self.figure(head)
+                self.assertAlmostEqual(fig[0] + fig[2] / 2, 960, delta=2, msg=f"{where}: the POT figure centred")
+                if head["win"][2]:
+                    row = (head["win"][0] + head["show"][0] + head["show"][2]) / 2
+                    self.assertAlmostEqual(row, 960, delta=2, msg=f"{where}: the prizes centred")
+                self.assertAlmostEqual(head["logo"][0], 32, delta=2, msg=f"{where}: the logo")
+                self.assertAlmostEqual(head["banner"][0] + head["banner"][2], 1888, delta=2, msg=f"{where}: the sign")
+
+    def test_a_resize_fits_the_header_again(self) -> None:
+        # A kiosk settling into full screen, an iPad turned: the header is measured again when the window is resized.
+        wide, narrow, back = (reading["header"] for reading in self.got("resize"))
+        self.assertEqual(wide["transform"], "none", "the TV's board: not scaled")
+        self.assertNotEqual(narrow["transform"], "none", "made narrower: fitted")
+        self.assertTrue(self.inside(narrow["banner"], narrow["frame"]), f"the sign {narrow['banner']} in {narrow['frame']}")
+        self.assertEqual(back["transform"], "none", "wide again: as it was")
+        self.assertAlmostEqual(back["banner"][0] + back["banner"][2], 1888, delta=2)
+
+    def test_at_4_3_the_header_is_scaled_as_one_piece_and_keeps_its_size_through_the_results(self) -> None:
+        for look in self.LOOKS:
+            scales = {reading["header"]["transform"] for reading in self.got(f"{look} 1366x1024")}
+            self.assertEqual(len(scales), 1, f"{look}: one size in every state, the results screen too: {scales}")
+            matrix = re.match(r"matrix\(([\d.]+), 0, 0, ([\d.]+), 0, 0\)", scales.pop())
+            self.assertIsNotNone(matrix, f"{look}: scaled down, as one piece")
+            scale = float(matrix.group(1))
+            self.assertTrue(0.6 < scale < 1, f"{look}: scaled to {scale}")
+            head = self.got(f"{look} 1366x1024")[0]["header"]
+            fig = self.figure(head)
+            self.assertAlmostEqual(fig[0] + fig[2] / 2, 683, delta=2, msg=f"{look}: the POT figure still centred")
 
 
 @unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")

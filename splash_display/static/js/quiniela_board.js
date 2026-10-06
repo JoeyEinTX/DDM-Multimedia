@@ -347,6 +347,7 @@
     let countedWanted = false; // pi5 says the pot is the host's hand count
     let countedFaceReady = false;   // the face the tag is lettered in has loaded (without document.fonts: always)
     let countedOn = false;     // ... and its tag is up (wanted, and its face is there)
+    let headerScale = 1;       // the header's fit to a board narrower than its layout (fitHeader); 1 on the TV
     let renderedOnce = false;  // rows have been painted at least once
     let es = null;
     let reconnectTimer = null;
@@ -422,6 +423,7 @@
         renderNames(m);            // live in every state
         renderResults(m, results); // the results screen, or back to the rows
         renderCloses(m, state);
+        fitHeader();               // the header's widths may have changed: fitted, and the tag placed again
 
         if (inBoard) show(); else hide();
 
@@ -449,6 +451,33 @@
         if (bannerTextEl.textContent === spec.text) return;
         bannerTextEl.textContent = spec.text;
         fitBanner();
+    }
+
+    // The header is laid out for the TV, 16:9: the logo and the sign each in a
+    // 480 px column, the POT and the prizes between them at their own width.
+    // A board narrower than that layout (an iPad's 4:3, a small 16:9 window)
+    // pushed the right-hand column, the sign with it, out of the frame. So the
+    // header keeps its layout, at the width it needs, and is scaled down as one
+    // piece to the width there is (never up), about the middle of its left
+    // edge; its box keeps its 196 px, so the rows below stand where they do.
+    // The width it needs is measured with the prizes in it in every view
+    // (qb-measuring), so the header keeps one size when the results screen takes
+    // the prizes away. Measured again whenever a model is painted, the window
+    // is resized or a font arrives. On the TV the header needs no more than it
+    // has: the scale is 1, no style is set and nothing moves.
+    function fitHeader() {
+        headerEl.style.transform = '';
+        headerEl.style.width = '';
+        board.classList.add('qb-measuring');
+        const room = headerEl.clientWidth;
+        const need = headerEl.scrollWidth;
+        board.classList.remove('qb-measuring');
+        headerScale = need > room + 0.5 ? room / need : 1;
+        if (headerScale < 1) {
+            headerEl.style.width = need + 'px';
+            headerEl.style.transform = 'scale(' + headerScale + ')';
+        }
+        placeCounted();
     }
 
     // The banner is a sign in the header's right-hand cell. A text too long
@@ -534,6 +563,8 @@
         syncCounted();
     }
 
+    // The rects are the screen's; the tag's left, top and width are the
+    // header's own px, which a fitted header shows at headerScale.
     function placeCounted() {
         if (!countedEl || !countedOn) return;
         const box = potEl.parentElement.getBoundingClientRect();         // .qb-pot
@@ -542,11 +573,13 @@
         const fig = range.getBoundingClientRect();                       // the figure's own text
         if (!fig.width || !box.width) return;                            // not laid out yet: the next paint places it
         const logo = headerEl.querySelector('.qb-logo');
-        const room = fig.left - COUNTED_GAP_PX - (logo ? logo.getBoundingClientRect().right + COUNTED_LOGO_GAP_PX : box.left);
+        const k = headerScale;
+        const room = logo ? (fig.left - logo.getBoundingClientRect().right) / k - COUNTED_GAP_PX - COUNTED_LOGO_GAP_PX
+                          : (fig.left - box.left) / k - COUNTED_GAP_PX;
         setText(countedEl, COUNTED_LONG);
         if (countedEl.offsetWidth > room) setText(countedEl, COUNTED_SHORT);
-        countedEl.style.left = (fig.left - COUNTED_GAP_PX - box.left) + 'px';
-        countedEl.style.top = ((fig.top + fig.bottom) / 2 - box.top) + 'px';
+        countedEl.style.left = ((fig.left - box.left) / k - COUNTED_GAP_PX) + 'px';
+        countedEl.style.top = (((fig.top + fig.bottom) / 2 - box.top) / k) + 'px';
     }
 
     function horseName(h, n) {
@@ -851,7 +884,7 @@
         layoutStrips();
         layoutCrawl();
         refitNames();
-        placeCounted();            // the dotted POT figure changed width: its tag follows
+        fitHeader();               // the dotted POT figure changed width: the header is fitted again, its tag follows
         if (crawlHtml != null) applyCrawl(crawlHtml);
     }
 
@@ -1815,12 +1848,13 @@
     setInterval(tickCloses, CLOSES_TICK_MS);
     setInterval(tickLive, LIVE_TICK_MS);
     // Anton arrives late where Impact is missing: the names' widths change,
-    // and the tag is measured again. So does every dotted width when the tote
-    // face arrives.
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { refitNames(); placeCounted(); });
-    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { placeCounted(); });
-    // A window that changes size moves the POT figure, and its tag with it.
-    window.addEventListener('resize', () => { placeCounted(); });
+    // and the header is fitted again, its tag with it. So does every dotted
+    // width when the tote face arrives.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { refitNames(); fitHeader(); });
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { fitHeader(); });
+    // A window that changes size fits the header again, and moves the POT
+    // figure's tag with it.
+    window.addEventListener('resize', () => { fitHeader(); });
     // In "dots" a window that changes size (a kiosk settling into full
     // screen) measures the strips and the crawl's tiles again.
     if (dottedNames) {
