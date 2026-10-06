@@ -224,6 +224,12 @@
   function say(id, text, cls) {
     var el = $(id); el.textContent = text || ""; el.className = "status" + (cls ? " " + cls : "");
   }
+  // One tap, one request: an action's buttons are disabled until its request ends, however it ends.
+  function holding(buttons, request) {
+    var set = function (on) { buttons.forEach(function (b) { b.disabled = on; }); };
+    set(true);
+    return request.then(function (v) { set(false); return v; }, function (e) { set(false); throw e; });
+  }
   // Resolves {ok, status, body} for any reply, JSON or not (a Flask HTML 500
   // or a proxy error page becomes {error: "HTTP 500"}); rejects only when
   // the request itself failed. Callers report a rejection with fail().
@@ -295,7 +301,7 @@
     if (!confirm("Reset betting?\n\nBack to PRE-RACE; the ticker and the closing time are cleared and the " +
                  "tokens now in the cups become the starting point. Cups, horses, names and scratches are kept.")) { return; }
     say("reset-status", "resetting…");
-    api("POST", "/api/quiniela/reset").then(function (r) {
+    holding([$("reset-betting")], api("POST", "/api/quiniela/reset").then(function (r) {
       if (!r.ok) { say("reset-status", r.body.error || ("error " + r.status), "err"); return; }
       var b = r.body, left = b.horses_with_tokens || [];
       say("reset-status", "Reset. Pot " + money(b.pot) +
@@ -303,7 +309,7 @@
                          (left.length === 1 ? " of horse " : "s of horses ") + left.join(", ") + ")" : "") +
           " · " + (b.cups_online || 0) + " cups online", "ok");
       loadModel();
-    }).catch(fail("reset-status"));
+    }).catch(fail("reset-status")));
   };
 
   // ---- the counted pot ---------------------------------------------------------
@@ -438,13 +444,13 @@
   }
   $("race-save").onclick = function () {
     say("race-status", "saving…");
-    api("PUT", "/api/quiniela/race", { name: $("race-name").value, date: $("race-date").value,
-                                       time: $("race-time").value }).then(function (r) {
+    holding([$("race-save")], api("PUT", "/api/quiniela/race", { name: $("race-name").value, date: $("race-date").value,
+                                                                time: $("race-time").value }).then(function (r) {
       if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
       renderRaceForm(r.body);
       say("race-status", r.body.race.post_at == null ? "Saved · no post time" : "Saved · post " + r.body.race.post_local, "ok");
       loadModel();
-    }).catch(fail("race-status"));
+    }).catch(fail("race-status")));
   };
 
   // ---- names -----------------------------------------------------------------
@@ -458,16 +464,17 @@
       horses = r.body; $("names-text").value = namesText(); renderScratches(true);
     });
   }
+  var nameButtons = function () { return [$("names-reload"), $("names-save")]; };
   $("names-reload").onclick = function () {
-    loadHorses().then(function () { say("names-status", "Reloaded", "ok"); }).catch(fail("names-status"));
+    holding(nameButtons(), loadHorses().then(function () { say("names-status", "Reloaded", "ok"); }).catch(fail("names-status")));
   };
   $("names-save").onclick = function () {
     say("names-status", "saving…");
-    api("PUT", "/api/quiniela/horses", { text: $("names-text").value }).then(function (r) {
+    holding(nameButtons(), api("PUT", "/api/quiniela/horses", { text: $("names-text").value }).then(function (r) {
       if (!r.ok) { say("names-status", r.body.error || "error " + r.status, "err"); return; }
       horses = r.body.horses; $("names-text").value = namesText(); renderScratches(true);
       say("names-status", "Saved", "ok"); loadModel(true);
-    }).catch(fail("names-status"));
+    }).catch(fail("names-status")));
   };
 
   // ---- scratches -------------------------------------------------------------
@@ -478,10 +485,12 @@
   // wipe a number being picked, a name being typed and a ticked "No
   // replacement" box. So the 5 s refresh only rebuilds when what the rows
   // show (names, who is in the field, cups, scratches) actually changed,
-  // never while the operator is in the list, and whatever was picked, typed
-  // or ticked is carried over into the new rows. An explicit reload (after
-  // Save, Scratch or Undo) always rebuilds.
-  var scratchKey = null;
+  // never while the operator is in the list or a Scratch or Undo is in
+  // flight, and whatever was picked, typed or ticked is carried over. After
+  // Save names it always rebuilds, carrying them over; after a Scratch or Undo
+  // that went through, fresh (each row's first free number and its stored
+  // name); a refused one leaves the rows as they were, to fix and press again.
+  var scratchKey = null, scratchBusy = false, freshRows = false;     // busy: further taps in the lists are ignored
   function horseState(n) { return (model && model.horses && model.horses[n]) || {}; }
   function scratchSignature() {
     var flags = [], n, m;
@@ -505,11 +514,12 @@
   function renderScratches(force) {
     var list = $("scratch-list"), done = $("scratched-list"), key = scratchSignature();
     if (!force) {
+      if (scratchBusy) { return; }                                   // its own reload rebuilds the rows
       if (key === scratchKey) { return; }
       if (list.contains(document.activeElement) || done.contains(document.activeElement)) { return; }     // mid-typing: next tick
     }
     var saved = {};
-    Array.prototype.forEach.call(list.querySelectorAll(".horse"), function (row) {
+    Array.prototype.forEach.call(freshRows ? [] : list.querySelectorAll(".horse"), function (row) {
       var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]"), c = row.querySelector("[data-norepl]");
       saved[row.getAttribute("data-horse")] = { num: s ? s.value : "", name: r ? r.value : "", norepl: !!(c && c.checked) };
     });
@@ -575,12 +585,12 @@
     var sel = ev.target.closest("[data-repl-num]"); if (!sel) { return; }
     sel.closest(".horse").querySelector("[data-repl-name]").value = storedName(Number(sel.value));
   });
-  // Every outcome of a Scratch or Undo is written into the row that was
-  // pressed (and into the section's status line): the server's error text
-  // verbatim in red, a short confirmation in green, a network failure or a
-  // non-JSON reply as such. It stays until the next action. The rows are
-  // rebuilt after a success (and by the 5 s refresh when something changed),
-  // so the notes live in a map and are re-applied to the new rows.
+  // Every outcome of a Scratch or Undo is written once, into the row of the
+  // horse it was about (a scratched one's under its Scratched line): the
+  // server's error text verbatim in red, a short confirmation in green, a
+  // network failure or a non-JSON reply as such. It stays until the next action.
+  // The rows are rebuilt after a success (and by the 5 s refresh when something
+  // changed), so the notes live in a map and are re-applied to the new rows.
   var rowNotes = {};
   function applyRowNotes() {
     Array.prototype.forEach.call(document.querySelectorAll("#scratch-list .horse, #scratched-list .horse"), function (row) {
@@ -593,10 +603,10 @@
   function noteRow(horse, text, cls) { rowNotes[horse] = { text: text, cls: cls }; applyRowNotes(); }
   function clearRowNotes() { rowNotes = {}; applyRowNotes(); }
   function onScratchClick(ev) {
-    var btn = ev.target.closest("button"); if (!btn) { return; }
+    var btn = ev.target.closest("button"); if (!btn || scratchBusy) { return; }
     var row = btn.closest(".horse"), horse = Number(row.getAttribute("data-horse"));
     var body = { horse: horse }, path, what;
-    var report = function (text, cls) { noteRow(horse, text, cls); say("scratch-status", text, cls); };
+    var report = function (text, cls) { noteRow(horse, text, cls); };
     if (btn.hasAttribute("data-undo")) {
       path = "/api/quiniela/unscratch";
     } else {
@@ -609,6 +619,8 @@
     }
     clearRowNotes();
     report("working\u2026");
+    scratchBusy = true;
+    btn.disabled = true;
     api("POST", path, body).then(function (r) {
       if (!r.ok) { report(r.body.error || ("error " + r.status), "err"); return; }
       if (path.indexOf("unscratch") >= 0) {
@@ -619,8 +631,10 @@
         what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
       }
       report(what, "ok");
+      freshRows = true;
       return loadHorses().then(function () { return loadModel(true); });
-    }).catch(function () { report("cannot reach pi5 (network error)", "err"); });
+    }).catch(function () { report("cannot reach pi5 (network error)", "err"); })
+      .then(function () { scratchBusy = false; freshRows = false; btn.disabled = false; });
   }
   $("scratch-list").addEventListener("click", onScratchClick);
   $("scratched-list").addEventListener("click", onScratchClick);
@@ -640,10 +654,10 @@
   }
   function putCloses(body) {
     say("closes-status", "saving…");
-    api("PUT", "/api/quiniela/closes_at", body).then(function (r) {
+    holding([].slice.call(document.querySelectorAll("#closes button")), api("PUT", "/api/quiniela/closes_at", body).then(function (r) {
       if (!r.ok) { say("closes-status", r.body.error || "error " + r.status, "err"); return; }
       say("closes-status", r.body.closes_at == null ? "Cleared" : "Set", "ok"); loadModel();
-    }).catch(fail("closes-status"));
+    }).catch(fail("closes-status")));
   }
   $("closes-set").onclick = function () {
     var v = $("closes-input").value; if (!v) { say("closes-status", "pick a date and time", "err"); return; }
