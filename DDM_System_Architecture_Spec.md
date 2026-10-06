@@ -146,6 +146,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 | `lq_link_state` | The state line pi5 holds (`state_rev`, phase, scratched, renumber pairs, results); how a gateway hello is answered after a restart |
 | `lq_horses` | Names for horses 1–24 (1–20 the field, 21–24 the also-eligibles) |
 | `lq_scratches` | One row per scratch: the horse that left, and the horse standing in (or none) |
+| `lq_scratch_names` | What a replacement scratch did to the new number's name, so Undo can put it back |
 | `lq_board` | Names revision, the betting close time |
 | `lq_closing` | The figures at the post (section 6) |
 | `lq_race` | Race name, year, post time |
@@ -321,6 +322,8 @@ There is no roster line. A v1 `roster` line is ignored.
 
 - A scratch of either kind is entered once, on the admin page, and can be undone (a chain
   undoes last record first). [BUILT]
+- Undo puts a replacement's name back as it was before the scratch: a name the scratch gave
+  the also-eligible is cleared, one entered ahead in Horse names stays. [BUILT]
 - La Subasta must read the same scratch. [BUILT, section 8]
 
 ---

@@ -3,8 +3,8 @@
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
 # lq_cups, telemetry, events, lq_link_state, and the betting board's
-# lq_horses, lq_scratches, lq_board, lq_closing and lq_race. Raw sqlite3,
-# like la_subasta/models.
+# lq_horses, lq_scratches, lq_scratch_names, lq_board, lq_closing and
+# lq_race. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -19,7 +19,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 def default_db_path() -> str:
@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS lq_scratches (
     now INTEGER CHECK (now IS NULL OR now BETWEEN 1 AND 24)
 );
 
+-- What a replacement scratch did to its now's name, so that Undo can put
+-- it back: one row per record whose scratch changed the name, keyed like
+-- the record, with the name before the scratch ('' for none) and the name
+-- the scratch gave. A record without a row (one from before this table, or
+-- one whose scratch kept the stored name) leaves the name as it is on Undo.
+-- A table of its own, so the live lq_scratches keeps its shape.
+CREATE TABLE IF NOT EXISTS lq_scratch_names (
+    was         INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
+    now         INTEGER NOT NULL CHECK (now BETWEEN 1 AND 24),
+    name_before TEXT    NOT NULL DEFAULT '',
+    name_set    TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS lq_board (
     id        INTEGER PRIMARY KEY CHECK (id = 1),
     names_rev INTEGER NOT NULL DEFAULT 0,
@@ -152,6 +165,7 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_link_state": ["id", "state_rev", "state_json"],
     "lq_horses": ["horse", "name", "replaced"],
     "lq_scratches": ["was", "now"],
+    "lq_scratch_names": ["was", "now", "name_before", "name_set"],
     "lq_board": ["id", "names_rev", "closes_at"],
     "lq_closing": ["id", "closing"],
     "lq_race": ["id", "name", "year", "post_at", "migrated"],
@@ -469,6 +483,24 @@ class LqDb:
     def delete_scratch(self, was: int) -> None:
         with self.txn() as conn:
             conn.execute("DELETE FROM lq_scratches WHERE was = ?", (int(was),))
+
+    def load_scratch_names(self) -> Dict[int, Tuple[int, str, str]]:
+        """{was: (now, the name before the scratch, the name it gave)} for
+        every replacement record whose scratch changed its now's name."""
+        return {int(r["was"]): (int(r["now"]), r["name_before"] or "", r["name_set"] or "")
+                for r in self.query("SELECT was, now, name_before, name_set FROM lq_scratch_names")}
+
+    def save_scratch_name(self, was: int, now: int, name_before: str, name_set: str) -> None:
+        with self.txn() as conn:
+            conn.execute(
+                "INSERT INTO lq_scratch_names (was, now, name_before, name_set) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(was) DO UPDATE SET now = excluded.now, name_before = excluded.name_before, "
+                "name_set = excluded.name_set",
+                (int(was), int(now), name_before or "", name_set or ""))
+
+    def delete_scratch_name(self, was: int) -> None:
+        with self.txn() as conn:
+            conn.execute("DELETE FROM lq_scratch_names WHERE was = ?", (int(was),))
 
     def load_board(self) -> Dict[str, Any]:
         row = self.query_one("SELECT names_rev, closes_at FROM lq_board WHERE id = 1")

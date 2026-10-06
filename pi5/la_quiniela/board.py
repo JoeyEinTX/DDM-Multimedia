@@ -474,9 +474,10 @@ def api_quiniela_scratch():
     renumber. 9 must be in the field (400 "horse 9 is not in the field") and
     22 unused: not claimed by any cup, not in the field, not the was or now
     of any record (400 "22 is in use"; 22 == 9 is in use too). The store
-    records {was: 9, now: 22}, names 22 if a name was given, bumps names_rev,
-    and the board's refresh() puts the pair [9, 22] in the gateway's state
-    line: the cup that says it is 9 becomes 22 on its own, tokens and all.
+    records {was: 9, now: 22}, names 22 if a name was given (keeping the
+    name it had, for Undo), bumps names_rev, and the board's refresh() puts
+    the pair [9, 22] in the gateway's state line: the cup that says it is 9
+    becomes 22 on its own, tokens and all.
     Reply {"ok": true, "kind": "replacement", "was": {"number", "name"},
     "now": {"number", "name"}, "cup": <MAC of the cup claiming 9, or null>,
     "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N},
@@ -530,17 +531,18 @@ def api_quiniela_scratch():
 
 @quiniela_board_bp.route("/api/quiniela/unscratch", methods=["POST"])
 def api_quiniela_unscratch():
-    """{"horse": 9}: if 9 is the "was" of a record, the record is removed
-    (22's name stays stored), names_rev bumps, and the board sends the pair
-    [22, 9] down for a minute or until a cup reports 9, so the cup that
-    became 22 goes back to 9; reply {"ok": true, "kind": "replacement",
-    "was", "now", "cup": <MAC claiming 22, or null>, "renum": [22, 9],
-    "names_rev"}. A chain (9 -> 22, then 22 -> 23) is undone last record
-    first: while 22 -> 23 stands, undoing 9 is a 400 "horse 9: undo 22
-    first" (the cup is 23, so nothing could go back to 9, and 22 would be
-    left out of the field with no record to bring it back). Else the
-    no-replacement record goes and its bit leaves the state line; 400
-    "horse 9 is not scratched" when neither applies."""
+    """{"horse": 9}: if 9 is the "was" of a record, the record is removed,
+    22's name goes back to what it was before the scratch (a name the
+    scratch gave is cleared, one entered ahead stays), names_rev bumps, and
+    the board sends the pair [22, 9] down for a minute or until a cup
+    reports 9, so the cup that became 22 goes back to 9; reply {"ok": true,
+    "kind": "replacement", "was", "now", "cup": <MAC claiming 22, or null>,
+    "renum": [22, 9], "names_rev"}. A chain (9 -> 22, then 22 -> 23) is
+    undone last record first: while 22 -> 23 stands, undoing 9 is a 400
+    "horse 9: undo 22 first" (the cup is 23, so nothing could go back to 9,
+    and 22 would be left out of the field with no record to bring it back).
+    Else the no-replacement record goes and its bit leaves the state line;
+    400 "horse 9 is not scratched" when neither applies."""
     body = request.get_json(silent=True)
     horse, error = _horse_arg(body)
     if error:

@@ -24,10 +24,11 @@
 # reads this store when it builds its model and the admin routes write it.
 #
 # Names are stored as typed. The board upper-cases them when it serves them.
-# With a database the rows are lq_horses, lq_scratches, lq_board, lq_closing
-# and lq_race (models.py); without one (tests) the store is memory only. One
-# lock; the on_change callback is invoked after every write, outside the
-# lock, so the board's wake() (an Event set) is a safe listener.
+# With a database the rows are lq_horses, lq_scratches, lq_scratch_names,
+# lq_board, lq_closing and lq_race (models.py); without one (tests) the store
+# is memory only. One lock; the on_change callback is invoked after every
+# write, outside the lock, so the board's wake() (an Event set) is a safe
+# listener.
 
 import json
 import logging
@@ -199,7 +200,9 @@ class HorseStore:
     becomes `now`, through the renumber pair the board sends) or, with now
     None, a no-replacement scratch (the horse is out, its tokens handed back to re-bet;
     its bit goes in the state line from BettingBoard.refresh()). Both kinds
-    live in lq_scratches and survive a reset.
+    live in lq_scratches and survive a reset. What a replacement scratch did
+    to its now's name is kept beside the record (lq_scratch_names), so that
+    Undo can put the name back.
 
     db is an LqDb (models.py) or None for a memory-only store. on_change is a
     no-argument callable invoked after every write, outside the lock; more
@@ -220,6 +223,7 @@ class HorseStore:
         self._horses: Dict[int, Dict[str, str]] = {
             n: {"name": ""} for n in range(1, HORSE_COUNT + 1)}
         self._scratches: Dict[int, Optional[int]] = {}      # was -> now, or None: no replacement
+        self._scratch_names: Dict[int, Tuple[str, str]] = {}   # was -> (now's name before the scratch, the name it gave)
         self._names_rev = 0
         self._closes_at: Optional[float] = None
         self._closing: Optional[Dict[str, Any]] = None
@@ -257,6 +261,15 @@ class HorseStore:
             self.load_failed = True
             return
         try:
+            for was, (now, before, given) in self._db.load_scratch_names().items():
+                if self._scratches.get(was) == now:     # a row whose record is gone or changed is stale
+                    self._scratch_names[was] = (before, given)
+        except sqlite3.Error as exc:
+            # lq_scratch_names is newer than lq_scratches: without it an Undo
+            # leaves a replacement's name as it is, as it did before.
+            log.error("La Quiniela horses: cannot read lq_scratch_names (%s); "
+                      "an Undo will leave a replacement's name as it is", exc)
+        try:
             self._closing = _parse_closing(self._db.load_closing())
         except sqlite3.Error as exc:
             # lq_closing is newer than the rest: without it only the closing
@@ -283,6 +296,22 @@ class HorseStore:
                 self._db.save_scratch(was, self._scratches[was])
             else:
                 self._db.delete_scratch(was)
+
+    def _save_scratch_name(self, was: int) -> None:
+        """Write, or drop, the row of what record `was`'s scratch did to
+        its now's name. Without lq_scratch_names (the schema refused) only
+        the restore after a restart is lost: the scratch itself stands."""
+        if self._db is None:
+            return
+        try:
+            if was in self._scratch_names:
+                before, given = self._scratch_names[was]
+                self._db.save_scratch_name(was, self._scratches[was], before, given)
+            else:
+                self._db.delete_scratch_name(was)
+        except sqlite3.Error as exc:
+            log.error("La Quiniela horses: cannot write lq_scratch_names for horse %d (%s); "
+                      "after a restart an Undo may leave that replacement's name as it is", was, exc)
 
     def _save_board(self) -> None:
         if self._db is not None:
@@ -473,7 +502,8 @@ class HorseStore:
         """Record that horse `was` left the field and horse `now` stands in
         for it (the cup's renumbering itself is the bridge's business; see
         board.py). A non-empty name is stored as now's name, else the stored
-        one is kept. Bumps names_rev once. Returns {"was": {"number", "name"},
+        one is kept; when the name changes, the one it had (or '') is kept
+        for Undo. Bumps names_rev once. Returns {"was": {"number", "name"},
         "now": {"number", "name"}} with the names as typed.
 
         Only what the records alone can tell is checked here: was != now, was
@@ -493,11 +523,16 @@ class HorseStore:
             if now in self._scratches or now in self._scratches.values():
                 raise ValueError(f"{now} is in use")
             self._scratches[was] = now
-            if new_name and self._horses[now]["name"] != new_name:
+            before = self._horses[now]["name"]
+            if new_name and before != new_name:
                 self._horses[now] = {"name": new_name}
                 self._save_horse(now)
+                self._scratch_names[was] = (before, new_name)
+            else:
+                self._scratch_names.pop(was, None)
             self._names_rev += 1
             self._save_scratch(was)
+            self._save_scratch_name(was)
             self._save_board()
             result = {"was": {"number": was, "name": self._horses[was]["name"]},
                       "now": {"number": now, "name": self._horses[now]["name"]}}
@@ -505,8 +540,12 @@ class HorseStore:
         return result
 
     def unscratch_replace(self, was: Any) -> Optional[int]:
-        """Remove the replacement record whose "was" is this horse. Returns
-        its "now" (whose name stays stored), or None when there is no such
+        """Remove the replacement record whose "was" is this horse, and put
+        its now's name back as it was before the scratch: a name the scratch
+        gave is cleared, one it typed over comes back. A name the scratch
+        kept (entered ahead in Horse names), one changed since the scratch,
+        and the name under a record from before lq_scratch_names stay as
+        they are. Returns the record's "now", or None when there is no such
         record (a no-replacement record is left alone: see
         unscratch_gateway). Bumps names_rev once when it did something."""
         was = _horse_number(was)
@@ -514,8 +553,13 @@ class HorseStore:
             if self._scratches.get(was) is None:
                 return None
             now = self._scratches.pop(was)
+            names = self._scratch_names.pop(was, None)
+            if names is not None and self._horses[now]["name"] == names[1]:
+                self._horses[now] = {"name": names[0]}
+                self._save_horse(now)
             self._names_rev += 1
             self._save_scratch(was)
+            self._save_scratch_name(was)
             self._save_board()
         self._changed()
         return now

@@ -1339,19 +1339,23 @@ def test_names_and_replacement_scratch_in_the_model():
            m["scratches"][0] == {"was": {"number": 1, "name": ""}, "now": {"number": 21, "name": "LATE ENTRY"}}, str(m["scratches"]))
     _check("21 is in the field with replaced '' (a record, an unnamed horse); 1 is out",
            m["horses"]["21"]["in_field"] is True and m["horses"]["21"]["replaced"] == "" and m["horses"]["1"]["in_field"] is False)
-    _check("a replacement with an empty name keeps the stored one", b.store.unscratch_replace(1) == 21
-           and b.store.scratch_replace(1, 21, "")["now"] == {"number": 21, "name": "Late Entry"})
+    _check("Undo clears the name the scratch gave 21 (it had none before)", b.store.unscratch_replace(1) == 21
+           and b.store.horses()[21] == {"name": ""})
+    b.store.set_names({21: "Late Entry"})                       # entered ahead in Horse names this time
+    _check("a replacement with an empty name keeps the stored one",
+           b.store.scratch_replace(1, 21, "")["now"] == {"number": 21, "name": "Late Entry"})
     _check("unscratch_replace returns the now and removes the record", b.store.unscratch_replace(9) == 22
-           and b.store.scratches() == {1: 21} and b.store.names_rev == 6)
-    _check("unscratch_replace with nothing to undo is None, no bump", b.store.unscratch_replace(9) is None and b.store.names_rev == 6)
-    _check("22's name stays stored", b.store.horses()[22] == {"name": "Ocelli"})
+           and b.store.scratches() == {1: 21} and b.store.names_rev == 7)
+    _check("unscratch_replace with nothing to undo is None, no bump", b.store.unscratch_replace(9) is None and b.store.names_rev == 7)
+    _check("22's name, entered ahead, stays stored", b.store.horses()[22] == {"name": "Ocelli"})
     b.store.unscratch_replace(1)
+    _check("...and so does 21's: that scratch kept the name it found", b.store.horses()[21] == {"name": "Late Entry"})
     b.apply_snapshot(snap(cups=[cup_entry(1, horse=9, count=13, online=True), cup_entry(2, horse=3, count=5, online=True)]))
     m = b.model()
-    _check("model back: ENCINO on its cup with the tokens and in the field, 22 out with no replaced, no scratches, names_rev 7",
+    _check("model back: ENCINO on its cup with the tokens and in the field, 22 out with no replaced, no scratches, names_rev 8",
            m["horses"]["9"]["name"] == "ENCINO" and m["horses"]["9"]["cup"] == mac_of(1) and m["horses"]["9"]["tokens"] == 13
            and m["horses"]["9"]["in_field"] is True and m["horses"]["22"]["in_field"] is False
-           and m["horses"]["22"]["replaced"] is None and m["scratches"] == [] and m["names_rev"] == 7, str(m["horses"]["9"]))
+           and m["horses"]["22"]["replaced"] is None and m["scratches"] == [] and m["names_rev"] == 8, str(m["horses"]["9"]))
     _check("...and the undo produced no event either (the cup moved back)", m["events"] == [{"horse": 22, "delta": 1, "ts": wall.t}],
            str(m["events"]))
     # An injected store is used as given, and the empty model already carries its names.
@@ -1729,6 +1733,128 @@ def test_lq_scratches_migration():
     _check("a second init_schema() finds nothing to migrate", db._migrate_lq_scratches() is False and db.load_scratches() == {9: 22, 20: None})
     _check("check_shape() still passes", db.check_shape() is None)
     db.close()
+
+def test_undo_puts_the_name_back():
+    """Undo puts a replacement scratch's effects back exactly as they were before it (Joey's rule, 2026-10-06): a
+    name the scratch gave the also-eligible is cleared, a name it typed over comes back, a name it found (entered
+    ahead in Horse names) stays, and so does a name changed after the scratch. What the scratch did is kept beside
+    the record (lq_scratch_names), so it holds across a restart; a record from before that table (no row) undoes as
+    it did, leaving the name. Undo of a no-replacement scratch is unchanged."""
+    store = HorseStore()
+    store.set_names({1: "Renegade", 2: "Albus", 22: "Ocelli"})
+    # DevPi, 2026-10-06: #1 scratched with #21 "Test", then undone.
+    store.scratch_replace(1, 21, "Test")
+    rev = store.names_rev
+    _check("a scratch with #21 and a name stores it as 21's", store.horses()[21] == {"name": "Test"})
+    _check("Undo clears the name the scratch gave 21, the record goes, names_rev bumps once",
+           store.unscratch_replace(1) == 21 and store.horses()[21] == {"name": ""} and store.scratches() == {}
+           and store.names_rev == rev + 1, str((store.horses()[21], store.names_rev)))
+    store.scratch_replace(2, 22, "Ocelli")
+    store.unscratch_replace(2)
+    _check("a name entered ahead, given again by the scratch, stays after Undo", store.horses()[22] == {"name": "Ocelli"})
+    store.scratch_replace(2, 22)
+    store.unscratch_replace(2)
+    _check("...and with no name given", store.horses()[22] == {"name": "Ocelli"})
+    store.scratch_replace(2, 22, "Ocelli II")
+    _check("a name typed over the one entered ahead replaces it", store.horses()[22] == {"name": "Ocelli II"})
+    store.unscratch_replace(2)
+    _check("...and Undo brings the one entered ahead back", store.horses()[22] == {"name": "Ocelli"})
+    store.scratch_replace(2, 23, "Epic Ride")
+    store.set_names({23: "Epic Ride II"})
+    store.unscratch_replace(2)
+    _check("a name changed after the scratch is the host's: Undo leaves it", store.horses()[23] == {"name": "Epic Ride II"})
+    store.set_names({23: ""})
+    store.scratch_replace(1, 21, "Mugatu")
+    store.scratch_replace(21, 24, "Society Girl")
+    store.unscratch_replace(21)
+    _check("a chain 1 -> 21 -> 24, undone last record first: 24's name cleared, 21's still there",
+           store.horses()[24] == {"name": ""} and store.horses()[21] == {"name": "Mugatu"})
+    store.unscratch_replace(1)
+    _check("...then 21's cleared too", store.horses()[21] == {"name": ""} and store.scratches() == {})
+    store.scratch_gateway(1)
+    _check("a no-replacement scratch and its Undo leave every name as it was", store.unscratch_gateway(1) is True
+           and store.horses()[1] == {"name": "Renegade"} and store.horses()[21] == {"name": ""} and store.scratches() == {})
+    # On a database: kept across a restart.
+    db = LqDb(str(tmpdir() / "undo_names.db"))
+    db.init_schema()
+    store = HorseStore(db)
+    store.set_names({1: "Renegade", 22: "Ocelli"})
+    store.scratch_replace(1, 21, "Test")
+    store.scratch_replace(9, 22, "Ocelli II")
+    store.scratch_replace(2, 23)
+    _check("lq_scratch_names holds what the two scratches that changed a name did, nothing for the third",
+           db.load_scratch_names() == {1: (21, "", "Test"), 9: (22, "Ocelli", "Ocelli II")}, str(db.load_scratch_names()))
+    again = HorseStore(db)                                       # pi5 restarts
+    _check("after a restart, Undo clears 21's name and brings 22's back",
+           again.unscratch_replace(1) == 21 and again.unscratch_replace(9) == 22
+           and again.horses()[21] == {"name": ""} and again.horses()[22] == {"name": "Ocelli"})
+    _check("...in the database too, and their rows are gone",
+           db.load_horses()[21]["name"] == "" and db.load_horses()[22]["name"] == "Ocelli"
+           and db.load_scratch_names() == {} and db.load_scratches() == {2: 23}, str(db.load_scratch_names()))
+    # A record from before lq_scratch_names has no row: its Undo leaves the name, as before.
+    db.save_horse(24, "Test")
+    db.save_scratch(3, 24)
+    old = HorseStore(db)
+    _check("an old-format record still undoes, and leaves the name",
+           old.unscratch_replace(3) == 24 and old.horses()[24] == {"name": "Test"} and old.scratches() == {2: 23})
+    # A row that is not its record's (another now, or no record at all) is never applied.
+    db.save_horse(21, "Test")
+    db.save_scratch(6, 21)
+    db.save_scratch_name(6, 24, "", "Test")
+    db.save_scratch_name(5, 22, "", "Ocelli")
+    stale = HorseStore(db)
+    _check("a row with another now than its record's is ignored: Undo leaves 21's name",
+           stale.unscratch_replace(6) == 21 and stale.horses()[21] == {"name": "Test"} and 6 not in db.load_scratch_names())
+    stale.scratch_replace(5, 22)
+    _check("a row with no record is replaced by the next scratch of that horse, and its Undo leaves 22's name",
+           5 not in db.load_scratch_names() and stale.unscratch_replace(5) == 22 and stale.horses()[22] == {"name": "Ocelli"})
+    db.close()
+    # A database from before lq_scratch_names, as DevPi's is: the store still reads names and records, an old record
+    # undoes as before, a new scratch still goes through; the bridge's start adds the table.
+    path = str(tmpdir() / "before_lq_scratch_names.db")
+    db = LqDb(path)
+    db.init_schema()
+    db.conn.execute("DROP TABLE lq_scratch_names")             # the shape before this change
+    db.save_horse(21, "Test")
+    db.save_scratch(1, 21)
+    with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
+        store = HorseStore(db)
+    _check("without lq_scratch_names: names and records are read, one ERROR naming the table",
+           store.horses()[21] == {"name": "Test"} and store.scratches() == {1: 21} and store._db is db
+           and len(cap.messages("lq_scratch_names")) == 1, str(cap.messages()))
+    with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
+        undone = store.unscratch_replace(1)
+        done = store.scratch_replace(2, 22, "Ocelli")
+    _check("...the old record undoes, the name left; a new scratch goes through (its row cannot be saved: an ERROR each)",
+           undone == 21 and store.horses()[21] == {"name": "Test"} and done["now"] == {"number": 22, "name": "Ocelli"}
+           and db.load_scratches() == {2: 22} and len(cap.messages("lq_scratch_names")) == 2, str(cap.messages()))
+    _check("...and its Undo puts the name back while pi5 runs", store.unscratch_replace(2) == 22 and store.horses()[22] == {"name": ""})
+    db.close()
+    b = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake"}, db_path=path, serial_factory=lambda p, baud, t: S.FakeSerial(),
+                 socketio=S.StubSocketIO(), clock=FakeClock(), console=S.ConsoleCapture())
+    try:
+        _check("the bridge's start adds lq_scratch_names and passes the shape check",
+               b.schema_error is None and b.db._columns("lq_scratch_names") == ["was", "now", "name_before", "name_set"])
+        _check("...the names where they were", HorseStore(b.db).horses()[21] == {"name": "Test"})
+    finally:
+        b.close()
+    # Through the routes, as the admin page does it.
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    client.put("/api/quiniela/horses", json={"text": DERBY_TEXT + "\n22. Ocelli"})
+    r = client.post("/api/quiniela/scratch", json={"horse": 1, "replacement": {"number": 21, "name": "Test"}})
+    _check("route: scratch 1 -> 21 'Test'", r.status_code == 200 and r.get_json()["now"] == {"number": 21, "name": "Test"}, str(r.get_json()))
+    r = client.post("/api/quiniela/unscratch", json={"horse": 1})
+    _check("route: Undo replies with 21's name cleared", r.status_code == 200 and r.get_json()["now"] == {"number": 21, "name": ""}, str(r.get_json()))
+    m = client.get("/api/quiniela").get_json()
+    _check("...Horse names and the model read 21 with no name", client.get("/api/quiniela/horses").get_json()["21"] == {"name": ""}
+           and m["horses"]["21"]["name"] == "" and m["scratches"] == [], str(m["horses"]["21"]))
+    client.post("/api/quiniela/scratch", json={"horse": 2, "replacement": {"number": 22, "name": "Ocelli"}})
+    r = client.post("/api/quiniela/unscratch", json={"horse": 2})
+    _check("route: a name entered ahead stays after Undo", r.get_json()["now"] == {"number": 22, "name": "Ocelli"}
+           and client.get("/api/quiniela/horses").get_json()["22"] == {"name": "Ocelli"}, str(r.get_json()))
+    b.close()
 
 
 def test_reset_clears_closes_at_and_keeps_names():
@@ -3509,6 +3635,7 @@ def main():
     _run("payout — a no-replacement scratch takes its tokens out of the pot", test_kind2_scratch_removes_tokens_from_the_pot)
     _run("scratch — a no-replacement scratch is about the horse, not the cup", test_no_replacement_scratch_is_about_the_horse)
     _run("scratch — the lq_scratches migration (now nullable)", test_lq_scratches_migration)
+    _run("scratch — Undo puts a replacement's name back as it was before the scratch", test_undo_puts_the_name_back)
     _run("payout — reset clears closes_at, keeps names; the tables", test_reset_clears_closes_at_and_keeps_names)
     _run("renumber — the lq_horses migration and the lq_scratches table", test_lq_horses_migration_and_scratches_table)
     _run("payout — GET/PUT /api/quiniela/horses", test_routes_horses_get_and_put)

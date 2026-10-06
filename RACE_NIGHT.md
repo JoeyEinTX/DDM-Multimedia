@@ -90,7 +90,9 @@ board**, prizes and all) and hands it back in 0 and 6.
       and all (nothing moves on the mantle; a cup set to the old number later becomes the
       new one the moment it hears the gateway).
 - [ ] Wrong? `ADMIN` → Scratches → Scratched → `Undo` on that line. Undo the most recent
-      scratch first if there were several (the page greys out the others).
+      scratch first if there were several (the page greys out the others). Undo puts the
+      names back as they were before the scratch: a name the scratch gave the new number
+      is cleared, one entered ahead in Horse names stays.
 - The names and scratches entered here feed La Subasta too: the auction at
   `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
   entered in La Subasta. A scratch made during the auction voids its bids on that horse
@@ -177,6 +179,10 @@ While open:
 - A cup that gets bumped or lifted freezes its count (`HANDLED` on its diag) and
   re-reads itself when it's set down. Don't touch it; wait five seconds.
 - Someone takes a token back out: the count drops and the pot drops. That's correct.
+- Enter any also-eligible replacement before pressing **60 MIN**; after betting opens,
+  every change is a same-day scratch with *No replacement* (an also-eligible can only
+  draw in before 9 a.m. ET on the Friday, so a real replacement is always known before
+  betting opens).
 - A same-day scratch (vet scratch, gate scratch): `ADMIN` → Scratches → In the field →
   that horse's row → tick *No replacement* → Scratch. The row leaves the board, the crawl
   says `RE-BET YOUR TOKENS`, its tokens leave the pot. Empty that cup and hand the tokens

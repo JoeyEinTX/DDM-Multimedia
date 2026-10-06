@@ -955,6 +955,11 @@ def _admin_one_tap(picker_check, touch, requests, slow):
         _check(f"admin page {mode}: ...one reply line, 'Undone 1'", lines == 1, f"{lines} lines")
         ok, detail = rows_at_defaults()
         _check(f"admin page {mode}: ...every row back to its defaults, #1's and #2's the same (no pick left from before)", ok, detail)
+        row1 = json.loads(chrome.eval(ADMIN_ROWS_JS))[0]
+        line21 = chrome.eval("document.getElementById('names-text').value.split(String.fromCharCode(10))[20]")
+        _check(f"admin page {mode}: ...and 21 has no name again: none stored, #1's row offers #21 with an empty name box, "
+               "Horse names reads '21.'", rig.client.get("/api/quiniela/horses").get_json()["21"] == {"name": ""}
+               and row1[:2] == [1, "21"] and row1[3] == "" and line21.strip() == "21.", f"{row1} {line21!r}")
         # A Scratch in flight across the 5 s refresh: pi5 has made the record, the refresh sees it, and the rows it
         # would draw put another horse's Scratch under the finger; the second tap must send nothing.
         polls = lambda: [t for t, m, p in requests if m == "GET" and p == "/api/quiniela"]     # noqa: E731
