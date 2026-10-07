@@ -2333,20 +2333,44 @@ class StepCrawlTests(unittest.TestCase):
 
     def test_on_the_tiles_only_scratched_is_red_and_nothing_is_a_chip_a_strike_or_an_arrow(self) -> None:
         # Joey, 2026-10-06: the crawl is one-colour dot-matrix tiles. The whole loop as the tiles showed it, a cell at
-        # a time: the red SCRATCHED over the same-day scratches, and every other cell the plain tile in the lit amber:
-        # no cloth, no colour of its own, nothing struck or dim, no arrow. A replacement's own SCRATCHED is plain like
-        # the rest of its line.
+        # a time: SCRATCHED red wherever it stands, over the same-day scratches and in each replacement's line (his
+        # DevPi check that day), and every other cell the plain tile in the lit amber: no cloth, no colour of its own,
+        # nothing struck or dim, no arrow.
         loop, looks = self.loop_cells("fast")
         self.assertIn("SCRATCHED 20 FULLEFFORT", loop, "the same-day scratch, its number plain, right after SCRATCHED")
-        label = loop.index("SCRATCHED 20 FULLEFFORT")
-        red = set(range(label, label + len("SCRATCHED")))
-        self.assertEqual({looks[k].split("|")[0] for k in red}, {"qb-ct is-lbl"}, "SCRATCHED over the same-day scratch: red")
+        words = [k for k in range(len(loop)) if loop.startswith("SCRATCHED", k)]
+        self.assertEqual(len(words), 4, "SCRATCHED over the same-day scratch and in the three replacements' lines")
+        red = {k + i for k in words for i in range(len("SCRATCHED"))}
+        self.assertEqual({looks[k].split("|")[0] for k in red}, {"qb-ct is-lbl"}, "SCRATCHED red, every time")
         self.assertEqual({tuple(looks[k].split("|")[:2]) for k in range(len(loop)) if k not in red}, {("qb-ct", "")},
                          "every other cell the plain tile: no cloth, no colour of its own, nothing struck or dim")
         lit = {looks[k] for k in range(len(loop)) if k not in red and loop[k] != " "}
         self.assertEqual(len(lit), 1, "one look for every character but SCRATCHED's: " + str(lit))
         self.assertEqual(next(iter(lit)).split("|")[2:4], ["rgb(212, 160, 0)", "1"], "the lit amber, opaque")
         self.assertNotIn("\u25b6", loop, "no arrow")
+
+    def test_a_replacements_scratched_is_the_same_red_as_the_same_day_items(self) -> None:
+        # Joey, 2026-10-06, after his DevPi check: SCRATCHED red in both kinds of scratch item, the same red. In each
+        # replacement's line its SCRATCHED tiles have the computed colour of the same-day item's (and its whole look:
+        # class, colour, opacity, glow), and every other cell of the line is the plain tile, its characters the lit
+        # amber.
+        loop, looks = self.loop_cells("fast")
+        label = loop.index("SCRATCHED 20 FULLEFFORT")
+        same_day = {looks[label + i] for i in range(len("SCRATCHED"))}
+        self.assertEqual(len(same_day), 1, "the same-day item's SCRATCHED: one look")
+        red = next(iter(same_day))
+        self.assertNotEqual(red.split("|")[2], "rgb(212, 160, 0)", "the same-day item's SCRATCHED is red, not the amber")
+        for line in ("5 RIGHT TO PARTY SCRATCHED - 21 GREAT WHITE DRAWS IN", "9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN",
+                     "13 SILENT TACTIC SCRATCHED - 23 ROBUSTA DRAWS IN"):
+            at = loop.index(line)
+            word = set(range(at + line.index("SCRATCHED"), at + line.index("SCRATCHED") + len("SCRATCHED")))
+            self.assertEqual({looks[k].split("|")[2] for k in word}, {red.split("|")[2]},
+                             f"{line}: SCRATCHED in the same-day item's computed colour")
+            self.assertEqual({looks[k] for k in word}, {red}, f"{line}: ...and its whole look")
+            rest = [k for k in range(at, at + len(line)) if k not in word]
+            self.assertEqual({tuple(looks[k].split("|")[:2]) for k in rest}, {("qb-ct", "")}, f"{line}: the rest plain tiles")
+            self.assertEqual({tuple(looks[k].split("|")[2:4]) for k in rest if loop[k] != " "}, {("rgb(212, 160, 0)", "1")},
+                             f"{line}: every other character the lit amber, opaque")
 
     def test_a_replacement_reads_its_own_line_then_the_same_day_scratches(self) -> None:
         # Joey, 2026-10-06: {old number} {old name} SCRATCHED - {new number} {new name} DRAWS IN, an item of its own,

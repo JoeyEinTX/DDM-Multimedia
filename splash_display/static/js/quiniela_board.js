@@ -1578,11 +1578,12 @@
         };
         if (lines.length) item(null, () => words(lines[0]));
         for (const [kind, text] of (live || [])) item(kind, () => words(text));
-        // The scratches in words, the lit amber like the rest. A replacement
-        // is an item of its own: 9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN,
-        // in the model's order (pi5's: by number). The same-day scratches
-        // follow in one item under a red SCRATCHED, each its number, name and
-        // · RE-BET YOUR TOKENS, a two-tile gap between them.
+        // The scratches in words, the lit amber like the rest but SCRATCHED,
+        // red wherever it stands. A replacement is an item of its own: 9 THE
+        // PUMA SCRATCHED - 22 OCELLI DRAWS IN, in the model's order (pi5's: by
+        // number). The same-day scratches follow in one item under a red
+        // SCRATCHED, each its number, name and · RE-BET YOUR TOKENS, a two-tile
+        // gap between them.
         const sameDay = [];
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
@@ -1593,7 +1594,13 @@
             }
             const now = scratchSide(x.now);
             if (!now) continue;
-            item(null, () => words(was.n + ' ' + was.name + ' SCRATCHED - ' + now.n + ' ' + now.name + ' DRAWS IN'));
+            // The line is one run of words (its tiles and its text as it
+            // reads); then SCRATCHED's nine tiles take the same-day item's red.
+            item(null, () => {
+                const red = ch.length + tileChars(was.n + ' ' + was.name).length + 1;
+                words(was.n + ' ' + was.name + ' SCRATCHED - ' + now.n + ' ' + now.name + ' DRAWS IN');
+                st.fill(TS_LABEL, red, red + 'SCRATCHED'.length);
+            });
         }
         if (sameDay.length) {
             item(null, () => {

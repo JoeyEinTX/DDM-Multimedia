@@ -709,7 +709,8 @@ stand still and the message steps across them, a character a tile.
   script's own list of the face's characters, which a test holds equal to
   the face's character map). The default content is all in the face: the
   middle dot, the diamond, the hyphen and the degree sign included. All of
-  it is the lit amber but `SCRATCHED`, red dots: no saddle cloths, no
+  it is the lit amber but `SCRATCHED`, red dots wherever it stands (in a
+  replacement's line and over the same-day scratches): no saddle cloths, no
   struck names and no arrows on the tiles (the track keeps them), and
   `RE-BET YOUR TOKENS` as bright as the name before it.
 - *Live updates* keep the track's rule (`f1a86e9`). A refresh that
