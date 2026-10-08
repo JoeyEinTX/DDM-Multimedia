@@ -89,6 +89,10 @@ board**, prizes and all) and hands it back in 0 and 6.
       the bottom and the cup that was that horse becomes the new number on its own, tokens
       and all (nothing moves on the mantle; a cup set to the old number later becomes the
       new one the moment it hears the gateway).
+- Every Scratch asks first, in its row, and sends nothing until you answer: it says what it will do
+  (`Scratch #9 THE PUMA: #22 OCELLI draws in.`, or `…, no replacement: its tokens are handed back to
+  re-bet.`); check it, then **Confirm scratch** (Cancel keeps what you typed). With no name and
+  *No replacement* unticked it asks which it is.
 - [ ] Wrong? `ADMIN` → Scratches → Scratched → `Undo` on that line. Undo the most recent
       scratch first if there were several (the page greys out the others). Undo puts the
       names back as they were before the scratch: a name the scratch gave the new number

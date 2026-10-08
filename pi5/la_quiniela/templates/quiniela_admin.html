@@ -9,93 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="LQ Admin">
 <title>La Quiniela admin</title>
-<style>
-  :root { --bg: #14140f; --card: #1f1f18; --line: #3a3a2e; --fg: #f3efe2; --dim: #b9b39f;
-          --gold: #ffd700; --green: #228b22; --rose: #dc143c; --ok: #4caf50; }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 12px 12px 40px; background: var(--bg); color: var(--fg);
-         font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  h1 { font-size: 22px; margin: 4px 0 12px; color: var(--gold); letter-spacing: .04em; }
-  h2 { font-size: 18px; margin: 0 0 10px; color: var(--gold); }
-  h3 { font-size: 16px; margin: 18px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-            padding: 14px; margin-bottom: 14px; }
-  textarea, input[type=text], input[type=datetime-local], input[type=date], input[type=time], select {
-    width: 100%; font: inherit; color: var(--fg); background: var(--bg);
-    border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 48px; }
-  textarea { min-height: 500px; font-family: ui-monospace, Consolas, monospace; font-size: 16px; }
-  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 16px; border-radius: 10px;
-           border: 1px solid var(--line); background: #2c2c22; color: var(--fg); cursor: pointer; }
-  button.primary { background: var(--green); border-color: var(--green); }
-  button.danger { background: var(--rose); border-color: var(--rose); }
-  button:disabled { opacity: .5; }
-  /* A quick double tap on a button doesn't zoom the page (pinch zoom still does). Everything the host
-     presses here is at least 44 px each way: la_quiniela/test_dashboard.py measures it. */
-  button, .state-link, .controls label { touch-action: manipulation; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-  .row > * { flex: 1 1 auto; }
-  .status { color: var(--dim); font-size: 15px; margin-top: 8px; min-height: 1.3em; }
-  .status.ok { color: var(--ok); } .status.err { color: var(--rose); font-weight: 600; }
-  .rowstatus { grid-column: 1 / -1; margin-top: 0; }   /* under the buttons of that very row, where the finger is */
-  .horse { display: grid; grid-template-columns: 44px 1fr; gap: 6px 10px; align-items: center;
-           padding: 10px 0; border-top: 1px solid var(--line); }
-  .horse:first-of-type { border-top: 0; }
-  .num { font-size: 24px; font-weight: 800; color: var(--gold); text-align: center; }
-  .num.ae { color: var(--dim); }
-  .name { font-weight: 600; min-height: 1.3em; }
-  .note { color: var(--dim); font-size: 14px; }
-  .note.scr { color: var(--rose); }
-  .controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; gap: 8px; }   /* one column: at half width the picker clipped "#21 GREAT WHITE" on a phone */
-  .controls label { display: flex; gap: 10px; align-items: center; color: var(--dim); min-height: 44px; }
-  .controls input[type=checkbox] { width: 24px; height: 24px; }
-  .undo { grid-column: 2; justify-self: start; }
-  .empty { color: var(--dim); padding: 6px 0; }
-  .pill { display: inline-block; padding: 0 8px; border-radius: 999px; background: #2c2c22; margin-right: 6px; }
-  .pill.up { background: var(--green); } .pill.down { background: var(--rose); }
-  /* Race section: the race state, read-only, like the figures and as easy to read at
-     arm's length (it is changed on the Control Center, whose buttons run the LEDs with
-     it), with a link there; the figures; the cups two table rows each. */
-  .pills { margin-bottom: 10px; line-height: 1.8; }
-  .figure.state .val { font-size: 34px; color: var(--fg); letter-spacing: .02em; }
-  .figure.state .val.unknown { font-size: 20px; line-height: 1.6; color: var(--dim); }
-  .state-link { display: inline-block; padding: 12px 0; color: var(--gold); font-weight: 600; }
-  .figures { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 4px; }
-  .figure { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
-  .figure .lbl { color: var(--dim); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-  .figure .val { font-size: 40px; font-weight: 800; line-height: 1.15; color: var(--gold); }
-  .figure.pot { grid-column: 1 / -1; } .figure.pot .val { font-size: 56px; }
-  .figure.bets .val { color: var(--fg); }
-  /* Counted pot: the host's hand count of the cash box. The scale figure at the post, the
-     count and the difference side by side; a number box with the numeric keypad and a big Save. */
-  .counted { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--line); }
-  .compare { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
-  .compare .figure { padding: 6px 8px; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; }   /* the three figures sit on one line even when a label wraps */
-  .compare .figure .lbl { font-size: 12px; letter-spacing: .04em; }
-  .compare .figure .val { font-size: 28px; }
-  .compare .figure.counted-fig .val { color: var(--fg); } .compare .figure.diff .val { color: var(--dim); }
-  #counted-input { font-size: 32px; font-weight: 800; text-align: center; min-height: 68px; letter-spacing: .04em; }
-  button.big { min-height: 68px; font-size: 22px; letter-spacing: .02em; }
-  #counted .row .big { flex: 3 1 160px; } #counted .row button:not(.big) { flex: 1 1 90px; min-height: 68px; }
-  /* The Horses list: one row per horse, the number on its cloth, name, status, tokens. */
-  .hrow { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 0 10px; align-items: center;
-          padding: 6px 0; border-top: 1px solid var(--line); }
-  .hrow:first-child { border-top: 0; }
-  .hrow .cloth { width: 40px; height: 34px; border-radius: 8px; display: flex; align-items: center;
-                 justify-content: center; font-size: 20px; font-weight: 800; }
-  .hrow .hname { font-weight: 600; min-height: 1.3em; }
-  .hrow .hstat { font-size: 14px; color: var(--dim); white-space: nowrap; }
-  .hrow .hstat.on { color: var(--ok); } .hrow .hstat.warn { color: var(--gold); font-weight: 700; }
-  .hrow .htok { font-size: 20px; font-weight: 800; color: var(--fg); min-width: 2ch; text-align: right; }
-  .hrow.dimmed .hname, .hrow.dimmed .htok { color: var(--dim); }
-  .tag { display: inline-block; padding: 0 6px; border-radius: 6px; font-size: 12px; font-weight: 700;
-         margin-left: 6px; vertical-align: middle; }
-  .tag.win { background: var(--gold); color: #14140f; } .tag.place { background: #c0c0c8; color: #14140f; }
-  .tag.show { background: #cd7f32; color: #14140f; } .tag.scr { background: var(--rose); color: #fff; }
-  /* Race info: a name, then the date and the post time side by side, labelled above. */
-  .field { display: block; color: var(--dim); font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
-  .field input { margin-top: 4px; }
-  .row > .field { flex: 1 1 140px; }
-</style>
+<link rel="stylesheet" href="{{ static_url('css/quiniela_admin.css') if static_url is defined else url_for('static', filename='css/quiniela_admin.css') }}">
 </head>
 <body>
 <h1>LA QUINIELA · ADMIN</h1>
@@ -167,10 +81,11 @@
 
 <section id="names">
   <h2>Horse names</h2>
-  <p class="note">One per line in program order. A leading <code>7.</code> names that horse;
-     a blank line leaves it alone. <b>Lines 21–24 are the also-eligibles</b>: name them ahead
+  <p class="note">One per line in program order. A leading <code>7.</code> names that horse.
+     <b>Lines 21–24 are the also-eligibles</b>: name them ahead
      of time; they join the field only when they replace a scratched horse.</p>
   <textarea id="names-text" rows="24" spellcheck="false"></textarea>
+  <p class="note">A number with nothing after it (<code>21.</code>) clears that horse's name; a blank line leaves it alone.</p>
   <div class="row">
     <button id="names-reload">Reload</button>
     <button id="names-save" class="primary">Save names</button>
@@ -561,6 +476,7 @@
         "</div></div>";
     }
     list.innerHTML = html || '<div class="empty">nobody in the field</div>';
+    if (ask && !horseState(ask.horse).in_field) { ask = null; }      // scratched meanwhile: its step is gone
     html = "";
     var scratches = (model && model.scratches) || [];
     scratches.forEach(function (s) {
@@ -592,10 +508,27 @@
   // The rows are rebuilt after a success (and by the 5 s refresh when something
   // changed), so the notes live in a map and are re-applied to the new rows.
   var rowNotes = {};
+  // Scratch sends nothing: it asks, in the row (Joey, 2026-10-07). With No
+  // replacement unticked and no name, which it is (its No replacement button
+  // ticks the box and goes on); otherwise what the scratch will do, with
+  // Confirm scratch and Cancel. Only Confirm sends, the body the step showed;
+  // Cancel, or a change to the row, drops the step and keeps what was typed.
+  var ask = null;                     // {horse, body}: the step in that horse's row (no body: the question)
+  function askHtml() {
+    var who = "#" + ask.horse + (storedName(ask.horse) ? " " + storedName(ask.horse).toUpperCase() : ""), r = ask.body && ask.body.replacement;
+    if (!ask.body) { return "<p>No replacement? Tick No replacement, or enter the replacement's name.</p><button data-ask-norepl>No replacement</button>"; }
+    return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in."
+                         : "Scratch " + who + ", no replacement: its tokens are handed back to re-bet.") + "</p>" +
+      (r && model && model.race_state >= 1 && model.race_state <= 5 ? "<p>Betting is open: the tokens in this cup will ride on #" +
+        r.number + ". After 60 MIN, use No replacement.</p>" : "") + '<button class="danger" data-confirm>Confirm scratch</button><button data-cancel>Cancel</button>';
+  }
   function applyRowNotes() {
     Array.prototype.forEach.call(document.querySelectorAll("#scratch-list .horse, #scratched-list .horse"), function (row) {
       var el = row.querySelector("[data-rowstatus]"), note = rowNotes[row.getAttribute("data-horse")];
       if (!el) { return; }
+      if (ask && ask.horse === Number(row.getAttribute("data-horse")) && row.querySelector("[data-scratch]")) {
+        el.innerHTML = askHtml(); el.className = "status rowstatus ask"; return;
+      }
       el.textContent = note ? note.text : "";
       el.className = "status rowstatus" + (note && note.cls ? " " + note.cls : "");
     });
@@ -609,13 +542,20 @@
     var report = function (text, cls) { noteRow(horse, text, cls); };
     if (btn.hasAttribute("data-undo")) {
       path = "/api/quiniela/unscratch";
-    } else {
-      path = "/api/quiniela/scratch";
+    } else if (btn.hasAttribute("data-confirm")) {
+      if (!ask) { return; }
+      path = "/api/quiniela/scratch"; body = ask.body; ask = null;
+    } else if (btn.hasAttribute("data-cancel")) {
+      ask = null; applyRowNotes(); return;
+    } else {                                       // Scratch, or the question's No replacement: the step, nothing sent
+      if (btn.hasAttribute("data-ask-norepl")) { row.querySelector("[data-norepl]").checked = true; }
       var num = row.querySelector("[data-repl-num]").value;
       var name = row.querySelector("[data-repl-name]").value.trim();
       var norepl = row.querySelector("[data-norepl]").checked;
       if (!norepl && !num) { clearRowNotes(); report("no free number: tick No replacement", "err"); return; }
-      if (!norepl) { body.replacement = { number: Number(num), name: name }; }
+      if (!norepl && name) { body.replacement = { number: Number(num), name: name }; }
+      ask = { horse: horse, body: (norepl || name) ? body : null };
+      clearRowNotes(); return;
     }
     clearRowNotes();
     report("working\u2026");
@@ -637,6 +577,12 @@
       .then(function () { scratchBusy = false; freshRows = false; btn.disabled = false; });
   }
   $("scratch-list").addEventListener("click", onScratchClick);
+  ["input", "change"].forEach(function (type) {    // a pick, a name or the box changed: the step no longer says what it would send
+    $("scratch-list").addEventListener(type, function (ev) {
+      var row = ev.target.closest(".horse");
+      if (ask && row && Number(row.getAttribute("data-horse")) === ask.horse) { ask = null; applyRowNotes(); }
+    });
+  });
   $("scratched-list").addEventListener("click", onScratchClick);
 
   // ---- betting closes ----------------------------------------------------------

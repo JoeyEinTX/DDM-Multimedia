@@ -930,11 +930,13 @@ def _admin_one_tap(picker_check, touch, requests, slow):
             const s = row.querySelector('[data-repl-num]'); s.value = '21'; s.dispatchEvent(new Event('change', {bubbles: true}));
             row.querySelector('[data-repl-name]').value = 'Test'; return 1; })()""")
         slow[("POST", "/api/quiniela/scratch")] = 0.8
+        chrome.tap('#scratch-list .horse[data-horse="1"] [data-scratch]')          # the confirm step (it sends nothing)
+        chrome.wait_for("!!document.querySelector('#scratch-list .horse[data-horse=\"1\"] [data-confirm]')", timeout=5)
         t = time.monotonic()
-        double_tap('#scratch-list .horse[data-horse="1"] [data-scratch]')
+        double_tap('#scratch-list .horse[data-horse="1"] [data-confirm]')
         chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"1\"]')", timeout=10)
         settle(0.6)
-        _check(f"admin page {mode}: a double tap on Scratch sends one request", count(t, "POST", "/api/quiniela/scratch") == 1,
+        _check(f"admin page {mode}: a double tap on Confirm scratch sends one request", count(t, "POST", "/api/quiniela/scratch") == 1,
                str(count(t, "POST", "/api/quiniela/scratch")))
         _check(f"admin page {mode}: ...one record in the model", len(rig.model()["scratches"]) == 1, str(rig.model()["scratches"]))
         reply = "Scratched 1 \u2192 #21 TEST"
@@ -971,8 +973,10 @@ def _admin_one_tap(picker_check, touch, requests, slow):
         settle(4.0)                                       # the next refresh is a second away
         chrome.eval("""(() => { document.querySelector('#scratch-list .horse[data-horse="3"] [data-norepl]').checked = true; return 1; })()""")
         slow[("POST", "/api/quiniela/scratch")] = 2.6
+        chrome.tap('#scratch-list .horse[data-horse="3"] [data-scratch]')
+        chrome.wait_for("!!document.querySelector('#scratch-list .horse[data-horse=\"3\"] [data-confirm]')", timeout=5)
         t = time.monotonic()
-        double_tap('#scratch-list .horse[data-horse="3"] [data-scratch]', gap=1.8)
+        double_tap('#scratch-list .horse[data-horse="3"] [data-confirm]', gap=1.8)
         chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"3\"]')", timeout=10)
         settle(0.6)
         refreshed = [p for p in polls() if t < p < t + 2.6]
@@ -1026,14 +1030,162 @@ def _admin_one_tap(picker_check, touch, requests, slow):
 def test_admin_one_tap_one_request_in_a_browser():
     """The LQ admin page in headless Chrome at a 12.9-inch iPad Pro's 1366 x 1024 (pi5/tools/picker_check.py's
     Server and Chrome), with touch and with a mouse, every request counted where pi5 receives it and the
-    actions' replies held back a moment after the work is done, as a busy pi5's are: a double tap on Scratch,
-    Undo and every other action sends one request; a scratch makes one record and one reply line; a Scratch in
+    actions' replies held back a moment after the work is done, as a busy pi5's are: a double tap on Confirm
+    scratch, Undo and every other action sends one request; a scratch makes one record and one reply line; a Scratch in
     flight across the 5 s refresh is sent once and scratches nobody else; after a Scratch and after an Undo
     every row's replacement fields are back to their defaults. Skipped where there is no Chrome."""
     picker_check = _picker_check()
     if not picker_check.available():
         _check("admin page browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
         return
+    _with_counted_requests(lambda requests, slow: [_admin_one_tap(picker_check, touch, requests, slow) for touch in (True, False)])
+
+
+# -----------------------------------------------------------------------------
+# The admin page's Scratch check (Joey, 2026-10-07)
+# -----------------------------------------------------------------------------
+
+ADMIN_ROW9 = '#scratch-list .horse[data-horse="9"] '
+ADMIN_STEP_JS = """(() => { const el = document.querySelector(`#scratch-list .horse[data-horse="9"] [data-rowstatus]`);
+    return el ? el.innerText.trim() : null; })()"""
+ADMIN_STEP_BUTTONS_JS = """JSON.stringify([...document.querySelectorAll(`#scratch-list .horse[data-horse="9"] [data-rowstatus] button`)]
+    .map((b) => { const r = b.getBoundingClientRect(); return [b.textContent.trim(), r.width, r.height]; }))"""
+ADMIN_NOREPL_JS = "document.querySelector('" + ADMIN_ROW9 + "[data-norepl]').checked"
+ADMIN_NAME_JS = "document.querySelector('" + ADMIN_ROW9 + "[data-repl-name]').value"
+
+
+def _admin_scratch_check(picker_check, touch, requests, slow):
+    """One session of test_admin_scratch_asks_first_in_a_browser."""
+    mode = "[touch]" if touch else "[mouse]"
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={str(n): {"name": DERBY[n - 1]} for n in range(1, 21)})
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
+    who = "#9 " + DERBY[8].upper()
+    open_line = "Betting is open: the tokens in this cup will ride on #21. After 60 MIN, use No replacement."
+
+    def posts(since, path="/api/quiniela/scratch"):
+        return sum(1 for t, m, p in requests if t >= since and m == "POST" and p == path)
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def step():
+        return chrome.eval(ADMIN_STEP_JS)
+
+    def tap(what):                                   # a control in #9's row
+        chrome.tap(ADMIN_ROW9 + what)
+        settle(0.4)
+
+    def scratch():                                   # a tap on #9's Scratch, and what the row says then
+        tap("[data-scratch]")
+        return step() or ""
+
+    def state(n):                                    # the race state, once the page's 5 s refresh has read it
+        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}"})
+        chrome.wait_for(f"document.getElementById('state-now').textContent.trim().startsWith('{n} ')", timeout=12)
+
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && "
+                        "!!document.querySelector('" + ADMIN_ROW9 + "[data-scratch]')", timeout=20)
+        chrome.eval("window.__dialogs = 0; window.confirm = () => { window.__dialogs++; return true; }; "
+                    "window.alert = () => { window.__dialogs++; }; 1")
+        settle(0.4)
+        t = time.monotonic()
+        said = scratch()
+        _check(f"admin page {mode}: Scratch with nothing set (No replacement unticked, #21 with no name) sends nothing and asks, in the row",
+               posts(t) == 0 and said.startswith("No replacement? Tick No replacement, or enter the replacement's name."), repr(said))
+        buttons = json.loads(chrome.eval(ADMIN_STEP_BUTTONS_JS))
+        _check(f"admin page {mode}: ...with a No replacement button, 44 px or more each way; the box still unticked",
+               [b[0] for b in buttons] == ["No replacement"] and min(buttons[0][1:]) >= 44 and chrome.eval(ADMIN_NOREPL_JS) is False,
+               str(buttons))
+        tap("[data-ask-norepl]")
+        said = step() or ""
+        buttons = json.loads(chrome.eval(ADMIN_STEP_BUTTONS_JS))
+        _check(f"admin page {mode}: ...which ticks the box and goes on to the confirm step: Scratch {who}, no replacement",
+               chrome.eval(ADMIN_NOREPL_JS) is True and said.startswith(f"Scratch {who}, no replacement: its tokens are handed back to re-bet.")
+               and open_line[:15] not in said and posts(t) == 0, repr(said))
+        _check(f"admin page {mode}: ...Confirm scratch and Cancel, 44 px or more each way",
+               [b[0] for b in buttons] == ["Confirm scratch", "Cancel"] and all(min(b[1:]) >= 44 for b in buttons), str(buttons))
+        tap("[data-cancel]")
+        _check(f"admin page {mode}: Cancel sends nothing, takes the step away and leaves the box ticked",
+               posts(t) == 0 and step() == "" and chrome.eval(ADMIN_NOREPL_JS) is True, repr(step()))
+        tap("[data-norepl]")                         # unticked again, and a name for #21
+        tap("[data-repl-name]")
+        chrome.call("Input.insertText", text="Test")
+        settle(0.3)
+        said = scratch()
+        _check(f"admin page {mode}: with a name, the confirm step: Scratch {who}: #21 TEST draws in (no betting-open line before betting opens)",
+               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line not in said and posts(t) == 0, repr(said))
+        tap("[data-repl-name]")
+        chrome.call("Input.insertText", text="y")
+        settle(0.3)
+        _check(f"admin page {mode}: ...a change to the row takes the step away (it would no longer say what is sent)",
+               step() == "" and chrome.eval(ADMIN_NAME_JS) == "Testy", repr(step()))
+        chrome.eval("(() => { const r = document.querySelector('" + ADMIN_ROW9 + "[data-repl-name]'); r.value = 'Test'; "
+                    "r.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()")
+        scratch()
+        tap("[data-cancel]")
+        _check(f"admin page {mode}: Cancel keeps the typed name and sends nothing",
+               chrome.eval(ADMIN_NAME_JS) == "Test" and step() == "" and posts(t) == 0, chrome.eval(ADMIN_NAME_JS))
+        lines = {}
+        for n in (1, 2, 3, 4, 5, 6, 0):
+            state(n)
+            lines[n] = open_line in scratch()
+            tap("[data-cancel]")
+        _check(f"admin page {mode}: the betting-open line in race states 1-5 only (with a replacement)",
+               lines == {0: False, 1: True, 2: True, 3: True, 4: True, 5: True, 6: False}, str(lines))
+        state(1)
+        tap("[data-norepl]")
+        said = scratch()
+        _check(f"admin page {mode}: ...and never with No replacement", said.startswith(f"Scratch {who}, no replacement") and open_line not in said,
+               repr(said))
+        tap("[data-cancel]")
+        tap("[data-norepl]")
+        said = scratch()
+        _check(f"admin page {mode}: betting open, the replacement's confirm step carries the line",
+               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line in said and posts(t) == 0, repr(said))
+        slow[("POST", "/api/quiniela/scratch")] = 0.8
+        t = time.monotonic()
+        x, y = chrome.center(ADMIN_ROW9 + "[data-confirm]")
+        chrome.tap_at(x, y)
+        chrome.tap_at(x, y)                          # the same spot, as a finger's second tap
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
+        settle(0.6)
+        slow.clear()
+        reply = "Scratched 9 " + chr(0x2192) + " #21 TEST"
+        _check(f"admin page {mode}: a double tap on Confirm scratch sends one request: one record, 9 -> 21 TEST, one reply line",
+               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": {"number": 21, "name": "TEST"}}]
+               and chrome.eval(ADMIN_LINES_JS % json.dumps(reply)) == 1, f"{posts(t)} requests, {rig.model()['scratches']}")
+        t = time.monotonic()
+        chrome.tap('#scratched-list .horse[data-horse="9"] [data-undo]')
+        chrome.wait_for("!!document.querySelector('" + ADMIN_ROW9 + "[data-scratch]')", timeout=10)
+        settle(0.4)
+        _check(f"admin page {mode}: Undo is unchanged: one tap, one request, no step",
+               posts(t, "/api/quiniela/unscratch") == 1 and rig.model()["scratches"] == [] and step() == "Undone 9", repr(step()))
+        tap("[data-norepl]")
+        scratch()
+        t = time.monotonic()
+        tap("[data-confirm]")
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
+        _check(f"admin page {mode}: Confirm sends what the step said: 9 scratched with no replacement",
+               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": None}],
+               str(rig.model()["scratches"]))
+        _check(f"admin page {mode}: no confirm() or alert() dialog anywhere, no page errors",
+               chrome.eval("window.__dialogs") == 0 and not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        slow.clear()
+        chrome.close()
+        server.close()
+
+
+def _with_counted_requests(run):
+    """run(requests, slow) with every request pi5 receives counted, as (time, method, path), and the replies of the
+    (method, path) keys in `slow` held back that many seconds after the work is done, as a busy pi5's are."""
     requests, slow = [], {}
     inner = main.app.wsgi_app
 
@@ -1047,10 +1199,23 @@ def test_admin_one_tap_one_request_in_a_browser():
 
     main.app.wsgi_app = counting
     try:
-        for touch in (True, False):
-            _admin_one_tap(picker_check, touch, requests, slow)
+        run(requests, slow)
     finally:
         main.app.wsgi_app = inner
+
+
+def test_admin_scratch_asks_first_in_a_browser():
+    """Joey, 2026-10-07: Scratch asks before it scratches. On the LQ admin page in headless Chrome at 1366 x 1024,
+    touch and mouse, every request counted: Scratch with nothing set sends nothing and asks, in the row; its No
+    replacement button ticks the box and goes on to the confirm step; the step says what the scratch will do,
+    for both kinds, with the betting-open line in race states 1-5 when there is a replacement; Cancel or a change
+    to the row sends nothing and keeps what was typed; only Confirm sends, one request on a double tap, what the
+    step said; Undo is unchanged; no browser dialog. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("admin page Scratch check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: [_admin_scratch_check(picker_check, touch, requests, slow) for touch in (True, False)])
 
 
 # -----------------------------------------------------------------------------
@@ -1078,6 +1243,7 @@ def main_():
     _run("iPad — everything the host presses takes a finger, 44 px, in a browser", test_tap_targets_in_a_browser)
     _run("iPad — full screen, the links between the two pages open in place, in a browser", test_full_screen_links_in_a_browser)
     _run("admin page — one tap, one request; one scratch, one record, one reply; the rows reset", test_admin_one_tap_one_request_in_a_browser)
+    _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

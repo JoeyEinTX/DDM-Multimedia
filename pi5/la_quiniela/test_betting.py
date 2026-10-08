@@ -2933,6 +2933,9 @@ def test_admin_page():
     r = client.get("/quiniela/admin")
     _check("GET /quiniela/admin 200 text/html", r.status_code == 200 and r.mimetype == "text/html")
     html = r.get_data(as_text=True)
+    css = Path(_PI5_DIR, "static", "css", "quiniela_admin.css").read_text(encoding="utf-8")
+    _check("its stylesheet is pi5/static/css/quiniela_admin.css (moved out of the page on 2026-10-07)",
+           'href="/static/css/quiniela_admin.css' in html and "<style>" not in html and ".rowstatus.ask" in css)
     for section in ("race", "names", "scratches", "closes"):
         _check(f"section id={section!r} present", f'id="{section}"' in html)
     _check("the Race section comes first", html.index('id="race"') < html.index('id="names"'))
@@ -2968,6 +2971,14 @@ def test_admin_page():
     _check("a replacement number picker, a name box, No replacement and Undo",
            all(s in html for s in ("<select", "data-repl-num", "data-repl-name", "data-norepl", "data-undo", "No replacement")))
     _check("sends the replacement as {number, name}", "replacement = { number:" in html)
+    _check("Scratch asks first, in the row: the question, the confirm step of both kinds, the betting-open line, Confirm and Cancel",
+           all(s in html for s in ("No replacement? Tick No replacement, or enter the replacement's name.", "data-ask-norepl",
+                                   ", no replacement: its tokens are handed back to re-bet.", " draws in.",
+                                   "Betting is open: the tokens in this cup will ride on #", ". After 60 MIN, use No replacement.",
+                                   "model.race_state >= 1 && model.race_state <= 5", "data-confirm>Confirm scratch", "data-cancel>Cancel"))
+           and "confirm(" not in html.split("function onScratchClick")[1].split("function ")[0])
+    _check("the Horse names help: a number with nothing after it clears that horse's name, a blank line leaves it alone",
+           "A number with nothing after it (<code>21.</code>) clears that horse's name; a blank line leaves it alone." in html)
     _check("Undo is withheld on a chained record, with the reason", '" · undo #"' in html and "disabled" in html)
     _check("reads in_field and scratches from the model", "in_field" in html and "scratches" in html)
     _check("loadModel exists, runs at load, every 5 s and after every action (it went missing once)",
@@ -2985,7 +2996,7 @@ def test_admin_page():
            and 'id="counted" class="counted" hidden' in html and "st >= 3 && st <= 5" in html and "st === 6 && has" in html)
     _check("...a number box with the phone's numeric keypad, a big Save, Clear, and a reply line",
            'id="counted-input" type="text" inputmode="numeric" pattern="[0-9]*"' in html and 'id="counted-save" class="primary big"' in html
-           and 'id="counted-clear"' in html and 'id="counted-status"' in html and "min-height: 68px" in html)
+           and 'id="counted-clear"' in html and 'id="counted-status"' in html and "min-height: 68px" in css)
     _check("...it saves with PUT /api/quiniela/counted_pot, reads pot_scale, pot_counted and hand_counted from the model, and shows the difference",
            '"PUT", "/api/quiniela/counted_pot"' in html and "model.pot_scale" in html and "model.pot_counted" in html
            and "model.hand_counted" in html and 'id="cmp-scale"' in html and 'id="cmp-counted"' in html and 'id="cmp-diff"' in html
