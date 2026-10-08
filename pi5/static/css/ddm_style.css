@@ -912,6 +912,13 @@ body {
     background: rgba(0, 0, 0, 0.08);
 }
 
+/* A mode button whose tap is still being sent (ddm_control.js holdingMode): it takes no other tap until
+   its requests have ended and 2 s have passed. */
+.panels .btn.is-sending {
+    opacity: 0.7;
+    cursor: progress;
+}
+
 /* Disabled button state - grayed out when race is complete */
 .btn:disabled,
 .btn.disabled {

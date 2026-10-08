@@ -1219,6 +1219,186 @@ def test_admin_scratch_asks_first_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# The Control Center sends once a tap (Joey, 2026-10-07)
+# -----------------------------------------------------------------------------
+
+CC_MODES = (("WELCOME", "/api/animation/WELCOME"), ("TEST", None), ("STANDBY", "/api/led/all_off"),
+            ("BETTING_60", "/api/animation/BETTING_60"), ("BETTING_30", "/api/animation/BETTING_30"),
+            ("FINAL_CALL", "/api/animation/FINAL_CALL"), ("AT_THE_GATE", "/api/animation/AT_THE_GATE"),
+            ("GATES_BURST", "/api/animation/GATES_BURST"), ("CHAOS", "/api/animation/CHAOS"),
+            ("FINISH", "/api/animation/FINISH"), ("HEARTBEAT_COOLDOWN", "/api/animation/HEARTBEAT_COOLDOWN"))
+
+
+def _control_center_taps(picker_check, touch, requests, slow):
+    """One session of test_control_center_one_tap_one_send_in_a_browser."""
+    mode = "[touch]" if touch else "[mouse]"
+    rig = Rig()
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
+
+    def posts(since, path):
+        return sum(1 for t, m, p in requests if t >= since and m == "POST" and p == path)
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def double_tap(sel, gap=0.0):
+        x, y = chrome.center(sel)
+        chrome.tap_at(x, y)
+        if gap:
+            settle(gap)
+        chrome.tap_at(x, y)                          # the same spot, as a finger's second tap
+
+    def button(m):
+        return f"button[data-mode='{m}']"
+
+    def wait_posts(since, paths, seconds):         # each path's POSTs since, once each has one or the time is up
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not all(posts(since, p) for p in paths):
+            settle(0.05)
+        return tuple(posts(since, p) for p in paths)
+
+    try:
+        chrome.call("Page.navigate", url=server.url)
+        chrome.wait_for("document.readyState === 'complete' && typeof showResultsModal === 'function'", timeout=30)
+        chrome.wait_for("(() => { const s = document.getElementById('splash-screen'); return !s || s.style.display === 'none'; })()",
+                        timeout=20)
+        chrome.wait_for("typeof quinielaField !== 'undefined' && quinielaField !== null", timeout=20)
+        chrome.eval("window.__confirms = 0; window.confirm = () => { window.__confirms++; return true; }; 1")
+        # Every mode button, a double tap each: one race state, one LED request (TEST opens its modal: no LEDs).
+        server.led_latency = 0.3
+        sent = {}
+        for m, led in CC_MODES:
+            chrome.wait_for("(typeof raceStateSending === 'undefined' || raceStateSending === null) && "
+                            "!document.getElementById('loader').classList.contains('show')", timeout=10)
+            t = time.monotonic()
+            double_tap(button(m))
+            end = time.monotonic() + 5.0             # until this button's requests have reached pi5
+            while time.monotonic() < end and not (posts(t, "/api/quiniela/mode") and (posts(t, led) if led else True)):
+                settle(0.05)
+            settle(0.6)
+            sent[m] = (posts(t, "/api/quiniela/mode"), posts(t, led) if led else 1)
+            if m == "TEST":
+                chrome.eval("closeTestModal(); 1")
+                settle(0.3)
+        _check(f"Control Center {mode}: a double tap on each mode button sends one race state and one LED request",
+               all(v == (1, 1) for v in sent.values()), str(sent))
+        # A slower second tap, after the LEDs answered: still held, so it neither sends nor turns the animation off.
+        settle(2.2)
+        t = time.monotonic()
+        double_tap(button("AT_THE_GATE"), gap=0.7)
+        settle(0.5)
+        _check(f"Control Center {mode}: a second tap 0.7 s on (the LEDs answered at 0.3 s) sends nothing and does not turn the animation off",
+               (posts(t, "/api/quiniela/mode"), posts(t, "/api/animation/AT_THE_GATE"), posts(t, "/api/command")) == (1, 1, 0)
+               and chrome.eval("document.querySelector(\"button[data-mode='AT_THE_GATE']\").classList.contains('active')"),
+               str((posts(t, "/api/quiniela/mode"), posts(t, "/api/animation/AT_THE_GATE"), posts(t, "/api/command"))))
+        # While a race state is on its way no mode button takes a tap; once pi5 has answered, another mode goes.
+        settle(2.2)
+        slow[("POST", "/api/quiniela/mode")] = 3.0
+        t = time.monotonic()
+        chrome.tap(button("BETTING_60"))
+        wait_posts(t, ("/api/quiniela/mode",), 3.0)  # pi5 has 60 MIN's race state and answers 3 s later
+        chrome.tap(button("FINAL_CALL"))             # meanwhile
+        settle(0.8)
+        early = (posts(t, "/api/quiniela/mode"), posts(t, "/api/animation/FINAL_CALL"))
+        slow.clear()                                 # pi5 answers at once again
+        chrome.wait_for("typeof raceStateSending === 'undefined' || raceStateSending === null", timeout=10)
+        t = time.monotonic()
+        chrome.tap(button("FINAL_CALL"))
+        later = wait_posts(t, ("/api/quiniela/mode", "/api/animation/FINAL_CALL"), 3.0)
+        _check(f"Control Center {mode}: a tap on another mode while a race state is on its way sends nothing; once pi5 has answered it goes",
+               early == (1, 0) and later == (1, 1) and rig.model()["race_state"] == 2, str((early, later, rig.model()["race_state"])))
+        # The LED controller hangs for its whole 5 s: the race state and every other mode still go at once.
+        settle(2.2)
+        chrome.wait_for("typeof raceStateSending === 'undefined' || raceStateSending === null", timeout=10)
+        server.led_latency = 5.0
+        answered = len(server.led("ANIM:AT_THE_GATE"))
+        t = time.monotonic()
+        chrome.tap(button("AT_THE_GATE"))
+        wait_posts(t, ("/api/animation/AT_THE_GATE",), 3.0)        # its LED call is hanging from now on
+        settle(1.0)
+        t1 = time.monotonic()
+        chrome.tap(button("AT_THE_GATE"))            # its LEDs still on their way: held
+        chrome.tap(button("GATES_BURST"))
+        wait_posts(t1, ("/api/animation/GATES_BURST",), 2.5)
+        took = round(time.monotonic() - t1, 2)
+        went = (posts(t, "/api/quiniela/mode"), posts(t, "/api/animation/AT_THE_GATE"), posts(t, "/api/animation/GATES_BURST"))
+        state = rig.model()["race_state"]
+        hanging = len(server.led("ANIM:AT_THE_GATE")) == answered      # its LED call has not answered yet
+        _check(f"Control Center {mode}: with the LEDs answering in 5 s, THEY'RE OFF! tapped 1 s after AT THE GATE goes at once "
+               "(its race state and its LEDs, while AT THE GATE's LED call still hangs), and AT THE GATE tapped again does not",
+               went == (2, 1, 1) and state == 4 and took < 2.5 and hanging, str((went, state, took, hanging)))
+        settle(5.5)
+        server.led_latency = 0.0
+        # The panel's Reset asks once (its confirm) and sends once.
+        settle(2.2)
+        t = time.monotonic()
+        double_tap(button("RESET"))
+        settle(1.5)
+        _check(f"Control Center {mode}: a double tap on Reset asks once and sends /api/results/clear once",
+               chrome.eval("window.__confirms") == 1 and posts(t, "/api/results/clear") == 1,
+               str((chrome.eval("window.__confirms"), posts(t, "/api/results/clear"))))
+        chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
+        # SET WINNERS: RESET and CONFIRM RESULTS, a double tap each.
+        chrome.tap(button("RESULTS"))
+        chrome.wait_for("document.getElementById('results-modal').classList.contains('active') && "
+                        "document.querySelectorAll('.winner-pick-btn').length > 0", timeout=15)
+        settle(0.3)
+        picks = chrome.eval("[...document.querySelectorAll('.winner-pick-btn')].slice(0, 3).map((b) => b.getAttribute('data-horse'))")
+
+        def pick_three():
+            for h in picks:
+                chrome.tap(f".winner-pick-btn[data-horse='{h}']")
+                settle(0.3)
+
+        chrome.tap(f".winner-pick-btn[data-horse='{picks[0]}']")      # one pick: RESET stays where the finger is
+        settle(0.3)
+        t = time.monotonic()
+        double_tap("#results-reset-btn")
+        settle(1.0)
+        reset_once = posts(t, "/api/cup/unlock")
+        pick_three()
+        t = time.monotonic()
+        chrome.tap("#results-reset-btn")
+        settle(0.8)
+        _check(f"Control Center {mode}: SET WINNERS, a double tap on RESET sends its unlock once; a RESET after new picks unlocks again",
+               reset_once == 1 and posts(t, "/api/cup/unlock") == 1
+               and chrome.eval("JSON.stringify(resultsState)") == json.dumps({"chosen": None, "win": None, "place": None, "show": None},
+                                                                             separators=(",", ":")),
+               str((reset_once, posts(t, "/api/cup/unlock"), chrome.eval("JSON.stringify(resultsState)"))))
+        pick_three()
+        chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=10)
+        t = time.monotonic()
+        double_tap("#results-confirm-btn")
+        settle(3.0)
+        _check(f"Control Center {mode}: SET WINNERS, a double tap on CONFIRM RESULTS sends /api/results once",
+               posts(t, "/api/results") == 1, str(posts(t, "/api/results")))
+        _check(f"Control Center {mode}: no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        slow.clear()
+        chrome.close()
+        server.close()
+
+
+def test_control_center_one_tap_one_send_in_a_browser():
+    """Joey, 2026-10-07: the Control Center's buttons send once a tap, and a slow LED controller holds only the
+    button tapped. In headless Chrome at 1366 x 1024, touch and mouse, every request counted where pi5 receives it,
+    the LED controller answering through picker_check's stub: a double tap on each mode button sends one race state
+    and one LED request, and a second tap after the LEDs answered neither sends nor turns the animation off; while a
+    race state is on its way no mode button takes a tap; with the LEDs taking 5 s a different mode is sent within a
+    second (its race state and its LEDs) and the same one is not; the panel's Reset asks once and sends once; in
+    SET WINNERS a double tap on RESET or CONFIRM RESULTS sends once. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("Control Center tap checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: [_control_center_taps(picker_check, touch, requests, slow) for touch in (True, False)])
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -1244,6 +1424,7 @@ def main_():
     _run("iPad — full screen, the links between the two pages open in place, in a browser", test_full_screen_links_in_a_browser)
     _run("admin page — one tap, one request; one scratch, one record, one reply; the rows reset", test_admin_one_tap_one_request_in_a_browser)
     _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
+    _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

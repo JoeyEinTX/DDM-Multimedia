@@ -521,6 +521,9 @@ eventSource.addEventListener('results', function(e) {
 - Displays during API calls
 - Hides immediately on error
 - Prevents multiple rapid clicks
+- Not on the mode buttons (2026-10-07): a mode button sends once a tap, its race state and its LEDs, and takes no
+  other tap until those have ended and 2 s have passed (`.is-sending`); no mode button takes one while a race state
+  is on its way; a slow LED controller holds only the button tapped, so another mode goes at once
 
 **Style:** Spinning teal circle overlay
 

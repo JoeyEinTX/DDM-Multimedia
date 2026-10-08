@@ -679,9 +679,9 @@ function flashButton(buttonElement) {
 // pi5's (la_quiniela/betting.py MODE_STATES) and is not repeated here; a
 // button carries its mode in data-mode. SET WINNERS and RESET are told by
 // the routes they already call (/api/results once the results are applied,
-// /api/results/clear). La Quiniela's admin page sets the same state with
-// its seven buttons, so what it is now is read back every 5 s and shown on
-// the ticker. The race state does not wait on the LEDs: with the LED
+// /api/results/clear). Reset betting on La Quiniela's admin page, or another
+// dashboard, can change it too, so what it is now is read back every 5 s and
+// shown on the ticker. The race state does not wait on the LEDs: with the LED
 // controller unreachable the button still moves it, and says so.
 let raceModeInfo = null;   // {state, state_name, mode, label, source} as pi5 last reported it
 
@@ -878,8 +878,52 @@ function updateRaceControlDotFromEsp32() {
     dot.classList.add(esp32Info.online ? 'status-auto-connected' : 'status-auto-disconnected');
 }
 
+// =====================================================================
+// One tap, one send (Joey, 2026-10-07)
+// =====================================================================
+// A mode button's requests, the race state and the LEDs, go once a tap.
+// While a race state is on its way no mode button takes a tap (pi5 answers
+// at once: it is its own work), so a second state cannot overtake it. The
+// button tapped takes none until its own requests have ended and
+// MODE_HOLD_MS have passed, so a quick second tap cannot turn its animation
+// back off; it shows .is-sending meanwhile. The LEDs hold only that button:
+// with the LED controller slow or unreachable (pi5 waits up to 5 s for it)
+// every other mode can be pressed as soon as pi5 has the race state. The
+// full-screen loader did this before and held every button for the whole
+// LED call; the mode buttons no longer show it.
+const MODE_HOLD_MS = 2000;           // as long as the loader stayed up
+let raceStateSending = null;         // the race state's request while it is on its way
+const modesHeld = new Set();         // the mode buttons whose tap is still being sent
+
+async function holdingMode(buttonElement, send) {
+    if (raceStateSending || modesHeld.has(buttonElement)) return;    // nothing sent for this tap
+    const tapped = Date.now();
+    modesHeld.add(buttonElement);
+    buttonElement.classList.add('is-sending');
+    try {
+        await send();
+    } finally {
+        setTimeout(() => {
+            modesHeld.delete(buttonElement);
+            buttonElement.classList.remove('is-sending');
+        }, Math.max(0, MODE_HOLD_MS - (Date.now() - tapped)));
+    }
+}
+
+// No mode button takes a tap until pi5 has answered this race state
+// (setRaceMode never throws).
+function sendingRaceState(raceSet) {
+    raceStateSending = raceSet;
+    raceSet.then(() => { if (raceStateSending === raceSet) raceStateSending = null; });
+}
+
 // Send animation command with toggle functionality
 async function sendAnimation(animName, buttonElement) {
+    if (!buttonElement) return animate(animName, buttonElement);     // no button to hold (triggerFinish)
+    return holdingMode(buttonElement, () => animate(animName, buttonElement));
+}
+
+async function animate(animName, buttonElement) {
     if (raceControlMode === 'auto') {
         showNotification('Switch to MANUAL to control animations', 'error');
         return;
@@ -925,7 +969,6 @@ async function sendAnimation(animName, buttonElement) {
 
     // BUG FIX #2: Toggle animations - if same button was clicked, turn OFF the LEDs
     if (isToggleOff) {
-        showLoader();
         try {
             // Send LED:ALL_OFF command to stop the animation and turn off LEDs
             const response = await fetch('/api/command', {
@@ -944,13 +987,10 @@ async function sendAnimation(animName, buttonElement) {
                 filterTuningGroups('IDLE');
                 clearActiveButton();
                 await checkESP32Status();
-                hideLoader();
             } else {
-                hideLoader(true); // Hide immediately on error
                 showNotification(`Error: ${data.response}`, 'error');
             }
         } catch (error) {
-            hideLoader(true); // Hide immediately on error
             console.error('Error stopping animation:', error);
             showNotification('Connection error', 'error');
         }
@@ -961,7 +1001,7 @@ async function sendAnimation(animName, buttonElement) {
     // (one race state); the LEDs are not waited for.
     const mode = modeOf(buttonElement);
     const raceSet = mode ? setRaceMode(mode) : null;
-    showLoader();
+    if (raceSet) sendingRaceState(raceSet);
     try {
         const response = await fetch(`/api/animation/${animName}`, {
             method: 'POST'
@@ -976,13 +1016,10 @@ async function sendAnimation(animName, buttonElement) {
             filterTuningGroups(animName.toUpperCase());
             setActiveButton(buttonElement);
             await checkESP32Status();
-            hideLoader();
         } else {
-            hideLoader(true); // Hide immediately on error
             showNotification(withRaceState(`Error: ${data.response}`, race), 'error');
         }
     } catch (error) {
-        hideLoader(true); // Hide immediately on error
         console.error('Error sending animation:', error);
         showNotification(withRaceState('Connection error', raceSet ? await raceSet : null), 'error');
     }
@@ -990,9 +1027,14 @@ async function sendAnimation(animName, buttonElement) {
 
 // Standby - turns off LEDs without clearing results
 async function sendStandby() {
+    const button = document.querySelector("button[data-mode='STANDBY']");
+    return button ? holdingMode(button, standby) : standby();
+}
+
+async function standby() {
     if (raceControlMode === 'auto') return;
     const raceSet = setRaceMode('STANDBY');
-    showLoader();
+    sendingRaceState(raceSet);
     try {
         // Turn off all LEDs
         const response = await fetch('/api/led/all_off', {
@@ -1009,13 +1051,10 @@ async function sendStandby() {
             // Clear active button state
             clearActiveButton();
             await checkESP32Status();
-            hideLoader();
         } else {
-            hideLoader(true); // Hide immediately on error
             showNotification(`Error: ${data.response}`, 'error');
         }
     } catch (error) {
-        hideLoader(true); // Hide immediately on error
         console.error('Error going to standby:', error);
         showNotification('Connection error', 'error');
     }
@@ -1787,9 +1826,14 @@ async function resultsReset() {
     resultsNote('');
     updateResultsModalUI();
 
-    // Unlock all selected cups
-    await ledCall('/api/cup/unlock', { cup: 'ALL' });
+    // Unlock all selected cups, once a tap: a second RESET within MODE_HOLD_MS,
+    // with no LED call since the first one's unlock, has nothing more to unlock.
+    if (lastReset && ledChain === lastReset.unlock && Date.now() - lastReset.at < MODE_HOLD_MS) return;
+    const unlock = ledCall('/api/cup/unlock', { cup: 'ALL' });
+    lastReset = { unlock: unlock, at: Date.now() };
+    await unlock;
 }
+let lastReset = null;      // RESET's unlock and when it was asked for
 
 // Close results modal
 async function closeResultsModal(keepAnimation = false) {
