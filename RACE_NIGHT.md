@@ -9,7 +9,8 @@ as two tabs (section 2):
   the closing time, the counted pot, **Reset betting**, the Horses list, and the race
   state, read-only. It is also in the dashboard's menu (☰ → La Quiniela Admin).
 
-Commands are typed on DevPi only in the appendix (if the pages are down).
+Commands are typed on DevPi only to start fresh before the party, to start the apps (section 3)
+and in the appendix (if the pages are down).
 
 There is **one race state**. A dashboard button sets it, the cups and the TV follow:
 
@@ -72,6 +73,51 @@ board**, prizes and all) and hands it back in 0 and 6.
 - [ ] Spare cup, spare gateway, spare CYD, flashed and in the drawer. Tare the spare cup
       empty before it goes in: a cup remembers its last count and would report it for the
       first ~30 s after power-up.
+
+## Before the party: start fresh
+
+Testing leaves names, race info, scratches, results and La Subasta's guests and bids on
+DevPi. One command clears all of it, after a backup it checks file by file.
+
+- **When:** on DevPi, after the last test and before you enter the field (section 1): it
+  clears the names, the race info and the scratches too. **Never after betting opens.** It
+  is not Reset betting (section 4), which keeps names, race info and scratches.
+- [ ] Stop pi5: Ctrl+C in its terminal (the command refuses while pi5 runs). The splash can
+      stay up.
+- [ ] The list first. It changes nothing; read what it will clear and what it keeps:
+
+```bash
+cd ~/DDM-Multimedia && python3 pi5/tools/wipe.py --dry-run
+```
+
+- [ ] Then the real run. It shows the same list and asks you to type `WIPE`; anything else
+      stops with nothing changed. It backs up every file it touches to
+      `backups/wipe-<date-time>/`, checks each copy, clears, checks nothing is left, and
+      prints the command that undoes it:
+
+```bash
+python3 pi5/tools/wipe.py
+```
+
+- **Clears:** La Quiniela's names, race info, scratches, closing time, race state (back to
+  0 PRE-RACE), figures at the post, counted pot, results, cup cache and readings, and logs,
+  plus the old Race Setup file; La Subasta's guests, bids, owners, payouts, auction state
+  and changed settings; the splash's old betting log.
+- **Keeps:** the code, `pi5/config.py`, `pi5/.env`, the splash's config, the LEDs'
+  animation setup and the backups.
+- **To undo it,** pi5 stopped: `python3 pi5/tools/wipe.py --restore backups/wipe-<date-time>`,
+  then type `RESTORE`. Every file comes back byte for byte (what is there is backed up first).
+- [ ] Start pi5 and the splash (section 3). `ADMIN`: no names, no race info, no scratches,
+      `0 · PRE-RACE`, Pot $0. `DASH`: no results. `/la-subasta`: no guests, no bids.
+- [ ] What the wipe can't reach (it prints this too):
+  - The cups keep their own count: empty every cup, then `ADMIN` → Race says Pot $0. A cup
+    that still counts tokens when empty: hold its screen → `TARE` → `YES`.
+  - The cups keep their own numbers: a cup a replacement scratch moved (9 became 22) still
+    says 22. Walk the mantle and set any cup that isn't its post (hold → `HORSE` → `SET`).
+  - The gateway keeps the old race state and its list of cups until it loses power: unplug
+    it from DevPi and plug it back in before you start pi5.
+  - A phone that joined La Subasta before still remembers its old guest, and its bids are
+    refused: delete that phone's website data for joeydevpi.local, then join again.
 
 ## 1. Derby week — the field
 

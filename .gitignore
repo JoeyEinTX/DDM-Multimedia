@@ -1,6 +1,9 @@
 # Local configuration files with environment-specific settings
 pi5/config.py
 
+# The start-fresh tool's backups on DevPi (pi5/tools/wipe.py): race data, never committed
+backups/
+
 # Python
 __pycache__/
 *.py[cod]

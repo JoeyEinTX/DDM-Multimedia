@@ -134,6 +134,11 @@ also for a cup first heard with a horse, `from` 0), `cups_forgotten`,
 changed), `bridge_reopen`. The `horse` column of a cup event is the horse the
 cup reports (NULL for none).
 
+To start fresh before a party, pi5 stopped: `python3 pi5/tools/wipe.py` (try
+`--dry-run` first) empties every table of this database, La Subasta's too, and
+removes results.json, the betting log and the old Race Setup file, after a
+backup it checks file by file (RACE_NIGHT.md, "Before the party: start fresh").
+
 ## Who owns horse numbers: the cup
 
 - The cup: `HORSE` in its touch menu (hold the screen, `HORSE`, tap the top

@@ -490,6 +490,7 @@ Rules for either:
 | LED controller unreachable | The race state and results still apply; the dashboard says `LEDs unreachable`. [BUILT] |
 | No internet | No odds and no weather; nothing else notices. [BUILT] |
 | SD card failure | SQLite copied off the box on a schedule, and a cloned SD card on hand. [PROPOSED] |
+| Starting fresh before a party | `pi5/tools/wipe.py` on DevPi, pi5 stopped (it refuses otherwise). It copies every data file to `backups/wipe-<date-time>/` and checks each copy (size, SHA-256) before it clears anything. Then it empties every table (none recreated, so `check_shape()` passes; the id counters stay) and removes the results, the betting logs and the old Race Setup file. `--restore` puts a backup back byte for byte. The cups, the gateway and guests' phones keep their own; it says so (`RACE_NIGHT.md`, "Before the party: start fresh"). [BUILT] |
 
 - pi5 has no service file yet (`RACE_NIGHT.md` section 0). It should start on its own after
   a power cycle, under systemd only, never alongside a foreground copy. [PROPOSED]
