@@ -51,8 +51,11 @@ board**, prizes and all) and hands it back in 0 and 6.
       `journalctl -u ddm-pi5 -f` and `journalctl -u ddm-splash -f` (Ctrl+C stops the reading,
       not the app). Restart: `sudo systemctl restart ddm-pi5` (or `ddm-splash`, or both).
       Updating DevPi and running an app in a terminal: the end of this runbook.
-- [ ] The TV kiosk points at the splash on **5001**, not 5000.
-      (Files: `splash_display/deploy/kiosk.sh`, `splash_display/deploy/autostart_setup.md`.)
+- [ ] The TV's kiosk starts with DevPi's desktop too (the same install adds it): Chromium full
+      screen on the splash, `http://localhost:5001/display`, once the splash answers (it waits
+      up to 2 minutes, then starts anyway), with screen blanking off and the pointer hidden.
+      After the install, reboot once and check the TV: the slideshow, no pointer, and it never
+      blanks. (Files: `splash_display/deploy/kiosk.sh`, `deploy/kiosk_autostart.py`.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
 - [ ] The board on the TV is the tote look (`dots`, the default: amber dots on black
@@ -63,9 +66,10 @@ board**, prizes and all) and hands it back in 0 and 6.
       the FPS). `impact` (the board before the tote look) and `numbers` (the tote look's
       figures, names in Impact) stay: `http://joeydevpi.local:5001/?look=impact` from a
       laptop or phone; on the TV `pkill -f chromium`, then
-      `SPLASH_URL='http://localhost:5001/display?look=impact' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`.
-      To change the default: `QUINIELA_LOOK` in `splash_display/config.py`, restart the
-      splash and the kiosk.
+      `SPLASH_URL='http://localhost:5001/display?look=impact' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`
+      (the next boot brings the default back).
+      To change the default: `QUINIELA_LOOK` in `splash_display/config.py`, then
+      `sudo systemctl restart ddm-splash` and F5 on the kiosk's keyboard.
 - [ ] Every cup and the gateway: flashed from the current firmware (cup v0.7, the brownout
       build, and the protocol v2 gateway), sleeve installed, orientation right, touch working
       (`p` in serial shows touches), `CAL 10` done with the sleeve on, then **tared empty**
@@ -464,7 +468,7 @@ cd ~/DDM-Multimedia && git stash && git pull && git stash pop
 sudo systemctl restart ddm-pi5 ddm-splash
 ```
 A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
-(it restarts both).
+(it restarts both). A pull that changed the TV's page: F5 on the kiosk's keyboard too.
 
 ## Working on it by hand
 

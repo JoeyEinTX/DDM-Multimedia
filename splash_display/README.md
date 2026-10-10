@@ -118,13 +118,12 @@ while the service runs, the splash refuses and says how to stop the service
 first. Werkzeug's line per request is off in the log; `DDM_ACCESS_LOG=1` in
 the environment brings it back.
 
-For the kiosk autostart see `deploy/autostart_setup.md` (covers
-Wayfire/Wayland, labwc, and LXDE/X11):
-
-```bash
-chmod +x deploy/kiosk.sh
-# Wire deploy/kiosk.sh into your desktop autostart per the doc.
-```
+The same command starts the TV's kiosk with the desktop session
+(`~/.config/autostart/ddm-tv.desktop` runs `deploy/kiosk.sh`): Chromium full
+screen on `http://localhost:5001/display` once the splash answers (it waits up
+to 2 minutes, then starts anyway), screen blanking off for the session, and on
+labwc the pointer hidden (an Alt+Super+H keybind in `~/.config/labwc/rc.xml`,
+pressed by `wtype`). `deploy/autostart_setup.md` has the other desktops.
 
 ### Verify
 

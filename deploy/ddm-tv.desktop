@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=DDM TV kiosk
+Comment=The splash display full screen on the TV (DDM-Multimedia, deploy/install_services.sh)
+Exec=/bin/bash @REPO@/splash_display/deploy/kiosk.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

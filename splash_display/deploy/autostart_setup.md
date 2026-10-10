@@ -25,6 +25,12 @@ Reboot when prompted.
 
 ## 2. Disable screen blanking (display power management)
 
+On DevPi (Pi OS trixie, labwc) `deploy/install_services.sh` does sections 2 to 4:
+the services, and the kiosk at login (`~/.config/autostart/ddm-tv.desktop`), which
+stops the session's `swayidle` (Pi OS's Screen Blanking) and hides the pointer. Its
+output says when Screen Blanking is on; turning it off for good is the Control
+Centre's Display tab. The rest of this page is for other Pis and desktops.
+
 ### Bookworm desktop (Wayfire / labwc, recommended)
 
 Use the GUI:
@@ -79,6 +85,10 @@ after the install leaves only the splash starting at boot.
 ---
 
 ## 4. Set up Chromium kiosk on desktop login
+
+With `deploy/install_services.sh` (section 3) this is done: it writes
+`~/.config/autostart/ddm-tv.desktop`, which Pi OS's labwc session starts through
+`lxsession-xdg-autostart` (LXDE does too). By hand, on another desktop:
 
 Make the kiosk launcher executable:
 

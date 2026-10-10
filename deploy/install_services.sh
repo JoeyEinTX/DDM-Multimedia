@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # DevPi starts itself: pi5 and the splash as the systemd services ddm-pi5 and ddm-splash
-# (deploy/*.service), enabled at boot and started now.
+# (deploy/*.service), enabled at boot and started now; and the TV's kiosk with the desktop
+# session (deploy/kiosk_autostart.py: ~/.config/autostart/ddm-tv.desktop, and on labwc the
+# Alt+Super+H keybind that hides the pointer; wtype, which presses it, from apt if missing).
 #
 # Run it on DevPi as the user the services run as (joey), not with sudo: it asks for sudo
 # itself where it needs it.
@@ -37,7 +39,7 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY=1 ;;
         --uninstall) ACTION=uninstall ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
         *) echo "unknown option: $arg (use --dry-run, --uninstall or --help)" >&2; exit 2 ;;
     esac
 done
@@ -98,6 +100,23 @@ service_active() {
 render() {   # the unit with this repo's path and user filled in
     sed -e "s|@REPO@|$REPO|g" -e "s|@USER@|$RUN_USER|g" "$1"
 }
+# The TV kiosk's files in the user's home (deploy/kiosk_autostart.py install|uninstall),
+# written as that user. Without systemd (a dry run on another machine) any python will do.
+kiosk_autostart() {
+    local args=("$@")
+    [ "$DRY" = 1 ] && args+=(--dry-run)
+    if [ "$HAVE_SYSTEMD" = 1 ] && [ -x "$PYTHON" ]; then
+        as_user "$PYTHON" "$DEPLOY_DIR/kiosk_autostart.py" "${args[@]}"
+    else
+        local py
+        py="$(command -v python3 || command -v python || true)"
+        if [ -n "$py" ]; then
+            "$py" "$DEPLOY_DIR/kiosk_autostart.py" "${args[@]}" --home "$RUN_HOME"
+        else
+            skip "no python here: the kiosk's autostart is not shown"
+        fi
+    fi
+}
 
 echo "DDM services: repo $REPO, user $RUN_USER$( [ "$DRY" = 1 ] && echo ', dry run: nothing is changed' )"
 
@@ -117,7 +136,10 @@ if [ "$ACTION" = uninstall ]; then
     else
         skip "no systemd here: nothing to remove"
     fi
-    echo "Done. pi5 and the splash no longer start on their own; RACE_NIGHT.md, \"Working on it by hand\", starts them by hand."
+    echo
+    echo "TV kiosk"
+    kiosk_autostart uninstall
+    echo "Done. pi5 and the splash no longer start on their own, nor the kiosk with the desktop; RACE_NIGHT.md, \"Working on it by hand\", starts them by hand."
     exit 0
 fi
 
@@ -254,6 +276,21 @@ act $SUDO systemctl daemon-reload
 act $SUDO systemctl enable ddm-pi5 ddm-splash
 act $SUDO systemctl restart ddm-pi5 ddm-splash
 
+# --- The TV kiosk -------------------------------------------------------------------
+
+echo
+echo "TV kiosk (it starts at the next login: a reboot, or log out and in)"
+if command -v labwc >/dev/null 2>&1 || [ -d /etc/xdg/labwc ]; then
+    if command -v wtype >/dev/null 2>&1; then
+        ok "wtype is there (it presses the key that hides the pointer)"
+    elif command -v apt-get >/dev/null 2>&1; then
+        act $SUDO apt-get install -y wtype || warn "wtype did not install: the pointer stays on the TV (sudo apt install wtype)"
+    else
+        warn "no wtype and no apt-get: the pointer stays on the TV"
+    fi
+fi
+kiosk_autostart install || warn "the kiosk's autostart was not written (above): start it by hand, splash_display/deploy/kiosk.sh"
+
 if [ "$DRY" = 1 ]; then
     echo
     echo "Dry run: nothing changed."
@@ -279,5 +316,5 @@ for pair in "ddm-pi5:${PI5_PORT:-5000}" "ddm-splash:${SPLASH_PORT:-5001}"; do
     fi
 done
 echo
-echo "Installed. Both start on their own at every boot."
+echo "Installed. Both start on their own at every boot, and the TV's kiosk with the desktop."
 echo "  systemctl status ddm-pi5 ddm-splash      journalctl -u ddm-pi5 -f      sudo systemctl restart ddm-pi5 ddm-splash"

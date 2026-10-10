@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib
+import importlib.util
 import io
 import logging
 import os
@@ -423,7 +424,7 @@ def test_installer():
     # A dry run on a copy at a plain path (the Shop PC's checkout has a space in it).
     root = scratch_dir("ddm_deploy_dry_") / "DDM-Multimedia"
     shutil.copytree(DEPLOY, root / "deploy", ignore=shutil.ignore_patterns("__pycache__", "test_*.py"))
-    for rel in ("pi5/main.py", "splash_display/server.py"):
+    for rel in ("pi5/main.py", "splash_display/server.py", "splash_display/deploy/kiosk.sh"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / rel, root / rel)
     before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file()}
@@ -449,6 +450,8 @@ def test_installer():
     for step in ("would write /etc/systemd/system/ddm-pi5.service", "would write /etc/systemd/system/ddm-splash.service",
                  "systemctl daemon-reload", "systemctl enable ddm-pi5 ddm-splash", "systemctl restart ddm-pi5 ddm-splash"):
         _check(f"--dry-run: says it would: {step}", step in out)
+    _check("--dry-run: and the TV kiosk's autostart (deploy/kiosk_autostart.py, dry)",
+           "TV kiosk" in out and "would write ~/.config/autostart/ddm-tv.desktop" in out, out[-600:])
     after = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file()}
     _check("--dry-run: changed nothing in the repo", before == after)
     run = subprocess.run([sh, str(root / "deploy/install_services.sh"), "--uninstall", "--dry-run"],
@@ -460,6 +463,214 @@ def test_installer():
     _check("an unknown option: exit 2", run.returncode == 2, run.stderr)
 
 
+# -----------------------------------------------------------------------------
+# The TV kiosk: kiosk.sh, deploy/ddm-tv.desktop, deploy/kiosk_autostart.py
+# -----------------------------------------------------------------------------
+
+KIOSK = REPO / "splash_display/deploy/kiosk.sh"
+
+
+def load_kiosk_autostart():
+    spec = importlib.util.spec_from_file_location("kiosk_autostart", DEPLOY / "kiosk_autostart.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_kiosk_files():
+    sh = bash()
+    text = KIOSK.read_text(encoding="utf-8")
+    if sh:
+        run = subprocess.run([sh, "-n", str(KIOSK)], capture_output=True, text=True)
+        _check("kiosk.sh: bash -n", run.returncode == 0, run.stderr)
+    if shutil.which("shellcheck"):
+        run = subprocess.run(["shellcheck", str(KIOSK)], capture_output=True, text=True)
+        _check("kiosk.sh: shellcheck", run.returncode == 0, run.stdout[-1500:])
+    _check("kiosk.sh: LF, no home path", b"\r\n" not in KIOSK.read_bytes() and "/home/" not in text)
+    _check("kiosk.sh: the board's page by default, http://localhost:5001/display",
+           'URL="${SPLASH_URL:-http://localhost:5001/display}"' in text)
+    _check("kiosk.sh: waits for http://localhost:5001/ up to 2 minutes, then starts the browser anyway",
+           'WAIT_URL="${SPLASH_WAIT_URL:-http://localhost:5001/}"' in text and 'WAIT_S="${SPLASH_WAIT_S:-120}"' in text
+           and "starting the browser anyway" in text)
+    ka = load_kiosk_autostart()
+    _check("kiosk.sh presses the key kiosk_autostart.py binds (Alt+Super+H)",
+           'key="A-W-h"' in ka.KEYBIND and "HIDE_POINTER=(-M alt -M logo -k h -m logo -m alt)" in text)
+    desktop = (DEPLOY / "ddm-tv.desktop").read_text(encoding="utf-8")
+    entry = parse_unit(desktop).get("Desktop Entry", {})
+    _check("ddm-tv.desktop: an Application whose Exec is kiosk.sh, the path filled in by the installer",
+           entry.get("Type") == ["Application"] and entry.get("Exec") == ["/bin/bash @REPO@/splash_display/deploy/kiosk.sh"])
+    _check("ddm-tv.desktop's Exec is a file in the repo",
+           Path(entry["Exec"][0].split()[1].replace("@REPO@", str(REPO))).is_file())
+
+
+KIOSK_FAKES = {
+    "chromium": '#!/bin/bash\necho "$*" >> "$FAKE_LOG/chromium.args"\nexec -a "chromium $*" sleep 6\n',
+    "curl": ('#!/bin/bash\nn=$(cat "$FAKE_LOG/curl.n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_LOG/curl.n"\n'
+             '[ $n -ge ${CURL_OK_AT:-3} ]\n'),
+    "wtype": '#!/bin/bash\necho "$*" >> "$FAKE_LOG/wtype.args"\n',
+}
+
+
+def test_kiosk_script_runs():
+    """kiosk.sh with a fake browser, curl and wtype: it needs flock and pgrep (Linux)."""
+    sh = bash()
+    if not (sh and shutil.which("flock") and shutil.which("pgrep")):
+        print("  (skipped here: kiosk.sh's run needs Linux's flock and pgrep; it runs on DevPi)")
+        return
+    base = scratch_dir("ddm_kiosk_test_")
+    fakes, home, logs = base / "bin", base / "home", base / "log"
+    for d in (fakes, home, logs):
+        d.mkdir()
+    for name, body in KIOSK_FAKES.items():
+        (fakes / name).write_text(body, encoding="utf-8")
+        (fakes / name).chmod(0o755)
+    env = dict(ENV, PATH=f"{fakes}{os.pathsep}{ENV.get('PATH', '')}", HOME=str(home), FAKE_LOG=str(logs),
+               WAYLAND_DISPLAY="wayland-test", SPLASH_WAIT_S="20")
+    first = subprocess.Popen([sh, str(KIOSK)], env=env, stderr=subprocess.PIPE, text=True)
+    time.sleep(1)
+    second = subprocess.run([sh, str(KIOSK)], env=env, capture_output=True, text=True, timeout=60)
+    _check("a second kiosk.sh while the first runs: does nothing, says so",
+           second.returncode == 0 and "another kiosk.sh is running" in second.stderr, second.stderr)
+    err = first.communicate(timeout=60)[1]
+    _check("the first: exit 0 when its browser closes", first.returncode == 0, err)
+    _check("it waited for the splash (curl until it answered, the third time)",
+           (logs / "curl.n").read_text().strip() == "3")
+    args = (logs / "chromium.args").read_text().split()
+    _check("one browser, kiosk mode, on http://localhost:5001/display",
+           len((logs / "chromium.args").read_text().splitlines()) == 1 and "--kiosk" in args
+           and args[-1] == "http://localhost:5001/display", str(args[-3:]))
+    _check("then Alt+Super+H, once (the pointer off)",
+           (logs / "wtype.args").read_text().splitlines() == ["-M alt -M logo -k h -m logo -m alt"])
+    for f in ("curl.n", "chromium.args"):
+        (logs / f).unlink()
+    started = time.time()
+    run = subprocess.run([sh, str(KIOSK)], env=dict(env, CURL_OK_AT="999", SPLASH_WAIT_S="4"),
+                         capture_output=True, text=True, timeout=60)
+    _check("the splash never answers: the browser starts anyway after the wait",
+           run.returncode == 0 and "starting the browser anyway" in run.stderr
+           and (logs / "chromium.args").is_file() and time.time() - started < 30, run.stderr)
+
+
+RC_WITH_KEYBINDS = ('<?xml version="1.0"?>\r\n<labwc_config>\r\n  <theme><name>PiXnoir</name></theme>\r\n'
+                    '  <keyboard>\r\n    <keybind key="W-Return"><action name="Execute" command="lxterminal" />'
+                    '</keybind>\r\n  </keyboard>\r\n</labwc_config>\r\n')
+RC_NO_KEYBOARD = '<?xml version="1.0"?>\n<labwc_config>\n  <theme><name>PiXflat</name></theme>\n</labwc_config>\n'
+RC_EMPTY_KEYBOARD = ('<?xml version="1.0"?>\n<labwc_config>\n  <keyboard>\n    <repeatRate>25</repeatRate>\n'
+                     '  </keyboard>\n</labwc_config>\n')
+RC_COMMENTED = ('<?xml version="1.0"?>\n<labwc_config>\n  <!-- an example:\n  <keyboard>\n    <keybind key="W-x" />\n'
+                '  </keyboard>\n  -->\n</labwc_config>\n')
+RC_SELF_CLOSING = '<?xml version="1.0"?>\n<labwc_config>\n  <keyboard />\n</labwc_config>\n'
+
+
+def test_kiosk_autostart():
+    import xml.etree.ElementTree as ET
+    ka = load_kiosk_autostart()
+    base = scratch_dir("ddm_kiosk_home_")
+    system_autostart = base / "etc-xdg-labwc-autostart"
+    ka.SYSTEM_LABWC_AUTOSTART = system_autostart
+    ka.labwc_present = lambda: True
+
+    def run(action, home, dry=False):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ka.main([action, "--home", str(home)] + (["--dry-run"] if dry else []))
+        return code, out.getvalue()
+
+    def files(home):
+        return {p.relative_to(home).as_posix(): p.read_bytes() for p in home.rglob("*") if p.is_file()}
+
+    def keybind_ok(text, default):
+        root = ET.fromstring(text.split("?>", 1)[1] if text.startswith("<?xml") else text)
+        keyboards = root.findall("keyboard")
+        binds = [k for kb in keyboards for k in kb.findall("keybind") if k.get("key") == "A-W-h"]
+        actions = [a.get("name") for a in binds[0].findall("action")] if len(binds) == 1 else []
+        defaults = [d for kb in keyboards for d in kb.findall("default")]
+        return actions == ["HideCursor", "WarpCursor"] and (len(defaults) == 1) == default
+
+    system_autostart.write_text("/usr/bin/lwrespawn /usr/bin/wf-panel-pi &\n/usr/bin/kanshi &\n"
+                                "/usr/bin/lxsession-xdg-autostart\n", encoding="utf-8")
+    home = base / "home1"
+    home.mkdir()
+    code, out = run("install", home, dry=True)
+    _check("dry run: says what it would write, writes nothing",
+           code == 0 and "would" in out and files(home) == {}, out)
+    code, out = run("install", home)
+    desktop = (home / ".config/autostart/ddm-tv.desktop").read_text(encoding="utf-8")
+    _check("install: ~/.config/autostart/ddm-tv.desktop runs this repo's kiosk.sh",
+           f"Exec=/bin/bash {REPO.as_posix()}/splash_display/deploy/kiosk.sh" in desktop and "@REPO@" not in desktop, desktop)
+    rc = (home / ".config/labwc/rc.xml").read_text(encoding="utf-8")
+    _check("install, no rc.xml: one written, Alt+Super+H -> HideCursor + WarpCursor, with <default />",
+           keybind_ok(rc, default=True), rc)
+    _check("install: the system autostart runs lxsession-xdg-autostart, so no labwc autostart line",
+           not (home / ".config/labwc/autostart").exists() and "runs lxsession-xdg-autostart" in out)
+    snapshot = files(home)
+    code, out = run("install", home)
+    _check("install twice: nothing changes", files(home) == snapshot and "already so" in out, out)
+    code, out = run("uninstall", home)
+    _check("uninstall: everything it wrote is gone", code == 0 and files(home) == {}, str(files(home)))
+
+    for name, original, default in (("keybinds in <keyboard> (CRLF)", RC_WITH_KEYBINDS, False),
+                                    ("no <keyboard>", RC_NO_KEYBOARD, True),
+                                    ("a <keyboard> with no keybind", RC_EMPTY_KEYBOARD, True),
+                                    ("only a commented-out <keyboard>", RC_COMMENTED, True)):
+        home = base / f"home-{len(name)}-{abs(hash(name)) % 1000}"
+        (home / ".config/labwc").mkdir(parents=True)
+        rc_path = home / ".config/labwc/rc.xml"
+        rc_path.write_bytes(original.encode("utf-8"))
+        run("install", home)
+        after = rc_path.read_bytes().decode("utf-8")
+        _check(f"rc.xml with {name}: the keybind added, <default /> {'added' if default else 'not added'}, still XML",
+               keybind_ok(after, default) and after != original, after)
+        _check(f"rc.xml with {name}: line endings kept",
+               ("\r\n" in after) == ("\r\n" in original) and after.replace("\r\n", "").count("\n") == 0
+               if "\r\n" in original else "\r\n" not in after)
+        run("uninstall", home)
+        _check(f"rc.xml with {name}: uninstall puts it back byte for byte",
+               rc_path.read_bytes() == original.encode("utf-8"), rc_path.read_text(encoding="utf-8"))
+
+    home = base / "home-selfclosing"
+    (home / ".config/labwc").mkdir(parents=True)
+    (home / ".config/labwc/rc.xml").write_text(RC_SELF_CLOSING, encoding="utf-8")
+    code, out = run("install", home)
+    _check("rc.xml with <keyboard />: left alone, with a WARN saying what to add by hand",
+           (home / ".config/labwc/rc.xml").read_text(encoding="utf-8") == RC_SELF_CLOSING and "WARN" in out, out)
+
+    # A system autostart that does not run lxsession-xdg-autostart: the kiosk goes in the labwc one.
+    system_autostart.write_text("/usr/bin/kanshi &\n", encoding="utf-8")
+    home = base / "home-labwc-autostart"
+    (home / ".config/labwc").mkdir(parents=True)
+    user_autostart = home / ".config/labwc/autostart"
+    original = "swayidle -w timeout 600 'wlopm --off \\*' resume 'wlopm --on \\*' &\n"
+    user_autostart.write_text(original, encoding="utf-8")
+    code, out = run("install", home)
+    text = user_autostart.read_text(encoding="utf-8")
+    _check("no lxsession-xdg-autostart: one marked line starts kiosk.sh from ~/.config/labwc/autostart",
+           text.startswith(original) and f"/bin/bash {REPO.as_posix()}/splash_display/deploy/kiosk.sh &" in text
+           and text.count("ddm-tv") == 1 and "WARN" in out, text)
+    _check("swayidle there: reported as screen blanking on, the file's own line untouched",
+           "screen blanking is on" in out and original in text)
+    run("uninstall", home)
+    _check("uninstall: the labwc autostart back byte for byte", user_autostart.read_text(encoding="utf-8") == original)
+    home = base / "home-labwc-new"
+    home.mkdir()
+    run("install", home)
+    created = (home / ".config/labwc/autostart").is_file()
+    run("uninstall", home)
+    _check("a labwc autostart it created: uninstall removes it", created and not (home / ".config/labwc/autostart").exists())
+
+    # The keybind edited by hand: uninstall leaves it and says so.
+    home = base / "home-edited"
+    (home / ".config/labwc").mkdir(parents=True)
+    (home / ".config/labwc/rc.xml").write_text(RC_NO_KEYBOARD, encoding="utf-8")
+    run("install", home)
+    rc_path = home / ".config/labwc/rc.xml"
+    edited = rc_path.read_text(encoding="utf-8").replace('x="-1"', 'x="-2"')
+    rc_path.write_text(edited, encoding="utf-8")
+    code, out = run("uninstall", home)
+    _check("uninstall after a hand edit of the keybind: the file left as it is, a WARN",
+           rc_path.read_text(encoding="utf-8") == edited and "edited by hand" in out, out)
+
+
 def main():
     started = time.time()
     print(f"deploy/ tests, repo {REPO}")
@@ -467,6 +678,9 @@ def main():
     _run("the hand-run guard and the access log", test_hand_run_guard)
     _run("the LED controller client logs on change", test_led_client_logs_on_change)
     _run("the installer", test_installer)
+    _run("the kiosk script and its desktop entry", test_kiosk_files)
+    _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
+    _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")
     print(f"\n{'=' * 50}")
