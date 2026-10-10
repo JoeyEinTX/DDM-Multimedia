@@ -1,0 +1,26 @@
+# The splash display (the TV's slideshow and La Quiniela board) on port 5001, started at boot.
+# Installed by deploy/install_services.sh, which fills in @REPO@ and @USER@.
+#   systemctl status ddm-splash     journalctl -u ddm-splash -f     sudo systemctl restart ddm-splash
+# A copy started by hand (python3 server.py) refuses while this one runs (splash_display/service_mode.py).
+# After pi5 when both start, but not tied to it: the splash finds pi5 again on its own.
+
+[Unit]
+Description=DDM splash display: the TV's slideshow and La Quiniela board (port 5001)
+Wants=network-online.target
+After=network-online.target ddm-pi5.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@/splash_display
+ExecStart=/usr/bin/python3 @REPO@/splash_display/server.py
+Environment=PYTHONUNBUFFERED=1
+# UTF-8 whatever the boot locale, as for pi5.
+Environment=PYTHONIOENCODING=utf-8
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

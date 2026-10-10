@@ -16,7 +16,10 @@ until you set one, the way you would on a real cup's touch menu.
 
 > **Warning**
 >
-> 1. Stop the normal app first. Never run two copies of the app at once.
+> 1. Stop the normal app first: `sudo systemctl stop ddm-pi5` (and
+>    `sudo systemctl start ddm-pi5` when you are done). Never run two
+>    copies of the app at once: started by hand while the service runs,
+>    the app refuses and says so.
 > 2. While the app is pointed at the simulator, the real gateway is
 >    ignored, even if it is plugged in.
 > 3. Everything here is for the bench. Do not run it on party day.

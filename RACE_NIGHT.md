@@ -9,8 +9,9 @@ as two tabs (section 2):
   the closing time, the counted pot, **Reset betting**, the Horses list, and the race
   state, read-only. It is also in the dashboard's menu (☰ → La Quiniela Admin).
 
-Commands are typed on DevPi only to start fresh before the party, to start the apps (section 3)
-and in the appendix (if the pages are down).
+pi5 and the splash start on their own when DevPi boots (section 0). Commands are typed on DevPi
+only to set that up and to start fresh before the party, and in the appendix (if the pages are
+down).
 
 There is **one race state**. A dashboard button sets it, the cups and the TV follow:
 
@@ -33,11 +34,25 @@ board**, prizes and all) and hands it back in 0 and 6.
 
 ## 0. Before the party (do these once, weeks out)
 
-- [ ] pi5 and the splash display run as services and come up on their own after a
-      power cycle. Until they do, they're two foreground terminals (section 3).
+- [ ] pi5 and the splash run as the services `ddm-pi5` and `ddm-splash` and come up on their
+      own after a power cycle. Install them once, on DevPi, as `joey` (stop any copy started by
+      hand first: Ctrl+C in its terminal):
+
+```bash
+~/DDM-Multimedia/deploy/install_services.sh
+```
+
+- It checks first and installs nothing on a `STOP` line (each says what to do): `joey` in
+  `dialout`, every Python package pi5 and the splash import, nothing started by hand on 5000
+  or 5001. A `WARN` line is only a warning (the gateway unplugged: pi5 opens it when it
+  appears). `--dry-run` shows all of it and changes nothing; `--uninstall` removes it. Running
+  it again (after a pull that changed `deploy/`) is fine.
+- [ ] Check: `systemctl status ddm-pi5 ddm-splash`, both `active (running)`. The logs:
+      `journalctl -u ddm-pi5 -f` and `journalctl -u ddm-splash -f` (Ctrl+C stops the reading,
+      not the app). Restart: `sudo systemctl restart ddm-pi5` (or `ddm-splash`, or both).
+      Updating DevPi and running an app in a terminal: the end of this runbook.
 - [ ] The TV kiosk points at the splash on **5001**, not 5000.
-      (Files: `splash_display/deploy/kiosk.sh`, `splash_display/deploy/splash_display.service`,
-      `splash_display/deploy/autostart_setup.md`. pi5 has no service file yet.)
+      (Files: `splash_display/deploy/kiosk.sh`, `splash_display/deploy/autostart_setup.md`.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
 - [ ] The board on the TV is the tote look (`dots`, the default: amber dots on black
@@ -82,8 +97,8 @@ DevPi. One command clears all of it, after a backup it checks file by file.
 - **When:** on DevPi, after the last test and before you enter the field (section 1): it
   clears the names, the race info and the scratches too. **Never after betting opens.** It
   is not Reset betting (section 4), which keeps names, race info and scratches.
-- [ ] Stop pi5: Ctrl+C in its terminal (the command refuses while pi5 runs). The splash can
-      stay up.
+- [ ] Stop pi5: `sudo systemctl stop ddm-pi5` (the command refuses while pi5 runs, and says
+      how to stop it). The splash can stay up.
 - [ ] The list first. It changes nothing; read what it will clear and what it keeps:
 
 ```bash
@@ -107,7 +122,7 @@ python3 pi5/tools/wipe.py
   animation setup and the backups.
 - **To undo it,** pi5 stopped: `python3 pi5/tools/wipe.py --restore backups/wipe-<date-time>`,
   then type `RESTORE`. Every file comes back byte for byte (what is there is backed up first).
-- [ ] Start pi5 and the splash (section 3). `ADMIN`: no names, no race info, no scratches,
+- [ ] Start pi5 again: `sudo systemctl start ddm-pi5`. `ADMIN`: no names, no race info, no scratches,
       `0 · PRE-RACE`, Pot $0. `DASH`: no results. `/la-subasta`: no guests, no bids.
 - [ ] What the wipe can't reach (it prints this too):
   - The cups keep their own count: empty every cup, then `ADMIN` → Race says Pot $0. A cup
@@ -115,7 +130,7 @@ python3 pi5/tools/wipe.py
   - The cups keep their own numbers: a cup a replacement scratch moved (9 became 22) still
     says 22. Walk the mantle and set any cup that isn't its post (hold → `HORSE` → `SET`).
   - The gateway keeps the old race state and its list of cups until it loses power: unplug
-    it from DevPi and plug it back in before you start pi5.
+    it from DevPi and plug it back in before you start pi5 again.
   - A phone that joined La Subasta before still remembers its old guest, and its bids are
     refused: delete that phone's website data for joeydevpi.local, then join again.
 
@@ -173,21 +188,17 @@ python3 pi5/tools/wipe.py
       `—` where there are none: start the odds poller or type them, appendix). When the
       board is up its crawl carries the time, `POST IN 1:14` and the weather.
 
-### 3. Start the apps (skip if they're services)
+### 3. The apps are up
 
-Terminal 1:
+pi5 and the splash started with DevPi (section 0). To watch them, on DevPi:
 ```bash
-cd ~/DDM-Multimedia/pi5 && python main.py
+systemctl status ddm-pi5 ddm-splash
+journalctl -u ddm-pi5 -f
 ```
-Wait for `[LQ] bridge started on …` and then `[LQ] gateway online`. A `gateway hello
-from …` line only appears if the gateway was just powered; `answered the hello with …`
-follows it.
-
-Terminal 2:
-```bash
-cd ~/DDM-Multimedia/splash_display && python3 server.py
-```
-Wait for `pi5 link up`.
+Both `active (running)`. pi5's log has `[LQ] bridge started on …` and then
+`[LQ] gateway online`. A `gateway hello from …` line only appears if the gateway was just
+powered; `answered the hello with …` follows it. The splash's log
+(`journalctl -u ddm-splash -f`) has `pi5 link up`. Ctrl+C stops the reading, not the app.
 
 Check: open `ADMIN` on the iPad. Race says `LINK OK` and `20 cups online`.
 `NO LINK`, or fewer cups: stop here and fix that first (table at the end).
@@ -321,8 +332,10 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 | You see | It means | Do |
 |---|---|---|
-| `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (Terminal 2 alive? its `PI5_URL`); restart the splash. |
-| Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that Terminal 1 said `bridge started`. |
+| `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (`systemctl status ddm-splash` running? its `PI5_URL`); `sudo systemctl restart ddm-splash`. |
+| Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that pi5's log says `bridge started` (`journalctl -u ddm-pi5 -n 50`). |
+| `ddm-pi5 is running under systemd. Stop it first: …` when you type `python main.py` (or `ddm-splash …` for `python3 server.py`) | the service is running; a second copy would fight it for the gateway and the port | Do what it says: `sudo systemctl stop ddm-pi5`, work by hand, then `sudo systemctl start ddm-pi5` (end of this runbook). |
+| `Address already in use`, or `systemctl status ddm-pi5` says `activating (auto-restart)` over and over | a copy started by hand before the service holds port 5000 (or 5001 for the splash) | Ctrl+C that copy in its terminal; the service starts by itself within 3 s. |
 | Cup shows `NO HORSE` | that cup hasn't been set | Hold the screen → `HORSE` → tap to its number → `SET`. |
 | A horse is `○ no cup` on the page | no cup says that number | Walk the mantle: the cup for that post shows `NO HORSE` (set it) or another number (set it right), or it has no power. |
 | A horse is `● offline` on the page; the cup's screen has a `NO LINK` badge | the cup can't hear the gateway, or the gateway is down, or the cup is | Gateway up and the other horses online? Then it's that cup's power. Dead for good: "cup died" below. |
@@ -352,7 +365,7 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 | A button's line is red, or `ADMIN`'s state says `cannot reach pi5` | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the iPad's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
-| `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: restart pi5 (Terminal 1). Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
+| `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: `sudo systemctl restart ddm-pi5`, and `journalctl -u ddm-pi5 -n 50` says why it was down. Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
 
 ## The rules, for anyone who asks
 
@@ -440,3 +453,32 @@ The track's odds for the roster slide (optional; La Quiniela pays no odds). Fetc
 curl -s -X POST localhost:5000/api/quiniela/odds/start
 curl -s -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/json' -d '{"odds":{"1":"5-2","2":"8-1","21":"30-1"}}'
 ```
+
+---
+
+## Updating DevPi
+
+The stash keeps DevPi's own edits to `pi5/config.py` across the pull:
+```bash
+cd ~/DDM-Multimedia && git stash && git pull && git stash pop
+sudo systemctl restart ddm-pi5 ddm-splash
+```
+A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
+(it restarts both).
+
+## Working on it by hand
+
+To run pi5 in a terminal (to watch its console, or with the cup simulator), stop its
+service first and start it again after:
+```bash
+sudo systemctl stop ddm-pi5
+cd ~/DDM-Multimedia/pi5 && python main.py
+```
+Ctrl+C when done, then:
+```bash
+sudo systemctl start ddm-pi5
+```
+The splash the same way: `sudo systemctl stop ddm-splash`,
+`cd ~/DDM-Multimedia/splash_display && python3 server.py`, `sudo systemctl start ddm-splash`.
+Forget the stop and the copy you start refuses with `ddm-pi5 is running under systemd. Stop it
+first: …`. Forget the start and it stays stopped until DevPi next boots.

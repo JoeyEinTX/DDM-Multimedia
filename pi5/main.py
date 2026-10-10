@@ -1,5 +1,11 @@
 # main.py - Flask app entry point for DDM Horse Dashboard
 
+# pi5 runs as the ddm-pi5 service (deploy/), never alongside it: a copy started
+# by hand refuses while the service is active, before it opens anything.
+import service_mode
+if __name__ == '__main__':
+    service_mode.refuse_alongside_the_service('ddm-pi5')
+
 from flask import Flask, render_template, jsonify, request, Response, make_response, url_for
 from flask_socketio import SocketIO, emit
 import sys
@@ -1217,4 +1223,5 @@ if __name__ == '__main__':
             # The weather into La Quiniela's model for the TV's crawl
             Thread(target=feed_weather_to_board, name='weather-feed', daemon=True).start()
     
+    service_mode.quiet_access_log()   # no line per request in the journal (DDM_ACCESS_LOG=1 brings them back)
     socketio.run(app, host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG, allow_unsafe_werkzeug=True)

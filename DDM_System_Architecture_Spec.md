@@ -492,8 +492,10 @@ Rules for either:
 | SD card failure | SQLite copied off the box on a schedule, and a cloned SD card on hand. [PROPOSED] |
 | Starting fresh before a party | `pi5/tools/wipe.py` on DevPi, pi5 stopped (it refuses otherwise). It copies every data file to `backups/wipe-<date-time>/` and checks each copy (size, SHA-256) before it clears anything. Then it empties every table (none recreated, so `check_shape()` passes; the id counters stay) and removes the results, the betting logs and the old Race Setup file. `--restore` puts a backup back byte for byte. The cups, the gateway and guests' phones keep their own; it says so (`RACE_NIGHT.md`, "Before the party: start fresh"). [BUILT] |
 
-- pi5 has no service file yet (`RACE_NIGHT.md` section 0). It should start on its own after
-  a power cycle, under systemd only, never alongside a foreground copy. [PROPOSED]
+- pi5 and the splash start on their own after a power cycle, under systemd only: the services
+  `ddm-pi5` and `ddm-splash` (`deploy/`, installed by `deploy/install_services.sh`,
+  `RACE_NIGHT.md` section 0). A copy started by hand refuses while its service runs, so never
+  alongside a foreground copy. [BUILT]
 - The one-week code freeze before DDM applies.
 
 ---
@@ -550,6 +552,7 @@ gateway says hello.
 - SET WINNERS no-bets marker: the picker tags a horse whose cup held no bets at the post
 - The admin page shows the race state read-only; its race-state buttons are gone
 - Re-bet wording for a same-day scratch: the crawl says `· RE-BET YOUR TOKENS`
+- pi5 and the splash as systemd services (`ddm-pi5`, `ddm-splash`); a hand-run copy refuses while its service runs
 
 ### Next
 
@@ -570,7 +573,7 @@ One single-concern Claude Code prompt each, in this order:
 
 ### Later
 
-7. pi5 as a systemd service.
+7. ~~pi5 as a systemd service.~~ Done (2026-10-09; listed under Done).
 8. JoeyAI as an odds and names source, if open question 2 says yes.
 9. HUB75 renderer, if it earns its place.
 

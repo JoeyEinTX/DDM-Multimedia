@@ -41,9 +41,11 @@ splash_display/
 │   └── fonts/
 └── deploy/
     ├── kiosk.sh
-    ├── splash_display.service
     └── autostart_setup.md
 ```
+
+The systemd service is `ddm-splash`, installed with pi5's `ddm-pi5` by
+`deploy/install_services.sh` at the repo root (`deploy/ddm-splash.service`).
 
 ### Routes
 
@@ -103,14 +105,23 @@ placeholder labeled with the splash name instead of breaking the slide.
 
 ### Install the systemd service + kiosk autostart
 
-See `deploy/autostart_setup.md` for the full Bookworm walk-through (covers
-Wayfire/Wayland, labwc, and LXDE/X11). Short version:
+The splash runs as the systemd service `ddm-splash`, next to pi5's `ddm-pi5`,
+both installed (and enabled at boot) by one command, run as the Pi's user
+(it uses sudo itself; `--dry-run` shows what it would do):
 
 ```bash
-sudo cp deploy/splash_display.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now splash_display.service
+~/DDM-Multimedia/deploy/install_services.sh
+```
 
+Its log: `journalctl -u ddm-splash -f`. Started by hand (`python3 server.py`)
+while the service runs, the splash refuses and says how to stop the service
+first. Werkzeug's line per request is off in the log; `DDM_ACCESS_LOG=1` in
+the environment brings it back.
+
+For the kiosk autostart see `deploy/autostart_setup.md` (covers
+Wayfire/Wayland, labwc, and LXDE/X11):
+
+```bash
 chmod +x deploy/kiosk.sh
 # Wire deploy/kiosk.sh into your desktop autostart per the doc.
 ```
@@ -131,7 +142,7 @@ Or hit `http://<pi-ip>:5001/display` from any browser on the LAN.
 
 Edit `content/trivia.json` or `content/splash_pages.json`, then:
 
-- **Code changes**: `sudo systemctl restart splash_display.service`
+- **Code changes**: `sudo systemctl restart ddm-splash`
 - **Content-only changes**: a browser refresh is enough — the playlist is
   rebuilt on every `/api/slides` call, so no service restart needed.
 
@@ -160,8 +171,11 @@ cd splash_display
 pkill -f chromium && sleep 2 && ./deploy/kiosk.sh &
 
 # Code change — full restart:
-sudo systemctl restart splash_display.service
+sudo systemctl restart ddm-splash
 pkill -f chromium && sleep 2 && ./deploy/kiosk.sh &
+
+# What it says:
+journalctl -u ddm-splash -f
 ```
 
 ---

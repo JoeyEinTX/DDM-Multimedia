@@ -49,9 +49,11 @@ parsed: `normalize_mac()` (upper-case, colon-separated, or `None`) and
    can change between boots. A CH340-based board has no serial number, so
    if two CH340 devices are ever plugged in, use the physical-slot path from
    `ls -l /dev/serial/by-path/` instead.
-3. Set `LQ_SERIAL_PORT` in `pi5/config.py`, or export
-   `DDM_LQ_SERIAL_PORT=/dev/serial/by-id/...` for the service.
-4. Restart the app. The log shows `La Quiniela bridge started on ...`, then
+3. Set `LQ_SERIAL_PORT` in `pi5/config.py`, or put
+   `DDM_LQ_SERIAL_PORT=/dev/serial/by-id/...` in `pi5/.env` (the `ddm-pi5`
+   service doesn't see a variable exported in a shell).
+4. Restart the app: `sudo systemctl restart ddm-pi5`. Its log
+   (`journalctl -u ddm-pi5 -f`) shows `[LQ] bridge started on ...`, then
    the gateway's `hello` is answered with the state line DevPi holds.
 
 With no port configured the bridge idles and logs once how to set it. With
@@ -244,7 +246,9 @@ that is neither `leave` nor `low` warns once and behaves as `leave`.
 The app prints a few lines about the bridge while it runs, each starting with
 `[LQ]`. They are the quickest way to tell a working bridge from a stuck one
 without opening a browser. Telemetry is never printed, so a quiet console
-after `gateway online` is a good sign, not a bad one.
+after `gateway online` is a good sign, not a bad one. Under the `ddm-pi5`
+service the console is its log: `journalctl -u ddm-pi5 -f` (the last 50
+lines: `journalctl -u ddm-pi5 -n 50`).
 
 | Line | Means |
 | --- | --- |

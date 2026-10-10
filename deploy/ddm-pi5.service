@@ -1,0 +1,26 @@
+# pi5 (the Control Center, La Quiniela, La Subasta) on port 5000, started at boot.
+# Installed by deploy/install_services.sh, which fills in @REPO@ and @USER@.
+#   systemctl status ddm-pi5     journalctl -u ddm-pi5 -f     sudo systemctl restart ddm-pi5
+# A copy started by hand (python main.py) refuses while this one runs (pi5/service_mode.py).
+
+[Unit]
+Description=DDM pi5: Control Center, La Quiniela and La Subasta (port 5000)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@/pi5
+ExecStart=/usr/bin/python3 @REPO@/pi5/main.py
+Environment=PYTHONUNBUFFERED=1
+# The banner prints a check mark or a cross; never let the encoding stop it at boot.
+Environment=PYTHONIOENCODING=utf-8
+Restart=on-failure
+RestartSec=3
+# Stopped the way it always was by hand: Ctrl+C (SIGINT), then killed after 10 s.
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

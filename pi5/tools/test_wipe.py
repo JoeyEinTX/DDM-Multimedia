@@ -237,11 +237,27 @@ def diff(a: dict, b: dict) -> str:
             if a != b else "")
 
 
-def wipe(root: Path, *args, answer=None) -> subprocess.CompletedProcess:
-    """The tool, run from the scratch copy as on DevPi; answer is what is typed (None: no input)."""
+def fake_systemctl(state: str) -> Path:
+    """A folder holding a `systemctl` whose `is-active` answers `state`: the wipe asks it whether
+    pi5 runs as the ddm-pi5 service, and on DevPi the real one would answer for the real pi5."""
+    folder = Path(tempfile.mkdtemp(prefix="ddm_wipe_test_systemctl_"))
+    _BASES.append(folder)
+    code = 0 if state == "active" else 3
+    if os.name == "nt":
+        (folder / "systemctl.bat").write_text(f"@echo {state}\r\n@exit /b {code}\r\n", encoding="ascii")
+    else:
+        (folder / "systemctl").write_text(f"#!/bin/sh\necho {state}\nexit {code}\n", encoding="ascii")
+        (folder / "systemctl").chmod(0o755)
+    return folder
+
+
+def wipe(root: Path, *args, answer=None, service="inactive") -> subprocess.CompletedProcess:
+    """The tool, run from the scratch copy as on DevPi; answer is what is typed (None: no input);
+    service is what systemctl says about ddm-pi5."""
+    env = dict(ENV, PATH=str(fake_systemctl(service)) + os.pathsep + ENV.get("PATH", ""))
     return subprocess.run([sys.executable, str(root / "pi5" / "tools" / "wipe.py"), *args],
                           input=answer, stdin=None if answer is not None else subprocess.DEVNULL,
-                          capture_output=True, text=True, encoding="utf-8", env=ENV, cwd=root, timeout=300)
+                          capture_output=True, text=True, encoding="utf-8", env=env, cwd=root, timeout=300)
 
 
 def read_db(path: Path) -> dict:
@@ -633,12 +649,17 @@ def test_refuses_while_pi5_runs():
     # Anything at all on the port is refused, pi5 or not.
     listener = socket.socket()
     listener.bind(("127.0.0.1", _PORTS[root]))
-    listener.listen(1)
+    listener.listen(16)          # never accepted: each probe waits in the backlog (Windows refuses past it)
     try:
         before = snapshot(root)
         run = wipe(root, answer="WIPE\n")
         _check("a plain listener on pi5's port: refused, nothing changed",
                run.returncode == 2 and "Stop pi5 first" in run.stdout and snapshot(root) == before, run.stdout[-400:])
+        run = wipe(root, answer="WIPE\n", service="active")
+        _check("pi5 running as the ddm-pi5 service: the refusal says how to stop it, nothing changed",
+               run.returncode == 2 and "Stop pi5 first: sudo systemctl stop ddm-pi5 (start it again afterwards "
+               "with sudo systemctl start ddm-pi5)." in run.stdout and "Ctrl+C" not in run.stdout
+               and snapshot(root) == before, run.stdout[-400:])
     finally:
         listener.close()
 

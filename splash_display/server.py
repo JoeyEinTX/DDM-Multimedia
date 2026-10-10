@@ -17,6 +17,12 @@ remote-content source can be plugged in without touching the route layer.
 
 from __future__ import annotations
 
+# The splash runs as the ddm-splash service (deploy/), never alongside it: a copy
+# started by hand refuses while the service is active, before the link to pi5 starts.
+import service_mode
+if __name__ == "__main__":
+    service_mode.refuse_alongside_the_service("ddm-splash")
+
 import json
 import logging
 import os
@@ -564,6 +570,7 @@ if _serves_requests():
 # Entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    service_mode.quiet_access_log()   # no line per request in the journal (DDM_ACCESS_LOG=1 brings them back)
     app.run(
         host=config.FLASK_HOST,
         port=config.FLASK_PORT,

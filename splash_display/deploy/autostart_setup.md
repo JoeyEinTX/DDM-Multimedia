@@ -64,16 +64,17 @@ pip install -r requirements.txt --break-system-packages
 # Drop logos into static/img/ before first run:
 #   ddm_master.png  la_subasta.png  la_quiniela.png  derby_dash.png
 
-# Install + enable the systemd unit
-sudo cp deploy/splash_display.service /etc/systemd/system/splash_display.service
-sudo systemctl daemon-reload
-sudo systemctl enable splash_display.service
-sudo systemctl start splash_display.service
+# Install + enable the systemd services: ddm-splash, and pi5's ddm-pi5 beside it
+# (one command, run as the Pi's user; it uses sudo itself, --dry-run changes nothing)
+~/DDM-Multimedia/deploy/install_services.sh
 
 # Verify it is up (the splash listens on 5001; pi5's dashboard keeps 5000)
-sudo systemctl status splash_display.service
+systemctl status ddm-splash
 curl -fsS http://localhost:5001/api/slides | head -c 200; echo
 ```
+
+On a Pi that runs the splash without pi5, `sudo systemctl disable --now ddm-pi5`
+after the install leaves only the splash starting at boot.
 
 ---
 
@@ -134,7 +135,7 @@ git pull
 cd splash_display
 # If requirements.txt changed:
 pip install -r requirements.txt --break-system-packages
-sudo systemctl restart splash_display.service
+sudo systemctl restart ddm-splash
 ```
 
 To pick up content edits without restarting the service, just refresh the
@@ -158,7 +159,7 @@ pkill -f chromium && sleep 2 && ~/DDM-Multimedia/splash_display/deploy/kiosk.sh 
 
 ```bash
 # Tail the Flask service logs
-sudo journalctl -u splash_display.service -f
+journalctl -u ddm-splash -f
 
 # Stop the kiosk display only (leave Flask running)
 pkill -f chromium

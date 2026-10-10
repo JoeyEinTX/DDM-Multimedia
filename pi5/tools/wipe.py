@@ -40,8 +40,9 @@ It keeps the code, pi5/config.py, pi5/.env and the splash's config, the LEDs' se
 counters, the backups, and anything else in pi5/data, which it lists as not recognised.
 
 It refuses while pi5 is running: something answers on pi5's port (FLASK_PORT in
-pi5/config.py), or, on Linux, a process has the database open. The splash keeps no data of
-its own (it holds pi5's model in memory), so it can stay up.
+pi5/config.py), or, on Linux, a process has the database open. It says how to stop it: the
+ddm-pi5 service (sudo systemctl stop ddm-pi5), or Ctrl+C for a copy started by hand. The
+splash keeps no data of its own (it holds pi5's model in memory), so it can stay up.
 
 The backup copies every file it will touch to backups/wipe-<date-time>/ (git-ignored),
 checks each copy's size and SHA-256 against the original, and stops before anything is
@@ -66,6 +67,7 @@ import shlex
 import shutil
 import socket
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import types
@@ -91,6 +93,7 @@ KEPT = (
 
 CONFIRM_WIPE = "WIPE"
 CONFIRM_RESTORE = "RESTORE"
+PI5_SERVICE = "ddm-pi5"                   # deploy/ddm-pi5.service
 STATE_NAMES = {0: "PRE-RACE", 1: "BETTING OPEN", 2: "FINAL CALL", 3: "AT THE POST",
                4: "RUNNING", 5: "WINNER", 6: "AFTER PARTY"}
 
@@ -111,7 +114,7 @@ What this can't reach (do it before betting opens):
     22) still says 22: hold its screen -> HORSE -> its post -> SET. Walk the mantle:
     every cup shows its post, 1 to 20.
   - The gateway keeps the last race state and the cups it heard until it loses power:
-    unplug it from DevPi and plug it back in before you start pi5.
+    unplug it from DevPi and plug it back in before you start pi5 again.
   - A phone that joined La Subasta before still remembers its old guest, and its bids
     are refused: on that phone delete the website data for joeydevpi.local, then join
     again.
@@ -274,11 +277,28 @@ def running_reasons(settings) -> List[str]:
     return reasons
 
 
+def service_active(service: str) -> bool:
+    """True while systemd runs `service` (False where there is no systemctl)."""
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return False
+    try:
+        state = subprocess.run([systemctl, "is-active", service], capture_output=True, text=True,
+                               timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return state in ("active", "activating", "reloading")
+
+
 def refuse_if_running(settings) -> bool:
     reasons = running_reasons(settings)
     if not reasons:
         return False
-    print("Stop pi5 first: Ctrl+C in its terminal.")
+    if service_active(PI5_SERVICE):
+        print(f"Stop pi5 first: sudo systemctl stop {PI5_SERVICE} "
+              f"(start it again afterwards with sudo systemctl start {PI5_SERVICE}).")
+    else:
+        print("Stop pi5 first: Ctrl+C in its terminal.")
     for reason in reasons:
         print(f"  ({reason})")
     print("Nothing changed.")
@@ -902,7 +922,7 @@ def cmd_restore(settings, where: str) -> int:
         return 2
     print(f"\nRestored: {plural(len(entries), 'file')}, each the same size and SHA-256 as in the backup."
           + (f" What was there before is in {shown(before)}/." if before is not None else "")
-          + " Start pi5.")
+          + f" Start pi5 again (sudo systemctl start {PI5_SERVICE}).")
     return 0
 
 

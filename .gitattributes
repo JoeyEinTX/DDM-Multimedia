@@ -1,0 +1,5 @@
+# Shell scripts, systemd units and desktop entries run on DevPi: LF in every checkout,
+# the Shop PC's included (core.autocrlf=true there would make them CRLF, and bash fails on \r).
+*.sh text eol=lf
+*.service text eol=lf
+*.desktop text eol=lf

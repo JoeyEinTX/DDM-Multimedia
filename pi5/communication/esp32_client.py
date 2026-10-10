@@ -1,18 +1,30 @@
 # esp32_client.py - Socket client to communicate with ESP32
 
 import socket
+import threading
+import time
 from config import ESP32_IP, ESP32_PORT, SOCKET_TIMEOUT
+
+# While the LED controller stays unreachable, one line says so at most this often:
+# the dashboard asks it for STATUS every 5 s, and a line each time buried the journal.
+DOWN_LOG_EVERY_S = 300.0
 
 
 class ESP32Client:
     """Client for sending commands to ESP32 LED controller via socket"""
     
-    def __init__(self, ip=ESP32_IP, port=ESP32_PORT, timeout=SOCKET_TIMEOUT):
+    def __init__(self, ip=ESP32_IP, port=ESP32_PORT, timeout=SOCKET_TIMEOUT, clock=time.monotonic):
         self.ip = ip
         self.port = port
         self.timeout = timeout
         self.connected = False
         self.last_response = ""
+        # One line when the controller becomes unreachable (with the address tried), one
+        # when it answers again, and while it stays down one every DOWN_LOG_EVERY_S.
+        self._clock = clock
+        self._log_lock = threading.Lock()
+        self._down_logged_at = None      # when the last "unreachable" line went out; None while it answers
+        self._failed_since_log = 0
     
     def send_command(self, command):
         """
@@ -40,27 +52,51 @@ class ESP32Client:
                 self.last_response = response
                 self.connected = True
                 
+                self._answered()
                 print(f"[ESP32] Sent: {command} | Received: {response}")
                 return response
         
         except socket.timeout:
             self.connected = False
             error = "ERROR:TIMEOUT"
-            print(f"[ESP32] Timeout sending command: {command}")
+            self._failed(command, "timed out")
             return error
         
         except ConnectionRefusedError:
             self.connected = False
             error = "ERROR:CONNECTION_REFUSED"
-            print(f"[ESP32] Connection refused to {self.ip}:{self.port}")
+            self._failed(command, "connection refused")
             return error
         
         except Exception as e:
             self.connected = False
             error = f"ERROR:EXCEPTION:{str(e)}"
-            print(f"[ESP32] Exception: {e}")
+            self._failed(command, str(e))
             return error
     
+    def _failed(self, command, reason):
+        """A command that got no answer: say so once, then at most every DOWN_LOG_EVERY_S."""
+        with self._log_lock:
+            now = self._clock()
+            if self._down_logged_at is None:
+                print(f"[ESP32] LED controller unreachable at {self.ip}:{self.port} ({reason}, sending {command})")
+            elif now - self._down_logged_at >= DOWN_LOG_EVERY_S:
+                print(f"[ESP32] LED controller still unreachable at {self.ip}:{self.port} ({reason}); "
+                      f"{self._failed_since_log} more command(s) failed since the last line")
+            else:
+                self._failed_since_log += 1
+                return
+            self._down_logged_at = now
+            self._failed_since_log = 0
+
+    def _answered(self):
+        """A command answered: one line if the controller had been reported unreachable."""
+        with self._log_lock:
+            if self._down_logged_at is not None:
+                print(f"[ESP32] LED controller reachable again at {self.ip}:{self.port}")
+                self._down_logged_at = None
+                self._failed_since_log = 0
+
     def ping(self):
         """Test connection to ESP32"""
         response = self.send_command("PING")
