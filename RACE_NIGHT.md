@@ -493,3 +493,5 @@ Forget the stop and the copy you start refuses with `ddm-pi5 is running under sy
 first: …`. Forget the start and it stays stopped until DevPi next boots.
 The TV's kiosk takes DevPi's own screen: `~/DDM-Multimedia/deploy/install_services.sh --kiosk off`
 while you work at it, `--kiosk on` before the party.
+The logs leave out a line per request and per answer to the dashboard's 5 s LED `STATUS` poll;
+`DDM_ACCESS_LOG=1 python main.py` prints them all.

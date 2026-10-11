@@ -393,13 +393,29 @@ def test_led_client_logs_on_change():
                result == error and lines == [], f"{result} {lines}")
     FakeSocket.mode = "up"
     result, lines = call(client.get_power_status)
-    _check("back: one line saying so, then the command's own line as before",
-           lines == ["[ESP32] LED controller reachable again at 10.0.0.42:5005",
-                     "[ESP32] Sent: STATUS | Received: STATUS:120:300:80"], str(lines))
+    _check("back, on a STATUS poll: one line saying so, and no line for the poll itself",
+           lines == ["[ESP32] LED controller reachable again at 10.0.0.42:5005"], str(lines))
     _check("back: the status parsed, connected True",
            result == {"current_ma": 120, "peak_ma": 300, "min_ma": 80} and client.is_connected())
-    _, lines = call(client.get_power_status)
-    _check("still up: no reachability line", lines == ["[ESP32] Sent: STATUS | Received: STATUS:120:300:80"], str(lines))
+    quiet = []
+    for _ in range(12):                       # a minute of the dashboard's 5 s power poll
+        quiet += call(client.get_power_status)[1]
+    _check("up: the STATUS poll prints nothing (it was a line every 5 s per open dashboard)", quiet == [], str(quiet[:2]))
+    FakeSocket.reply = b"PONG\n"
+    _, lines = call(client.send_command, "PING")
+    _check("up: every other command still prints its line", lines == ["[ESP32] Sent: PING | Received: PONG"], str(lines))
+    FakeSocket.reply = b"STATUS:120:300:80\n"
+    saved = os.environ.get("DDM_ACCESS_LOG")
+    os.environ["DDM_ACCESS_LOG"] = "1"
+    try:
+        _, lines = call(client.get_power_status)
+    finally:
+        if saved is None:
+            os.environ.pop("DDM_ACCESS_LOG", None)
+        else:
+            os.environ["DDM_ACCESS_LOG"] = saved
+    _check("DDM_ACCESS_LOG=1: the STATUS line is back", lines == ["[ESP32] Sent: STATUS | Received: STATUS:120:300:80"],
+           str(lines))
     FakeSocket.mode = "down"
     clock.advance(1)
     _, lines = call(client.ping)

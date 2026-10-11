@@ -1,5 +1,6 @@
 # esp32_client.py - Socket client to communicate with ESP32
 
+import os
 import socket
 import threading
 import time
@@ -8,6 +9,13 @@ from config import ESP32_IP, ESP32_PORT, SOCKET_TIMEOUT
 # While the LED controller stays unreachable, one line says so at most this often:
 # the dashboard asks it for STATUS every 5 s, and a line each time buried the journal.
 DOWN_LOG_EVERY_S = 300.0
+
+
+def _logs_every_status():
+    """The dashboard's power poll asks for STATUS every 5 s per open page: its answers print
+    no line (every other command still does) unless DDM_ACCESS_LOG is 1/true/yes/on, the
+    switch that brings werkzeug's request lines back too."""
+    return os.environ.get("DDM_ACCESS_LOG", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class ESP32Client:
@@ -53,7 +61,8 @@ class ESP32Client:
                 self.connected = True
                 
                 self._answered()
-                print(f"[ESP32] Sent: {command} | Received: {response}")
+                if command != "STATUS" or _logs_every_status():
+                    print(f"[ESP32] Sent: {command} | Received: {response}")
                 return response
         
         except socket.timeout:
