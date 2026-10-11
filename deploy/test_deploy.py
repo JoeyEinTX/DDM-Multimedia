@@ -824,6 +824,101 @@ def test_starters():
     _check("check after retiring: nothing left", code == 0, out)
 
 
+JOEY_RC = '''<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <theme>
+    <font place="ActiveWindow">
+      <name>Nunito Sans</name>
+      <size>12</size>
+      <weight>Light</weight>
+      <slant>Normal</slant>
+    </font>
+    <font place="InactiveWindow">
+      <name>Nunito Sans</name>
+      <size>12</size>
+      <weight>Light</weight>
+      <slant>Normal</slant>
+    </font>
+    <font place="OnScreenDisplay">
+      <name>Nunito Sans</name>
+      <size>12</size>
+      <weight>Light</weight>
+      <slant>Normal</slant>
+    </font>
+    <font place="MenuItem">
+      <name>Nunito Sans</name>
+      <size>12</size>
+      <weight>Light</weight>
+      <slant>Normal</slant>
+    </font>
+    <name>PiXonyx</name>
+  </theme>
+</openbox_config>
+'''
+
+
+def test_rc_xml_on_pi_os():
+    """Joey's ~/.config/labwc/rc.xml on DevPi, verbatim: Pi OS's shape (openbox_config in the
+    openbox namespace, a <theme>, no <keyboard>), which the first version could not add to.
+    Whether labwc accepts the result is for DevPi (labwc --reconfigure)."""
+    import xml.etree.ElementTree as ET
+    ka = load_kiosk_autostart()
+    ka.labwc_present = lambda: True
+    ka.SYSTEM_LABWC_AUTOSTART = scratch_dir("ddm_rc_sys_") / "autostart"
+    ka.SYSTEM_LABWC_AUTOSTART.write_text("/usr/bin/lxsession-xdg-autostart\n", encoding="utf-8")
+    ns = "{http://openbox.org/3.4/rc}"
+    for name, original in (("Joey's rc.xml (LF)", JOEY_RC), ("Joey's rc.xml with a blank line at the end", JOEY_RC + "\n"),
+                           ("Joey's rc.xml, CRLF", JOEY_RC.replace("\n", "\r\n"))):
+        home = scratch_dir("ddm_rc_home_")
+        rc = home / ".config/labwc/rc.xml"
+        rc.parent.mkdir(parents=True)
+        rc.write_bytes(original.encode("utf-8"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ka.main(["install", "--home", str(home)])
+        after = rc.read_bytes().decode("utf-8")
+        root = ET.fromstring(after.encode("utf-8"))
+        keyboard = root.find(f"{ns}keyboard")
+        bind = keyboard.find(f"{ns}keybind") if keyboard is not None else None
+        _check(f"{name}: the keybind lands, in a <keyboard> with <default />, in the openbox namespace",
+               root.tag == f"{ns}openbox_config" and bind is not None and bind.get("key") == "A-W-h"
+               and [a.get("name") for a in bind.findall(f"{ns}action")] == ["HideCursor", "WarpCursor"]
+               and keyboard.find(f"{ns}default") is not None, after)
+        _check(f"{name}: the declaration and the namespace survive, no ns0", after.startswith(
+            original.split("\n")[0]) and '<openbox_config xmlns="http://openbox.org/3.4/rc">' in after and "ns0" not in after)
+        theme = original[original.index("  <theme>"):original.index("</theme>") + len("</theme>")]
+        added = ka.new_keyboard(ka.eol_of(original))
+        _check(f"{name}: the theme block byte for byte, and only the keyboard added, just before the end tag",
+               theme in after and after.replace(added, "", 1) == original
+               and after.index(added) == original.rindex("</openbox_config>"))
+        _check(f"{name}: install says how to load it (labwc --reconfigure)", "labwc --reconfigure" in out.getvalue(),
+               out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            ka.main(["install", "--home", str(home)])
+        _check(f"{name}: a second run changes nothing", rc.read_bytes().decode("utf-8") == after)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ka.main(["uninstall", "--home", str(home)])
+        _check(f"{name}: uninstall gives it back byte for byte", rc.read_bytes() == original.encode("utf-8"))
+    # A root it does not know, or a file that is not XML: left alone, with the lines to add by hand.
+    # The last case: the root's <keyboard> comes after another element's <keyboard>, so the text
+    # insertion lands in the wrong one; reading the result back as XML catches it.
+    for name, text in (("another root element", '<?xml version="1.0"?>\n<config><theme/></config>\n'),
+                       ("not XML", "<openbox_config><theme></openbox_config>\n"),
+                       ("a <keyboard> inside another element before the root's own",
+                        '<?xml version="1.0"?>\n<labwc_config>\n  <mouse><keyboard>x</keyboard></mouse>\n'
+                        '  <keyboard>\n    <keybind key="W-x" />\n  </keyboard>\n</labwc_config>\n')):
+        home = scratch_dir("ddm_rc_home_")
+        rc = home / ".config/labwc/rc.xml"
+        rc.parent.mkdir(parents=True)
+        rc.write_text(text, encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ka.main(["install", "--home", str(home)])
+        _check(f"rc.xml with {name}: untouched, a WARN with the lines to add by hand",
+               rc.read_text(encoding="utf-8") == text and "WARN" in out.getvalue()
+               and "<keyboard><default />" in out.getvalue(), out.getvalue())
+
+
 def test_kiosk_switch():
     ka = load_kiosk_autostart()
     base = scratch_dir("ddm_kiosk_switch_")
@@ -941,6 +1036,7 @@ def main():
     _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
     _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)
     _run("other starters of pi5 or the splash, and --retire-old", test_starters)
+    _run("the pointer keybind on Pi OS's rc.xml", test_rc_xml_on_pi_os)
     _run("the kiosk switch: on, off, status", test_kiosk_switch)
     _run("--kiosk off stops a running kiosk", test_kiosk_off_stops_a_running_kiosk)
     passed = sum(1 for r in _results if r[0] == "PASS")

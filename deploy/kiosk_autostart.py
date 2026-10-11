@@ -14,8 +14,12 @@ user's home, and takes away again with --uninstall. Standard library only.
   replace it).
 - With labwc: a keybind in ~/.config/labwc/rc.xml, Alt+Super+H, that hides the pointer and
   moves it to the screen's corner (labwc's HideCursor and WarpCursor; there is no setting for
-  it). kiosk.sh presses it once with wtype when the browser is up. A <keyboard> section that
-  had no keybind gets <default /> too, so labwc's own shortcuts stay.
+  it). kiosk.sh presses it once with wtype when the browser is up. The root may be
+  labwc_config or openbox_config (Pi OS's own, in the openbox namespace, a <theme> and no
+  <keyboard>): a <keyboard> with <default /> and the keybind goes in just before the root's
+  end tag; a <keyboard> section that had no keybind gets <default /> too, so labwc's own
+  shortcuts stay. The file is read as XML and the result read back to check it, but written
+  by inserting text at that one place, so everything else stays byte for byte.
 - Screen blanking: only reported. Pi OS's Screen Blanking setting is a swayidle line in
   ~/.config/labwc/autostart; kiosk.sh stops swayidle for its session, and the setting itself
   (Control Centre -> Display) is Joey's.
@@ -42,6 +46,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Optional
 
@@ -140,29 +145,67 @@ def new_keyboard(eol: str) -> str:
             f"    {KEYBIND_END}{eol}  </keyboard>{eol}")
 
 
+ROOTS = ("labwc_config", "openbox_config")        # Pi OS writes openbox_config, in the openbox namespace
+
+
+def local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def parse_rc(text: str):
+    """The rc.xml as an element tree (None if it is not XML). Read only: the file is never
+    written back from the tree, which would rewrite its declaration, quotes and spacing (and
+    could name the openbox namespace ns0), so uninstall could not give it back byte for byte."""
+    try:
+        return ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return None
+
+
+def has_keybind(root) -> bool:
+    """Exactly one <keyboard> under the root, holding our keybind with both actions."""
+    keyboards = [child for child in root if local(child.tag) == "keyboard"]
+    if len(keyboards) != 1:
+        return False
+    binds = [kb for kb in keyboards[0] if local(kb.tag) == "keybind" and kb.get("key") == "A-W-h"]
+    return len(binds) == 1 and [local(a.tag) + ":" + str(a.get("name")) for a in binds[0]] == \
+        ["action:HideCursor", "action:WarpCursor"]
+
+
 def rc_with_keybind(text: Optional[str]) -> Optional[str]:
-    """rc.xml with the hide-pointer keybind; None when the file has a shape this can't add to."""
+    """rc.xml with the hide-pointer keybind; None when the file has a shape this can't add to.
+    Read as XML (the root labwc_config or openbox_config, its <keyboard> if any), changed by
+    inserting text at one place, and the result read back as XML to check it."""
     if text is None:
         return CREATED_FILE
     if f"<!-- {MARK}" in text:
         return text
-    eol = eol_of(text)
-    # Search a copy with the comments blanked out (same length, so positions hold): a
-    # commented-out example <keyboard> is not the section labwc reads.
-    bare = re.sub(r"<!--.*?-->", lambda c: " " * len(c.group(0)), text, flags=re.S)
-    if re.search(r"<keyboard\s*/>", bare) or len(re.findall(r"<keyboard[\s>/]", bare)) > 1:
-        return None                       # unusual: leave it to a person
-    m = re.search(r"<keyboard(\s[^>]*)?>", bare)
-    if m:
-        close = bare.find("</keyboard>", m.end())
-        if close < 0:
-            return None
-        has_keybind = "<keybind" in bare[m.end():close]
-        return text[:m.end()] + in_keyboard(eol, default=not has_keybind) + text[m.end():]
-    end = bare.rfind("</labwc_config>")
-    if end < 0:
+    root = parse_rc(text)
+    if root is None or local(root.tag) not in ROOTS:
         return None
-    return text[:end] + new_keyboard(eol) + text[end:]
+    keyboards = [child for child in root if local(child.tag) == "keyboard"]
+    if len(keyboards) > 1:
+        return None                       # unusual: leave it to a person
+    eol = eol_of(text)
+    # Find where to insert in a copy with the comments blanked out (same length, so positions
+    # hold): a commented-out example <keyboard> is not the section labwc reads.
+    bare = re.sub(r"<!--.*?-->", lambda c: " " * len(c.group(0)), text, flags=re.S)
+    if keyboards:
+        m = re.search(r"<(?:[\w.-]+:)?keyboard(\s[^>]*)?>", bare)
+        if m is None or m.group(0).endswith("/>"):
+            return None                   # <keyboard /> on its own: leave it to a person
+        has_any = any(local(child.tag) == "keybind" for child in keyboards[0])
+        after = text[:m.end()] + in_keyboard(eol, default=not has_any) + text[m.end():]
+    else:
+        ends = list(re.finditer(r"</(?:[\w.-]+:)?(?:%s)\s*>" % "|".join(ROOTS), bare))
+        if not ends:
+            return None
+        end = ends[-1].start()
+        after = text[:end] + new_keyboard(eol) + text[end:]
+    checked = parse_rc(after)
+    if checked is None or local(checked.tag) != local(root.tag) or not has_keybind(checked):
+        return None
+    return after
 
 
 def rc_without_keybind(text: str) -> Optional[str]:
@@ -274,10 +317,15 @@ def install(home: Path, dry: bool) -> int:
         before = read(rc)
         after = rc_with_keybind(before)
         if after is None:
-            plan.say("WARN", f"{shown(rc)} has a shape this can't add to: the pointer stays on the TV "
-                             f"(add the Alt+Super+H keybind by hand: {KEYBIND})")
+            plan.say("WARN", f"{shown(rc)} has a shape this can't add to: the pointer stays on the TV. "
+                             f"By hand, inside its root element: <keyboard><default />{KEYBIND}</keyboard> "
+                             f"(or the keybind alone inside a <keyboard> that has keybinds)")
         else:
-            plan.write(rc, after, "Alt+Super+H hides the pointer (labwc reads it at the next login)")
+            changed = after != before
+            plan.write(rc, after, "Alt+Super+H hides the pointer")
+            if changed:
+                plan.say("", "labwc loads it with `labwc --reconfigure` in a terminal on DevPi's desktop, "
+                             "or at the next login")
         text = read(labwc_autostart) or ""
         if any("swayidle" in ln and not ln.lstrip().startswith("#") for ln in text.splitlines()):
             plan.say("WARN", f"screen blanking is on ({shown(labwc_autostart)} starts swayidle): the kiosk "
