@@ -56,6 +56,10 @@ board**, prizes and all) and hands it back in 0 and 6.
       up to 2 minutes, then starts anyway), with screen blanking off and the pointer hidden.
       After the install, reboot once and check the TV: the slideshow, no pointer, and it never
       blanks. (Files: `splash_display/deploy/kiosk.sh`, `deploy/kiosk_autostart.py`.)
+      Off while you work on DevPi's own screen, on again for the party:
+      `~/DDM-Multimedia/deploy/install_services.sh --kiosk off` (it also closes a running
+      kiosk), `--kiosk on` (from the next login; it says how to start it now), `--kiosk status`.
+      Re-running the installer keeps it as it is.
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
 - [ ] The board on the TV is the tote look (`dots`, the default: amber dots on black
@@ -340,6 +344,7 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 | Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that pi5's log says `bridge started` (`journalctl -u ddm-pi5 -n 50`). |
 | `ddm-pi5 is running under systemd. Stop it first: …` when you type `python main.py` (or `ddm-splash …` for `python3 server.py`) | the service is running; a second copy would fight it for the gateway and the port | Do what it says: `sudo systemctl stop ddm-pi5`, work by hand, then `sudo systemctl start ddm-pi5` (end of this runbook). |
 | `Address already in use`, or `systemctl status ddm-pi5` says `activating (auto-restart)` over and over | a copy started by hand before the service holds port 5000 (or 5001 for the splash) | Ctrl+C that copy in its terminal; the service starts by itself within 3 s. |
+| `ddm-pi5` restarts in a loop at boot (`Address already in use` in `journalctl -u ddm-pi5`), with nothing started by hand | something else starts pi5 at boot too (on 2026-10-11 an old `ddm.service`) and holds port 5000 and the gateway | Who holds the port: `sudo ss -ltnp 'sport = :5000'`, then `systemctl status <its pid>` names the unit. Retire it: `~/DDM-Multimedia/deploy/install_services.sh --retire-old` (it finds every other starter, prints each step; `--dry-run` first to see them). |
 | Cup shows `NO HORSE` | that cup hasn't been set | Hold the screen → `HORSE` → tap to its number → `SET`. |
 | A horse is `○ no cup` on the page | no cup says that number | Walk the mantle: the cup for that post shows `NO HORSE` (set it) or another number (set it right), or it has no power. |
 | A horse is `● offline` on the page; the cup's screen has a `NO LINK` badge | the cup can't hear the gateway, or the gateway is down, or the cup is | Gateway up and the other horses online? Then it's that cup's power. Dead for good: "cup died" below. |
@@ -486,3 +491,5 @@ The splash the same way: `sudo systemctl stop ddm-splash`,
 `cd ~/DDM-Multimedia/splash_display && python3 server.py`, `sudo systemctl start ddm-splash`.
 Forget the stop and the copy you start refuses with `ddm-pi5 is running under systemd. Stop it
 first: …`. Forget the start and it stays stopped until DevPi next boots.
+The TV's kiosk takes DevPi's own screen: `~/DDM-Multimedia/deploy/install_services.sh --kiosk off`
+while you work at it, `--kiosk on` before the party.

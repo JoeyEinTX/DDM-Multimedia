@@ -53,6 +53,8 @@ if running; then
     log "the kiosk's browser is already running"
     exit 0
 fi
+# Who this kiosk is, for `deploy/install_services.sh --kiosk off`, which stops it.
+echo "$$" > "$PROFILE_DIR.pid"
 
 # --- Wait for the splash ------------------------------------------------------------
 splash_up() {

@@ -4,6 +4,7 @@ user's home, and takes away again with --uninstall. Standard library only.
 
     python3 deploy/kiosk_autostart.py install   [--dry-run] [--home DIR]
     python3 deploy/kiosk_autostart.py uninstall [--dry-run] [--home DIR]
+    python3 deploy/kiosk_autostart.py on | off | status [--dry-run] [--home DIR]
 
 - ~/.config/autostart/ddm-tv.desktop, from deploy/ddm-tv.desktop with this repo's path:
   splash_display/deploy/kiosk.sh at login. Pi OS's labwc session (/etc/xdg/labwc/autostart)
@@ -19,6 +20,15 @@ user's home, and takes away again with --uninstall. Standard library only.
   ~/.config/labwc/autostart; kiosk.sh stops swayidle for its session, and the setting itself
   (Control Centre -> Display) is Joey's.
 
+- The switch (deploy/install_services.sh --kiosk on|off|status): off writes Hidden=true into
+  ddm-tv.desktop (lxsession-xdg-autostart skips such an entry, xdg-autostart.c in lxsession)
+  and closes a running kiosk (its kiosk.sh by the PID it keeps beside its lock, its browser by
+  its own profile folder); on takes Hidden=true out again, and the kiosk starts at the next
+  login. A ddm-tv.desktop.off (renamed by hand: the session reads only *.desktop names) is
+  renamed back first, so there is one entry. The labwc-autostart line, where there is one, is
+  commented out and back. install keeps the switch where it is: a pull and a re-run of the
+  installer never turn a kiosk that is off back on.
+
 Everything it adds is marked `ddm-tv`, and uninstall takes away exactly that: a file it
 created goes, a file it added to comes back byte for byte. Running it twice changes nothing.
 """
@@ -29,6 +39,8 @@ import argparse
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -46,6 +58,9 @@ KEYBIND = ('<keybind key="A-W-h"><action name="HideCursor" />'
            '<action name="WarpCursor" x="-1" y="-1" /></keybind>')
 CREATED_RC = f"<!-- {MARK}: written by deploy/install_services.sh; uninstall removes it -->"
 AUTOSTART_LINE_MARK = f"# {MARK}: the TV kiosk (deploy/install_services.sh)"
+DESKTOP_NAME = "ddm-tv.desktop"
+RENAMED_NAME = DESKTOP_NAME + ".off"              # how it was switched off by hand before --kiosk off
+OFF_PREFIX = f"# {MARK}-off: "                    # the labwc-autostart line, switched off
 
 
 class Plan:
@@ -179,8 +194,51 @@ def system_runs_xdg_autostart() -> Optional[bool]:
                for line in text.splitlines())
 
 
-def desktop_entry() -> str:
-    return DESKTOP_TEMPLATE.read_text(encoding="utf-8").replace("@REPO@", REPO.as_posix())
+def desktop_entry(on: bool = True) -> str:
+    text = DESKTOP_TEMPLATE.read_text(encoding="utf-8").replace("@REPO@", REPO.as_posix())
+    return text if on else text + "Hidden=true\n"
+
+
+def hidden(text: str) -> bool:
+    return bool(re.search(r"^\s*Hidden\s*=\s*true\s*$", text, re.M | re.I))
+
+
+def switch_state(config: Path) -> Optional[bool]:
+    """The kiosk at login: True on, False off, None not installed."""
+    entry = read(config / "autostart" / DESKTOP_NAME)
+    if entry is not None:
+        return not hidden(entry)
+    if (config / "autostart" / RENAMED_NAME).is_file():
+        return False
+    for line in (read(config / "labwc" / "autostart") or "").splitlines():
+        if AUTOSTART_LINE_MARK in line:
+            return not line.startswith(OFF_PREFIX)
+    return None
+
+
+def set_switch(plan: Plan, config: Path, on: bool) -> None:
+    """ddm-tv.desktop (and the labwc-autostart line, if there is one) on or off."""
+    entry, renamed = config / "autostart" / DESKTOP_NAME, config / "autostart" / RENAMED_NAME
+    if renamed.is_file() and not entry.exists():
+        if plan.dry:
+            plan.say("would", f"rename {shown(renamed)} back to {DESKTOP_NAME} (the session reads only *.desktop names)")
+        else:
+            renamed.rename(entry)
+            plan.say("+", f"renamed {shown(renamed)} back to {DESKTOP_NAME} (the session reads only *.desktop names)")
+    elif renamed.is_file():
+        plan.say("--", f"{shown(renamed)} left as it is: the session never reads it")
+    plan.write(entry, desktop_entry(on), "on: the kiosk starts at login" if on
+               else "off: Hidden=true, the session skips it")
+    labwc_autostart = config / "labwc" / "autostart"
+    text = read(labwc_autostart)
+    if text and AUTOSTART_LINE_MARK in text:
+        lines = []
+        for line in text.splitlines(keepends=True):
+            if AUTOSTART_LINE_MARK in line:
+                bare = line[len(OFF_PREFIX):] if line.startswith(OFF_PREFIX) else line
+                line = bare if on else OFF_PREFIX + bare
+            lines.append(line)
+        plan.write(labwc_autostart, "".join(lines), "its kiosk line on" if on else "its kiosk line commented out")
 
 
 def install(home: Path, dry: bool) -> int:
@@ -189,7 +247,10 @@ def install(home: Path, dry: bool) -> int:
     if not KIOSK.is_file():
         plan.say("STOP", f"{KIOSK} is missing")
         return 1
-    plan.write(config / "autostart" / "ddm-tv.desktop", desktop_entry(), "the kiosk starts at login")
+    on = switch_state(config) is not False          # a kiosk switched off stays off
+    if not on:
+        plan.say("--", "the kiosk is switched off and stays off (deploy/install_services.sh --kiosk on turns it on)")
+    set_switch(plan, config, on)
 
     labwc_autostart = config / "labwc" / "autostart"
     runs = system_runs_xdg_autostart()
@@ -197,13 +258,14 @@ def install(home: Path, dry: bool) -> int:
         text = read(labwc_autostart) or ""
         line = f"/bin/bash {KIOSK.as_posix()} &  {AUTOSTART_LINE_MARK}"
         if AUTOSTART_LINE_MARK in text:
-            plan.say("ok", f"{shown(labwc_autostart)} starts the kiosk: already so")
+            plan.say("ok", f"{shown(labwc_autostart)} has the kiosk's line: already so")
         else:
             eol = eol_of(text) if text else "\n"
             sep = "" if not text or text.endswith(("\n", "\r\n")) else eol
             plan.say("WARN", f"{SYSTEM_LABWC_AUTOSTART} does not run lxsession-xdg-autostart, so the .desktop "
                              f"entry would not start: the kiosk goes in {shown(labwc_autostart)} too")
-            plan.write(labwc_autostart, text + sep + line + eol, "the kiosk starts with labwc")
+            plan.write(labwc_autostart, text + sep + ("" if on else OFF_PREFIX) + line + eol,
+                       "the kiosk starts with labwc" if on else "the kiosk's line, switched off")
     elif runs:
         plan.say("ok", f"{SYSTEM_LABWC_AUTOSTART} runs lxsession-xdg-autostart: the .desktop entry starts the kiosk")
 
@@ -226,12 +288,99 @@ def install(home: Path, dry: bool) -> int:
     return 0
 
 
+# -----------------------------------------------------------------------------
+# The switch: on, off, status
+# -----------------------------------------------------------------------------
+
+def profile_dir(home: Path) -> Path:
+    return home / ".config" / "chromium-kiosk"          # kiosk.sh's PROFILE_DIR
+
+
+def cmdline(pid: int) -> Optional[str]:
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def running(home: Path) -> Optional[dict]:
+    """This home's kiosk now: {'script': kiosk.sh's pid or None, 'browser': [pids]}; None where
+    there is no /proc and pgrep to tell (not Linux)."""
+    if os.name != "posix" or not Path("/proc").is_dir() or not shutil.which("pgrep"):
+        return None
+    script = None
+    try:
+        pid = int(Path(str(profile_dir(home)) + ".pid").read_text().strip())
+        if "kiosk.sh" in (cmdline(pid) or ""):
+            script = pid
+    except (OSError, ValueError):
+        pass
+    try:
+        out = subprocess.run(["pgrep", "-u", str(os.getuid()), "-f", "--", f"--user-data-dir={profile_dir(home)}"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    return {"script": script, "browser": [int(p) for p in out.split() if p.isdigit()]}
+
+
+def close_kiosk(plan: Plan, home: Path) -> None:
+    now = running(home)
+    if now is None:
+        plan.say("--", "can't see running processes here: close a kiosk on screen by hand")
+        return
+    if not now["script"] and not now["browser"]:
+        plan.say("ok", "no kiosk running")
+        return
+    # kiosk.sh first, so a script still waiting for the splash never starts the browser.
+    for what, pids in (("kiosk.sh", [now["script"]] if now["script"] else []), ("its browser", now["browser"])):
+        for pid in pids:
+            if plan.dry:
+                plan.say("would", f"stop {what} (pid {pid})")
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+                plan.say("+", f"stopped {what} (pid {pid})")
+            except ProcessLookupError:
+                pass
+            except PermissionError as exc:
+                plan.say("WARN", f"could not stop {what} (pid {pid}): {exc}")
+
+
+def switch(home: Path, action: str, dry: bool) -> int:
+    plan = Plan(dry)
+    config = home / ".config"
+    if action == "status":
+        state = switch_state(config)
+        plan.say("", "the kiosk at login: " + {True: "on", False: "off", None: "not installed (run the installer)"}[state])
+        now = running(home)
+        if now is None:
+            plan.say("", "running now: can't tell here")
+        else:
+            plan.say("", "running now: " + ("yes" if now["script"] or now["browser"] else "no"))
+        return 0
+    set_switch(plan, config, on=action == "on")
+    if action == "off":
+        close_kiosk(plan, home)
+        return 0
+    now = running(home)
+    if not now or not (now["script"] or now["browser"]):
+        kiosk = KIOSK.as_posix()
+        print(f"  It starts at the next login. To start it now: in a terminal on DevPi's desktop,\n"
+              f"      /bin/bash {kiosk} &\n"
+              f"  or over SSH (the desktop's Wayland socket, usually wayland-0: ls /run/user/$(id -u)):\n"
+              f"      XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-0 nohup /bin/bash {kiosk} >/dev/null 2>&1 &")
+    return 0
+
+
 def uninstall(home: Path, dry: bool) -> int:
     plan = Plan(dry)
     config = home / ".config"
-    desktop = config / "autostart" / "ddm-tv.desktop"
+    desktop = config / "autostart" / DESKTOP_NAME
     if desktop.is_file():
         plan.remove(desktop, "the kiosk no longer starts at login")
+    renamed = config / "autostart" / RENAMED_NAME
+    if renamed.is_file() and "deploy/install_services.sh" in (read(renamed) or ""):
+        plan.remove(renamed, "the kiosk's entry, renamed off by hand")
     labwc_autostart = config / "labwc" / "autostart"
     text = read(labwc_autostart)
     if text and AUTOSTART_LINE_MARK in text:
@@ -257,11 +406,13 @@ def uninstall(home: Path, dry: bool) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     global HOME
     parser = argparse.ArgumentParser(description="The TV kiosk with the desktop session (see the docstring).")
-    parser.add_argument("action", choices=("install", "uninstall"))
+    parser.add_argument("action", choices=("install", "uninstall", "on", "off", "status"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--home", default=os.path.expanduser("~"))
     args = parser.parse_args(argv)
     HOME = Path(args.home)
+    if args.action in ("on", "off", "status"):
+        return switch(HOME, args.action, args.dry_run)
     return (install if args.action == "install" else uninstall)(HOME, args.dry_run)
 
 

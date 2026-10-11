@@ -10,9 +10,15 @@
 #   ~/DDM-Multimedia/deploy/install_services.sh               install, or update after a pull
 #   ~/DDM-Multimedia/deploy/install_services.sh --dry-run     the checks, and what it would do
 #   ~/DDM-Multimedia/deploy/install_services.sh --uninstall   stop and remove what it installed
+#   ~/DDM-Multimedia/deploy/install_services.sh --retire-old  retire other starters (below), then install
+#   ~/DDM-Multimedia/deploy/install_services.sh --kiosk off   the TV kiosk off at login, and closed now
+#                                              --kiosk on | status
 #
 # It checks first, and installs nothing if a check says STOP:
 #   - systemd and /usr/bin/python3 are there, and the repo's path has no spaces;
+#   - nothing else starts pi5 or the splash at boot (deploy/starters.py: another unit, system
+#     or the user's, a crontab @reboot line, /etc/rc.local, an autostart entry); --retire-old
+#     retires them, printing each step (an old ddm.service did this on DevPi in 2026-10);
 #   - the user is in dialout (the gateway's serial port);
 #   - /usr/bin/python3, run as that user with an environment as bare as the service's,
 #     imports every package pi5 and the splash need;
@@ -35,13 +41,23 @@ OLD_SPLASH_UNIT=splash_display.service           # the splash's earlier unit, fo
 
 DRY=0
 ACTION=install
-for arg in "$@"; do
-    case "$arg" in
+RETIRE=0
+KIOSK_SWITCH=""
+while [ $# -gt 0 ]; do
+    case "$1" in
         --dry-run) DRY=1 ;;
         --uninstall) ACTION=uninstall ;;
-        -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
-        *) echo "unknown option: $arg (use --dry-run, --uninstall or --help)" >&2; exit 2 ;;
+        --retire-old) RETIRE=1 ;;
+        --kiosk)
+            shift
+            case "${1:-}" in
+                on|off|status) KIOSK_SWITCH="$1" ;;
+                *) echo "--kiosk takes on, off or status" >&2; exit 2 ;;
+            esac ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+        *) echo "unknown option: $1 (use --dry-run, --uninstall, --retire-old, --kiosk on|off|status or --help)" >&2; exit 2 ;;
     esac
+    shift
 done
 
 # --- Who and where ------------------------------------------------------------------
@@ -118,7 +134,28 @@ kiosk_autostart() {
     fi
 }
 
+# Other starters of pi5 or the splash (deploy/starters.py check|retire), as the user, with the
+# user's session so `systemctl --user` answers.
+starters() {
+    local args=("$@" --repo "$REPO")
+    [ "$DRY" = 1 ] && args+=(--dry-run)
+    if [ "$(id -un)" = "$RUN_USER" ]; then
+        "$PYTHON" "$DEPLOY_DIR/starters.py" "${args[@]}"
+    else
+        sudo -u "$RUN_USER" env "XDG_RUNTIME_DIR=/run/user/$(id -u "$RUN_USER")" "$PYTHON" "$DEPLOY_DIR/starters.py" "${args[@]}"
+    fi
+}
+
 echo "DDM services: repo $REPO, user $RUN_USER$( [ "$DRY" = 1 ] && echo ', dry run: nothing is changed' )"
+
+# --- The kiosk switch ---------------------------------------------------------------
+
+if [ -n "$KIOSK_SWITCH" ]; then
+    echo
+    echo "TV kiosk: $KIOSK_SWITCH"
+    kiosk_autostart "$KIOSK_SWITCH"
+    exit 0
+fi
 
 # --- Uninstall ----------------------------------------------------------------------
 
@@ -166,6 +203,20 @@ else
         ok "$PYTHON ($("$PYTHON" -V 2>&1))"
     else
         stop "$PYTHON is missing: the services run it (sudo apt install python3)"
+    fi
+
+    if [ -x "$PYTHON" ]; then
+        if [ "$RETIRE" = 1 ]; then
+            echo "  Retiring other starters of pi5 and the splash (--retire-old):"
+            starters retire || stop "a step above failed: something else may still start pi5 or the splash"
+            if [ "$DRY" = 1 ]; then
+                skip "a real run checks again here, once those are retired"
+            elif ! starters check; then
+                STOPS=$((STOPS + 1))
+            fi
+        elif ! starters check; then
+            STOPS=$((STOPS + 1))
+        fi
     fi
 
     if id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx dialout; then

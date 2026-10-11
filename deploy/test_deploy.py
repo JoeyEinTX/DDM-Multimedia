@@ -14,6 +14,14 @@
   simulated time, then one; one when it answers again.
 - The installer: bash -n, shellcheck when there is one, and a --dry-run on a scratch copy
   (here, without systemd, it shows the units and the steps; on DevPi it runs the checks too).
+- Other starters (deploy/starters.py) from faked systemctl and crontab answers: an old
+  ddm.service on this repo's main.py, a packaged unit, a crontab @reboot line, rc.local, a
+  labwc autostart line and an autostart entry are each a STOP; --retire-old on a scratch root
+  retires them, printing each step; a clean system has none.
+- The kiosk switch on scratch homes: on, off (Hidden=true), status, a ddm-tv.desktop.off
+  renamed by hand, the labwc-autostart line; the installer keeps it where it is. On Linux, off
+  stops a running kiosk.sh and its browser and nothing else.
+- The kiosk: kiosk.sh with a fake browser (Linux), the autostart and rc.xml edits.
 """
 
 from __future__ import annotations
@@ -461,6 +469,18 @@ def test_installer():
     run = subprocess.run([sh, str(root / "deploy/install_services.sh"), "--bogus"], capture_output=True, text=True,
                          env=ENV, timeout=60)
     _check("an unknown option: exit 2", run.returncode == 2, run.stderr)
+    run = subprocess.run([sh, str(root / "deploy/install_services.sh"), "--kiosk", "sometimes"], capture_output=True,
+                         text=True, env=ENV, timeout=60)
+    _check("--kiosk with something other than on, off or status: exit 2", run.returncode == 2, run.stderr)
+    run = subprocess.run([sh, str(root / "deploy/install_services.sh"), "--kiosk", "off", "--dry-run"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", env=ENV, timeout=120)
+    _check("--kiosk off --dry-run: only the kiosk's switch, nothing about the services",
+           run.returncode == 0 and "TV kiosk: off" in run.stdout and "Checks" not in run.stdout
+           and "would" in run.stdout, run.stdout[-600:])
+    run = subprocess.run([sh, str(root / "deploy/install_services.sh"), "--retire-old", "--dry-run"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", env=ENV, cwd=root, timeout=300)
+    _check("--retire-old --dry-run: runs (here, without systemd, it has nothing to look at)",
+           run.returncode in (0, 1) and ("Dry run" in run.stdout or "STOP" in run.stdout), run.stdout[-600:])
 
 
 # -----------------------------------------------------------------------------
@@ -671,6 +691,245 @@ def test_kiosk_autostart():
            rc_path.read_text(encoding="utf-8") == edited and "edited by hand" in out, out)
 
 
+# -----------------------------------------------------------------------------
+# Other starters (deploy/starters.py) and the kiosk switch
+# -----------------------------------------------------------------------------
+
+def load_module(name):
+    spec = importlib.util.spec_from_file_location(name, DEPLOY / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_starters():
+    st = load_module("starters")
+    base = scratch_dir("ddm_starters_")
+    home = base / "home" / "joey"
+    repo = home / "DDM-Multimedia"
+    fs_root = base / "root"
+    (repo / "pi5").mkdir(parents=True)
+    (fs_root / "etc/systemd/system").mkdir(parents=True)
+    main_py, server_py = str(repo / "pi5" / "main.py"), str(repo / "splash_display" / "server.py")
+
+    class FakeRunner(st.Runner):
+        """systemctl and crontab as a fixture: queries answered from `answers`, actions recorded."""
+
+        def __init__(self, answers, dry=False):
+            self.dry, self.sudo, self.answers, self.acts = dry, ["sudo"], answers, []
+
+        def query(self, cmd, root=False):
+            key = " ".join(cmd)
+            for prefix, answer in self.answers.items():
+                if key.startswith(prefix):
+                    return answer
+            return None
+
+        def act(self, cmd, root=False, stdin=None):
+            args = (self.sudo if root else []) + list(cmd)
+            print(("  would run: " if self.dry else "  + ") + " ".join(args))
+            self.acts.append((args, stdin))
+            return True
+
+    def unit_block(unit, argv, wd, state, active, fragment):
+        return (f"Id={unit}\nExecStart={{ path=/usr/bin/python3 ; argv[]={argv} ; ignore_errors=no ; start_time=[n/a] }}\n"
+                f"WorkingDirectory={wd}\nUnitFileState={state}\nActiveState={active}\nFragmentPath={fragment}\n")
+
+    clean = {
+        "systemctl --no-pager list-unit-files": "ddm-pi5.service enabled enabled\nddm-splash.service enabled enabled\n"
+                                                "ssh.service enabled enabled\n",
+        "systemctl --no-pager list-units": "ddm-pi5.service loaded active running DDM pi5\nssh.service loaded active running\n",
+        "systemctl --no-pager show": unit_block("ssh.service", "/usr/sbin/sshd -D", "/", "enabled", "active",
+                                                "/usr/lib/systemd/system/ssh.service"),
+        "systemctl --user --no-pager list-unit-files": "",
+        "systemctl --user --no-pager list-units": "",
+        "crontab -l -u root": "",
+        "crontab -l": "# m h dom mon dow command\n",
+    }
+
+    def run(action, answers, dry=False):
+        runner = FakeRunner(answers, dry)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = st.main([action, "--repo", str(repo)] + (["--dry-run"] if dry else []), runner=runner,
+                           home=home, fs_root=fs_root)
+        return code, out.getvalue(), runner
+
+    code, out, _ = run("check", clean)
+    _check("a clean system: nothing else starts pi5 or the splash, exit 0",
+           code == 0 and "nothing else starts pi5 or the splash at boot" in out, out)
+
+    # DevPi on 2026-10-11, and every other kind of starter there is.
+    ddm = unit_block("ddm.service", f"/usr/bin/python3 {main_py}", str(repo / "pi5"), "enabled", "inactive",
+                     "/etc/systemd/system/ddm.service")
+    packaged = unit_block("dashboard.service", f"/usr/bin/python3 {server_py}", "/", "enabled", "active",
+                          "/usr/lib/systemd/system/dashboard.service")
+    rogue = dict(clean)
+    rogue["systemctl --no-pager list-unit-files"] += "ddm.service enabled enabled\ndashboard.service enabled enabled\n"
+    rogue["systemctl --no-pager show"] = clean["systemctl --no-pager show"] + "\n" + ddm + "\n" + packaged
+    tilde = "~" + str(repo)[len(str(home)):]
+    cron = f"# m h dom mon dow command\n@reboot cd {tilde}/splash_display && python3 server.py\n0 3 * * * /usr/bin/true\n"
+    rogue["crontab -l"] = cron
+    (fs_root / "etc/systemd/system/ddm.service").write_text("[Service]\nExecStart=/usr/bin/python3 main.py\n",
+                                                            encoding="utf-8")
+    rc_local = fs_root / "etc/rc.local"
+    rc_local.write_text(f"#!/bin/sh -e\npython3 {main_py} &\nexit 0\n", encoding="utf-8")
+    autostart = home / ".config/autostart"
+    autostart.mkdir(parents=True)
+    (autostart / "dashboard.desktop").write_text(f"[Desktop Entry]\nType=Application\nExec=python3 {main_py}\n",
+                                                 encoding="utf-8")
+    kiosk_entry = "[Desktop Entry]\nType=Application\nExec=/bin/bash kiosk.sh\n"
+    (autostart / "ddm-tv.desktop").write_text(kiosk_entry, encoding="utf-8")
+    labwc = home / ".config/labwc/autostart"
+    labwc.parent.mkdir(parents=True)
+    labwc.write_text(f"/usr/bin/kanshi &\npython3 {server_py} &\n", encoding="utf-8")
+
+    code, out, _ = run("check", rogue)
+    for what in ("unit ddm.service", "unit dashboard.service", "crontab", "rc.local", "labwc autostart",
+                 "autostart entry"):
+        _check(f"check: STOP names the {what}", f"STOP  {what}" in out, out)
+    _check("check: the kiosk's own ddm-tv.desktop is not a starter", "ddm-tv.desktop" not in out)
+    _check("check: exit 1 and says how to retire them", code == 1 and "--retire-old" in out)
+    _check("check: ssh.service and the cron line at 3 a.m. are left out", "ssh" not in out and "/usr/bin/true" not in out)
+
+    before = {p: p.read_bytes() for p in base.rglob("*") if p.is_file()}
+    code, out, runner = run("retire", rogue, dry=True)
+    _check("retire --dry-run: says each step, changes nothing",
+           code == 0 and "would run: sudo systemctl disable --now ddm.service" in out
+           and before == {p: p.read_bytes() for p in base.rglob("*") if p.is_file()}, out)
+
+    code, out, runner = run("retire", rogue)
+    acts = [" ".join(a) for a, _ in runner.acts]
+    _check("retire: ddm.service disabled and stopped, then daemon-reload",
+           "sudo systemctl disable --now ddm.service" in acts and acts[-1] == "sudo systemctl daemon-reload", str(acts))
+    _check("retire: its file moved to the repo's backups/ddm.service.old",
+           (repo / "backups/ddm.service.old").is_file() and not (fs_root / "etc/systemd/system/ddm.service").exists())
+    _check("retire: a package's unit is masked, not moved", "sudo systemctl mask dashboard.service" in acts, str(acts))
+    new_cron = [stdin for a, stdin in runner.acts if a[:2] == ["crontab", "-"]]
+    _check("retire: the crontab's @reboot line commented out behind a marker, the rest kept",
+           len(new_cron) == 1 and "# ddm-retired" in new_cron[0] and "0 3 * * * /usr/bin/true" in new_cron[0]
+           and not any(ln.startswith("@reboot") for ln in new_cron[0].splitlines()), str(new_cron))
+    rc = rc_local.read_text(encoding="utf-8")
+    _check("retire: rc.local's line commented out, exit 0 kept",
+           f"# ddm-retired" in rc and "exit 0\n" in rc and not any(ln.startswith("python3") for ln in rc.splitlines()), rc)
+    desktop = (autostart / "dashboard.desktop").read_text(encoding="utf-8")
+    _check("retire: the autostart entry gets Hidden=true", "Hidden=true" in desktop, desktop)
+    _check("retire: the kiosk's own entry untouched", (autostart / "ddm-tv.desktop").read_text(encoding="utf-8") == kiosk_entry)
+    _check("retire: the labwc autostart line commented out, kanshi kept",
+           labwc.read_text(encoding="utf-8").startswith("/usr/bin/kanshi &\n# ddm-retired"))
+    _check("retire: every step printed", all(f"+ {a}" in out for a in acts) and "+ moved" in out and "+ edited" in out, out)
+    after = dict(clean)
+    after["crontab -l"] = new_cron[0]
+    code, out, _ = run("check", after)
+    _check("check after retiring: nothing left", code == 0, out)
+
+
+def test_kiosk_switch():
+    ka = load_kiosk_autostart()
+    base = scratch_dir("ddm_kiosk_switch_")
+    ka.SYSTEM_LABWC_AUTOSTART = base / "etc-xdg-labwc-autostart"
+    ka.SYSTEM_LABWC_AUTOSTART.write_text("/usr/bin/kanshi &\n/usr/bin/lxsession-xdg-autostart\n", encoding="utf-8")
+    ka.labwc_present = lambda: False
+    home = base / "home"
+    home.mkdir()
+    entry = home / ".config/autostart/ddm-tv.desktop"
+
+    def run(action, dry=False):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ka.main([action, "--home", str(home)] + (["--dry-run"] if dry else []))
+        return code, out.getvalue()
+
+    _check("status before anything: not installed", "not installed" in run("status")[1])
+    run("install")
+    code, out = run("status")
+    _check("installed: the kiosk at login is on", "the kiosk at login: on" in out, out)
+    code, out = run("off", dry=True)
+    _check("off --dry-run: says it, changes nothing", "would" in out and "Hidden" not in entry.read_text(encoding="utf-8"))
+    code, out = run("off")
+    _check("off: Hidden=true in ddm-tv.desktop (lxsession-xdg-autostart skips it)",
+           code == 0 and "Hidden=true" in entry.read_text(encoding="utf-8"), out)
+    _check("off: it says whether a kiosk was running (or that it can't tell here)",
+           "no kiosk running" in out or "can't see running processes" in out, out)
+    snapshot = entry.read_bytes()
+    run("off")
+    _check("off twice: nothing changes", entry.read_bytes() == snapshot)
+    _check("status: off", "the kiosk at login: off" in run("status")[1])
+    run("install")
+    _check("the installer run again keeps it off", "Hidden=true" in entry.read_text(encoding="utf-8"))
+    code, out = run("on")
+    _check("on: Hidden=true gone, and how to start it now without logging out",
+           "Hidden" not in entry.read_text(encoding="utf-8") and "To start it now" in out
+           and "splash_display/deploy/kiosk.sh &" in out, out)
+    _check("on twice: nothing changes", "already so" in run("on")[1])
+
+    # Switched off by hand, as Joey did: ddm-tv.desktop renamed to ddm-tv.desktop.off.
+    entry.rename(entry.with_name("ddm-tv.desktop.off"))
+    _check("renamed .off by hand: status says off", "the kiosk at login: off" in run("status")[1])
+    run("install")
+    _check("the installer on a renamed entry: renamed back, kept off, one entry",
+           entry.is_file() and "Hidden=true" in entry.read_text(encoding="utf-8")
+           and not entry.with_name("ddm-tv.desktop.off").exists())
+    entry.rename(entry.with_name("ddm-tv.desktop.off"))
+    run("on")
+    _check("on from a renamed entry: renamed back and on",
+           entry.is_file() and "Hidden" not in entry.read_text(encoding="utf-8")
+           and not entry.with_name("ddm-tv.desktop.off").exists())
+
+    # Where the system's labwc autostart does not run lxsession-xdg-autostart: the labwc line too.
+    ka.SYSTEM_LABWC_AUTOSTART.write_text("/usr/bin/kanshi &\n", encoding="utf-8")
+    run("install")
+    labwc = home / ".config/labwc/autostart"
+    run("off")
+    off_text = labwc.read_text(encoding="utf-8")
+    run("on")
+    on_text = labwc.read_text(encoding="utf-8")
+    _check("the labwc autostart line: commented out by off, back by on",
+           off_text.startswith("# ddm-tv-off: /bin/bash ") and on_text.startswith("/bin/bash ")
+           and "kiosk.sh" in on_text, f"{off_text!r} {on_text!r}")
+    entry.rename(entry.with_name("ddm-tv.desktop.off"))
+    run("uninstall")
+    _check("uninstall: the entry (even renamed .off) and the labwc line gone",
+           not entry.exists() and not entry.with_name("ddm-tv.desktop.off").exists() and not labwc.exists(),
+           str([p.name for p in home.rglob("*")]))
+    kiosk = (REPO / "splash_display/deploy/kiosk.sh").read_text(encoding="utf-8")
+    _check("kiosk.sh keeps its PID where off looks for it",
+           'echo "$$" > "$PROFILE_DIR.pid"' in kiosk and 'PROFILE_DIR="${HOME}/.config/chromium-kiosk"' in kiosk
+           and ka.profile_dir(Path("/h")).as_posix() == "/h/.config/chromium-kiosk")
+
+
+def test_kiosk_off_stops_a_running_kiosk():
+    """Linux: a fake kiosk.sh (its PID in the file) and a fake browser on the scratch profile:
+    off stops both, and nothing else."""
+    if os.name != "posix" or not shutil.which("pgrep") or not Path("/proc").is_dir():
+        print("  (skipped here: stopping a running kiosk needs Linux's /proc and pgrep; it runs on DevPi)")
+        return
+    ka = load_kiosk_autostart()
+    ka.labwc_present = lambda: False
+    base = scratch_dir("ddm_kiosk_stop_")
+    home = base / "home"
+    (home / ".config").mkdir(parents=True)
+    fake_kiosk = base / "kiosk.sh"
+    fake_kiosk.write_text("#!/bin/bash\nsleep 60\n", encoding="utf-8")
+    script = subprocess.Popen(["bash", str(fake_kiosk)])
+    browser = subprocess.Popen(["bash", "-c", f'exec -a "chromium --user-data-dir={home}/.config/chromium-kiosk" sleep 60'])
+    bystander = subprocess.Popen(["sleep", "60"])
+    try:
+        Path(f"{home}/.config/chromium-kiosk.pid").write_text(f"{script.pid}\n")
+        time.sleep(0.5)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ka.main(["off", "--home", str(home)])
+        time.sleep(0.5)
+        _check("off: the kiosk's kiosk.sh and its browser stopped",
+               script.poll() is not None and browser.poll() is not None, out.getvalue())
+        _check("off: nothing else stopped", bystander.poll() is None)
+    finally:
+        for p in (script, browser, bystander):
+            if p.poll() is None:
+                p.kill()
+
+
 def main():
     started = time.time()
     print(f"deploy/ tests, repo {REPO}")
@@ -681,6 +940,9 @@ def main():
     _run("the kiosk script and its desktop entry", test_kiosk_files)
     _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
     _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)
+    _run("other starters of pi5 or the splash, and --retire-old", test_starters)
+    _run("the kiosk switch: on, off, status", test_kiosk_switch)
+    _run("--kiosk off stops a running kiosk", test_kiosk_off_stops_a_running_kiosk)
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")
     print(f"\n{'=' * 50}")
