@@ -13,6 +13,7 @@
 
 import io
 import json
+import logging
 import os
 import re
 import sys
@@ -692,6 +693,9 @@ def test_e2e_normal():
     _check("normal: the bridge sent the hello answer and one state line per phase", bridge.stats["sent"] >= 7, str(bridge.stats))
     _check("normal: phase AFTER_PARTY reached on the gateway", sim.gw.phase == int(Phase.AFTER_PARTY))
     _check("normal: no bad JSON, some '# ' text dropped", bridge.stats["bad_json"] == 0 and bridge.stats["text"] > 0)
+    _check("normal: a clean open is left alone: no bad open, no reopen, no event of either",
+           bridge.stats["bad_opens"] == 0 and bridge.stats["reopens"] == 0
+           and "bridge_bad_open" not in events and "bridge_reopen" not in events, str(bridge.stats))
     _check("normal: cup_online and cup_horse events, no v1 event types",
            "cup_online" in events and "cup_horse" in events and not any(e in ("lq_reset", "roster_set", "cup_hello") for e in events))
     print("      elapsed %.1f s, bridge stats %s" % (elapsed, bridge.stats))
@@ -904,6 +908,10 @@ def test_e2e_newline_free_torrent_over_a_real_port():
             pushed += push(torrent, budget=0.3)
         _check("torrent: a lot of newline-free bytes went in", pushed > 20000, str(pushed))
         _check("torrent: the reader thread is still alive", bridge.running)
+        _check("torrent: caught as a bad open first (bytes the gateway never sends, no valid line, 3 s)",
+               bridge.stats["bad_opens"] >= 1
+               and len(bridge.db.query("SELECT id FROM events WHERE type = 'bridge_bad_open'")) >= 1,
+               str(bridge.stats))
         snap = bridge.get_snapshot()["link"]
         _check("torrent: the bytes were read, not blocked on", snap["bytes_rx"] > 20000, str(snap))
         _check("torrent: nothing was parsed from it", snap["lines_ok"] == 0, str(snap))
@@ -914,14 +922,202 @@ def test_e2e_newline_free_torrent_over_a_real_port():
                str(bridge.stats))
         _check("torrent: a bridge_reopen event was written",
                len(bridge.db.query("SELECT id FROM events WHERE type = 'bridge_reopen'")) >= 1)
-        # Now talk properly. The link must come up without restarting anything.
-        push(b"\n" + W.hello_line("24:6F:28:AA:BB:CC").encode() + b"\n")
-        push(W.status_line(1, 1, 0, [], 0, 145).encode() + b"\n")
-        came_back = wait(lambda: bridge.link.gateway_online and bridge.link.up_s == 145, 20)
+        # Now talk properly, as the gateway does: a hello every 2 s until it is
+        # answered. The link must come up without restarting anything. (A
+        # single push can land inside a reopen's settle and be dropped with
+        # the junk, as it would be on the wire.)
+        came_back, end = False, time.time() + 20
+        while not came_back and time.time() < end:
+            push(b"\n" + W.hello_line("24:6F:28:AA:BB:CC").encode() + b"\n")
+            push(W.status_line(1, 1, 0, [], 0, 145).encode() + b"\n")
+            came_back = wait(lambda: bridge.link.gateway_online and bridge.link.up_s == 145, 2)
         _check("torrent: the link recovers on its own, no restart", came_back,
                str(bridge.get_snapshot()["link"]))
         _check("torrent: thread_alive is true throughout",
                bridge.get_snapshot()["link"]["thread_alive"] is True)
+    finally:
+        bridge.close()
+        link.close()
+
+
+# What a UART at 460800 makes of the gateway's 115200 hello (test_smoke has
+# the same bytes): runs of one bit value, no newline, no JSON. 2 KB of it.
+NOISE = bytes.fromhex("f8 f8 78 00 80 00 f8 78 00 80 80 f8 80 80 00 80"
+                      " 00 f8 78 78 78 f8 78 f8 78 f8 78 00 80 00 78 80") * 64
+
+
+class _BridgeLog(logging.Handler):
+    """The bridge's WARNING lines, what the journal gets, counted instead of printed."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+    def matching(self, needle):
+        return [l for l in self.lines if needle in l]
+
+    def __enter__(self):
+        logging.getLogger("la_quiniela.bridge").addHandler(self)
+        return self
+
+    def __exit__(self, *exc):
+        logging.getLogger("la_quiniela.bridge").removeHandler(self)
+        return False
+
+
+def _wait_for(pred, timeout):
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return pred()
+
+
+def _noise_while(link, keep_going, per_s=8192):
+    """Noise into the port from the gateway's side, about per_s bytes a
+    second, for as long as keep_going() says."""
+    def run():
+        while keep_going():
+            try:
+                os.write(link.master, NOISE)
+            except BlockingIOError:
+                pass
+            except OSError:
+                return
+            time.sleep(len(NOISE) / per_s)
+    th = threading.Thread(target=run, name="lq-test-noise", daemon=True)
+    th.start()
+    return th
+
+
+def _gateway_on(link, seconds):
+    """The simulator's gateway (and its cups) coming onto the line now: it
+    boots and says hello at once, as the firmware does."""
+    sim = Simulator(link=link, seed=4, ideal=True, quiet=True, out=lambda s: None)
+    th = threading.Thread(target=lambda: sim.run(scenario=None, duration=seconds), name="lq-test-sim",
+                          daemon=True)
+    th.start()
+    return sim, th
+
+
+def _bad_open_bridge(prefix, **cfg):
+    from la_quiniela.bridge import LqBridge
+    from la_quiniela.sim.link import PtyLink
+    _fresh_db()
+    link = PtyLink(link_path=tempfile.mktemp(prefix=prefix))
+    bridge = LqBridge(settings=dict(BRIDGE_CFG, LQ_SERIAL_PORT=link.slave_path, **cfg), db_path=_TMP_DB,
+                      console=_quiet_console)
+    return link, bridge
+
+
+def _events(bridge, type_):
+    return [json.loads(r["detail"]) for r in
+            bridge.db.query("SELECT detail FROM events WHERE type = ? ORDER BY id", (type_,))]
+
+
+def test_e2e_bad_first_open():
+    """DevPi's cold boots over a real port, with real pyserial: the first open
+    gets noise (the gateway is not on the line yet); the moment the bridge has
+    given that open up and opened again, the simulator's gateway is there and
+    says hello, which is what a clean reopen finds. The link must be up a few
+    seconds after the first open (3 s, the next tick, the reopen), not 20."""
+    from la_quiniela.bridge import BAD_OPEN_S
+    link, bridge = _bad_open_bridge("ddm-lq-badopen-", LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    sim = th = None
+    try:
+        with _BridgeLog() as log:
+            bridge.start()
+            _check("bad first open: the real bridge opened the real port", _wait_for(lambda: bridge.link.port_open, 10))
+            first_open = bridge._open_mono
+            _noise_while(link, lambda: bridge.stats["bad_opens"] == 0 and time.monotonic() - first_open < 10)
+            _check("bad first open: given up as a bad open",
+                   _wait_for(lambda: bridge.stats["bad_opens"] >= 1, 10), str(bridge.stats))
+            _wait_for(lambda: bridge._open_mono != first_open and bridge.link.port_open, 5)
+            sim, th = _gateway_on(link, 12)
+            up = _wait_for(lambda: bridge.stats["lines"] > 0 and bridge.link.gateway_online, 10)
+            took = bridge.link.last_good_line_mono - first_open if up else None
+            _check("bad first open: the link is up %.1f s after the first open" % (took or -1),
+                   up and took <= BAD_OPEN_S + 2, str(bridge.get_snapshot()["link"]))
+            _check("bad first open: the hello was answered: the gateway holds rev 1",
+                   _wait_for(lambda: sim.gw.state_rev == 1, 5), str(sim.gw.state_rev))
+            bad = _events(bridge, "bridge_bad_open")
+            _check("bad first open: one bridge_bad_open event, with the first 32 bytes in hex",
+                   len(bad) == 1 and bad[0]["hex"] == NOISE[:32].hex(" ") and bad[0]["bytes"] > 0
+                   and bad[0]["quick"] == 1, str(bad))
+            _check("bad first open: one log line", len(log.lines) == 1 and "bad open" in log.lines[0],
+                   str(log.lines))
+            _check("bad first open: the watchdog never fired",
+                   bridge.stats["reopens"] == 0 and not _events(bridge, "bridge_reopen"))
+            print("      link up %.1f s after the first open; the event: %s" % (took or -1, bad[:1]))
+    finally:
+        if sim is not None:
+            sim.stop()
+            th.join(5)
+        bridge.close()
+        link.close()
+
+
+def test_e2e_silent_first_open():
+    """A port that says nothing is the watchdog's, as before (its 20 s scaled
+    down to 4 s here): it reopens, the gateway comes on, the link comes up,
+    and nothing about a bad open is logged or recorded."""
+    link, bridge = _bad_open_bridge("ddm-lq-silent-", LQ_DEAF_REOPEN_S=4, LQ_REOPEN_MIN_GAP_S=4)
+    sim = th = None
+    try:
+        with _BridgeLog() as log:
+            bridge.start()
+            _check("silent first open: the port opened", _wait_for(lambda: bridge.link.port_open, 10))
+            _check("silent first open: the watchdog reopened it",
+                   _wait_for(lambda: bridge.stats["reopens"] >= 1, 10), str(bridge.stats))
+            sim, th = _gateway_on(link, 10)
+            _check("silent first open: the link comes up once the gateway talks",
+                   _wait_for(lambda: bridge.stats["lines"] > 0 and bridge.link.gateway_online, 10))
+            reopen = _events(bridge, "bridge_reopen")
+            _check("silent first open: a bridge_reopen event with 0 bytes, as before",
+                   len(reopen) >= 1 and reopen[0]["bytes_rx"] == 0, str(reopen))
+            _check("silent first open: no bad open, no bridge_bad_open event",
+                   bridge.stats["bad_opens"] == 0 and not _events(bridge, "bridge_bad_open"))
+            _check("silent first open: only the watchdog's log lines",
+                   log.lines and all("no valid line for" in l for l in log.lines), str(log.lines))
+    finally:
+        if sim is not None:
+            sim.stop()
+            th.join(5)
+        bridge.close()
+        link.close()
+
+
+def test_e2e_noise_forever():
+    """Noise on every open for 22 s (the watchdog's 20 s scaled down to 4 s):
+    three quick reopens, then the watchdog alone, and one log line each."""
+    from la_quiniela.bridge import BAD_OPEN_QUICK_MAX
+    link, bridge = _bad_open_bridge("ddm-lq-noise-", LQ_DEAF_REOPEN_S=4, LQ_REOPEN_MIN_GAP_S=4)
+    try:
+        with _BridgeLog() as log:
+            bridge.start()
+            _check("noise forever: the port opened", _wait_for(lambda: bridge.link.port_open, 10))
+            t0 = time.time()
+            noise = _noise_while(link, lambda: time.time() - t0 < 22)
+            noise.join(30)
+            bridge.stop()                        # so the counts and the log lines agree
+            stats = dict(bridge.stats)
+            _check("noise forever: %d quick reopens, then the watchdog's (%d)" % (BAD_OPEN_QUICK_MAX, stats["reopens"]),
+                   stats["bad_opens"] == BAD_OPEN_QUICK_MAX and stats["reopens"] >= 1, str(stats))
+            _check("noise forever: the bytes were read (%d)" % stats["bytes_rx"], stats["bytes_rx"] > 50000)
+            bad = _events(bridge, "bridge_bad_open")
+            _check("noise forever: bridge_bad_open events quick 1, 2, 3",
+                   [d["quick"] for d in bad] == [1, 2, 3], str(bad))
+            _check("noise forever: one log line per reopen and one when the quick ones are spent (%d)" % len(log.lines),
+                   len(log.matching("bad open")) == BAD_OPEN_QUICK_MAX
+                   and len(log.matching("quick reopens")) == 1
+                   and len(log.matching("no valid line for")) == stats["reopens"]
+                   and len(log.lines) == BAD_OPEN_QUICK_MAX + 1 + stats["reopens"], "\n".join(log.lines))
+            _check("noise forever: no valid line, the gateway not claimed online",
+                   stats["lines"] == 0 and not bridge.link.gateway_online)
     finally:
         bridge.close()
         link.close()
@@ -974,6 +1170,9 @@ E2E = [
     ("end to end — scratch-renumber", test_e2e_scratch_renumber),
     ("end to end — a real gateway after a simulator run", test_e2e_real_gateway_after_a_simulator_run),
     ("end to end — a newline-free torrent on a real port", test_e2e_newline_free_torrent_over_a_real_port),
+    ("end to end — noise on the first open, a clean reopen", test_e2e_bad_first_open),
+    ("end to end — a silent first open is the watchdog's", test_e2e_silent_first_open),
+    ("end to end — noise on every open", test_e2e_noise_forever),
     ("bridge disconnect and reconnect mid-run", test_bridge_disconnect_reconnect),
 ]
 

@@ -133,7 +133,8 @@ changes, and for events.
 Event types: `cup_online`, `cup_offline`, `cup_horse` (`{"mac","from","to"}`,
 also for a cup first heard with a horse, `from` 0), `cups_forgotten`,
 `gateway_hello`, `gateway_reboot`, `gateway_err`, `state_set` (with what
-changed), `bridge_reopen`. The `horse` column of a cup event is the horse the
+changed), `bridge_reopen`, `bridge_bad_open` (both under "The watchdog" and
+"A bad open", below). The `horse` column of a cup event is the horse the
 cup reports (NULL for none).
 
 To start fresh before a party, pi5 stopped: `python3 pi5/tools/wipe.py` (try
@@ -264,6 +265,14 @@ lines: `journalctl -u ddm-pi5 -n 50`).
 | `no data from the gateway for 20 s - reopening the port` | The watchdog, below. |
 | `reader thread failed (N), restarting in 5 s` | Something unexpected. The traceback is in the log; the bridge carries on. |
 
+Two lines come from the log rather than the console, with no `[LQ]` in front.
+Under the service they are in the same journal:
+
+| Line | Means |
+| --- | --- |
+| `La Quiniela bridge: bad open on ...: N bytes in 3.0 s, no valid line; reopening at once (1 of 3). First 32 bytes: ...` | A bad open, below. One line per bad open. |
+| `La Quiniela bridge: still no valid line after 3 quick reopens; back to reopening after 20 s without one` | The quick reopens did not help; the watchdog carries on. Said once. |
+
 ### The watchdog
 
 The gateway sends a `status` line every 5 seconds, so on a healthy link
@@ -285,6 +294,112 @@ until the app was restarted. The reader now takes bounded chunks (lines up to
 newline always returns it to a clean start of line, and the watchdog is the
 backstop for anything else.
 
+### Opening the port
+
+Every open goes the same way, the first one and every reopen:
+
+1. pyserial opens the port at 115200 baud, 8 data bits, no parity, 1 stop bit,
+   raw, with a 1 s read timeout, and exclusively, so a second copy of the app
+   cannot open it. With `LQ_SERIAL_LINES` at `leave` the bridge never sets DTR
+   or RTS. Linux raises both lines together as the port opens and drops both
+   together as it closes, and the gateway's reset circuit ignores that (above).
+2. The bridge waits 0.1 s, then drops whatever arrived in that time.
+3. Nothing counts as a line until the first newline, so the tail of a line cut
+   by the open is dropped.
+4. The watchdog's 20 s and the 3 s below count from here.
+
+Linux does not open the gateway's adapter, a CP2102, the same way every time.
+The first open after the adapter appears, at boot or after a replug, starts
+from the kernel's defaults (9600 baud, echo on), and pyserial's 115200 follows
+as a second request. Every later open starts from the settings the last close
+left, 115200 raw.
+
+On DevPi's cold boots (2026-10-11) the first open handed over 120 to 800 KB of
+garbage in 20 s and no valid line. 800 KB in 21 s is more than a 115200 line
+can carry. The watchdog's reopen at 20 s brought the link straight up, and the
+gateway kept running through it (`up_s` 283 with DevPi up 4 minutes).
+
+Setting the same baud rate again on an open port would not help: pyserial
+skips settings that have not changed, and the kernel's CP2102 driver sends the
+chip nothing when they have not. A reopen is what sends the chip a fresh set.
+
+### A bad open: caught in 3 s
+
+An open is bad when, `BAD_OPEN_S` (3 s) after it, all three of these hold:
+
+- bytes have come out of the port;
+- at least one of them is a byte the gateway never sends: anything but
+  printable ASCII, tab, CR or LF. Every gateway line is ASCII JSON or `# ` text.
+- not one valid line has arrived.
+
+The bridge then closes the port and opens it again at once, through the same
+path. It checks once a second, so in practice this happens 3 to 4 s after the
+open.
+
+- **At most three quick reopens in a row** (`BAD_OPEN_QUICK_MAX`). After that
+  the watchdog's cadence takes over again: a reopen 20 s after the open, then
+  every 30 s. The log says so once. A valid line gives the next bad open its
+  three quick reopens back.
+- **Some ports are left to the watchdog, as before.** A port that says nothing
+  is not a bad open. Neither is a port that sends only ASCII, such as the tail
+  of a long status cut by the open followed by nothing until the next status
+  5 s later, or the gateway's `# ` text with debug on.
+- **A quick reopen does not reset the gateway.** It is the same close and open
+  the watchdog does, and an app restart does. Nothing is written to the port,
+  and DTR and RTS are left as `LQ_SERIAL_LINES` says. With `leave`, the gateway
+  keeps running. With `low`, every open resets that board, quick or not.
+
+Each bad open writes one log line and one `bridge_bad_open` event, and nothing
+per byte:
+
+```
+La Quiniela bridge: bad open on /dev/serial/by-id/...: 28672 bytes in 3.3 s, no valid line; reopening at once (1 of 3). First 32 bytes: f8 f8 78 00 80 00 f8 78 ...
+```
+
+The event's detail is `{"bytes": 28672, "elapsed_s": 3.3, "hex": "f8 f8 78
+00 ...", "quick": 1, "of": 3}`:
+
+- `bytes` and `elapsed_s` count from the open, after the 0.1 s drop;
+- `hex` is the first 32 bytes;
+- `quick` is which of the three quick reopens this was.
+
+`bridge_reopen` stays the watchdog's alone. A quick reopen does not write one
+and does not count in `reopens`. The watchdog still writes one for a port that
+says nothing (its `bytes_rx` does not move) and for garbage that outlasts the
+three quick reopens. On the console a quick reopen prints nothing.
+
+To read them on DevPi:
+
+```
+sqlite3 ~/DDM-Multimedia/pi5/data/la_subasta.db "select ts, detail from events where type in ('bridge_bad_open','bridge_reopen') order by id desc limit 5"
+```
+
+#### Reading the hex sample
+
+This is what a receiver at the wrong rate makes of the gateway's 115200 hello,
+from a bit-level simulation of the line:
+
+| Receiving at | Bytes for the 60 sent | First bytes |
+| --- | --- | --- |
+| 115200, the right rate | 60 | `7b 22 74 22 3a 22 68 65 6c 6c 6f`, which is `{"t":"hello` |
+| 9600 | 5 | `4c 89 a5 5a 46` |
+| 57600 | 26 | `d2 48 31 6b 28 e8 39 31 31 29 4a c8` |
+| 230400 | 92 | `9e 86 60 60 86 60 98 18 60 80 9e 66` |
+| 460800 | 148 | `f8 f8 78 00 80 00 f8 78 00 80 80 f8` |
+| 921600 | 181 | `80 80 80 00 00 00 00 80 80 00 00 00` |
+
+- **A receiver too fast** gives runs of one bit value: bytes like `00`, `80`,
+  `f8`, `78` and `ff`, up to about three bytes per byte sent.
+- **A receiver too slow** gives fewer bytes than were sent, with no pattern.
+- **Either way, the count follows the gateway.** It sends about 50 bytes a
+  second with no cups, and about 2 KB a second with 20 (each cup's telemetry
+  every 2 s, the status with the cup table every 5 s). So hundreds of KB in 20 s
+  is not the gateway's own words read at a wrong rate.
+- **A line held low** (the gateway's TX low, or the gateway in reset) gives
+  `00` after `00`, at the receiver's own pace, whatever the gateway does.
+- **A floating or noisy input** gives values with no pattern, in bursts that do
+  not follow the gateway's 2 s and 5 s.
+
 ### What the snapshot says
 
 `GET /api/lq/snapshot` carries these under `link`, alongside the older fields:
@@ -296,7 +411,7 @@ backstop for anything else.
 | `lines_ok` | Lines that parsed as JSON. |
 | `lines_bad` | Lines that did not: the gateway's `# ` text, bad JSON, over-long, unknown type. |
 | `bytes_rx` | Bytes taken off the port. |
-| `reopens` | How many times the watchdog has reopened the port. |
+| `reopens` | How many times the watchdog has reopened the port. Not the quick reopens of a bad open: those are `bridge_bad_open` events. |
 
 Read them together. Bytes climbing with `lines_ok` stuck at zero means the port
 is delivering something that is not this protocol, usually the wrong baud rate

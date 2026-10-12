@@ -72,6 +72,14 @@ RESEND_MIN_S = 2.0            # at most one reconcile re-send per this
 HELLO_EVENT_MIN_S = 10.0      # gateway_hello event at most this often
 GATEWAY_STALE_MS = 3000       # the gateway's own STALE threshold: its status ages under this count as heard
 PENDING_MAX = 4 * P.MAX_LINE_BYTES   # partial-line buffer ceiling
+BAD_OPEN_S = 3.0              # garbage but no valid line this long after an open -> reopen at once
+BAD_OPEN_QUICK_MAX = 3        # quick reopens in a row, then the deaf-port watchdog's cadence again
+BAD_OPEN_SAMPLE_BYTES = 32    # the first bytes of a bad open, kept for its log line and event
+
+# Every byte the gateway sends is one of these: its lines are ASCII JSON or
+# "# " text. A byte outside them is what a port at the wrong settings, or a
+# line that is not the gateway talking, delivers.
+GATEWAY_BYTES = bytes(range(0x20, 0x7F)) + b"\t\r\n"
 
 LINK_REASONS = ("boot", "reboot", "online", "offline", "port_open", "port_closed",
                 "status", "protocol_mismatch", "deaf")
@@ -242,12 +250,21 @@ class LqBridge:
         self.cups: Dict[str, CupLive] = {}    # by MAC
         self.link = LinkLive()
         self._resync = False              # drop bytes until the next newline
+        # The last open, watched for garbage until its first valid line (see
+        # _bad_open_due), and the quick reopens since the last valid line.
+        self._open_watch = False
+        self._open_mono: Optional[float] = None
+        self._open_bytes = 0
+        self._open_head = b""             # its first BAD_OPEN_SAMPLE_BYTES bytes
+        self._open_foreign = False        # a byte the gateway never sends has arrived
+        self._quick_reopens = 0
+        self._quick_spent_said = False
         self._last_link_key = None        # what the last emitted lq_link said
         self._lines_warned = False        # LQ_SERIAL_LINES warned about once
         self._console = console or console_print
         self.stats = {"lines": 0, "text": 0, "bad_json": 0, "too_long": 0,
                       "unknown_type": 0, "sent": 0, "bytes_rx": 0, "reopens": 0,
-                      "thread_restarts": 0}
+                      "bad_opens": 0, "thread_restarts": 0}
 
         # DevPi-owned state, keyed by horse number. DevPi always holds a
         # state (PRE_RACE with nothing scratched until something is set) and
@@ -481,6 +498,11 @@ class LqBridge:
             self._port_fail_logged_mono = None
             now = self._clock()
             self.link.last_good_line_mono = now     # the watchdog counts from here
+            self._open_watch = True                 # and so does the bad-open check
+            self._open_mono = now
+            self._open_bytes = 0
+            self._open_head = b""
+            self._open_foreign = False
             logger.info("La Quiniela bridge: %s open", self.settings["LQ_SERIAL_PORT"])
             self._set_link(port_open=True, reason="port_open")
         return True
@@ -531,6 +553,12 @@ class LqBridge:
         this back into a clean start-of-line state, and nothing is buffered
         without bound."""
         self.stats["bytes_rx"] += len(chunk)
+        if self._open_watch:
+            self._open_bytes += len(chunk)
+            if len(self._open_head) < BAD_OPEN_SAMPLE_BYTES:
+                self._open_head += chunk[:BAD_OPEN_SAMPLE_BYTES - len(self._open_head)]
+            if not self._open_foreign and chunk.translate(None, GATEWAY_BYTES):
+                self._open_foreign = True
         buf = self._pending + chunk
         self._pending = b""
         if self._resync:
@@ -576,6 +604,10 @@ class LqBridge:
                 return
             self.stats["lines"] += 1
             self.link.last_good_line_mono = now     # what the watchdog waits for
+            if self._open_watch:                    # this open is a good one
+                self._open_watch = False
+                self._quick_reopens = 0
+                self._quick_spent_said = False
             try:
                 self.handle_message(obj, now)
             except Exception:
@@ -786,11 +818,60 @@ class LqBridge:
                     and now - self.link.last_line_mono >= gw_limit:
                 self._set_link(gateway_online=False, in_sync=False, reason="offline")
                 self.say("gateway offline: nothing heard for %.0f s" % gw_limit)
+            bad = self._bad_open_due(now)
             deaf = self._watchdog_due(now)
-        if deaf:
-            # Outside the lock: reopening blocks, and a Flask request thread
-            # must not be held up behind it.
+        # Outside the lock: reopening blocks, and a Flask request thread must
+        # not be held up behind it. One reopen per tick, a bad open's first.
+        if bad:
+            self._reopen_bad(now)
+        elif deaf:
             self._reopen_deaf(now)
+
+    def _bad_open_due(self, now: float) -> bool:
+        """True when the port was opened BAD_OPEN_S ago, bytes have come out of
+        it since, at least one of them a byte the gateway never sends, and not
+        one valid line. DevPi's cold boots: the first open delivered hundreds
+        of KB of that for 20 s, until the watchdog's reopen brought the link
+        straight up. A healthy gateway sends a valid line within 2 s of a
+        reopen (its hello) or 5 s (its status), all of it ASCII, so a port
+        that says nothing, or only the ASCII tail of a line cut by the open,
+        is left to the watchdog as before.
+
+        After BAD_OPEN_QUICK_MAX bad opens in a row the watchdog's cadence
+        takes over again, said once; a valid line starts the count afresh."""
+        if self._port is None or not self.link.port_open or not self._open_watch:
+            return False
+        if not self._open_foreign or now - self._open_mono < BAD_OPEN_S:
+            return False
+        if self._quick_reopens >= BAD_OPEN_QUICK_MAX:
+            if not self._quick_spent_said:
+                self._quick_spent_said = True
+                logger.warning("La Quiniela bridge: still no valid line after %d quick reopens; "
+                               "back to reopening after %.0f s without one",
+                               self._quick_reopens, float(self.settings["LQ_DEAF_REOPEN_S"]))
+            return False
+        return True
+
+    def _reopen_bad(self, now: float) -> None:
+        """Close the port and open it again at once, the same close and open
+        the watchdog does: nothing else is sent to the port, and DTR and RTS
+        are left exactly as LQ_SERIAL_LINES says, so the gateway is not reset.
+        One log line and one bridge_bad_open event per bad open, carrying what
+        came out of it: its first bytes in hex tell a wrong baud rate from a
+        line that is not the gateway (LQ_BRIDGE.md)."""
+        with self._lock:
+            self._quick_reopens += 1
+            self.stats["bad_opens"] += 1
+            detail = {"bytes": self._open_bytes, "elapsed_s": round(now - self._open_mono, 1),
+                      "hex": self._open_head.hex(" "), "quick": self._quick_reopens,
+                      "of": BAD_OPEN_QUICK_MAX}
+            self._event("bridge_bad_open", None, detail)
+        logger.warning("La Quiniela bridge: bad open on %s: %d bytes in %.1f s, no valid line; "
+                       "reopening at once (%d of %d). First %d bytes: %s",
+                       self.settings["LQ_SERIAL_PORT"], detail["bytes"], detail["elapsed_s"],
+                       detail["quick"], BAD_OPEN_QUICK_MAX, len(self._open_head), detail["hex"])
+        self._close_port("deaf")
+        self._open_port()
 
     def _watchdog_due(self, now: float) -> bool:
         """True when the port is open but nothing valid has come out of it for

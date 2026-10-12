@@ -10,6 +10,7 @@
 
 import io
 import json
+import logging
 import os
 import queue
 import re
@@ -39,8 +40,8 @@ from la_quiniela import bridge as bridge_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import (  # noqa: E402
-    HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX, RESEND_MIN_S, SERIAL_LINE_MODES,
-    LqBridge, load_settings, open_serial_port,
+    BAD_OPEN_QUICK_MAX, BAD_OPEN_S, HELLO_EVENT_MIN_S, LINK_REASONS, LQ_ROOM, PENDING_MAX,
+    RESEND_MIN_S, SERIAL_LINE_MODES, LqBridge, load_settings, open_serial_port,
 )
 from la_quiniela.models import LqDb  # noqa: E402
 
@@ -1051,6 +1052,328 @@ def test_watchdog_with_no_gateway_is_harmless():
     _check("no gateway: no exception escaped", b.link.port_open)
 
 
+# -----------------------------------------------------------------------------
+# A bad open: bytes the gateway never sends, and no valid line, 3 s after opening
+# -----------------------------------------------------------------------------
+
+# What a UART at the wrong rate makes of the gateway's 115200 hello: here a
+# receiver at 460800, from a bit-level simulation of the line (LQ_BRIDGE.md
+# has the other rates). Runs of one bit value, no newline, no JSON.
+WRONG_BAUD = bytes.fromhex("f8 f8 78 00 80 00 f8 78 00 80 80 f8 80 80 00 80"
+                           " 00 f8 78 78 78 f8 78 f8 78 f8 78 00 80 00 78 80")
+NOISE_PER_S = WRONG_BAUD * 256        # 8 KB a second; DevPi's first opens delivered 6 to 38 KB/s
+# The same hello read at 921600, to start a bad open with something the rest
+# of its noise is not: the hex sample must be the first bytes, not any 32.
+FIRST_32 = bytes.fromhex("80 80 80 00 00 00 00 80 80 00 00 00 00 80 00 00"
+                         " 00 00 00 80 80 80 80 00 80 00 80 80 00 80 80 80")
+
+
+class LogCapture(logging.Handler):
+    """The bridge's log lines at WARNING and above, which is what reaches the
+    journal under the ddm-pi5 service, collected instead of printed."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+    def matching(self, needle):
+        return [l for l in self.lines if needle in l]
+
+    def __enter__(self):
+        bridge_mod.logger.addHandler(self)
+        return self
+
+    def __exit__(self, *exc):
+        bridge_mod.logger.removeHandler(self)
+        return False
+
+
+def _ports_from(b, clk, make):
+    """Every open takes a port from make(). Returns the list of (open time,
+    port), filled in as the bridge opens them."""
+    opened = []
+
+    def factory(p, baud, t):
+        port = make(opened)
+        opened.append((clk(), port))
+        return port
+    b._factory = factory
+    return opened
+
+
+def _seconds(b, clk, seconds, each_second=None):
+    """The bridge's loop on the fake clock, a second at a time: each_second()
+    may put bytes on the port, whatever the port holds is read, then tick()."""
+    for _ in range(int(seconds)):
+        clk.advance(1)
+        if each_second is not None:
+            each_second()
+        if b._port is not None:
+            drain(b, b._port)
+        b.tick(clk())
+
+
+def _detail(row):
+    return json.loads(row["detail"])
+
+
+def test_bad_open_then_a_clean_reopen():
+    """DevPi's cold boots: the first open hands over noise and the reopen is
+    clean. Here the first port would deliver noise for 10 s and valid lines
+    after that; every port opened after it is a healthy gateway, whose next
+    line comes within 2 s (here: at the next second). The link must be up
+    within about 4 s of the first open, not 20, with one bridge_bad_open
+    event and one log line."""
+    b, first, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    opened = _ports_from(b, clk, lambda opened: first if not opened else FakeSerial())
+    fed = []
+    with LogCapture() as log:
+        b._open_port()
+        t0 = clk()
+
+        def gateway():
+            port = b._port
+            if port is first:
+                # FIRST_32 split across two reads, then noise; valid lines from 10 s
+                s = clk() - t0
+                data = (FIRST_32[:10] if s == 1 else FIRST_32[10:] + NOISE_PER_S if s == 2
+                        else NOISE_PER_S if s < 10 else GOOD_LINES)
+                fed.append(data)
+                port.feed(data)
+            elif port is not None:
+                port.feed(GOOD_LINES)
+        up_at = None
+        for _ in range(12):
+            _seconds(b, clk, 1, gateway)
+            if up_at is None and b.stats["lines"]:
+                up_at = clk()
+    took = None if up_at is None else up_at - t0
+    _check("bad open: the link is up %s s after the first open (it took 20 before)" % took,
+           took is not None and took <= BAD_OPEN_S + 1, str(b.stats))
+    _check("bad open: caught at %.0f s, once" % BAD_OPEN_S,
+           b.stats["bad_opens"] == 1 and len(opened) == 2 and opened[1][0] - t0 == BAD_OPEN_S,
+           str([t - t0 for t, _ in opened]))
+    _check("bad open: the noisy port was closed, the clean one is in use", first.closed and b._port is opened[1][1])
+    _check("bad open: the hello on the clean port was answered",
+           any(l.startswith('{"t":"state"') for l in opened[1][1].lines()), str(opened[1][1].lines()))
+    _check("bad open: the watchdog never fired", b.stats["reopens"] == 0 and not events_of(b, "bridge_reopen"))
+    ev = events_of(b, "bridge_bad_open")
+    _check("bad open: one bridge_bad_open event", len(ev) == 1, str(ev))
+    d = _detail(ev[0]) if ev else {}
+    total = sum(len(x) for x in fed)
+    _check("bad open: the event counts every byte the bad open delivered",
+           d.get("bytes") == total == 32 + 2 * len(NOISE_PER_S), str(d))
+    _check("bad open: and says when", d.get("elapsed_s") == BAD_OPEN_S, str(d))
+    _check("bad open: its hex sample is the first 32 bytes, across reads",
+           d.get("hex") == FIRST_32.hex(" "), str(d))
+    _check("bad open: and which quick reopen it was", d.get("quick") == 1 and d.get("of") == BAD_OPEN_QUICK_MAX,
+           str(d))
+    _check("bad open: one log line", len(log.lines) == 1, str(log.lines))
+    line = log.lines[0] if log.lines else ""
+    _check("bad open: the log line has the byte count, the time and the hex sample",
+           "bad open" in line and "%d bytes in 3.0 s" % total in line
+           and FIRST_32.hex(" ") in line and "(1 of 3)" in line, line)
+
+
+def test_bad_open_and_the_watchdog_due_together():
+    """A watchdog set as short as the bad-open rule (the pty tests do this):
+    when both are due on the same tick, the port is reopened once, as a bad
+    open, not twice."""
+    b, first, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=3, LQ_REOPEN_MIN_GAP_S=2)
+    opened = _ports_from(b, clk, lambda opened: first if not opened else FakeSerial())
+    with LogCapture() as log:
+        b._open_port()
+        _seconds(b, clk, 3, lambda: b._port.feed(NOISE_PER_S))
+    _check("both due: one reopen, the bad open's", len(opened) == 2 and b.stats["bad_opens"] == 1
+           and b.stats["reopens"] == 0, str((len(opened), b.stats)))
+    _check("both due: one log line", len(log.lines) == 1 and "bad open" in log.lines[0], str(log.lines))
+
+
+def test_silence_is_still_the_watchdogs():
+    """A port that says nothing for 30 s and then talks: today's behaviour,
+    unchanged. The watchdog reopens at 20 s, the lines bring the link up at
+    30 s, and nothing about a bad open is logged or recorded."""
+    b, first, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    opened = _ports_from(b, clk, lambda opened: first if not opened else FakeSerial())
+    with LogCapture() as log:
+        b._open_port()
+        t0 = clk()
+
+        def gateway():
+            if clk() - t0 == 30:
+                b._port.feed(GOOD_LINES)
+        up_at = None
+        for _ in range(35):
+            _seconds(b, clk, 1, gateway)
+            if up_at is None and b.stats["lines"]:
+                up_at = clk()
+    _check("silence: the watchdog reopened once, at 20 s",
+           [t - t0 for t, _ in opened] == [0, 20] and b.stats["reopens"] == 1, str([t - t0 for t, _ in opened]))
+    _check("silence: the link came up with the first lines, at 30 s",
+           up_at is not None and up_at - t0 == 30, str(up_at))
+    _check("silence: no bad open, no bridge_bad_open event",
+           b.stats["bad_opens"] == 0 and not events_of(b, "bridge_bad_open"))
+    ev = events_of(b, "bridge_reopen")
+    _check("silence: one bridge_reopen event, as before: 20 s silent, 0 bytes",
+           len(ev) == 1 and _detail(ev[0])["silent_s"] == 20 and _detail(ev[0])["bytes_rx"] == 0, str(ev))
+    _check("silence: the only log line is the watchdog's",
+           len(log.lines) == 1 and "no valid line for 20 s" in log.lines[0], str(log.lines))
+
+
+def test_noise_forever_three_quick_then_the_watchdog():
+    """Noise on every open: three quick reopens, 3 s apart, then the
+    watchdog's cadence (20 s after the open, then every 30 s), with one log
+    line per reopen and one more when the quick ones are spent. A valid line
+    gives the next bad open its three quick reopens back."""
+    b, first, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    opened = _ports_from(b, clk, lambda opened: first if not opened else FakeSerial())
+
+    def noise():
+        if b._port is not None:
+            b._port.feed(NOISE_PER_S)
+    with LogCapture() as log:
+        b._open_port()
+        t0 = clk()
+        _seconds(b, clk, 100, noise)
+        times = [t - t0 for t, _ in opened]
+        _check("noise forever: opens at 0, 3, 6, 9 s, then the watchdog's 29, 59, 89 s",
+               times == [0, 3, 6, 9, 29, 59, 89], str(times))
+        _check("noise forever: 3 bad opens, 3 watchdog reopens",
+               b.stats["bad_opens"] == 3 and b.stats["reopens"] == 3, str(b.stats))
+        _check("noise forever: about 800 KB of it, like DevPi's worst first open",
+               b.stats["bytes_rx"] == 100 * len(NOISE_PER_S), str(b.stats["bytes_rx"]))
+        bad = events_of(b, "bridge_bad_open")
+        _check("noise forever: three bridge_bad_open events, quick 1, 2, 3",
+               [_detail(r)["quick"] for r in bad] == [1, 2, 3], str(bad))
+        _check("noise forever: three bridge_reopen events from the watchdog",
+               len(events_of(b, "bridge_reopen")) == 3)
+        _check("noise forever: the log is not flooded: 7 lines in 100 s",
+               len(log.lines) == 7, "\n".join(log.lines))
+        _check("noise forever: 3 bad-open lines, 1 saying the quick reopens are spent, 3 from the watchdog",
+               len(log.matching("bad open")) == 3 and len(log.matching("after 3 quick reopens")) == 1
+               and len(log.matching("no valid line for")) == 3, "\n".join(log.lines))
+        _check("noise forever: the console has the watchdog's three lines and nothing else",
+               len(b._console.matching("reopening the port")) == 3 and len(b._console.lines) == 3,
+               str(b._console.lines))
+
+        b._port.feed(GOOD_LINES)
+        drain(b, b._port)
+        _check("noise forever: a valid line ends it", b.stats["lines"] > 0)
+        b._close_port("port_closed")          # the cable out and back in
+        b._open_port()
+        t1 = clk()
+        _seconds(b, clk, 3, noise)
+        bad = events_of(b, "bridge_bad_open")
+        _check("noise forever: after a valid line a bad open is caught in 3 s again, quick 1 of 3",
+               b.stats["bad_opens"] == 4 and _detail(bad[-1])["quick"] == 1 and opened[-1][0] - t1 == 3,
+               str([_detail(r) for r in bad]))
+
+
+def test_a_clean_open_is_left_alone():
+    """Works from the first byte: no reopen, no event, no log line. Two
+    healthy shapes send bytes but no valid line for a while, and neither is a
+    bad open: the ASCII tail of a long status cut by the open, then nothing
+    until the next status 5 s later; and the gateway's "# " text (debug on)
+    ahead of its next status."""
+    cup = {"mac": "A0:B7:65:12:34:56", "horse": 7, "tok": 3, "rssi": -64, "up": -61, "age": 120}
+    long_status = status(cups=[dict(cup, mac="A0:B7:65:12:34:%02X" % n, horse=n) for n in range(1, 21)],
+                         up_s=145)
+    shapes = {
+        "valid from the first byte": {0: MID_LINE + GOOD_LINES, 2: hello(), 5: status(up_s=150),
+                                      10: status(up_s=155)},
+        "the tail of a long status, then 5 s of nothing": {0: long_status[len(long_status) // 3:],
+                                                          5: status(up_s=150)},
+        "debug text, then the status": {0: b"# ---- CUPS ----\n", 1: b"# cup A0:B7:65:12:34:56 tok 3\n",
+                                         2: b"# ---- CUPS ----\n", 3: b"# cup A0:B7:65:12:34:56 tok 3\n",
+                                         4: b"# ---- CUPS ----\n", 5: status(up_s=150)},
+    }
+    for name, schedule in shapes.items():
+        b, port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+        opened = _ports_from(b, clk, lambda opened: port if not opened else FakeSerial())
+        with LogCapture() as log:
+            b._open_port()
+            for s in range(12):
+                if s in schedule:
+                    b._port.feed(schedule[s])
+                drain(b, b._port)
+                b.tick(clk())
+                clk.advance(1)
+        _check("clean, %s: bytes did arrive" % name, b.stats["bytes_rx"] > 0)
+        _check("clean, %s: no reopen of either kind" % name,
+               len(opened) == 1 and b.stats["bad_opens"] == 0 and b.stats["reopens"] == 0, str(b.stats))
+        _check("clean, %s: no bridge_bad_open or bridge_reopen event" % name,
+               not events_of(b, "bridge_bad_open") and not events_of(b, "bridge_reopen"))
+        _check("clean, %s: no log line" % name, log.lines == [], str(log.lines))
+        _check("clean, %s: the gateway is online by the end" % name,
+               b.stats["lines"] > 0 and b.link.gateway_online, str(b.stats))
+
+
+class NoisyRecordingSerial(RecordingSerial):
+    """A RecordingSerial that can be read: the test puts bytes on it. It also
+    notes every attribute it was asked for and does not have, so a setDTR(),
+    a read of rts or a send_break() would show up as well as an assignment."""
+
+    def __init__(self):
+        super().__init__()
+        object.__setattr__(self, "looked_up", [])
+        object.__setattr__(self, "buf", bytearray())
+        object.__setattr__(self, "closed", False)
+
+    def __getattr__(self, name):
+        self.looked_up.append(name)
+        raise AttributeError(name)
+
+    def feed(self, data):
+        self.buf.extend(data)
+
+    @property
+    def in_waiting(self):
+        return len(self.buf)
+
+    def read(self, size=1):
+        out = bytes(self.buf[:size])
+        del self.buf[:size]
+        return out
+
+    def reset_input_buffer(self):
+        self.buf.clear()
+
+    def close(self):
+        object.__setattr__(self, "closed", True)
+
+
+def test_bad_opens_never_touch_dtr_or_rts():
+    """The gateway must never be reset by pi5. Through the real
+    open_serial_port with the default lines (leave): the first open, three
+    quick reopens and a watchdog reopen, and not one of them assigns, reads
+    or toggles DTR or RTS."""
+    RecordingSerial.reset()
+    b, _port, sio, clk = _fresh_bridge(LQ_DEAF_REOPEN_S=20, LQ_REOPEN_MIN_GAP_S=30)
+    b._factory = None                      # the bridge's own factory, onto the recording port
+    b._default_factory = lambda p, baud, t: open_serial_port(
+        p, baud, t, lines=b.lines_mode(), serial_class=NoisyRecordingSerial)
+
+    def noise():
+        if b._port is not None:
+            b._port.feed(NOISE_PER_S)
+    with LogCapture():
+        b._open_port()
+        _seconds(b, clk, 40, noise)
+    ports = RecordingSerial.instances
+    _check("dtr/rts: five opens through open_serial_port (1 + 3 quick + 1 watchdog), lines: leave",
+           len(ports) == 5 and b.stats["bad_opens"] == 3 and b.stats["reopens"] == 1
+           and b.lines_mode() == "leave" and all(p.opened for p in ports), str(b.stats))
+    _check("dtr/rts: never assigned on any of them", all(p.touched_lines == [] for p in ports),
+           str([p.assigned for p in ports]))
+    asked = [n for p in ports for n in p.looked_up]
+    _check("dtr/rts: never read, set or pulsed either (no setDTR, setRTS, dtr, rts, break)",
+           not any(re.search("dtr|rts|break", n, re.I) for n in asked), str(asked))
+    _check("dtr/rts: each port but the last was closed", all(p.closed for p in ports[:-1]) and not ports[-1].closed)
+
+
 def test_thread_supervisor():
     """A BaseException in the read loop must not end the thread."""
     old_restart, old_retry = bridge_mod.THREAD_RESTART_S, bridge_mod.RETRY_S
@@ -1383,6 +1706,12 @@ def main():
     _run("a talker that never sends a newline", test_a_talker_that_never_sends_a_newline)
     _run("watchdog reopens a deaf port", test_watchdog_reopens_a_deaf_port)
     _run("watchdog with no gateway is harmless", test_watchdog_with_no_gateway_is_harmless)
+    _run("bad open: noise, then a clean reopen", test_bad_open_then_a_clean_reopen)
+    _run("bad open: due with the watchdog on one tick", test_bad_open_and_the_watchdog_due_together)
+    _run("bad open: silence is still the watchdog's", test_silence_is_still_the_watchdogs)
+    _run("bad open: noise forever", test_noise_forever_three_quick_then_the_watchdog)
+    _run("bad open: a clean open is left alone", test_a_clean_open_is_left_alone)
+    _run("bad open: DTR and RTS are never touched", test_bad_opens_never_touch_dtr_or_rts)
     _run("thread supervisor", test_thread_supervisor)
     _run("new snapshot fields", test_new_snapshot_fields_move)
     _run("[LQ] console lines", test_console_lines)
