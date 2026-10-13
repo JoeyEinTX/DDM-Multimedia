@@ -1306,13 +1306,21 @@ git-ignored):
 ```
 
 An `online` or `link_ok` flip alone writes nothing. Two marks keep the log
-honest about what was not a bet: a baseline (the first snapshot after a
-start, or the between-races reset) writes a record with `"baseline": true`,
-the reset adding `"reset": "betting"` and leaving its trace even when
-nothing moved; and a count that came with a cup move (the MAC claiming the
-horse changed, or went away, or arrived) carries the move in its change,
-e.g. `{"horse":22,"tokens":[0,51],"cup":[null,"A0:B7:65:12:34:56"]}`. The
-closing figures leave their trace too: taken, `{"closing":{"pot":154.0,
+honest about what was not a bet. The between-races reset writes a record
+with `"baseline": true` and `"reset": "betting"`, even when nothing moved.
+And a count that came with a cup move (the MAC claiming the horse changed,
+or went away, or arrived) carries the move in its change, e.g.
+`{"horse":22,"tokens":[0,51],"cup":[null,"A0:B7:65:12:34:56"]}`.
+
+The first snapshot after a start carries no mark. It is a baseline for the
+ticker (no events), but its record is a plain one: each horse's count shows
+as a change from 0, e.g. `{"horse":7,"tokens":[0,23]}`, with no `baseline`
+flag and no cup marks. When it holds no changes, nothing is written at all.
+Nothing in the log marks the start itself, so a replay cannot tell those
+counts from bets by the record alone. A reset that is the very first snapshot
+after a start writes `"reset": "betting"` without `"baseline": true`.
+
+The closing figures leave their trace too: taken, `{"closing":{"pot":154.0,
 "prizes":{"win":92,"place":39,"show":23},"total_tokens":158}}` beside the
 state change that took them; dropped, `{"closing":null}`. A hand count
 is a record of its own when it is entered or cleared, `{"pot_counted":

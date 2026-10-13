@@ -43,7 +43,7 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
 2. **Every other device is a sensor or a renderer, with one exception: each cup owns its
    horse number.** [DECIDED, protocol v2] The number is set on the cup, saved in the cup,
    and sent in every packet. A cup also keeps its own scale settings (calibration,
-   orientation, brightness, and once built, its empty reading and last count). Nothing else
+   orientation, brightness, its saved empty reading and last count). Nothing else
    stores anything pi5 cannot rebuild.
 3. **One race state, one names list.** Everything that shows a horse reads La Quiniela's
    store: the TV, the dashboard, the roster slide, and La Subasta (section 8, [BUILT]).
@@ -152,7 +152,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 | `lq_race` | Race name, year, post time |
 | `pi5/data/results.json` | WIN, PLACE, SHOW horse numbers. The single store: the dashboard writes it, La Quiniela reads it |
 | In memory only | Track odds, weather, the dashboard mode that set the state |
-| On each cup (NVS) | Horse number, counts per token, orientation, brightness; the saved empty reading and last count once built (section 5) |
+| On each cup (NVS) | Horse number, counts per token, orientation, brightness; the saved empty reading and last count (section 5) [BUILT, cup sketch v0.7] |
 
 - **No per-token or per-guest data** is stored anywhere. Token numbers exist only on the
   plastic.
@@ -483,7 +483,7 @@ Rules for either:
 | pi5 restarts | The gateway keeps broadcasting the last line. pi5 restores the state line from `lq_link_state`, the results from `results.json`, the figures at the post from `lq_closing`, and seeds each cup's count from `lq_cups`, so no phantom bets. Opening the port does not reboot the gateway. [BUILT] |
 | DevPi reboots | Same, and the splash finds pi5 again on its own. [BUILT] |
 | Gateway reboots | Sends `hello`, stays silent until pi5 answers, never enters demo mode. Cups keep showing their own numbers. [BUILT] |
-| Power blip takes out DevPi and the gateway | The gateway is back in a second and silent. Cups show their own numbers with a `NO LINK` badge. Everything resumes when pi5 is up. If pi5's first open of the gateway's port hands over garbage, as on DevPi's cold boots (2026-10-11: 120-800 KB in 20 s, the link up only at the watchdog's reopen, 21 s), the bridge reopens it 3 s after the open (it checks once a second, so 3 to 4 s), at most three times in a row, without touching DTR or RTS. The link is back within seconds of the port opening: 4.0 s in the smoke test, 4.4 s over a real port in the simulator test, plus up to 2 s for the gateway's next hello (`pi5/LQ_BRIDGE.md`, "A bad open"). [BUILT; DevPi timing to confirm] |
+| Power blip takes out DevPi and the gateway | The gateway is back in a second and silent. Cups show their own numbers with a `NO LINK` badge. Everything resumes when pi5 is up. If pi5's first open of the gateway's port hands over garbage, as on DevPi's cold boots (2026-10-11: 120-800 KB in 20 s, the link up only at the watchdog's reopen, 21 s), the bridge reopens it 3 s after the open (it checks once a second, so 3 to 4 s), at most three times in a row, without touching DTR or RTS. The link is back within about 10 s of the bridge starting: on DevPi 9 s after a warm reboot and 8 s after a cold power cycle (2026-10-12), one quick reopen each (`pi5/LQ_BRIDGE.md`, "A bad open"). [BUILT] |
 | A cup reboots | Its horse number and its count come back from NVS. Through the warm-up it reports the saved count, then re-zeroes only if it reads empty; a cup with a pile keeps its saved empty reading (section 5). Bench-tested 2026-10-01. [BUILT] |
 | A cup dies | Spare cup: set its number, put it in the post, move the tokens. [BUILT] |
 | TV or splash reloads | Fetches the model; shows the figures at the post, not emptied cups. [BUILT] |
