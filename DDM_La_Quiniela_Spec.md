@@ -1,8 +1,14 @@
 # DDM La Quiniela - Live Betting System Specification
 
+> **SUPERSEDED (2026-09-29).** This document is kept for history only. It describes one
+> LQ Controller reading all 20 scales and driving LED matrices, which is not how the
+> system was built. The current design is `DDM_System_Architecture_Spec.md` (v1.0), and
+> the details live in the contract documents it lists: `firmware/quiniela/README.md`,
+> `pi5/LQ_BRIDGE.md`, `pi5/LQ_SIMULATOR.md`, `RACE_NIGHT.md` and `splash_display/README.md`.
+
 **Version:** 2.3  
 **Date:** May 2026  
-**Status:** Design Phase - Ready for Prototyping  
+**Status:** SUPERSEDED  
 **Target Debut:** DDM 2027  
 **Author:** Joey + Claude  
 
