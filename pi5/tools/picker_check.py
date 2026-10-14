@@ -115,7 +115,7 @@ class Server:
         self.fail: set = set()                            # paths answered 503, as if pi5 could not
         self.t0 = time.monotonic()
         self._saved = (main.esp32.send_command, main.WEATHER_API_KEY)
-        main.WEATHER_API_KEY = ""                          # the page polls /api/weather: never call out
+        main.WEATHER_API_KEY = ""                          # nothing here may call WeatherAPI (the page no longer asks)
         main.esp32.send_command = self._send_command
         override = Path(js).read_bytes() if js else None
 

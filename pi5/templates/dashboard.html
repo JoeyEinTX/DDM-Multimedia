@@ -60,14 +60,7 @@
             <img src="{{ url_for('static', filename='css/ddm_logo_2026.png') }}" alt="Derby de Mayo" class="header-logo">
         </div>
 
-        <!-- Row 2: Dot-Matrix Scrolling Ticker -->
-        <div class="ticker-strip">
-            <div class="ticker-track" id="ticker-track">
-                <!-- populated by JavaScript -->
-            </div>
-        </div>
-
-        <!-- Serape Band -->
+        <!-- Serape Band (no ticker above it since 2026-10-13: the TV's crawl is the only crawl) -->
         <div class="serape-band"></div>
 
         <!-- RACE CONTROL Toggle Bar - Two Cards -->
@@ -302,17 +295,6 @@
                         <button id="results-confirm-btn" class="modal-btn btn-confirm-sidebar" onclick="resultsConfirm()">CONFIRM RESULTS</button>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Weather Modal -->
-    <div id="weather-modal" class="modal">
-        <div class="modal-content modal-weather">
-            <span class="modal-close-tab" onclick="closeWeatherModal()">&times;</span>
-            <h2 id="weather-modal-title">Weather Forecast</h2>
-            <div id="weather-modal-grid" class="weather-modal-grid">
-                <!-- Weather forecast items will be inserted here -->
             </div>
         </div>
     </div>

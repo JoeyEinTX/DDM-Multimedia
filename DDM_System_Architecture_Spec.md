@@ -475,6 +475,9 @@ Rules for either:
   it is refused (409: `Reset betting works only before the race (0) or after it (6). Change
   the race state on the Control Center.`), so the Control Center stays the one place that
   changes the race state.
+- **No ticker on the Control Center.** [DECIDED 2026-10-13, BUILT] The TV's crawl is the
+  only crawl; the Control Center no longer fetches the weather (the TV's crawl gets it from
+  pi5's own feed).
 - **Two different resets.** RESET on the dashboard ends a race. Reset betting on the admin
   page prepares the next one. The runbook says which to use when.
 - **No PIN.** [DECIDED 2026-09-29] The dashboard, the admin page and La Subasta's guest

@@ -310,8 +310,8 @@ def test_buttons_carry_their_mode():
            rig.post("/api/quiniela/mode", {"mode": "TEST"}).status_code == 400 and rig.bridge.phase == 0)
     _check("the table is pi5's, not repeated in the page", "MODE_STATES" not in js.replace("la_quiniela/betting.py MODE_STATES", "")
            and "BETTING_60: 1" not in js)
-    _check("the race state is read back every 5 s and the ticker shows it",
-           "setInterval(pollRaceMode, 5000);" in js and "raceStateLabel(raceModeInfo)" in js)
+    _check("the race state is read back every 5 s, and fresh as a tap that could reopen betting is made",
+           "setInterval(pollRaceMode, 5000);" in js and "const info = await freshRaceMode();" in _js_function(js, "async function reopenAllowed(mode)"))
 
 
 def test_dashboard_modes_move_la_quiniela():
@@ -1808,6 +1808,80 @@ def test_race_night_guards_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# The Control Center's ticker is gone (Joey, 2026-10-13, gap review OD9)
+# -----------------------------------------------------------------------------
+# The TV's crawl is the only crawl. The ticker went with its markup, CSS, JS, its two timers (the step every
+# 220 ms and the message every second) and the 30-minute /api/weather fetch, which fed only it (the forecast
+# modal it also filled had nothing left that opened it). pi5's chyron, its weather feed for the TV and the
+# 5x7 table the TV's face is built from stay.
+
+TICKER_WORDS = ("ticker-strip", "ticker-track", "buildTicker", "initTicker", "tickerTick", "renderTickerFrame",
+                "tickerMessage", "getWeather", "weatherData", "openWeatherModal", "weather-modal", "/api/weather")
+
+
+def test_no_ticker():
+    rig = Rig()
+    html = rig.client.get("/").get_data(as_text=True)
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
+    css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True)
+    left = {name: [w for w in TICKER_WORDS if w in text] for name, text in (("page", html), ("script", js), ("stylesheet", css))}
+    _check("the ticker is gone from the page, the script and the stylesheet, with its weather fetch and the forecast modal",
+           not any(left.values()), str(left))
+    _check("...the 5x7 table stays (the TV's face is built from it), and so does the results tote that uses it",
+           "const dotPatterns = {" in js and "function createDotDigit(char)" in js and "createDotMatrixText(" in js)
+    _check("pi5 keeps the TV crawl's line and its weather: the model's chyron, the weather feed, the GET /api/weather route",
+           bool(rig.model()["chyron"]) and callable(getattr(main, "feed_weather_to_board", None))
+           and "/api/weather" in {rule.rule for rule in main.app.url_map.iter_rules()})
+
+
+def _no_ticker_in_a_browser(picker_check, requests):
+    rig = Rig()
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    try:
+        chrome.call("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__intervals = []; const __si = window.setInterval;"
+            " window.setInterval = function (fn, ms, ...a) { window.__intervals.push([(fn && fn.name) || '', ms]);"
+            " return __si.call(this, fn, ms, ...a); };"))
+        t = time.monotonic()
+        chrome.call("Page.navigate", url=server.url)
+        chrome.wait_for("document.readyState === 'complete' && typeof showResultsModal === 'function'", timeout=30)
+        chrome.wait_for("(() => { const s = document.getElementById('splash-screen'); return !s || s.style.display === 'none'; })()",
+                        timeout=20)
+        time.sleep(4.0)
+        weather = sum(1 for at, m, p in requests if at >= t and p == "/api/weather")
+        page = chrome.eval("JSON.stringify({ticker: document.querySelectorAll('.ticker-strip, #ticker-track').length,"
+                           " intervals: window.__intervals, gap: (() => {"
+                           " const h = document.querySelector('.hero-header').getBoundingClientRect();"
+                           " const s = document.querySelector('.serape-band').getBoundingClientRect();"
+                           " return Math.round((s.top - h.bottom) * 10) / 10; })()})")
+        page = json.loads(page)
+        names = [n for n, _ in page["intervals"]]
+        _check("in a browser: no ticker element, no request for the weather in the first seconds",
+               page["ticker"] == 0 and weather == 0, str((page["ticker"], weather)))
+        _check("...no ticker timer: no 220 ms step, no second 1 s timer (the clock's alone), no 30-minute weather timer",
+               not any(ms in (220, 1800000) for _, ms in page["intervals"])
+               and sum(1 for _, ms in page["intervals"] if ms == 1000) == 1
+               and not any(n in ("tickerTick", "buildTicker", "getWeather") for n in names), str(page["intervals"]))
+        _check("...and the serape band sits right under the logo: the page closed up by the ticker's space, nothing else moved",
+               page["gap"] == 0, str(page["gap"]))
+        _check("...no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+def test_no_ticker_in_a_browser():
+    """The Control Center in headless Chrome: no ticker element, no ticker timer, no weather request; the serape
+    band directly under the logo. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("no-ticker browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _no_ticker_in_a_browser(picker_check, requests))
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -1836,6 +1910,8 @@ def main_():
     _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
+    _run("no ticker — gone from the page, the script and the stylesheet, with its weather fetch", test_no_ticker)
+    _run("no ticker — no element, no timer, no request, in a browser", test_no_ticker_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

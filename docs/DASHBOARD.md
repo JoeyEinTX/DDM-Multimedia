@@ -15,16 +15,23 @@ The dashboard is a single-page web application built with Flask, HTML, CSS, and 
 ### Header Section
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ [LOGO]  [WEATHER WIDGET]         [TOTE BOARD CLOCK] [🔍][⛶]│
+│ [WIFI] [⬡ devices]                                     [☰] │
+│                        [DDM LOGO]                           │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ serape band ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │
+│ [ AUTO / MANUAL ]                      [ RACE INFO ]        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Components:**
-- **DDM Logo** - Project branding (left)
-- **Weather Widget** - Current weather with icon and temperature (clickable for forecast)
-- **Tote Board Clock** - 5×7 dot matrix display showing time in AM/PM format
-- **Device Status Button (🔍)** - Shows ESP32 connection status modal
-- **Fullscreen Toggle (⛶)** - Enter/exit fullscreen mode
+- **Status bar** - WiFi bars and the LED controller's device count (tap for the device
+  status modal) on the left; the menu (☰) on the right
+- **DDM Logo** - Project branding
+- **Serape band**, then the **AUTO / MANUAL** and **RACE INFO** cards
+- **No ticker** (Joey, 2026-10-13, gap review OD9): the dot-matrix ticker under the logo
+  (time, weather, race state, date) is gone, with its timers and its weather fetch; the
+  TV's crawl is the only crawl, and pi5 feeds it the weather itself. The race state is on
+  the LQ admin page and in every mode button's reply; the reopen confirm reads it fresh
+- **Fullscreen Toggle (⛶)** - bottom left corner
 
 ---
 
@@ -395,38 +402,12 @@ LED:TEST:R,G,B,BRIGHTNESS
 
 ---
 
-### 3. Weather Modal (12-HOUR FORECAST)
+### 3. Weather Modal: removed (2026-10-13)
 
-**Trigger:** Click weather widget in header
-
-**Layout:**
-```
-┌─────────────────────────────────────────────────────┐
-│  Weather Forecast - Dallas, TX              [X]     │
-│                                                      │
-│  ┌────┬────┬────┬────┬────┬────┬────┬────┬────┐   │
-│  │NOW │1PM │2PM │3PM │4PM │5PM │6PM │7PM │8PM │...│
-│  │ ☀ │ ☀ │ ⛅ │ ⛅ │ ☁ │ 🌧 │ 🌧 │ ⛈ │ ☁ │   │
-│  │72°│73°│74°│75°│76°│74°│72°│70°│68°│   │
-│  └────┴────┴────┴────┴────┴────┴────┴────┴────┘   │
-│                                                      │
-│                              [CLOSE]                │
-└─────────────────────────────────────────────────────┘
-```
-
-**Features:**
-- **12-hour forecast** starting from current hour
-- **Grid layout** with 12 time slots
-- **Weather icons** from WeatherAPI.com
-- **Temperature colors** based on value:
-  - < 40°F: Blue (cold)
-  - 40-59°F: Light blue (cool)
-  - 60-74°F: White (comfortable)
-  - 75-89°F: Orange (warm)
-  - ≥ 90°F: Red (hot)
-- **Current hour** highlighted
-- **Auto-refresh** every 30 minutes
-- **Caching** for 15 minutes
+Nothing on the page opened it any more (the header's weather widget was gone), and the
+30-minute `/api/weather` fetch that filled it fed only the ticker; both went with the
+ticker. `GET /api/weather` stays on pi5, and the TV's crawl gets the weather from pi5's
+own feed.
 
 ---
 

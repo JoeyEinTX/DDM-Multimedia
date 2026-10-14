@@ -1222,8 +1222,9 @@ Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
   within its 5 s refresh, with a link to the dashboard to change it. `state
   N` on the cmd route sets the same value directly and starts no LED
   animation: the simulator, the tests and a last-resort curl use it. The
-  dashboard reads the state back every 5 s and shows it on its ticker, so a
-  state set by a curl shows there too.
+  dashboard reads the state back every 5 s, and again when a tap could
+  reopen betting, so a state set by a curl is what its confirm goes by (it
+  has no ticker since 2026-10-13: the TV's crawl is the only crawl).
 - `closes_at` is untouched by all of it: the countdown is still manual.
 - Not part of it: the mock racing service (`/api/racing/*`, the dashboard's
   AUTO / MANUAL switch, states DORMANT .. OFFICIAL). In AUTO it drives the

@@ -227,129 +227,6 @@ function updateClock() {
     }
 }
 
-// =====================================================================
-// Dot-Matrix Ticker — Fixed Tile / Character Shift
-// =====================================================================
-
-let tickerMessage    = '';   // full looping message string
-let tickerCharOffset = 0;    // index of character in tickerMessage shown in tile 0
-let tickerTileCount  = 0;    // number of visible tile slots
-let tickerTimerMs    = 220;  // ms per character advance — adjust for scroll speed
-
-// (Re)build the fixed tile slots inside #ticker-track.
-// Called once on init and on window resize.
-function buildTickerGrid() {
-    const track = document.getElementById('ticker-track');
-    if (!track) return;
-
-    // Each .dot-digit tile is 5 cols × 7 rows of 5px dots + 2px gaps + padding
-    // Approximate tile width: (5 * 5) + (4 * 2) + 6px padding + 2px margin = ~41px
-    const TILE_WIDTH = 18;
-    const containerWidth = track.parentElement
-        ? track.parentElement.getBoundingClientRect().width
-        : window.innerWidth;
-
-    tickerTileCount = Math.max(10, Math.floor(containerWidth / TILE_WIDTH));
-
-    track.innerHTML = '';
-    for (let i = 0; i < tickerTileCount; i++) {
-        const tile = createDotDigit(' ');
-        tile.dataset.tickerSlot = i;
-        track.appendChild(tile);
-    }
-}
-
-// Render the current frame: fill each tile slot with the correct character.
-function renderTickerFrame() {
-    const track = document.getElementById('ticker-track');
-    if (!track || tickerMessage.length === 0) return;
-
-    const tiles = track.querySelectorAll('.dot-digit');
-    const len = tickerMessage.length;
-
-    tiles.forEach((tile, i) => {
-        const ch = tickerMessage[(tickerCharOffset + i) % len];
-        const pattern = dotPatterns[ch] || dotPatterns[' '];
-
-        // Update each dot in this tile in-place (toggle lit class only)
-        const dots = tile.querySelectorAll('.dot');
-        for (let row = 0; row < 7; row++) {
-            for (let col = 0; col < 5; col++) {
-                const dotIndex = row * 5 + col;
-                const lit = !!(pattern[row] & (1 << (4 - col)));
-                dots[dotIndex].classList.toggle('lit', lit);
-            }
-        }
-    });
-}
-
-// Advance offset by 1 character per tick.
-function tickerTick() {
-    if (tickerMessage.length === 0) return;
-    tickerCharOffset = (tickerCharOffset + 1) % tickerMessage.length;
-    renderTickerFrame();
-}
-
-// Build the message string from live data. Called every second.
-// Does NOT touch the DOM — only updates tickerMessage.
-function buildTicker() {
-    // --- 1. Time ---
-    const now = new Date();
-    let h = now.getHours();
-    const m = now.getMinutes();
-    const ap = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    const timeText = String(h) + ':' + String(m).padStart(2, '0') + ' ' + ap;
-
-    // --- 2. Weather ---
-    let weatherText = '';
-    if (typeof weatherData !== 'undefined' && weatherData && weatherData.current) {
-        const temp = Math.round(weatherData.current.temp_f);
-        const cond = weatherData.current.condition.text.toUpperCase();
-        weatherText = temp + 'F ' + cond;
-    }
-
-    // --- 3. Race state: the one pi5 holds (La Quiniela's, set by the mode
-    //        buttons or its admin page); the LED mode's name until pi5 has said ---
-    const modeEl = document.getElementById('current-mode');
-    const modeText = modeEl ? modeEl.textContent.trim().toUpperCase() : 'STANDBY';
-    const raceState = (typeof raceStateLabel === 'function' && raceStateLabel(raceModeInfo)) || modeText;
-
-    // --- 4. Date ---
-    const days   = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
-    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-    const dateText = days[now.getDay()] + ' ' + months[now.getMonth()] + ' ' +
-                     now.getDate() + ' ' + now.getFullYear();
-
-    // --- 5. Brand ---
-    const brandText = 'DERBY DE MAYO';
-
-    // Assemble with pipe separators + trailing spaces for visual gap before loop
-    const segments = [timeText, weatherText, raceState, dateText, brandText]
-        .filter(s => s.length > 0);
-    tickerMessage = segments.join(' | ') + ' | ';
-}
-
-// Initialize ticker — call once from DOMContentLoaded.
-function initTicker() {
-    buildTickerGrid();
-    buildTicker();
-    renderTickerFrame();
-
-    // Advance 1 character per tick
-    setInterval(tickerTick, tickerTimerMs);
-
-    // Refresh message content every second (keeps time/state current)
-    setInterval(buildTicker, 1000);
-
-    // Rebuild tile count on resize
-    window.addEventListener('resize', () => {
-        buildTickerGrid();
-        buildTicker();
-        renderTickerFrame();
-    });
-}
-
 // Show notification
 function showNotification(message, type = 'success') {
     const notification = document.getElementById('notification');
@@ -679,10 +556,12 @@ function flashButton(buttonElement) {
 // pi5's (la_quiniela/betting.py MODE_STATES) and is not repeated here; a
 // button carries its mode in data-mode. SET WINNERS and RESET are told by
 // the routes they already call (/api/results once the results are applied,
-// /api/results/clear). Reset betting on La Quiniela's admin page, or another
-// dashboard, can change it too, so what it is now is read back every 5 s and
-// shown on the ticker. The race state does not wait on the LEDs: with the LED
-// controller unreachable the button still moves it, and says so.
+// /api/results/clear). Another dashboard, or Reset betting on La Quiniela's
+// admin page after the race, can change it too, so what it is now is read
+// back every 5 s, and again as a tap that could reopen betting is made. The
+// race state does not wait on the LEDs: with the LED controller unreachable
+// the button still moves it, and says so. (The Control Center has no ticker
+// since 2026-10-13: the TV's crawl is the only crawl.)
 let raceModeInfo = null;   // {state, state_name, mode, label, source} as pi5 last reported it
 
 async function setRaceMode(mode) {
@@ -695,7 +574,6 @@ async function setRaceMode(mode) {
         const data = await response.json();
         if (data && data.ok) {
             raceModeInfo = data;
-            buildTicker();
             return data;
         }
         console.error('[Race state] pi5 refused mode', mode, data && data.error);
@@ -716,10 +594,9 @@ async function freshRaceMode() {
         if (data && data.ok) {
             raceModeInfo = data;
             if (data.modes) raceModes = data.modes;
-            buildTicker();
         }
     } catch (error) {
-        // pi5 not answering: the ticker keeps what it had
+        // pi5 not answering: what was read last stays
     }
     return raceModeInfo;
 }
@@ -2031,10 +1908,9 @@ async function resultsConfirm() {
             pendingResults = null;           // these are the results now, whatever another device had said
             showResultsBanner(winHorse, placeHorse, showHorse);
 
-            // /api/results set the race state (WINNER, with the results): show it
+            // /api/results set the race state (WINNER, with the results): the page knows it now
             if (data.race) {
                 raceModeInfo = data.race;
-                buildTicker();
             }
 
             // The winners' chase blending into the heartbeat (RESULTS:FINALIZE)
@@ -2915,108 +2791,6 @@ window.onclick = function(event) {
     }
 }
 
-// Get temperature color class based on temperature
-function getTempColorClass(temp) {
-    if (temp < 40) return 'temp-cold';
-    if (temp < 60) return 'temp-cool';
-    if (temp < 75) return 'temp-comfortable';
-    if (temp < 90) return 'temp-warm';
-    return 'temp-hot';
-}
-
-// Store weather data globally for modal
-let weatherData = null;
-
-// Fetch and display weather summary/modal
-async function getWeather() {
-    try {
-        const response = await fetch('/api/weather');
-        const data = await response.json();
-        
-        if (data.success && data.current && data.hourly) {
-            weatherData = data;
-            
-            // Update graphical header summary (if element exists — e.g. spectator page)
-            const summary = document.getElementById('weather-summary');
-            if (summary) {
-                const current = data.current;
-                const temp = Math.round(current.temp_f);
-                const tempColorClass = getTempColorClass(temp);
-                const condition = current.condition.text;
-                const location = data.location || 'Dallas, TX';
-                const iconUrl = current.condition.icon.replace('64x64', '128x128');
-
-                // Build graphical weather widget with forced icon size
-                summary.innerHTML = `
-                    <img src="https:${iconUrl}" alt="${condition}" class="weather-icon"
-                         width="36" height="36"
-                         style="width: 36px !important; height: 36px !important; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; flex-shrink: 0;">
-                    <div class="weather-info">
-                        <div class="weather-temp-large ${tempColorClass}">${temp}°F</div>
-                        <div class="weather-condition">${condition}</div>
-                        <div class="weather-location">${location}</div>
-                    </div>
-                `;
-                summary.style.display = 'flex';
-            }
-            buildTicker();
-        }
-    } catch (error) {
-        console.error('Error fetching weather:', error);
-        // Hide weather summary on error
-        const ws = document.getElementById('weather-summary');
-        if (ws) ws.style.display = 'none';
-    }
-}
-
-// Open weather modal
-function openWeatherModal() {
-    if (!weatherData) return;
-    
-    const modal = document.getElementById('weather-modal');
-    const grid = document.getElementById('weather-modal-grid');
-    const title = document.getElementById('weather-modal-title');
-    
-    // Set title
-    const location = weatherData.location || 'Dallas, TX';
-    title.textContent = `Weather Forecast - ${location}`;
-    
-    // Clear grid
-    grid.innerHTML = '';
-    
-    // Populate with hourly forecasts
-    const hourlyForecasts = weatherData.hourly.slice(0, 12);
-    hourlyForecasts.forEach((item, index) => {
-        const timeStr = item.time.split(' ')[1];
-        const hours = parseInt(timeStr.split(':')[0]);
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        const displayHour = hours % 12 || 12;
-        const temp = Math.round(item.temp_f);
-        const tempColorClass = getTempColorClass(temp);
-        const iconUrl = item.condition.icon.replace('64x64', '128x128');
-        
-        const weatherItem = document.createElement('div');
-        weatherItem.className = 'weather-modal-item';
-        if (index === 0) weatherItem.classList.add('current');
-        
-        weatherItem.innerHTML = `
-            <div class="weather-modal-time">${index === 0 ? 'NOW' : `${displayHour} ${ampm}`}</div>
-            <img src="https:${iconUrl}" alt="${item.condition.text}" class="weather-modal-icon">
-            <div class="weather-modal-temp ${tempColorClass}">${temp}°F</div>
-        `;
-        
-        grid.appendChild(weatherItem);
-    });
-    
-    modal.classList.add('active');
-}
-
-// Close weather modal
-function closeWeatherModal() {
-    const modal = document.getElementById('weather-modal');
-    modal.classList.remove('active');
-}
-
 // Handle splash screen fade-out
 function hideSplashScreen() {
     const splash = document.getElementById('splash-screen');
@@ -3206,9 +2980,6 @@ document.addEventListener('DOMContentLoaded', function() {
     updateClock();
     setInterval(updateClock, 1000);
 
-    // Initialize dot-matrix ticker engine (fixed grid / pixel shift)
-    initTicker();
-
     initTuningSliders();
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
@@ -3241,10 +3012,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load initial results from server
     loadResultsFromServer();
     
-    // Get weather forecast immediately and every 30 minutes
-    getWeather();
-    setInterval(getWeather, 30 * 60 * 1000);
-    
     // Poll power draw every 5 seconds (also detects ESP32 online/offline)
     pollPowerStatus();
     setInterval(pollPowerStatus, 5000);
@@ -3258,7 +3025,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (modeEl) {
         const modeObserver = new MutationObserver(function () {
             updateSpectatorIndicator(modeEl.textContent.trim());
-            buildTicker();
         });
         modeObserver.observe(modeEl, { childList: true, characterData: true, subtree: true });
     }
