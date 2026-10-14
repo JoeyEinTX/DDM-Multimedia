@@ -464,7 +464,7 @@ GND ────────→ GND
 
 | Symptom | Possible Cause | Solution |
 |---------|----------------|----------|
-| Won't connect to WiFi | Wrong credentials | Check config.h, verify network |
+| Won't connect to WiFi | Wrong credentials | Check `esp32/ddm_led_controller/secrets.h` (git-ignored; from `secrets.example.h`), verify network |
 | No response to commands | Socket error | Check firewall, verify IP address |
 | OLED blank | I2C issue | Check SDA/SCL connections, I2C address |
 | Freezes/crashes | Power issue | Verify 5V supply to VIN pin |

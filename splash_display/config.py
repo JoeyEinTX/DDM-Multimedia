@@ -6,7 +6,55 @@ service (or the dev server) to take effect.
 
 Phase 2 will add upload-related config (auth, content paths, etc) — keep this
 file focused on Phase 1 concerns for now.
+
+This file is tracked and the repo is public: nothing secret and nothing that
+belongs to one box lives here. A box's own settings go in splash_display/.env
+(git-ignored; splash_display/.env.example lists them), read below the same way
+pi5/config.py reads pi5/.env: DDM_PI5_URL and DDM_QUINIELA_LOOK, and a
+variable already set in the environment wins.
 """
+
+import os
+
+
+def _read_env_file(path):
+    """KEY=VALUE lines of a .env file as a dict (pi5/config.py's reader: blank
+    lines and # comments skipped, an optional `export`, quotes kept off)."""
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, sep, value = line.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        values[name] = value
+    return values
+
+
+ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+for _name, _value in _read_env_file(ENV_FILE).items():
+    os.environ.setdefault(_name, _value)
+
+
+def _env(name, default):
+    """DDM_<name> from the environment, or the default when unset."""
+    raw = os.environ.get("DDM_" + name)
+    return default if raw is None or not raw.strip() else raw.strip()
+
 
 # ---------------------------------------------------------------------------
 # Timing — fixed durations
@@ -195,8 +243,10 @@ DEBUG = False
 # odds), and the weather for the crawl. pi5 owns the cup gateway's USB port,
 # keeps the model and serves /api/quiniela*; this app is an HTTP client of it
 # (quiniela.py, via PI5_URL) and re-serves the model to the TV.
+# On DevPi both run on the same box, so the default is right there; a splash on
+# another machine sets DDM_PI5_URL=http://joeydevpi.local:5000 in its .env.
 # ---------------------------------------------------------------------------
-PI5_URL = "http://joeydevpi.local:5000"
+PI5_URL = _env("PI5_URL", "http://localhost:5000")
 
 # How the La Quiniela board draws its tote fields (README, "The tote look"):
 #   "dots"     the tote look: the pot, the prizes, every row (one strip of
@@ -208,4 +258,5 @@ PI5_URL = "http://joeydevpi.local:5000"
 # This is the default; ?look=impact (or numbers, dots) on the board's URL
 # overrides it for that page, which is how to compare them on the TV:
 #   http://joeydevpi.local:5001/?look=impact
-QUINIELA_LOOK = "dots"
+# DDM_QUINIELA_LOOK in splash_display/.env changes it for that box.
+QUINIELA_LOOK = _env("QUINIELA_LOOK", "dots")

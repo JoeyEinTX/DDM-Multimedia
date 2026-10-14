@@ -449,11 +449,16 @@ pinging the TV while pi5 is unreachable; only `link_ok` changes.
 
 ### Config
 
+`config.py` is tracked and holds the defaults; a box's own settings go in
+`splash_display/.env` (git-ignored; `splash_display/.env.example` lists them),
+read at start: `DDM_PI5_URL` and `DDM_QUINIELA_LOOK`. A variable set in the
+environment wins. On DevPi, where pi5 runs on the same box, no `.env` is needed.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `FLASK_PORT` | `5001` | This app's port (pi5's dashboard owns 5000 on DevPi) |
-| `PI5_URL` | `"http://joeydevpi.local:5000"` | pi5's dashboard: the betting model (`/api/quiniela*`), and in it everything the race slides and the crawl show (the race info, the field, the odds, the weather). The splash asks pi5 for nothing else |
-| `QUINIELA_LOOK` | `"dots"` | The board's look: `"dots"` (the tote look, what the TV shows), `"impact"` or `"numbers"` (the tote look's figures, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
+| `PI5_URL` | `"http://localhost:5000"` (`DDM_PI5_URL`: a splash on another machine sets `http://joeydevpi.local:5000`) | pi5's dashboard: the betting model (`/api/quiniela*`), and in it everything the race slides and the crawl show (the race info, the field, the odds, the weather). The splash asks pi5 for nothing else |
+| `QUINIELA_LOOK` | `"dots"` (`DDM_QUINIELA_LOOK`) | The board's look: `"dots"` (the tote look, what the TV shows), `"impact"` or `"numbers"` (the tote look's figures, names left in Impact). `?look=` on the board's URL overrides it for that page. See "The tote look" below |
 
 Race states: 0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST,
 4 RUNNING, 5 WINNER, 6 AFTER_PARTY.

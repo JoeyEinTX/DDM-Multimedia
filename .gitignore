@@ -1,5 +1,5 @@
-# Local configuration files with environment-specific settings
-pi5/config.py
+# pi5/config.py is tracked: it holds only code and safe defaults. A box's own
+# settings live in pi5/.env (below).
 
 # The start-fresh tool's backups on DevPi (pi5/tools/wipe.py): race data, never committed
 backups/
@@ -39,7 +39,15 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets and a box's own settings: never in a tracked file (the repo is public).
+# Each has a tracked example beside it: pi5/.env.example, splash_display/.env.example,
+# esp32/ddm_led_controller/secrets.example.h.
+.env
 pi5/.env
+splash_display/.env
+esp32/ddm_led_controller/secrets.h
+
 pi5/data/*
 pi5/data/race_setup.json
 pi5/data/animation_assignments.json

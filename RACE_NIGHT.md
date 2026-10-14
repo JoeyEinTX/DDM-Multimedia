@@ -34,6 +34,28 @@ board**, prizes and all) and hands it back in 0 and 6.
 
 ## 0. Before the party (do these once, weeks out)
 
+- [ ] DevPi's own settings and the keys go in `pi5/.env`, never in a tracked file (the repo is
+      public; `pi5/.env` is git-ignored). Once, on DevPi:
+
+```bash
+cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
+```
+
+  - `DDM_LQ_SERIAL_PORT`: the gateway's port, the `/dev/serial/by-id/...` path from
+    `ls -l /dev/serial/by-id/` (never `/dev/ttyUSB0`). Empty: no cups.
+  - `DDM_ESP32_IP`: the LED controller's address (its little screen shows it at boot, or
+    the router's list of clients). Empty: the LEDs are off. The Control Center's device panel
+    writes this line when the address is changed there.
+  - `DDM_WEATHER_API_KEY`: the WeatherAPI.com key, from the account at weatherapi.com.
+    Empty: no weather on the dashboard or in the TV's crawl.
+  - `DDM_ANTHROPIC_API_KEY`: only for the track's odds poller (appendix). Empty: no poller.
+  - The rest of the file is commented out: the defaults are right. pi5 says once at start
+    which of these is missing (`journalctl -u ddm-pi5 -n 30`), and the installer below checks
+    each one (a `WARN` line per empty one; nothing blocks).
+  - The splash needs no `.env` on DevPi (it finds pi5 on the same box). A splash on another
+    machine: `cp splash_display/.env.example splash_display/.env`, set `DDM_PI5_URL`.
+  - A box that still has a local edit of `pi5/config.py` from before (DevPi did, until
+    2026-10): "Updating DevPi" at the end moves it into `pi5/.env` once.
 - [ ] pi5 and the splash run as the services `ddm-pi5` and `ddm-splash` and come up on their
       own after a power cycle. Install them once, on DevPi, as `joey` (stop any copy started by
       hand first: Ctrl+C in its terminal):
@@ -72,7 +94,8 @@ board**, prizes and all) and hands it back in 0 and 6.
       laptop or phone; on the TV `pkill -f chromium`, then
       `SPLASH_URL='http://localhost:5001/display?look=impact' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`
       (the next boot brings the default back).
-      To change the default: `QUINIELA_LOOK` in `splash_display/config.py`, then
+      To change the default on this box: `DDM_QUINIELA_LOOK=impact` in `splash_display/.env`
+      (copy `splash_display/.env.example`), then
       `sudo systemctl restart ddm-splash` and F5 on the kiosk's keyboard.
 - [ ] Every cup and the gateway: flashed from the current firmware (cup v0.7, the brownout
       build, and the protocol v2 gateway), sleeve installed, orientation right, touch working
@@ -126,7 +149,8 @@ python3 pi5/tools/wipe.py
   0 PRE-RACE), figures at the post, counted pot, results, cup cache and readings, and logs,
   plus the old Race Setup file; La Subasta's guests, bids, owners, payouts, auction state
   and changed settings; the splash's old betting log.
-- **Keeps:** the code, `pi5/config.py`, `pi5/.env`, the splash's config, the LEDs'
+- **Keeps:** the code, `pi5/config.py`, `pi5/.env` (DevPi's own settings and the keys),
+  `pi5/.env.example`, the splash's config and its `.env` if it has one, the LEDs'
   animation setup and the backups.
 - **To undo it,** pi5 stopped: `python3 pi5/tools/wipe.py --restore backups/wipe-<date-time>`,
   then type `RESTORE`. Every file comes back byte for byte (what is there is backed up first).
@@ -340,7 +364,7 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 | You see | It means | Do |
 |---|---|---|
-| `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (`systemctl status ddm-splash` running? its `PI5_URL`); `sudo systemctl restart ddm-splash`. |
+| `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (`systemctl status ddm-splash` running? on DevPi it looks for pi5 on the same box; a `DDM_PI5_URL` in `splash_display/.env` overrides that); `sudo systemctl restart ddm-splash`. |
 | Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that pi5's log says `bridge started` (`journalctl -u ddm-pi5 -n 50`). |
 | `ddm-pi5 is running under systemd. Stop it first: …` when you type `python main.py` (or `ddm-splash …` for `python3 server.py`) | the service is running; a second copy would fight it for the gateway and the port | Do what it says: `sudo systemctl stop ddm-pi5`, work by hand, then `sudo systemctl start ddm-pi5` (end of this runbook). |
 | `Address already in use`, or `systemctl status ddm-pi5` says `activating (auto-restart)` over and over | a copy started by hand before the service holds port 5000 (or 5001 for the splash) | Ctrl+C that copy in its terminal; the service starts by itself within 3 s. |
@@ -357,7 +381,8 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 | An empty cup comes back from a power blip reporting 1 | its empty reading drifted more than half a token across the power-off, so the boot read took the cup for a pile of one | Hold the screen → `TARE` → `YES` (cup empty). A pull-and-refill does not clear it. |
 | No countdown slide, or the wrong race on it; the roster's post time blank | Race info has no post time, or last year's | `ADMIN` → Race info → the date and the post time → Save race info (section 1). A countdown on screen shows it on its next second; one left out of the slideshow comes back on the next lap (the playlist is rebuilt every ~35 slides, a few minutes). |
 | No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
-| The crawl has no weather | pi5 has no `WEATHER_API_KEY`, or no internet yet | Nothing needed: the item is left out. With a key it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
+| The crawl has no weather | `pi5/.env` has no `DDM_WEATHER_API_KEY` (pi5's log says `no weather key` at start), or no internet yet | Nothing needed: the item is left out. To have it: the key in `pi5/.env`, `sudo systemctl restart ddm-pi5`; it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
+| Every `DASH` button says `Error: ERROR:NO_LED_CONTROLLER` | `pi5/.env` has no `DDM_ESP32_IP` (pi5's log says `no LED controller set` at start) | The race state is set all the same. The LEDs: put the controller's address in `pi5/.env` (or the device panel on `DASH`), `sudo systemctl restart ddm-pi5`. |
 | Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results, the figures at the post and the hand count until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. |
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | No Counted pot box on `ADMIN`, or Save answers `The count can only be entered after betting closes …` | the box shows from AT THE POST to WINNER; before that betting is still open (nothing to count against yet), after it (AFTER PARTY) a saved count is read-only | Close betting first (section 7: `DASH` → **AT THE GATE**); the box appears within five seconds. |
@@ -457,7 +482,7 @@ The race's name and post time, what `ADMIN` → Race info → Save does (date an
 curl -s -X PUT localhost:5000/api/quiniela/race -H 'Content-Type: application/json' -d '{"name":"Kentucky Derby","date":"2027-05-01","time":"17:57"}'
 ```
 
-The track's odds for the roster slide (optional; La Quiniela pays no odds). Fetched every 5 minutes while this runs (needs `ANTHROPIC_API_KEY` and internet), or typed from the program:
+The track's odds for the roster slide (optional; La Quiniela pays no odds). Fetched every 5 minutes while this runs (needs `DDM_ANTHROPIC_API_KEY` in `pi5/.env` and internet), or typed from the program:
 ```bash
 curl -s -X POST localhost:5000/api/quiniela/odds/start
 curl -s -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/json' -d '{"odds":{"1":"5-2","2":"8-1","21":"30-1"}}'
@@ -467,13 +492,38 @@ curl -s -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/js
 
 ## Updating DevPi
 
-The stash keeps DevPi's own edits to `pi5/config.py` across the pull:
+Nothing tracked holds DevPi's own settings (they are in `pi5/.env`), so a plain pull:
 ```bash
-cd ~/DDM-Multimedia && git stash && git pull && git stash pop
+cd ~/DDM-Multimedia && git pull
 sudo systemctl restart ddm-pi5 ddm-splash
 ```
 A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
 (it restarts both). A pull that changed the TV's page: F5 on the kiosk's keyboard too.
+`git status` should be clean; `pi5/.env` doesn't show (it is git-ignored).
+
+**Once, on a box that still has a local edit of `pi5/config.py`** (`git status` lists it;
+DevPi did, with the gateway's port and the LED controller's address in it): stash the edit,
+pull, move its values from the stash into `pi5/.env`, and the tree is clean for good. No
+`git stash pop`: the pull rewrote the very lines the edit changed, so a pop would conflict.
+```bash
+cd ~/DDM-Multimedia
+git stash
+git pull
+python3 pi5/tools/env_from_config.py --stash
+python3 pi5/tools/env_from_config.py --stash --write
+nano pi5/.env
+git status
+git stash drop
+sudo systemctl restart ddm-pi5 ddm-splash
+```
+The first `env_from_config.py` changes nothing: read what it would write (a secret shows
+only its length). `--write` merges it into `pi5/.env`, never changing a value already there
+(and `splash_display/.env`, if the splash's config had a local setting too). The old weather
+key is not copied (it was committed to the public repo, so it was rotated): put the new one
+in `pi5/.env` by hand (`DDM_WEATHER_API_KEY=`). `git status`: nothing to commit. Then drop
+the stash, which held only the old edit. (`--from FILE` reads a copy of the old file kept
+aside instead; a `pi5/config.py` left with conflict markers by a `git stash pop` is read on
+the stash's side, then `git checkout -- pi5/config.py` and `git stash drop`.)
 
 ## Working on it by hand
 

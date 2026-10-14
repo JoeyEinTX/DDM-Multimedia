@@ -4,6 +4,8 @@
 #define CONFIG_H
 
 // ===== WiFi Configuration =====
+// Placeholders only: the sketch doesn't include this file. The real network
+// goes in secrets.h (git-ignored; copy secrets.example.h), never in a tracked file.
 #define WIFI_SSID "YOUR_WIFI_SSID"          // Replace with your WiFi network name
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"  // Replace with your WiFi password
 

@@ -36,7 +36,13 @@ In Arduino IDE:
 
 ### 4. Configure WiFi
 
-Open `ddm_led_controller.ino` and edit these lines:
+The network goes in `ddm_led_controller/secrets.h`, which is git-ignored: the repo is
+public, so the real name and password never go in a tracked file. Copy the example
+beside the sketch and fill it in (the sketch won't build without it):
+
+```bash
+cp esp32/ddm_led_controller/secrets.example.h esp32/ddm_led_controller/secrets.h
+```
 
 ```cpp
 #define WIFI_SSID "YOUR_WIFI_SSID"        // Your WiFi name
@@ -169,7 +175,7 @@ These can be added later from the full implementation files in this folder.
 ## Next Steps
 
 1. **Test Basic Commands** - Verify all simple commands work
-2. **Connect to Pi5** - Update `pi5/config.py` with ESP32 IP
+2. **Connect to Pi5** - Put the ESP32's IP in `pi5/.env` as `DDM_ESP32_IP` (its screen shows it at boot)
 3. **Test Dashboard** - Run `python pi5/main.py` and access web interface
 4. **Add Animations** - When ready, integrate from `animations.h/cpp`
 5. **Add OLED** - When ready, integrate from `oled_display.h/cpp`
@@ -204,7 +210,8 @@ Common GND     →  Everything
 | File | Status | Purpose |
 |------|--------|---------|
 | `ddm_led_controller.ino` | ✅ **START HERE** | Main starter code (single file) |
-| `config.h` | ⏸️ For later | Configuration constants (future) |
+| `secrets.example.h` | ✅ Copy to `secrets.h` | The Wi-Fi network (`secrets.h` is git-ignored) |
+| `config.h` | ⏸️ For later | Configuration constants (future; not included, placeholders only) |
 | `led_control.h/cpp` | ⏸️ For later | LED control functions (future) |
 | `animations.h/cpp` | ⏸️ For later | Animation implementations (future) |
 | `oled_display.h/cpp` | ⏸️ For later | OLED display support (future) |

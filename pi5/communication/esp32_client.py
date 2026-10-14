@@ -44,6 +44,11 @@ class ESP32Client:
         Returns:
             Response string from ESP32, or error message
         """
+        if not self.ip:
+            # No LED controller set (DDM_ESP32_IP in pi5/.env): the LEDs are
+            # off. main.py says so once at start; nothing is tried or logged here.
+            self.connected = False
+            return "ERROR:NO_LED_CONTROLLER"
         try:
             # Create socket connection
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

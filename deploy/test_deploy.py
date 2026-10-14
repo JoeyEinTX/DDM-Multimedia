@@ -499,6 +499,87 @@ def test_installer():
            run.returncode in (0, 1) and ("Dry run" in run.stdout or "STOP" in run.stdout), run.stdout[-600:])
 
 
+def env_checks(root):
+    """deploy/env_check.py on a scratch repo, as the installer runs it: {level: [texts]}, the
+    raw output."""
+    run = subprocess.run([sys.executable, str(DEPLOY / "env_check.py"), str(root)], cwd=root / "pi5", env=ENV,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    out = {}
+    for line in run.stdout.splitlines():
+        level, _, text = line.partition("|")
+        out.setdefault(level, []).append(text)
+    return out, run.stdout + run.stderr
+
+
+def test_env_check():
+    """The installer's pi5/.env check (deploy/install_services.sh runs deploy/env_check.py as
+    the service's user): with and without each setting the night needs. Nothing blocks:
+    every missing one is a WARN. A secret is said to be set, never shown."""
+    root = scratch_dir("ddm_env_check_")
+    (root / "pi5").mkdir()
+    shutil.copy2(REPO / "pi5/config.py", root / "pi5/config.py")
+    port_file = root / "ttyFAKE-gateway"
+    port_file.write_text("", encoding="utf-8")
+    key, odds = "0f" * 15 + "a", "b4" * 20
+    full = {"DDM_LQ_SERIAL_PORT": str(port_file), "DDM_ESP32_IP": "10.0.0.42",
+            "DDM_WEATHER_API_KEY": key, "DDM_ANTHROPIC_API_KEY": odds, "DDM_FLASK_PORT": "5050"}
+
+    out, raw = env_checks(root)
+    _check("no pi5/.env: a WARN that says to copy the example", any("no pi5/.env" in t for t in out.get("warn", [])), raw)
+    for what in ("DDM_LQ_SERIAL_PORT is empty", "DDM_ESP32_IP is empty", "DDM_WEATHER_API_KEY is empty",
+                 "DDM_ANTHROPIC_API_KEY is empty"):
+        _check(f"no pi5/.env: WARN {what}", any(what in t for t in out.get("warn", [])), raw)
+    _check("no pi5/.env: only ok, warn and the port; nothing that blocks", set(out) <= {"ok", "warn", "port"}, raw)
+    _check("no pi5/.env: pi5's port 5000", out.get("port") == ["5000"], raw)
+
+    (root / "pi5/.env").write_text("".join(f"{k}={v}\n" for k, v in full.items()), encoding="utf-8")
+    out, raw = env_checks(root)
+    _check("a full pi5/.env: no WARN", not out.get("warn"), raw)
+    for what in ("pi5/.env is there", f"the gateway's port is there: {port_file}", "the LED controller: 10.0.0.42",
+                 "the weather key is set", "the odds poller's key is set"):
+        _check(f"a full pi5/.env: ok {what}", what in out.get("ok", []), raw)
+    _check("a full pi5/.env: the port from DDM_FLASK_PORT", out.get("port") == ["5050"], raw)
+    _check("the secrets are never shown", key not in raw and odds not in raw)
+
+    for name, warning in (("DDM_LQ_SERIAL_PORT", "DDM_LQ_SERIAL_PORT is empty"), ("DDM_ESP32_IP", "DDM_ESP32_IP is empty"),
+                          ("DDM_WEATHER_API_KEY", "DDM_WEATHER_API_KEY is empty"),
+                          ("DDM_ANTHROPIC_API_KEY", "DDM_ANTHROPIC_API_KEY is empty")):
+        (root / "pi5/.env").write_text("".join(f"{k}={'' if k == name else v}\n" for k, v in full.items()),
+                                       encoding="utf-8")
+        out, raw = env_checks(root)
+        _check(f"{name} empty: that one WARN, and only it", [w for w in out.get("warn", [])] and
+               all(warning in w for w in out["warn"]) and len(out["warn"]) == 1, raw)
+    (root / "pi5/.env").write_text(f"DDM_LQ_SERIAL_PORT={root / 'not-plugged-in'}\n", encoding="utf-8")
+    out, raw = env_checks(root)
+    _check("the gateway's port set but not there: a WARN (pi5 opens it when it appears)",
+           any("the gateway's port is not there now" in w for w in out.get("warn", [])), raw)
+
+    # A local edit of the tracked pi5/config.py: a WARN naming the tool that moves it.
+    subprocess.run(["git", "-C", str(root), "init", "-q"], capture_output=True)
+    subprocess.run(["git", "-C", str(root), "add", "pi5/config.py"], capture_output=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c"],
+                   capture_output=True)
+    out, raw = env_checks(root)
+    _check("pi5/config.py as committed: no local-edit WARN", not any("local edit" in w for w in out.get("warn", [])), raw)
+    with open(root / "pi5/config.py", "a", encoding="utf-8") as f:
+        f.write('\nESP32_IP = "10.0.0.42"\n')
+    out, raw = env_checks(root)
+    _check("pi5/config.py edited by hand: a WARN naming pi5/tools/env_from_config.py",
+           any("local edit" in w and "env_from_config.py" in w for w in out.get("warn", [])), raw)
+
+    (root / "pi5/config.py").write_text("this is not python (\n", encoding="utf-8")
+    out, raw = env_checks(root)
+    _check("an unreadable pi5/config.py: a WARN, port 5000, no traceback",
+           any("could not be read" in w for w in out.get("warn", [])) and out.get("port") == ["5000"]
+           and "Traceback" not in raw, raw)
+    installer = (DEPLOY / "install_services.sh").read_text(encoding="utf-8")
+    _check("the installer runs it as the service's user and prints its lines",
+           'as_user "$PYTHON" "$DEPLOY_DIR/env_check.py" "$REPO"' in installer
+           and 'ok) ok "$text"' in installer and 'warn) warn "$text"' in installer)
+    _check("the installer no longer needs python-dotenv (pi5/config.py reads pi5/.env itself)",
+           '"dotenv"' not in installer)
+
+
 # -----------------------------------------------------------------------------
 # The TV kiosk: kiosk.sh, deploy/ddm-tv.desktop, deploy/kiosk_autostart.py
 # -----------------------------------------------------------------------------
@@ -1048,6 +1129,7 @@ def main():
     _run("the hand-run guard and the access log", test_hand_run_guard)
     _run("the LED controller client logs on change", test_led_client_logs_on_change)
     _run("the installer", test_installer)
+    _run("the installer's pi5/.env check", test_env_check)
     _run("the kiosk script and its desktop entry", test_kiosk_files)
     _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
     _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)

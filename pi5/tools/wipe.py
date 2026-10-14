@@ -35,7 +35,8 @@ next start with what a fresh install gets (INSERT OR IGNORE in la_quiniela/model
 the id counters stay (sqlite_sequence): a phone that joined La Subasta before keeps its old
 guest number, and with the counters kept no new guest is ever given that number.
 
-It keeps the code, pi5/config.py, pi5/.env and the splash's config, the LEDs' setup
+It keeps the code, the configuration (pi5/config.py; pi5/.env, the box's own settings and
+its secrets, and pi5/.env.example; the splash's config.py, .env and .env.example), the LEDs' setup
 (animation_registry.json, animation_assignments.json, animation_params.json), the id
 counters, the backups, and anything else in pi5/data, which it lists as not recognised.
 
@@ -86,7 +87,9 @@ SPLASH_LOG_DIR = REPO_DIR / "splash_display" / "logs"
 BACKUPS_DIR = REPO_DIR / "backups"
 
 KEPT = (
-    ("Configuration", (PI5_DIR / "config.py", PI5_DIR / ".env", REPO_DIR / "splash_display" / "config.py")),
+    ("Configuration", (PI5_DIR / "config.py", PI5_DIR / ".env", PI5_DIR / ".env.example",
+                       REPO_DIR / "splash_display" / "config.py", REPO_DIR / "splash_display" / ".env",
+                       REPO_DIR / "splash_display" / ".env.example")),
     ("The LEDs' setup", (DATA_DIR / "animation_registry.json", DATA_DIR / "animation_assignments.json",
                          PI5_DIR / "animation_params.json")),
 )

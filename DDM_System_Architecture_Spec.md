@@ -77,7 +77,7 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
 | pi5 (Flask app on DevPi, port 5000) | Race brain; serves the dashboard, the admin page, La Subasta | n/a | Everything (SQLite, one results file) |
 | Gateway (ESP32 WROOM-32) | Radio-to-USB bridge | USB serial, JSON lines | The last state line, RAM only |
 | Betting cups (CYD + HX711), 20 plus spares | Weigh tokens, show their horse number | ESP-NOW via the gateway | Horse number and scale settings in NVS |
-| LED controller (ESP32, `10.0.0.44:5005`) | Mantle LED animations | TCP | Nothing |
+| LED controller (ESP32, TCP 5005 at the address in DevPi's `pi5/.env`) | Mantle LED animations | TCP | Nothing |
 | Splash display (Flask app, port 5001) | TV slideshow and the LQ board | HTTP and the `/api/quiniela/stream` event stream from pi5 | Nothing about the race |
 | TV kiosk | Chromium on the splash's `/display` | HTTP | Nothing |
 | DDM Control Center | The touchscreen dashboard at `/` | Same server | Nothing |
@@ -404,7 +404,7 @@ information. [BUILT]
 - **Horse names**: 24 lines pasted into the admin page's names box.
 - **Track odds**, for the roster slide only. La Quiniela pays no odds, and the LQ board
   shows none; a horse's line is its bets. The odds come from the odds poller
-  (`pi5/la_quiniela/odds.py`, Claude with web search every 5 min, needs `ANTHROPIC_API_KEY`
+  (`pi5/la_quiniela/odds.py`, Claude with web search every 5 min, needs `DDM_ANTHROPIC_API_KEY` in `pi5/.env`
   and internet) or are typed by hand from the program. They are kept in memory only.
 - `GET /api/race` is built from this store for anything that wants a roster.
 
@@ -467,8 +467,10 @@ Rules for either:
 
 - **DevPi by hostname:** `joeydevpi.local`. pi5 on port 5000, the splash on port 5001.
   [BUILT]
-- **LED controller:** TCP to `10.0.0.44:5005` per the repo's `pi5/config.py`. DevPi's local
-  config was reported as `10.0.0.42`, so one of them is stale. Open question 5.
+- **LED controller:** TCP port 5005 at the address in `DDM_ESP32_IP`, a per-box setting in
+  DevPi's `pi5/.env` (empty: no LED controller, the LEDs are off). Nothing secret and nothing
+  that belongs to one box is in a tracked file: `pi5/.env`, `splash_display/.env` and the LED
+  controller's `secrets.h` are git-ignored, each with a tracked example. [BUILT]
 - **ESP-NOW on channel 6.** Cups and gateway never touch WiFi, so guest load on the router
   cannot affect betting.
 - For the party, the router's 2.4 GHz band sits on channel 1 or 11. [PROPOSED]
@@ -511,7 +513,10 @@ Rules for either:
 4. ~~**Scale drift across a power cycle.**~~ Resolved 2026-10-01: the brownout bench test
    read a drift of −5 counts (≈0.001 token at ≈6004 counts per token) across a power
    cycle; the saved empty reading is good enough on its own.
-5. **LED controller address:** `10.0.0.44` (repo) or `10.0.0.42` (DevPi's local config)?
+5. ~~**LED controller address:** `10.0.0.44` (repo) or `10.0.0.42` (DevPi's local config)?~~
+   Resolved 2026-10-13: it is a per-box value, `DDM_ESP32_IP` in `pi5/.env`, never in a
+   tracked file (section 11). DevPi's old local edit said `10.0.0.42`; the controller's own
+   screen shows the address it really has, which is what goes in `pi5/.env`.
 6. **The bridge's SocketIO events:** keep them for a future screen (HUB75), or remove them
    as unused?
 

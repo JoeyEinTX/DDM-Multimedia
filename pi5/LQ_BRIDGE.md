@@ -49,9 +49,10 @@ parsed: `normalize_mac()` (upper-case, colon-separated, or `None`) and
    can change between boots. A CH340-based board has no serial number, so
    if two CH340 devices are ever plugged in, use the physical-slot path from
    `ls -l /dev/serial/by-path/` instead.
-3. Set `LQ_SERIAL_PORT` in `pi5/config.py`, or put
-   `DDM_LQ_SERIAL_PORT=/dev/serial/by-id/...` in `pi5/.env` (the `ddm-pi5`
-   service doesn't see a variable exported in a shell).
+3. Put `DDM_LQ_SERIAL_PORT=/dev/serial/by-id/...` in `pi5/.env` (copied
+   from `pi5/.env.example`; git-ignored, because the port is this box's own
+   setting and `pi5/config.py` is tracked). The `ddm-pi5` service reads
+   `pi5/.env`; it doesn't see a variable exported in a shell.
 4. Restart the app: `sudo systemctl restart ddm-pi5`. Its log
    (`journalctl -u ddm-pi5 -f`) shows `[LQ] bridge started on ...`, then
    the gateway's `hello` is answered with the state line DevPi holds.
@@ -64,11 +65,15 @@ The port is opened with `exclusive=True`, so a second copy of the app cannot
 open the same port. A missing or vanished port is retried every 5 s forever,
 logged at most once a minute.
 
-## Configuration (`pi5/config.py`)
+## Configuration (`pi5/config.py`, `pi5/.env`)
 
-Every key can be overridden by an environment variable of the same name
-prefixed `DDM_`, so a simulator can point the app at a virtual port without
-editing files (`DDM_LQ_SERIAL_PORT=/dev/pts/3`).
+`pi5/config.py` is tracked and holds only the defaults below; nothing secret
+and nothing that belongs to one box goes in it (the repo is public). Every
+key is set by an environment variable of the same name prefixed `DDM_`, and
+on DevPi by a line in `pi5/.env` (git-ignored; `pi5/.env.example` lists
+every setting): `DDM_LQ_SERIAL_PORT` is the one the night needs. A simulator
+points the app at a virtual port the same way (`DDM_LQ_SERIAL_PORT=/dev/pts/3`).
+A variable set in the environment wins over `pi5/.env`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -902,7 +907,8 @@ La Quiniela's store is the one home of race information:
   draws in keeps its number, and its odds). They reach the model as
   `horses[n].odds`, a string, or null for a horse with none; they are kept
   in memory only, so a round that fails, a machine without
-  `ANTHROPIC_API_KEY` or a party with no internet leaves them as they were
+  `DDM_ANTHROPIC_API_KEY` in `pi5/.env` (an unprefixed `ANTHROPIC_API_KEY`
+  works too) or a party with no internet leaves them as they were
   or null, and nothing errors. `PUT /api/quiniela/odds` sets them by hand
   (the program's morning line). Each successful round is also emitted as
   the spectator page's `odds_update`.
@@ -910,7 +916,8 @@ La Quiniela's store is the one home of race information:
   dashboard's own source, WeatherAPI.com through `main.py`'s cache
   (`weather_data()`, which `GET /api/weather` answers from too, so the API
   is asked at most once per `WEATHER_CACHE_MINUTES`). A thread started in
-  `main.py`'s `__main__` when `WEATHER_API_KEY` is set
+  `main.py`'s `__main__` when `DDM_WEATHER_API_KEY` is set in `pi5/.env`
+  (without it pi5 says once at start that the weather line is off)
   (`feed_weather_to_board()`) hands the current conditions to the board
   every `WEATHER_CACHE_MINUTES`, 5 at least; the model carries them as
   `weather`. In memory only; a failed fetch keeps the last weather, and
@@ -1247,7 +1254,8 @@ with the message from `validate_phase` if the bridge rejects the state; 503
 
 More keys in `pi5/config.py` (the first ones with the names the splash
 display used), each overridable by `DDM_<KEY>` in the environment or
-`pi5/.env`:
+`pi5/.env`. These change the money: set one only on purpose, and in
+`pi5/.env`, never by editing the tracked `pi5/config.py`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |

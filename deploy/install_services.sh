@@ -24,8 +24,12 @@
 #     imports every package pi5 and the splash need;
 #   - nothing started by hand holds pi5's or the splash's port (the service would fail to
 #     start and try again every 3 s).
-# A warning only: the gateway's port (LQ_SERIAL_PORT, pi5/config.py or pi5/.env) not there
-# now (pi5 retries every 5 s until it appears), DDM_* settings that live in this shell only.
+# A warning only: no pi5/.env, or a setting the night needs empty in it (the gateway's port
+# DDM_LQ_SERIAL_PORT, the LED controller DDM_ESP32_IP, the weather key DDM_WEATHER_API_KEY,
+# the odds poller's DDM_ANTHROPIC_API_KEY: each feature is off without it); the gateway's
+# port not there now (pi5 retries every 5 s until it appears); a local edit of the tracked
+# pi5/config.py (pi5/tools/env_from_config.py moves it into pi5/.env); DDM_* settings that
+# live in this shell only. Secrets are never printed: only whether they are set.
 #
 # Running it twice is fine: the units are rewritten only when they differ, and both services
 # are restarted so they run the code that is checked out.
@@ -235,7 +239,6 @@ needed = [  # (module, pip name, who needs it)
     ("jinja2", "Jinja2", "pi5 and the splash"), ("flask_socketio", "Flask-SocketIO", "pi5"),
     ("socketio", "python-socketio", "pi5"), ("engineio", "python-engineio", "pi5"),
     ("requests", "requests", "pi5"), ("serial", "pyserial", "pi5 (the gateway)"),
-    ("dotenv", "python-dotenv", "pi5 (pi5/.env)"),
 ]
 for module, pip_name, who in needed:
     try:
@@ -249,7 +252,7 @@ except Exception:
 PY
 )" || true
         if [ -z "$missing" ]; then
-            ok "$PYTHON imports flask, flask_socketio, socketio, engineio, requests, serial, dotenv, jinja2, werkzeug as $RUN_USER"
+            ok "$PYTHON imports flask, flask_socketio, socketio, engineio, requests, serial, jinja2, werkzeug as $RUN_USER"
         else
             while IFS='|' read -r module pip_name who error; do
                 [ -n "$module" ] || continue
@@ -261,18 +264,21 @@ PY
             done <<< "$missing"
         fi
 
-        # The gateway's port and pi5's own port, read the way pi5 reads them.
-        read -r PI5_PORT SERIAL <<< "$(cd "$REPO/pi5" && as_user "$PYTHON" -c \
-            'import config; print(getattr(config, "FLASK_PORT", 5000), getattr(config, "LQ_SERIAL_PORT", "") or "-")' 2>/dev/null || echo "5000 ?")"
-        if [ "$SERIAL" = "?" ]; then
-            warn "pi5/config.py could not be read as $RUN_USER, so the gateway's port is not checked"
-        elif [ "$SERIAL" = "-" ]; then
-            warn "LQ_SERIAL_PORT is empty: pi5's bridge will idle (set it in pi5/config.py or pi5/.env)"
-        elif [ -e "$SERIAL" ]; then
-            ok "the gateway's port is there: $SERIAL"
-        else
-            warn "the gateway's port is not there now ($SERIAL): unplugged? pi5 starts anyway and opens it when it appears (it tries every 5 s)"
+        # pi5/.env and every setting the night needs, read the way pi5 reads them (pi5/config.py,
+        # pi5/.env included), as the service's user: deploy/env_check.py. Each missing one is a
+        # WARN (its feature is off); a secret is said to be set or not, never shown.
+        PI5_PORT=5000
+        checks="$(cd "$REPO/pi5" && as_user "$PYTHON" "$DEPLOY_DIR/env_check.py" "$REPO" 2>/dev/null)" || true
+        if [ -z "$checks" ]; then
+            warn "pi5/config.py could not be read as $RUN_USER, so pi5/.env's settings are not checked"
         fi
+        while IFS='|' read -r level text; do
+            case "$level" in
+                ok) ok "$text" ;;
+                warn) warn "$text" ;;
+                port) PI5_PORT="$text" ;;
+            esac
+        done <<< "$checks"
         SPLASH_PORT="$(cd "$REPO/splash_display" && as_user "$PYTHON" -c \
             'import config; print(getattr(config, "FLASK_PORT", 5001))' 2>/dev/null || echo 5001)"
     else

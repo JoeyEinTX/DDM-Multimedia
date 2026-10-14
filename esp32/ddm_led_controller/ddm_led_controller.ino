@@ -103,8 +103,10 @@ void resetParamsToDefault() {
 }
 
 // ===== CONFIGURATION =====
-#define WIFI_SSID "BMP_WIFI_MAIN"
-#define WIFI_PASSWORD "Derby1961"
+// The Wi-Fi network: WIFI_SSID and WIFI_PASSWORD come from secrets.h beside this
+// sketch, which is git-ignored (the repo is public). Copy secrets.example.h to
+// secrets.h and fill it in before flashing; without it the build stops here.
+#include "secrets.h"
 
 #define SOCKET_PORT 5005
 #define LED_PIN 18

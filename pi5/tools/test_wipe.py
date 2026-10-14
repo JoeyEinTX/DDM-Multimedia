@@ -214,7 +214,7 @@ STORE_FILES = ("pi5/data/la_subasta.db", "pi5/data/la_subasta.db-wal", "pi5/data
                "pi5/data/results.json", "pi5/data/results.json.tmp", "pi5/data/quiniela_2026-10-01.jsonl",
                "pi5/data/quiniela_2026-10-02.jsonl", "pi5/data/race_setup.json",
                "splash_display/logs/quiniela_2026-09-22.jsonl")
-KEPT_FILES = ("pi5/config.py", "pi5/.env", "splash_display/config.py", "pi5/data/animation_registry.json",
+KEPT_FILES = ("pi5/config.py", "pi5/.env", "pi5/.env.example", "splash_display/config.py", "pi5/data/animation_registry.json",
               "pi5/data/animation_assignments.json", "pi5/animation_params.json", "pi5/data/notes.txt")
 
 
@@ -425,7 +425,7 @@ def test_dry_run_changes_nothing():
         "Other tables ......... event_years 1 row, horse_state 2 rows",
         "Counters ............. names 7, race state line 33",
         "Old betting log ...... 1 file, 2 lines",
-        "Configuration ........ pi5/config.py, pi5/.env, splash_display/config.py",
+        "Configuration ........ pi5/config.py, pi5/.env, pi5/.env.example, splash_display/config.py",
         "The LEDs' setup ...... pi5/data/animation_registry.json, pi5/data/animation_assignments.json, "
         "pi5/animation_params.json",
         "Not recognised ....... pi5/data/notes.txt (left as is)",

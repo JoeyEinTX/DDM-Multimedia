@@ -39,7 +39,7 @@ import config as _config
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ddm-horse-controller-2025'
+app.config['SECRET_KEY'] = _config.FLASK_SECRET_KEY   # DDM_FLASK_SECRET_KEY in pi5/.env, or a random one per start
 
 # Initialize Socket.IO
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -936,9 +936,44 @@ def api_esp32_config_get():
     return jsonify({'ip': esp32.ip, 'port': esp32.port})
 
 
+def persist_env_setting(name, value, path=None):
+    """Set NAME=value in pi5/.env (git-ignored: the box's own settings), in
+    place of an existing NAME line or added at the end; every other line is
+    kept as it is. True when written."""
+    path = path or _config.ENV_FILE
+    try:
+        with open(path, 'r', encoding='utf-8', newline='') as f:
+            text = f.read()
+    except FileNotFoundError:
+        text = ''
+    except OSError as e:
+        print(f"[CONFIG] Failed to read {path}: {e}")
+        return False
+    eol = '\r\n' if '\r\n' in text else '\n'
+    lines = text.splitlines()
+    line = f'{name}={value}'
+    for i, existing in enumerate(lines):
+        stripped = existing.strip()
+        if stripped.startswith('export '):
+            stripped = stripped[len('export '):].lstrip()
+        if stripped.partition('=')[0].strip() == name:
+            lines[i] = line
+            break
+    else:
+        lines.append(line)
+    try:
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            f.write(eol.join(lines) + eol)
+    except OSError as e:
+        print(f"[CONFIG] Failed to write {path}: {e}")
+        return False
+    return True
+
+
 @app.route('/api/esp32/config', methods=['POST'])
 def api_esp32_config_set():
-    """Update the ESP32 client's IP, persist to config.py, and ping to verify."""
+    """Update the ESP32 client's IP, persist it to pi5/.env (DDM_ESP32_IP: the
+    box's own setting, never the tracked config.py), and ping to verify."""
     import re
 
     data = request.get_json(silent=True) or {}
@@ -950,25 +985,7 @@ def api_esp32_config_set():
         return jsonify({'success': False, 'error': 'Invalid IP address'}), 400
 
     esp32.ip = new_ip
-
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.py')
-    persisted = False
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            contents = f.read()
-        new_contents, count = re.subn(
-            r'^ESP32_IP\s*=.*$',
-            f'ESP32_IP = "{new_ip}"',
-            contents,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        if count == 1:
-            with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(new_contents)
-            persisted = True
-    except OSError as e:
-        print(f"[ESP32 CONFIG] Failed to persist IP to config.py: {e}")
+    persisted = persist_env_setting('DDM_ESP32_IP', new_ip)
 
     connected = esp32.ping()
 
@@ -1189,8 +1206,13 @@ if __name__ == '__main__':
     print(f"\n  Dashboard:     http://{FLASK_HOST}:{FLASK_PORT}")
     print(f"  Spectator TV:  http://localhost:{FLASK_PORT}/guest/spectator")
     print(f"  Spectator TV:  http://localhost:{FLASK_PORT}/spectator")
-    print(f"  ESP32 Target:  {esp32.ip}:{esp32.port}")
-    
+    if esp32.ip:
+        print(f"  ESP32 Target:  {esp32.ip}:{esp32.port}")
+    else:
+        print("  ESP32 Target:  none: no LED controller set (DDM_ESP32_IP in pi5/.env), the LEDs are off")
+    if not WEATHER_API_KEY:
+        print("  Weather:       no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off")
+
     # Tote board information and startup
     if TOTE_ENABLED and tote:
         print(f"  Tote Board: {tote.ip}:{tote.port}")

@@ -1,20 +1,107 @@
 # config.py - Configuration settings for DDM Horse Dashboard (Raspberry Pi 5)
+#
+# This file is tracked and the repo is public, so it holds only code and safe
+# defaults. Nothing secret and nothing that belongs to one box lives here: those
+# come from the environment, and on DevPi from pi5/.env (git-ignored; copy
+# pi5/.env.example and fill it in). Every setting read through _env() below is
+# the variable of the same name prefixed DDM_ (DDM_ESP32_IP=10.0.0.42), and a
+# variable already set in the environment wins over pi5/.env.
 
-# ESP32 Connection Settings
-ESP32_IP = "10.0.0.44"  # DDM ESP32 controller
-ESP32_PORT = 5005
+import os
+import secrets as _secrets
+
+ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+
+
+def _read_env_file(path):
+    """KEY=VALUE lines of a .env file as a dict: blank lines and # comments
+    skipped, an optional leading `export`, a value in matching quotes taken as
+    it is, an unquoted one trimmed and cut at ` #`. Standard library only, so
+    the tools that read this file (pi5/tools/wipe.py, the installer) need
+    nothing installed."""
+    values = {}
+    try:
+        with open(path, encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        name, sep, value = line.partition('=')
+        name = name.strip()
+        if not sep or not name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+            value = value[1:-1]
+        else:
+            value = value.split(' #', 1)[0].rstrip()
+        values[name] = value
+    return values
+
+
+def _load_env_file(path):
+    """pi5/.env into the environment; a variable already set is left alone."""
+    for name, value in _read_env_file(path).items():
+        os.environ.setdefault(name, value)
+
+
+_load_env_file(ENV_FILE)
+
+
+def _env(name, default):
+    """DDM_<name> from the environment, typed like its default (a bool from
+    1/true/yes/on, an int, a float), or the default when unset."""
+    raw = os.environ.get('DDM_' + name)
+    if raw is None:
+        return default
+    if isinstance(default, bool):
+        return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+    if isinstance(default, int):
+        return int(raw)
+    if isinstance(default, float):
+        return float(raw)
+    return raw
+
+
+_lq_env = _env   # the La Quiniela settings' name for it
+
+
+# ---------------------------------------------------------------------------
+# Secrets: empty unless set in pi5/.env, and the feature they feed is off.
+# ---------------------------------------------------------------------------
+WEATHER_API_KEY = _env('WEATHER_API_KEY', '')        # WeatherAPI.com; empty = no weather (the dashboard panel, the TV's crawl)
+ANTHROPIC_API_KEY = (_env('ANTHROPIC_API_KEY', '')   # the track's odds poller (la_quiniela/odds.py); empty = it can't run
+                     or os.environ.get('ANTHROPIC_API_KEY', ''))
+FLASK_SECRET_KEY = _env('FLASK_SECRET_KEY', '') or _secrets.token_hex(24)   # Flask's own; empty = a new random one each start (nothing keeps a session)
+
+# ---------------------------------------------------------------------------
+# DevPi's own settings: what only one box knows. The defaults work on any dev
+# machine and are wrong for no one.
+# ---------------------------------------------------------------------------
+# ESP32 Connection Settings (the LED controller on the mantle)
+ESP32_IP = _env('ESP32_IP', '')        # empty = no LED controller: the LEDs are off, everything else runs
+ESP32_PORT = _env('ESP32_PORT', 5005)
 SOCKET_TIMEOUT = 5.0  # Seconds
 
 # Tote Board Connection Settings (Interstate75 LED Display)
-TOTE_IP = "10.0.0.124"
-TOTE_PORT = 80
+TOTE_IP = _env('TOTE_IP', '')          # empty = no tote board
+TOTE_PORT = _env('TOTE_PORT', 80)
 TOTE_TIMEOUT = 2.0  # Seconds
-TOTE_ENABLED = True
+TOTE_ENABLED = _env('TOTE_ENABLED', bool(TOTE_IP))
 
 # Flask Settings
-FLASK_HOST = "0.0.0.0"  # Listen on all interfaces
-FLASK_PORT = 5000
+FLASK_HOST = _env('FLASK_HOST', "0.0.0.0")  # Listen on all interfaces
+FLASK_PORT = _env('FLASK_PORT', 5000)
 FLASK_DEBUG = False  # Set to False in production
+
+# Weather API Settings (WeatherAPI.com; the key is a secret, above)
+WEATHER_LOCATION = _env('WEATHER_LOCATION', "Dallas,TX")
+WEATHER_CACHE_MINUTES = 30
 
 # DDM Color Palette (RGB tuples)
 DDM_COLORS = {
@@ -34,17 +121,7 @@ NUM_CUPS = 20
 TOTAL_LEDS = 640
 
 # Animation Params Cache
-import os
 PARAMS_FILE = os.path.join(os.path.dirname(__file__), 'animation_params.json')
-
-# Load .env file if present (API keys etc)
-dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-if os.path.exists(dotenv_path):
-    from dotenv import load_dotenv
-    load_dotenv(dotenv_path)
-
-# Anthropic API key for AI horse search
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 
 # Race setup data file
 RACE_SETUP_FILE = os.path.join(os.path.dirname(__file__), 'data', 'race_setup.json')
@@ -52,11 +129,6 @@ RACE_SETUP_FILE = os.path.join(os.path.dirname(__file__), 'data', 'race_setup.js
 # Animation library data files
 ANIMATION_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), 'data', 'animation_registry.json')
 ANIMATION_ASSIGNMENTS_FILE = os.path.join(os.path.dirname(__file__), 'data', 'animation_assignments.json')
-
-# Weather API Settings (WeatherAPI.com)
-WEATHER_API_KEY = "f2296dce2c55403e8bb231111250612"
-WEATHER_LOCATION = "Dallas,TX"
-WEATHER_CACHE_MINUTES = 30
 
 
 # ---------------------------------------------------------------------------
@@ -66,18 +138,8 @@ WEATHER_CACHE_MINUTES = 30
 # name prefixed DDM_ (for example DDM_LQ_SERIAL_PORT=/dev/pts/3 points the
 # app at a simulator without editing this file).
 # ---------------------------------------------------------------------------
-def _lq_env(name, default):
-    raw = os.environ.get('DDM_' + name)
-    if raw is None:
-        return default
-    if isinstance(default, bool):
-        return raw.strip().lower() in ('1', 'true', 'yes', 'on')
-    if isinstance(default, int):
-        return int(raw)
-    return raw
-
 LQ_BRIDGE_ENABLED = _lq_env('LQ_BRIDGE_ENABLED', True)    # master switch
-LQ_SERIAL_PORT = _lq_env('LQ_SERIAL_PORT', '')            # empty = bridge idles; on DevPi a /dev/serial/by-id/... path, never /dev/ttyUSB0
+LQ_SERIAL_PORT = _lq_env('LQ_SERIAL_PORT', '')            # empty = bridge idles; on DevPi a /dev/serial/by-id/... path in pi5/.env, never /dev/ttyUSB0
 LQ_SERIAL_BAUD = _lq_env('LQ_SERIAL_BAUD', 115200)
 LQ_HEARTBEAT_LOG_S = _lq_env('LQ_HEARTBEAT_LOG_S', 10)    # per-cup heartbeat interval for logging and display refresh
 LQ_CUP_OFFLINE_S = _lq_env('LQ_CUP_OFFLINE_S', 6)         # no telemetry for this long = cup offline
