@@ -590,27 +590,66 @@ body {
     letter-spacing: 0.5px;
 }
 
-/* Panels disabled overlay when AUTO */
-.panels.race-control-auto .panel {
-    position: relative;
+/* AUTO: every mode button is disabled and says why on itself, "switch to MANUAL" (ddm_control.js
+   updatePanelButtons). Nothing covers the panels, so the reason can be read. */
+.panels .btn.auto-held:disabled {
+    opacity: 0.65;
+    filter: none;
+    border-style: dashed;
 }
 
-.panels.race-control-auto .panel::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.4);
-    border-radius: 8px;
-    pointer-events: none;
+.btn-reason {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    line-height: 1.2;
+    text-transform: none;
+    color: #8A1C1C;
 }
 
-.panels.race-control-auto .panel .btn:not([data-always-enabled]) {
-    opacity: 0.35 !important;
-    cursor: not-allowed !important;
-    pointer-events: none !important;
+/* Ask first: the in-page confirm (ddm_control.js askFirst), over every other dialog */
+#ask-modal {
+    z-index: 1200;
+}
+
+.ask-modal-content {
+    max-width: 580px;
+}
+
+.ask-modal-content h2 {
+    margin-bottom: 14px;
+}
+
+.modal-content p.ask-text {
+    color: #F2F2F2;
+    font-size: 1.15em;
+    line-height: 1.45;
+    margin-bottom: 26px;
+}
+
+.ask-actions {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+}
+
+.ask-actions .modal-btn {
+    min-width: 180px;
+    min-height: 52px;
+    font-size: 1.05em;
+}
+
+.ask-ok {
+    background: #E53935;
+    border: 2px solid #E53935;
+    color: #fff;
+}
+
+.ask-actions .modal-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 /* Results Banner - Dot Matrix Tote Board Style */

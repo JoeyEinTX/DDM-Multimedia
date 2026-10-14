@@ -33,7 +33,7 @@ from la_subasta import la_subasta_bp, init_la_subasta, follow_la_quiniela
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
                          quiniela_board_bp, init_board, start_board, get_board)
 from la_quiniela import racetime
-from la_quiniela.board import migrate_race_setup
+from la_quiniela.board import field_by_post, migrate_race_setup
 from la_quiniela.odds import init_odds
 import config as _config
 
@@ -354,12 +354,48 @@ def quiniela_mode(mode):
     (la_quiniela.betting.MODE_STATES). The mode buttons say so themselves
     (POST /api/quiniela/mode); this is for the two modes that are routes
     here: the results applied, and the reset. Never raises: the LEDs and the
-    results do not wait on La Quiniela. Returns what was set, or None."""
+    results do not wait on La Quiniela. Returns (what was set, None), or
+    (None, La Quiniela's reason), which the dashboard shows in red."""
     try:
-        return get_board().set_mode(mode)
+        return get_board().set_mode(mode), None
     except Exception as e:
         print(f'[La Quiniela] mode {mode} not set: {e}')
-        return None
+        return None, f'La Quiniela: {e}'
+
+
+def results_field():
+    """The horse numbers SET WINNERS may name: the field as La Quiniela has
+    it (the pickers' own list, a replacement under its own number, a horse
+    scratched with no replacement left out). Posts 1-20 when La Quiniela's
+    board cannot be read, so the results still go through without it."""
+    try:
+        return {entry['horse'] for entry in field_by_post(get_board())['posts']}
+    except Exception as e:
+        print(f'[La Quiniela] the field could not be read ({e}); results checked against 1-20')
+        return set(range(1, 21))
+
+
+def results_arg(data):
+    """(win, place, show), or (None, why) for a body that is not three
+    distinct horses in the field. Every key is required: a missing one is
+    refused, never filled in."""
+    if not isinstance(data, dict):
+        return None, 'results must be {"win": N, "place": N, "show": N}'
+    picks = []
+    for key in ('win', 'place', 'show'):
+        if key not in data or data[key] is None:
+            return None, f'{key} is missing: WIN, PLACE and SHOW are all required'
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None, f'{key} must be a horse number, not {value!r}'
+        picks.append(value)
+    if len(set(picks)) != 3:
+        return None, 'WIN, PLACE and SHOW must be three different horses'
+    field = results_field()
+    for key, horse in zip(('win', 'place', 'show'), picks):
+        if horse not in field:
+            return None, f'{key}: horse {horse} is not in the field'
+    return tuple(picks), None
 
 
 def save_results(win, place, show):
@@ -480,17 +516,15 @@ def api_results():
         # the LEDs: saved first, always, and La Quiniela goes to WINNER with
         # them; the LED controller is told after, and whether it answered is
         # reported ('leds'), never a reason to drop the results.
-        data = request.get_json()
-        win = data.get('win', 1)
-        place = data.get('place', 2)
-        show = data.get('show', 3)
-
-        # Validate unique cups
-        if len(set([win, place, show])) != 3:
+        # All three, distinct and in the field, or a 400 and nothing saved:
+        # a missing key used to be filled in with horse 1, 2 or 3.
+        picks, error = results_arg(request.get_json(silent=True))
+        if error:
             return jsonify({
                 'success': False,
-                'error': 'Win, Place, and Show must be different cups'
+                'error': error
             }), 400
+        win, place, show = picks
 
         # Save to file, first
         if not save_results(win, place, show):
@@ -501,8 +535,9 @@ def api_results():
                 'race': None
             }), 500
 
-        # SET WINNERS, results applied: La Quiniela goes to WINNER with them
-        race = quiniela_mode('RESULTS')
+        # SET WINNERS, results applied: La Quiniela goes to WINNER with them.
+        # When it refuses, the results stand and 'race_error' says why.
+        race, race_error = quiniela_mode('RESULTS')
 
         # Send official results to tote board
         tote_send('official', win, place, show)
@@ -531,7 +566,8 @@ def api_results():
             },
             'leds': leds,
             'response': response,
-            'race': race
+            'race': race,
+            'race_error': race_error
         })
 
 
@@ -567,7 +603,7 @@ def api_results_clear():
             os.remove(RESULTS_FILE)
 
         # RESET ends the race: La Quiniela goes to AFTER_PARTY, results cleared
-        race = quiniela_mode('RESET')
+        race, race_error = quiniela_mode('RESET')
 
         # Turn off all LEDs
         esp32.all_off()
@@ -578,7 +614,8 @@ def api_results_clear():
         return jsonify({
             'success': True,
             'message': 'Results cleared',
-            'race': race
+            'race': race,
+            'race_error': race_error
         })
     except Exception as e:
         return jsonify({

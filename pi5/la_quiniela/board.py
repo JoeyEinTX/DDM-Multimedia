@@ -70,6 +70,12 @@ USAGE_RACE = ('usage: {"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"} (th
 USAGE_ODDS = 'usage: {"odds": {"1": "5-2", "22": "30-1", ...}} | {"odds": null}'
 USAGE_COUNTED_POT = ('usage: {"amount": <whole dollars, 0-%d>} sets the hand count | {"amount": null} clears it'
                      % COUNTED_POT_MAX)
+# Reset betting changes the race state, so it is refused while a race is on
+# (Joey, 2026-10-13, gap review OD13): the Control Center stays the one place
+# that changes the race state, its buttons running the LEDs with it.
+RESET_STATES = (int(P.Phase.PRE_RACE), int(P.Phase.AFTER_PARTY))
+RESET_REFUSED = ("Reset betting works only before the race (0) or after it (6). "
+                 "Change the race state on the Control Center.")
 
 # The Race Setup page kept a post time as a time of day, which it treated as
 # on this date and on Churchill's clock (it printed "6:57 PM ET"): what
@@ -275,9 +281,11 @@ def api_quiniela_cmd():
 def api_quiniela_mode():
     """The one race state and the dashboard mode that set it: {"ok": true,
     "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label":
-    "60 MIN", "source": "dashboard", "modes": {...the table...}}. mode and
-    label are null when the state was set directly (the admin page's
-    buttons, `state N`, a reset) or not since pi5 started."""
+    "60 MIN", "source": "dashboard", "at_post": null, "modes": {...the
+    table...}}. mode and label are null when the state was set directly
+    (`state N`, a reset) or not since pi5 started. at_post is {"pot",
+    "pot_counted"} while figures at the post are held: what the dashboard's
+    reopen confirm names."""
     resp = jsonify({"ok": True, **get_board().race_mode(), "modes": dict(MODE_STATES)})
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -320,9 +328,13 @@ def api_quiniela_reset():
     them and "horses_with_tokens" says which horses. Reply: {"ok": true,
     "race_state": 0, "pot", "total_tokens", "horses_with_tokens",
     "cups_online", "events": 0, "closes_at": null, "rev", "gateway_online",
-    "names_rev"}."""
+    "names_rev"}. Only before the race (0) or after it (6): in 1-5 it is a
+    409 with RESET_REFUSED and nothing moves."""
+    board = get_board()
+    if board.race_mode()["state"] not in RESET_STATES:
+        return _bad(RESET_REFUSED, 409)
     try:
-        done = get_board().reset_betting()
+        done = board.reset_betting()
     except ValueError as exc:
         return _bad(str(exc))
     return jsonify({"ok": True, **done})

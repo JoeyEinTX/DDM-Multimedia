@@ -969,6 +969,8 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("SET WINNERS", "CANCEL", "#results-cancel-btn", False),
     ("SET WINNERS", "close x", "#results-modal .modal-close-tab", False),
     ("reveal", "REVEAL WINNERS (results set on another device)", ".btn-reveal-winners", False),
+    ("ask first", "Reopen betting (the confirm before reopening betting at the post)", "#ask-ok", False),
+    ("ask first", "Cancel", "#ask-cancel", False),
     ("admin page", "link to the Control Center", "#state-link", False),
     ("admin page", "Reset betting", "#reset-betting", False),
     ("admin page", "Counted pot field", "#counted-input", False),
@@ -987,7 +989,7 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "close time +15 / +30 / +60", "#closes button[data-min]", True),
     ("admin page", "close time Clear", "#closes-clear", False),
 ]
-WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "admin page")
+WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "ask first", "admin page")
 
 TAP_JS = r"""((sel, several, min) => {
   const els = (several ? [...document.querySelectorAll(sel)] : [document.querySelector(sel)])
@@ -1096,6 +1098,13 @@ def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
                 time.sleep(0.5)
                 rows += _measure(chrome, "reveal")
                 chrome.eval("revealWinners(); 1")
+                # the in-page confirm a reopening button shows from AT THE POST to WINNER
+                chrome.eval("askFirst('Reopen betting?', reopenText({pot: 86, pot_counted: 80}), 'Reopen betting'); 1")
+                chrome.wait_for("document.getElementById('ask-modal').classList.contains('active')", timeout=10)
+                time.sleep(0.4)
+                rows += _measure(chrome, "ask first")
+                chrome.eval("askAnswer(false); 1")
+                chrome.wait_for("!document.getElementById('ask-modal').classList.contains('active')", timeout=10)
                 # the admin page: betting closed (AT THE GATE), so the counted pot shows; a horse scratched, for Undo
                 rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
                 if not rig.model().get("scratches"):

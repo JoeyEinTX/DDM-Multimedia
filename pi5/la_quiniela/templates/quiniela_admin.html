@@ -211,9 +211,11 @@
   }
   // Reset betting: back to PRE-RACE with the names and scratches kept (the cups
   // keep their numbers, which are theirs); the results are cleared, the counts
-  // now in the cups are the baseline, and the reply says what the pot reads.
+  // now in the cups are the baseline, and the reply says what the pot reads. Only before the race (0) or
+  // after it (6): in 1-5 pi5 refuses it and its reason shows here, so the page asks nothing first then.
   $("reset-betting").onclick = function () {
-    if (!confirm("Reset betting?\n\nBack to PRE-RACE; the ticker and the closing time are cleared and the " +
+    var racing = !!model && model.race_state >= 1 && model.race_state <= 5;
+    if (!racing && !confirm("Reset betting?\n\nBack to PRE-RACE; the ticker and the closing time are cleared and the " +
                  "tokens now in the cups become the starting point. Cups, horses, names and scratches are kept.")) { return; }
     say("reset-status", "resetting…");
     holding([$("reset-betting")], api("POST", "/api/quiniela/reset").then(function (r) {

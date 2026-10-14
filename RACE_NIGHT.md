@@ -17,7 +17,7 @@ There is **one race state**. A dashboard button sets it, the cups and the TV fol
 
 | `DASH` button | Race state |
 |---|---|
-| WELCOME · TEST · STANDBY | 0 PRE-RACE |
+| WELCOME · STANDBY | 0 PRE-RACE |
 | 60 MIN · 30 MIN | 1 BETTING OPEN |
 | FINAL CALL | 2 FINAL CALL |
 | AT THE GATE | 3 AT THE POST |
@@ -25,10 +25,27 @@ There is **one race state**. A dashboard button sets it, the cups and the TV fol
 | SET WINNERS (once confirmed) · HEARTBEAT | 5 WINNER |
 | RESET | 6 AFTER PARTY |
 
+**TEST** is an LED test only (the colour wheel): it never changes the race state, so it is
+safe at any time, the figures at the post and the hand count included.
+
 `ADMIN` → Race shows the state read-only (`3 · AT THE POST`) and follows `DASH` within five
 seconds. To change it, use `DASH`: the link under the state on `ADMIN` takes you there (if
 `DASH` is down, the appendix). The board owns the TV in 1–5 (in WINNER it is the **results
 board**, prizes and all) and hands it back in 0 and 6.
+
+**Reopening betting asks first.** From AT THE POST to WINNER (3–5), WELCOME, STANDBY, 60 MIN,
+30 MIN and FINAL CALL would reopen betting, so `DASH` asks before it sends anything:
+`This reopens betting. The figures at the post (pot $86) and the hand count ($80) will be
+cleared.` (the real figures; no hand count, no second half). **Cancel** sends nothing.
+**Reopen betting** sends it: pi5 clears the figures at the post and the hand count, and the
+next AT THE GATE takes new ones. In 0–2 there is nothing to clear and they go at once. With
+the results set they stay greyed out, as ever.
+
+**AUTO / MANUAL** (the switch at the top of `DASH`): race night is **MANUAL**. AUTO is the
+old racing demo: a timer walks its own race through the LED animations by itself (La
+Quiniela, the cups and the TV do not follow it). While it is on every race button is greyed
+out and says `switch to MANUAL`. Switched to AUTO at AT THE POST, RUNNING or WINNER, `DASH`
+asks first.
 
 ---
 
@@ -246,6 +263,10 @@ Cups must be **empty** for this.
       `Reset. Pot $0 · 20 cups online`. If it names horses with tokens still in their
       cups, empty those cups and press it again. Nothing else changes: the cups keep their
       numbers (they're the cups' own), names and scratches (both kinds) stay.
+      Reset betting works only before a race (0 PRE-RACE) or after it (6 AFTER PARTY). If the
+      line says `Reset betting works only before the race (0) or after it (6). …`, a rehearsal
+      left the race in 1–5: `DASH` → **STANDBY** (from AT THE POST on it asks first: **Reopen
+      betting**), then Reset betting again.
 - [ ] Walk the mantle: every cup shows its number, no `NO HORSE`, no `NO LINK` badge on
       any cup.
 - [ ] Drop one token in one cup: `ADMIN` → Race shows Pot $1 (the TV board and its toast
@@ -296,6 +317,12 @@ over and paid (section 8), through a reload of the TV or a restart of pi5.
 The cash box can be counted from now on: it is the first step of section 8. The scales
 are estimates, so the pot you pay from is your count of the BETS compartment.
 
+A late bettor after AT THE GATE, before the race: `DASH` → **FINAL CALL** asks `This
+reopens betting. The figures at the post (pot $86) …`; **Reopen betting** clears the figures
+and any hand count, take the bet, then **AT THE GATE** again: new figures, from the cups as
+they are then (count the cash again if you had). Pressed by mistake: **Cancel**, nothing
+changes. AT THE GATE pressed twice changes nothing either.
+
 They're off: `DASH` → **THEY'RE OFF!** (then **CHAOS**, **FINISH** as the race runs: all
 three are RUNNING).
 
@@ -319,8 +346,12 @@ had nothing in its cup at the post and can't pay: skip it and tap the next finis
 its place (nobody bet the show horse: 4th place is SHOW). The three slot cards on the
 right are the check: read them before you press **CONFIRM RESULTS**. If a horse you picked
 had no bets, a red warning above the button says so.
-The results are saved whether or not the LED controller answers: a red `Results set: …
-· LEDs unreachable` means the TV and the cups have them and only the LEDs missed them.
+The line that follows names the race state the results set: `Results set: Win=19, Place=1,
+Show=22 · WINNER`, green. The results are saved whether or not the LED controller answers:
+a red `Results set: … · WINNER · LEDs unreachable` means the TV and the cups have them and
+only the LEDs missed them. A red `Results set: … · race state not set (La Quiniela: …)`
+means they are saved but La Quiniela did not go to WINNER, so the TV and the cups don't
+show them yet: the text after `La Quiniela:` says why (table at the end).
 
 - [ ] **Count the cash**, any time after AT THE GATE and always before you pay and before
       **RESET** (in AFTER PARTY the box is read-only). Open the cash box's BETS
@@ -350,9 +381,9 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 ## 9. Another race on the same night
 
-- [ ] `ADMIN` → Race → **Reset betting** → OK. The cups keep their numbers; names and
-      scratches stay; the figures at the post and the hand count go. The line says
-      `Reset. Pot $0`; if it names horses with tokens still
+- [ ] `ADMIN` → Race → **Reset betting** → OK (after **RESET**: AFTER PARTY). The cups keep
+      their numbers; names and scratches stay; the figures at the post and the hand count
+      go. The line says `Reset. Pot $0`; if it names horses with tokens still
       in their cups, empty those (each count drops to 0 by itself) and press it again.
 - [ ] Section 5 (close time), then section 6 (`DASH` → **60 MIN**).
 - [ ] A different field next race: `ADMIN` → Horse names → paste the new names → Save
@@ -383,7 +414,10 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 | No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
 | The crawl has no weather | `pi5/.env` has no `DDM_WEATHER_API_KEY` (pi5's log says `no weather key` at start), or no internet yet | Nothing needed: the item is left out. To have it: the key in `pi5/.env`, `sudo systemctl restart ddm-pi5`; it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
 | Every `DASH` button says `Error: ERROR:NO_LED_CONTROLLER` | `pi5/.env` has no `DDM_ESP32_IP` (pi5's log says `no LED controller set` at start) | The race state is set all the same. The LEDs: put the controller's address in `pi5/.env` (or the device panel on `DASH`), `sudo systemctl restart ddm-pi5`. |
-| Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results, the figures at the post and the hand count until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. |
+| Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results, the figures at the post and the hand count until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. If it refuses (next row), `DASH` → **STANDBY** first. |
+| **Reset betting** answers `Reset betting works only before the race (0) or after it (6). Change the race state on the Control Center.` | the race is in 1–5; Reset betting would change the race state behind `DASH`'s back (the mantle would stay on the old animation) | After the race: `DASH` → **RESET** (AFTER PARTY), then Reset betting. Before it (a rehearsal left the state there): `DASH` → **STANDBY** (from AT THE POST on it asks first), then Reset betting. |
+| `DASH` asks `Reopen betting?` | you tapped WELCOME, STANDBY, 60 MIN, 30 MIN or FINAL CALL at AT THE POST, RUNNING or WINNER: it would clear the figures at the post and the hand count it names | **Cancel**: nothing is sent. Only for a late bettor before the race: **Reopen betting**, take the bet, **AT THE GATE** again (new figures), count the cash again. |
+| Every `DASH` race button greyed out, each saying `switch to MANUAL` | the AUTO / MANUAL switch is on AUTO (the LED demo) | Switch it to MANUAL. Race night is MANUAL. |
 | Pot isn't $0 after **Reset betting** | tokens were still in the cups; the line under the button names them | Empty those cups (each count drops to 0 by itself) and press it again. |
 | No Counted pot box on `ADMIN`, or Save answers `The count can only be entered after betting closes …` | the box shows from AT THE POST to WINNER; before that betting is still open (nothing to count against yet), after it (AFTER PARTY) a saved count is read-only | Close betting first (section 7: `DASH` → **AT THE GATE**); the box appears within five seconds. |
 | A count typed wrong, or the cash changed after a late bet | the count is whatever was saved last | `ADMIN` → Race → Counted pot → type it again → **Save count** (it overwrites), or **Clear** to go back to the scales' figures. |
@@ -392,9 +426,10 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 | `Saved: … NOT stored: pi5 could not write it…` in red under Save count | pi5 holds the count but its database refused the write | Pay from it. If pi5 restarts before the draw is paid, enter the count again. |
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: its state line is the state pi5 holds (the ticker on `DASH` says the same). Press the right button on `DASH` and read what it answers. |
 | TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: results not saved …` (pi5 could not write the file; the LED controller has nothing to do with it) | `DASH` → **SET WINNERS** → confirm again. Meanwhile the prizes are in the board's header (WIN / PLACE / SHOW under the pot, the figures at the post); draw and pay from those. |
-| `Results set: … · LEDs unreachable` in red on `DASH` | the results are saved, on the TV and on the cups; only the LED controller missed them | Nothing for the results. The LEDs: check the LED controller (the device icon, top left of `DASH`). |
+| `Results set: … · WINNER · LEDs unreachable` in red on `DASH` | the results are saved, on the TV and on the cups; only the LED controller missed them | Nothing for the results. The LEDs: check the LED controller (the device icon, top left of `DASH`). |
+| `Results set: … · race state not set (La Quiniela: …)` in red on `DASH` | the results are saved, but La Quiniela refused WINNER, so the TV and the cups don't show them; the text says why (`bridge not initialised`: pi5's La Quiniela side is not up) | Fix what it names (`journalctl -u ddm-pi5 -n 50`), then `DASH` → **SET WINNERS** → the same three → **CONFIRM RESULTS** again. |
 | pi5 restarted, or the TV reloaded, during the draw | nothing is lost: pi5 keeps the results and the figures at the post | Nothing. The TV finds pi5 again by itself and shows the results board as it was. |
-| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid (a `DASH` WELCOME / TEST / STANDBY / 60 MIN / 30 MIN, or Reset betting): pi5 dropped the figures at the post, and a later close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held and count the cash again (the hand count went with the figures). |
+| Results board shows fewer bets or smaller prizes than at the close | betting was reopened before the draw was paid: a `DASH` WELCOME / STANDBY / 60 MIN / 30 MIN / FINAL CALL at AT THE POST or later, confirmed with **Reopen betting** (the question named the figures and the hand count it would clear); pi5 cleared them, and the next close took the cups as they were then | Pay from the backup photo (section 7), if there is one; otherwise count what those cups held and count the cash again (the hand count went with the figures). TEST never does this: it is LEDs only. |
 | `DASH` button says `Error: …` | the LED controller didn't answer | If the text goes on `· BETTING OPEN` (the state's name), the race state was set and only the LEDs are missing: check the LED controller (the device icon, top left of `DASH`). |
 | A button's line is red, or `ADMIN`'s state says `cannot reach pi5` | pi5 refused, or can't be reached; the text is the reason | `cannot reach pi5`: the iPad's Wi-Fi, or pi5 is down (appendix). Anything else names the fix. |
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
@@ -427,6 +462,9 @@ uses: the cups and the TV follow, `ADMIN` shows it, and it does nothing to the L
 ```bash
 curl -s -X POST localhost:5000/api/quiniela/mode -H 'Content-Type: application/json' -d '{"mode":"AT_THE_GATE"}'
 ```
+The curl does not ask first: from AT THE POST on, `WELCOME`, `STANDBY`, `BETTING_60`,
+`BETTING_30` and `FINAL_CALL` reopen betting and clear the figures at the post and the hand
+count at once. (`TEST` is not a mode: the LED test sets no race state.)
 The LEDs, the button's other half (the same name; skip it if the LED controller is the
 trouble):
 ```bash
@@ -447,12 +485,12 @@ curl -s localhost:5000/api/quiniela/mode
 
 ### The other actions
 
-The results, what `DASH` → SET WINNERS → CONFIRM RESULTS does (horse numbers; it sets WINNER, and the TV flips to the results board; the reply's `leds` says whether the LED controller took them, the results are saved either way):
+The results, what `DASH` → SET WINNERS → CONFIRM RESULTS does (horse numbers, all three, three different horses in the field, or a 400 that says which and nothing saved; it sets WINNER, and the TV flips to the results board; the reply's `leds` says whether the LED controller took them, the results are saved either way, and `race_error` says why when La Quiniela did not go to WINNER):
 ```bash
 curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":19,"place":1,"show":22}'
 ```
 
-Reset betting (cups, horses, names and scratches are kept; the reply names any cups with tokens still in them):
+Reset betting (cups, horses, names and scratches are kept; the reply names any cups with tokens still in them; only in PRE-RACE or AFTER PARTY, a 409 that says so in 1–5):
 ```bash
 curl -s -X POST localhost:5000/api/quiniela/reset
 ```

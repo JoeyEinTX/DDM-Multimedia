@@ -107,7 +107,7 @@ Each of the dashboard's mode buttons starts its LED animation and also sets the 
 
 | Dashboard button | Race state |
 |---|---|
-| WELCOME, TEST, STANDBY | 0 PRE_RACE |
+| WELCOME, STANDBY (TEST: an LED test only, no race state [DECIDED 2026-10-13, BUILT]) | 0 PRE_RACE |
 | 60 MIN, 30 MIN | 1 BETTING_OPEN |
 | FINAL CALL | 2 FINAL_CALL |
 | AT THE GATE | 3 AT_THE_POST |
@@ -279,7 +279,12 @@ There is no roster line. A v1 `roster` line is ignored.
 - **The figures at the post** (pot, prizes, bets per horse) are taken when the state first
   reaches 3 AT_THE_POST (or 4 or 5 if 3 was skipped), saved, and held through the race, the
   draw and any restart. They are dropped by Reset betting and by any state that reopens
-  betting (0 or 1). The TV shows them in states 3–5. [BUILT]
+  betting: 0, 1, or 2 (FINAL CALL after the post reopens betting, and the next AT THE GATE
+  takes fresh figures; AT THE GATE pressed again at the post takes nothing new). The
+  dashboard asks first before a button reopens betting from 3–5, naming the figures and the
+  hand count it clears. The betting log marks each close (`"betting": "closed"`) and each
+  reopen (`"betting": "reopened"`, with what it dropped). The TV shows them in states 3–5.
+  [DECIDED 2026-10-13, BUILT]
 - **Counted pot: the payout comes from the hand count.** [DECIDED 2026-09-29, BUILT]
   - After betting closes (states 3–5), the admin page shows a **Counted pot** box.
   - The host counts the cash box's BETS compartment and enters the amount.
@@ -448,13 +453,28 @@ Rules for either:
 | DDM Control Center (touchscreen, `joeydevpi.local:5000/`) | LQ admin page (phone, `joeydevpi.local:5000/quiniela/admin`) |
 |---|---|
 | LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
-| The mode buttons: LEDs **and** race state | The current race state, read-only [DECIDED 2026-10-02, BUILT] |
+| The mode buttons: LEDs **and** race state; TEST is LEDs only | The current race state, read-only [DECIDED 2026-10-02, BUILT] |
 | SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [BUILT] | Figures: pot, prizes, bets |
 | RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
-| Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept |
+| Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept; only in 0 or 6 |
 | | Race info, horse names, scratches and undo, the betting close time |
 
 - **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, BUILT]
+- **Nothing drops the figures at the post by accident.** [DECIDED 2026-10-13, BUILT]
+  - TEST is an LED test only and never sets a race state.
+  - From 3–5, WELCOME, STANDBY, 60 MIN, 30 MIN and FINAL CALL show an in-page confirm that
+    names the figures at the post and the hand count they would clear; only **Reopen
+    betting** sends. In 0–2 they go at once; with results set they stay disabled.
+  - AUTO / MANUAL: race night is MANUAL. While AUTO (the mock racing demo) is on, every
+    mode button is disabled and says `switch to MANUAL`; switching to AUTO in 3–5 asks
+    first.
+  - CONFIRM RESULTS says the race state it set (`· WINNER`), or in red La Quiniela's reason
+    when it refused; `POST /api/results` takes all three, distinct and in the field, or
+    answers a 400 and saves nothing.
+- **Reset betting only before or after a race.** [DECIDED 2026-10-13, BUILT] In states 1–5
+  it is refused (409: `Reset betting works only before the race (0) or after it (6). Change
+  the race state on the Control Center.`), so the Control Center stays the one place that
+  changes the race state.
 - **Two different resets.** RESET on the dashboard ends a race. Reset betting on the admin
   page prepares the next one. The runbook says which to use when.
 - **No PIN.** [DECIDED 2026-09-29] The dashboard, the admin page and La Subasta's guest

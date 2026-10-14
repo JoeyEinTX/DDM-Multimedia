@@ -195,6 +195,19 @@
         </div>
     </div>
 
+    <!-- Ask first: the in-page confirm for a tap that would lose something (ddm_control.js askFirst): a button that
+         reopens betting from AT THE POST to WINNER, AUTO switched on then. Only its first button sends. -->
+    <div id="ask-modal" class="modal ask-modal" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+        <div class="modal-content ask-modal-content">
+            <h2 id="ask-title"></h2>
+            <p id="ask-text" class="ask-text"></p>
+            <div class="ask-actions">
+                <button type="button" id="ask-ok" class="modal-btn ask-ok" onclick="askAnswer(true)"></button>
+                <button type="button" id="ask-cancel" class="modal-btn btn-back" onclick="askAnswer(false)">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Device Status Modal - ESP32 Controllers Only -->
     <div id="device-modal" class="modal">
         <div class="modal-content">

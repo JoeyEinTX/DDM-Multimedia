@@ -703,15 +703,18 @@ betting closed, and **pi5 holds them**, not the page: the model's `closing`.
   {"pot", "prizes", "total_tokens"}}`, and saved in `lq_closing` before the
   model goes out.
 - **Held** whatever the cups do afterwards (a token after the post, the
-  winners' cups emptied for the draw), through FINAL CALL pressed by
-  mistake (2 neither takes nor drops them, so WINNER again shows the same
-  figures, never ones taken again from emptied cups), AFTER_PARTY, and a
-  restart of pi5 (the store loads them).
+  winners' cups emptied for the draw, AT THE GATE pressed again), through
+  AFTER_PARTY and back to WINNER (HEARTBEAT after RESET), and a restart of
+  pi5 (the store loads them).
 - **Dropped** by Reset betting and by a state that reopens betting: 0
-  PRE_RACE or 1 BETTING_OPEN (the dashboard's WELCOME, TEST, STANDBY, 60 MIN,
-  30 MIN). Logged as
-  `{"closing": null}`. To take them again after a mistaken close, reopen
-  with 60 MIN and close again.
+  PRE_RACE, 1 BETTING_OPEN or 2 FINAL_CALL (the dashboard's WELCOME,
+  STANDBY, 60 MIN, 30 MIN, FINAL CALL; Joey, 2026-10-13: going back to FINAL
+  CALL after the post reopens betting, so a late bet is counted at the next
+  close, which takes fresh figures). From 3–5 the dashboard asks first,
+  naming the figures and the hand count it would clear (`at_post` in `GET
+  /api/quiniela/mode`); a curl does not. Logged as `{"closing": null}`, the
+  record marked `"betting": "reopened"` with `"dropped"` (below). TEST,
+  the dashboard's LED test, sets no race state and drops nothing.
 
 The live fields keep following the cups underneath (that is the truth about
 the cups, and what the admin page shows: the tokens always, the pot and the
@@ -737,7 +740,7 @@ It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
   is absent while there is no count), so the two lifecycles cannot drift
   apart: it is saved when it is entered, held through 4, 5, 6 and a restart
   of pi5 (the store loads the record), and dropped with the figures by
-  Reset betting and by 0 or 1 (2 keeps both, as it keeps the figures). A
+  Reset betting and by 0, 1 or 2 (betting reopened). A
   record without the key, which is every record from before this, has no
   count. A stored value that is not a whole number of dollars is ignored.
 - **One function.** `prizes_for(pot, split)` is the only place a prize is
@@ -788,7 +791,8 @@ its appendix. Top to bottom:
   tokens in the pot; tokens in scratched cups are counted beside the label);
   **Reset betting** behind a `confirm()`, calling `POST /api/quiniela/reset`
   and reporting `Reset. Pot $N (M tokens still in the cup(s) of horse(s) ...)
-  · K cups online`; and **Horses**, one row per horse 1..24 from the model
+  · K cups online` (only in 0 or 6: in 1–5 pi5 answers 409 and the page,
+  asking nothing first, shows its reason in red); and **Horses**, one row per horse 1..24 from the model
   and nothing to click: the number in its cloth colour, the name, the status
   (`● online`, `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup
   claims the horse), the tokens, and `WIN` / `PLACE` / `SHOW` / `SCR` tags
@@ -962,7 +966,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
-| `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "modes": {...the table...}}`, `Cache-Control: no-store`. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |
+| `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "at_post": null, "modes": {...the table...}}`, `Cache-Control: no-store`. `at_post` is `{"pot": <the scale pot at the post>, "pot_counted": <the hand count or null>}` while figures at the post are held: what the dashboard's reopen confirm names. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |
 | `POST /api/quiniela/mode` | `{"mode": "BETTING_60"}`: a dashboard mode; the race state is the table's. `{"ok": true, "mode": "BETTING_60", "state": 1, "state_name": "BETTING_OPEN", "source": "dashboard", "rev": R, "gateway_online": bool}`. 400 `unknown mode ...; one of ...`, 503 `bridge not initialised`. Sets the race state only: the LEDs are the button's own request. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
@@ -977,7 +981,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `PUT /api/quiniela/odds` | `{"odds": {"1": "5-2", ...}}` replaces them all (by hand: the morning line), `{"odds": null}` clears them. Numbers 1..24, non-empty values of at most 7 characters, upper-cased; the rest dropped. |
 | `POST /api/quiniela/odds/start` | `{"interval": 300}` (optional; 60 at least): the poller runs. 503 `ANTHROPIC_API_KEY not configured`, 409 when it already runs. |
 | `POST /api/quiniela/odds/stop` | `{"ok": true, "stopped": bool}`. |
-| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time and the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). |
+| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time and the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). Only before the race (0) or after it (6): in 1–5 a 409, `{"ok": false, "error": "Reset betting works only before the race (0) or after it (6). Change the race state on the Control Center."}`, and nothing moves (Joey, 2026-10-13: the Control Center stays the one place that changes the race state). `reset_betting()` itself does not check; the route does. |
 | `GET /quiniela/admin` | The admin page above. |
 
 These operator routes refresh the model synchronously before answering, so a
@@ -1166,13 +1170,15 @@ the store and the results file as follows:
 ### One race state
 
 There is one race state, and the dashboard's modes are its source. The
-dashboard's thirteen buttons drive the LEDs, as they always did; each also
-names its mode to pi5 (`POST /api/quiniela/mode`), and La Quiniela's race
-state, the one the cups and the TV board follow, is derived from the mode:
+dashboard's thirteen buttons drive the LEDs, as they always did; twelve of
+them also name their mode to pi5 (`POST /api/quiniela/mode`), and La
+Quiniela's race state, the one the cups and the TV board follow, is derived
+from the mode. TEST, the LED test, names none: it never sets a race state
+(Joey, 2026-10-13), and `TEST` is refused as a mode.
 
 | Dashboard button | Mode | La Quiniela state |
 | --- | --- | --- |
-| WELCOME, TEST, STANDBY | `WELCOME`, `TEST`, `STANDBY` | 0 PRE_RACE |
+| WELCOME, STANDBY | `WELCOME`, `STANDBY` | 0 PRE_RACE |
 | 60 MIN, 30 MIN | `BETTING_60`, `BETTING_30` | 1 BETTING_OPEN |
 | FINAL CALL | `FINAL_CALL` | 2 FINAL_CALL |
 | AT THE GATE | `AT_THE_GATE` | 3 AT_THE_POST |
@@ -1330,7 +1336,12 @@ after a start writes `"reset": "betting"` without `"baseline": true`.
 
 The closing figures leave their trace too: taken, `{"closing":{"pot":154.0,
 "prizes":{"win":92,"place":39,"show":23},"total_tokens":158}}` beside the
-state change that took them; dropped, `{"closing":null}`. A hand count
+state change that took them, the record marked `"betting":"closed"`;
+dropped, `{"closing":null}`. A drop by a reopening state (0, 1 or 2) marks
+its record `"betting":"reopened"` with what it dropped,
+`"dropped":{"pot":86.0,"pot_counted":80,"total_tokens":86}` (the scale pot,
+the hand count or null, the tokens), so a re-close reads as close, reopen,
+close; a drop by Reset betting is its `"reset":"betting"` record. A hand count
 is a record of its own when it is entered or cleared, `{"pot_counted":
 [null,152]}` (before, after), with the race state and the token total. The
 first write failure logs one WARNING and disables the log for the rest of
@@ -1355,21 +1366,26 @@ record beating a pending undo, the four-slot cap; a scratch before any cup
 says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
 the names text parser for 24 lines, the closing time, the between-races
-one race state (each of the dashboard's thirteen modes against the table,
-byte-exact lines, the cmd route setting the
+one race state (each of the dashboard's twelve modes against the table,
+`TEST` refused, byte-exact lines, the cmd route setting the
 same value, WINNER and the results in one line), the between-races
 reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
 results cleared, the ticker and `closes_at` zeroed, the tokens still in the
-cups read and their horses named), the closing figures (taken on 2 -> 3,
+cups read and their horses named; a 409 with nothing moved in each of 1–5),
+the closing figures (taken on 2 -> 3,
 0 -> 3, 1 -> 4 and 1 -> 5, in the very model that first says the closed
-state; not moved by later counts, the emptied cups included; kept by 2, 6
-and a snapshot with no phase; dropped by 1 and by Reset betting; logged,
+state; not moved by later counts, the emptied cups included; kept by 6, by
+WINNER again and by a snapshot with no phase; dropped by 2, by 1 and by
+Reset betting, a reopen marked with what it dropped; logged,
 saved in `lq_closing`, and a database error costing only the copy on disk),
+a re-close through the routes (close at $86 and count $80, AT THE GATE
+again taking nothing, FINAL CALL clearing both, nine more tokens, the
+second close at $96 in the TV's model; the log's close, reopen, close),
 a database from before `lq_closing` gaining it at start, the counted pot
 (`prizes_for` the only place a prize is worked out, for the scale pot and
 the count alike, no other module doing the sum; 154 -> 92 / 39 / 23, a
 spread of pots summing to themselves; bets per horse unchanged; held
-through 4, 5, 6 and 2, dropped by 0, 1 and Reset betting; refused outside
+through 4, 5 and 6, dropped by 0, 1, 2 and Reset betting; refused outside
 3 to 5 and with no figures at the post; bad amounts rejected; Clear
 putting the scale figures back, key for key; pushed at once, logged,
 saved in `lq_closing` and kept by a restart; the route's 400s and 409s; a
@@ -1413,11 +1429,19 @@ built from La Quiniela (the field and names, the odds by program number,
 the post time on the race's clock, the race state and the results), pi5's
 weather reaching the model (the feed's thread, and none without a key or
 conditions), the degree sign in the dots table, the
-thirteen buttons each
-carrying its mode, the LED command each one sends (unchanged), the race
+thirteen buttons, twelve
+carrying a mode (TEST none: pi5 refuses it), the LED command each one sends (unchanged), the race
 state each one sets, the results making it WINNER and RESET making it
 AFTER_PARTY; the results saved, WINNER in one line and `"leds":
 "unreachable"` with the LED controller down (RESULTS:FINALIZE tried once,
 after the save), a file that cannot be written moving nothing (500), the
 page's red `· LEDs unreachable` and its following the server's results, and
-that nothing main.py runs at start removes a file.
+that nothing main.py runs at start removes a file; `POST /api/results`
+refusing a missing, null, repeated or out-of-field horse with a 400 that
+saves and sends nothing; and, in headless Chrome, the race-night guards:
+TEST at the post sending no race state, every reopening button in 3, 4 and
+5 asking with the real figures (Cancel sends nothing, Reopen betting once)
+and in 0–2 going at once, a re-close through the page, CONFIRM RESULTS
+naming WINNER or La Quiniela's reason in red, AUTO asking first at the post
+and holding every mode button with `switch to MANUAL`, and Reset betting
+refused at the post on the admin page.

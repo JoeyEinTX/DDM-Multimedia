@@ -706,17 +706,26 @@ async function setRaceMode(mode) {
     }
 }
 
-async function pollRaceMode() {
+// The race state as pi5 holds it now, with the figures at the post (GET /api/quiniela/mode: state,
+// at_post, the modes table); what was read last when pi5 does not answer.
+let raceModes = null;      // pi5's table, {mode: race state}, from the last GET that carried it
+async function freshRaceMode() {
     try {
         const response = await fetch('/api/quiniela/mode', { cache: 'no-store' });
         const data = await response.json();
         if (data && data.ok) {
             raceModeInfo = data;
+            if (data.modes) raceModes = data.modes;
             buildTicker();
         }
     } catch (error) {
         // pi5 not answering: the ticker keeps what it had
     }
+    return raceModeInfo;
+}
+
+async function pollRaceMode() {
+    await freshRaceMode();
     await followServerResults();
     return raceModeInfo;
 }
@@ -825,6 +834,20 @@ function updateRaceControlUI() {
         dot.classList.remove('status-auto-connected', 'status-auto-disconnected');
         dot.classList.add('status-manual');
     }
+    updatePanelButtons();
+}
+
+// AUTO is the mock racing service's demo: a timer walks its own race states and drives the LEDs by itself
+// (La Quiniela does not follow it). Race night is MANUAL. Switched on while a race is at the post, running or
+// in WINNER, it asks first: the mantle would leave the race and SET WINNERS, STANDBY and RESET go off.
+async function autoAllowed() {
+    const info = await freshRaceMode();
+    const state = info ? info.state : null;
+    if (!(state >= AT_THE_POST && state <= WINNER)) return true;
+    return askFirst('Switch to AUTO?',
+        `The race state is ${raceStateLabel(info)}. AUTO runs the LED demo on its own timer, and SET WINNERS, `
+        + 'STANDBY, RESET and the other race buttons stay off until you switch back to MANUAL. Race night is MANUAL.',
+        'Switch to AUTO');
 }
 
 function initRaceControlToggle() {
@@ -833,6 +856,11 @@ function initRaceControlToggle() {
 
     toggle.addEventListener('change', async () => {
         const newMode = toggle.checked ? 'auto' : 'manual';
+        if (newMode === 'auto') {
+            toggle.checked = false;                  // MANUAL until the answer
+            if (!(await autoAllowed())) return;
+            toggle.checked = true;
+        }
         const success = await setRaceControlMode(newMode);
         if (!success) {
             toggle.checked = raceControlMode === 'auto';
@@ -917,6 +945,107 @@ function sendingRaceState(raceSet) {
     raceSet.then(() => { if (raceStateSending === raceSet) raceStateSending = null; });
 }
 
+// =====================================================================
+// Ask first (Joey, 2026-10-13)
+// =====================================================================
+// A tap that would lose something asks in the page before anything is sent: a button that reopens betting
+// from AT THE POST to WINNER (the figures at the post and the hand count would be cleared), and AUTO switched
+// on in those states. askFirst() shows the question and resolves true for its first button, false for
+// Cancel. An answer keeps the dialog up, its buttons off, for ASK_HOLD_MS, so the second tap of a double tap
+// lands on the dialog, not on whatever is under it once it has gone; a question asked meanwhile is a Cancel.
+// No browser confirm(): it is OK'd without reading, and a Home Screen page shows it oddly.
+const AT_THE_POST = 3;               // race states: from AT THE POST to WINNER the figures at the post are held
+const WINNER = 5;
+const ASK_HOLD_MS = 600;
+let askPending = null;               // the question on screen: its resolve
+let askHold = null;                  // the hold after an answer
+
+function askFirst(title, text, okLabel) {
+    const modal = document.getElementById('ask-modal');
+    if (!modal || askPending || askHold) return Promise.resolve(false);
+    const ok = document.getElementById('ask-ok');
+    const cancel = document.getElementById('ask-cancel');
+    document.getElementById('ask-title').textContent = title;
+    document.getElementById('ask-text').textContent = text;
+    ok.textContent = okLabel;
+    ok.disabled = cancel.disabled = false;
+    modal.classList.add('active');
+    return new Promise((resolve) => { askPending = resolve; });
+}
+
+function askAnswer(yes) {
+    const resolve = askPending;
+    if (!resolve) return;                         // already answered: the second tap of a double tap
+    askPending = null;
+    document.getElementById('ask-ok').disabled = true;
+    document.getElementById('ask-cancel').disabled = true;
+    askHold = setTimeout(() => {
+        askHold = null;
+        document.getElementById('ask-modal').classList.remove('active');
+    }, ASK_HOLD_MS);
+    resolve(yes);
+}
+
+// A mode that could reopen betting: its race state is before AT THE POST (pi5's table), or the table is not
+// known yet. AT THE GATE, THEY'RE OFF!, CHAOS, FINISH and HEARTBEAT go at once, as ever.
+function mayReopen(mode) {
+    return !raceModes || typeof raceModes[mode] !== 'number' || raceModes[mode] < AT_THE_POST;
+}
+
+// "This reopens betting. The figures at the post (pot $86) and the hand count ($80) will be cleared."
+function reopenText(atPost) {
+    const dollars = (n) => '$' + Math.round(Number(n) || 0);
+    if (!atPost || atPost.pot === null || atPost.pot === undefined) {
+        return 'This reopens betting. The figures at the post will be cleared.';
+    }
+    const count = atPost.pot_counted;
+    return `This reopens betting. The figures at the post (pot ${dollars(atPost.pot)})`
+        + (count !== null && count !== undefined ? ` and the hand count (${dollars(count)}) will be cleared.` : ' will be cleared.');
+}
+
+// Whether a tap on `mode` may go (OD1, OD2): at once unless it reopens betting while pi5 is at AT THE POST,
+// RUNNING or WINNER, read as the tap is made; then only on Reopen betting. pi5 clears the figures at the post
+// and the hand count when the state arrives, and the next AT THE GATE takes fresh ones.
+async function reopenAllowed(mode) {
+    if (!mayReopen(mode)) return true;
+    const info = await freshRaceMode();
+    const target = raceModes ? raceModes[mode] : undefined;
+    const state = info ? info.state : null;
+    if (typeof target !== 'number' || target >= AT_THE_POST || !(state >= AT_THE_POST && state <= WINNER)) return true;
+    return askFirst('Reopen betting?', reopenText(info.at_post), 'Reopen betting');
+}
+
+// A mode button's tap asks first when it must; meanwhile no other mode button takes a tap.
+function askedFirst(mode) {
+    const asked = reopenAllowed(mode);
+    sendingRaceState(asked);
+    return asked;
+}
+
+// Every mode button is held while AUTO is on, each saying why on itself, and the race-phase buttons (the
+// first three panels) once the results are set (setRaceComplete).
+let raceComplete = false;
+function updatePanelButtons() {
+    const auto = raceControlMode === 'auto';
+    document.querySelectorAll('.panels .panel').forEach((panel, i) => {
+        panel.querySelectorAll('button.btn').forEach((btn) => {
+            const held = auto || (raceComplete && i < 3);
+            btn.disabled = held;
+            btn.classList.toggle('disabled', held);
+            btn.classList.toggle('auto-held', auto);
+            let reason = btn.querySelector('.btn-reason');
+            if (auto && !reason) {
+                reason = document.createElement('span');
+                reason.className = 'btn-reason';
+                reason.textContent = 'switch to MANUAL';
+                btn.appendChild(reason);
+            } else if (!auto && reason) {
+                reason.remove();
+            }
+        });
+    });
+}
+
 // Send animation command with toggle functionality
 async function sendAnimation(animName, buttonElement) {
     if (!buttonElement) return animate(animName, buttonElement);     // no button to hold (triggerFinish)
@@ -964,6 +1093,11 @@ async function animate(animName, buttonElement) {
     // Check toggle-off BEFORE clearing (so we can detect re-click on same button)
     const isToggleOff = (activeButton === buttonElement);
 
+    // A mode that would reopen betting from AT THE POST or later asks first; Cancel sends nothing and leaves
+    // the page as it was. (Toggling an animation off sends no race state: nothing to ask.)
+    const mode = modeOf(buttonElement);
+    if (mode && !isToggleOff && !(await askedFirst(mode))) return;
+
     // Clear all highlights before sending new animation
     clearAllActiveButtons();
 
@@ -999,7 +1133,6 @@ async function animate(animName, buttonElement) {
     
     // Start new toggle animation. A mode button also names its mode to pi5
     // (one race state); the LEDs are not waited for.
-    const mode = modeOf(buttonElement);
     const raceSet = mode ? setRaceMode(mode) : null;
     if (raceSet) sendingRaceState(raceSet);
     try {
@@ -1032,7 +1165,8 @@ async function sendStandby() {
 }
 
 async function standby() {
-    if (raceControlMode === 'auto') return;
+    if (raceControlMode === 'auto') return;          // its button is held in AUTO and says so
+    if (!(await askedFirst('STANDBY'))) return;      // from AT THE POST or later: asks first
     const raceSet = setRaceMode('STANDBY');
     sendingRaceState(raceSet);
     try {
@@ -1174,10 +1308,11 @@ async function emergencyStop() {
 let colorPicker = null;
 let currentBrightness = 75;
 
-// Open test modal with color wheel
+// Open test modal with color wheel. An LED test only: it names no mode to pi5, so the race state, the
+// figures at the post and the hand count stay as they are (Joey, 2026-10-13: opening it at the post used to
+// set PRE-RACE and drop them). Nothing in the modal needs a race state; 'TEST' below is the LED mode's name.
 function openTestModal() {
     clearAllActiveButtons();
-    setRaceMode('TEST');
     document.getElementById('current-mode').textContent = 'TEST';
     filterTuningGroups('TEST');
     const modal = document.getElementById('test-modal');
@@ -1878,13 +2013,15 @@ async function resultsConfirm() {
         const data = await response.json();
 
         if (data.success) {
-            // The results stand either way; an unreachable LED controller only
-            // means the LEDs missed them
-            const set = `Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`;
+            // The results stand either way. The line names the race state they set (WINNER); in red when La
+            // Quiniela refused it, with its reason; an unreachable LED controller only means the LEDs missed them
+            const race = data.race ? { ok: true, ...data.race }
+                : { ok: false, error: data.race_error || 'La Quiniela did not answer' };
+            const set = withRaceState(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, race);
             if (data.leds === 'unreachable') {
                 showNotification(`${set} \u00b7 LEDs unreachable`, 'error');
             } else {
-                showNotification(set, 'success');
+                showNotification(set, race.ok ? 'success' : 'error');
             }
             document.getElementById('current-mode').textContent = 'RESULTS';
             filterTuningGroups('RESULTS');
@@ -2024,23 +2161,11 @@ function createDotMatrixText(text, padLeft = 0, padRight = 0, fixedLength = null
     return container;
 }
 
-// Enable or disable race-phase panels when results are set
+// Enable or disable race-phase panels when results are set (the first 3 panels: PRE-RACE, BETTING, DURING;
+// the Results panel stays enabled). AUTO holds them all whatever this says (updatePanelButtons).
 function setRaceComplete(isComplete) {
-    // Get all panels (first 3 are race phases, 4th is Results panel which stays enabled)
-    const allPanels = document.querySelectorAll('.panel');
-    const racePhasePanels = Array.from(allPanels).slice(0, 3); // PRE-RACE, BETTING, DURING
-    
-    racePhasePanels.forEach(panel => {
-        const buttons = panel.querySelectorAll('button.btn');
-        buttons.forEach(btn => {
-            btn.disabled = isComplete;
-            if (isComplete) {
-                btn.classList.add('disabled');
-            } else {
-                btn.classList.remove('disabled');
-            }
-        });
-    });
+    raceComplete = !!isComplete;
+    updatePanelButtons();
 }
 
 // The tote's name column holds 15 tiles. A longer name is drawn whole and

@@ -1691,8 +1691,9 @@ def test_no_replacement_scratch_is_about_the_horse():
     _check("the record is gone", HorseStore(b.db).scratches() == {})
     r = client.post("/api/quiniela/unscratch", json={"horse": 20})
     _check("unscratching again -> 400", r.status_code == 400 and r.get_json()["error"] == "horse 20 is not scratched", str(r.get_json()))
-    # A reset keeps the record and the bit.
+    # A reset keeps the record and the bit (Reset betting works before the race or after it: 0 first).
     client.post("/api/quiniela/scratch", json={"horse": 20})
+    client.post("/api/quiniela/cmd", json={"cmd": "state 0"})
     r = client.post("/api/quiniela/reset")
     _check("after a reset the record stands and the bit is still in the line", r.status_code == 200
            and HorseStore(b.db).scratches() == {20: None} and b.scratched == [20] and port.lines()[-1] == state_line(b.state_rev, 0, [20]),
@@ -2364,7 +2365,8 @@ def test_closing_figures():
     """closing: the pot, the prizes, the token count and every horse's
     tokens as they were when betting closed. Taken the first time the race
     state is 3, 4 or 5 with none held; no count moves them afterwards; Reset
-    betting and a return to 0 or 1 drop them; 2 and 6 leave them."""
+    betting and a return to 0, 1 or 2 drop them (2: FINAL CALL after the
+    post reopens betting, Joey's OD1 of 2026-10-13); 6 leaves them."""
     b, wall, log_dir = fresh_board()
     b.apply_snapshot(snap(phase=1, cups=POST_CUPS))
     _check("betting open: no closing figures", b.model()["closing"] is None)
@@ -2383,9 +2385,10 @@ def test_closing_figures():
            and all(c["horses"][k]["tokens"] == h["tokens"] for k, h in m["horses"].items()))
     _check("...in the JSON the TV gets", json.loads(b.model_json())["closing"] == c)
     _, lines = log_lines(log_dir)
-    _check("the log records them beside the state change",
+    _check("the log records them beside the state change, the record marked as the close",
            {"closing": {"pot": 46.0, "prizes": {"win": 27, "place": 12, "show": 7}, "total_tokens": 46}} in lines[-1]["changes"]
-           and {"race_state": [2, 3]} in lines[-1]["changes"], str(lines[-1]))
+           and {"race_state": [2, 3]} in lines[-1]["changes"] and lines[-1].get("betting") == "closed"
+           and "dropped" not in lines[-1], str(lines[-1]))
     # A late token, the race, the results, the cups emptied for the draw.
     wall.advance(5)
     b.apply_snapshot(snap(phase=3, cups=post_cups(h7=25)))
@@ -2397,22 +2400,34 @@ def test_closing_figures():
     _check("later token changes move the live fields, never the closing figures",
            m["closing"] == c and m["pot"] == 25.0 and m["prizes"] == {"win": 15, "place": 6, "show": 4}
            and m["horses"]["19"]["tokens"] == 0 and m["results"] == {"win": 19, "place": 1, "show": 22}, str(m["pot"]))
-    b.apply_snapshot(snap(phase=2, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
-    _check("FINAL CALL pressed after the draw: kept", b.model()["closing"] == c)
-    b.apply_snapshot(snap(phase=5, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
-    _check("...and WINNER again shows the same figures, not ones taken again from the emptied cups", b.model()["closing"] == c)
     b.apply_snapshot(snap(phase=6, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
     _check("AFTER_PARTY keeps them", b.model()["closing"] == c)
     b.apply_snapshot({})
     _check("a snapshot with no phase at all (no bridge) leaves them", b.model()["closing"] == c)
+    b.apply_snapshot(snap(phase=5, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("WINNER again (HEARTBEAT after RESET) keeps them, never taken again from the emptied cups", b.model()["closing"] == c)
+    b.apply_snapshot(snap(phase=2, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
+    _check("FINAL CALL after the post reopens betting: dropped (the Control Center asks first)", b.model()["closing"] is None)
+    _, lines = log_lines(log_dir)
+    _check("...logged as dropped, the record marked as a reopen with what it dropped",
+           {"closing": None} in lines[-1]["changes"] and {"race_state": [5, 2]} in lines[-1]["changes"]
+           and lines[-1].get("betting") == "reopened"
+           and lines[-1].get("dropped") == {"pot": 46.0, "pot_counted": None, "total_tokens": 46}, str(lines[-1]))
+    b.apply_snapshot(snap(phase=3, cups=post_cups(h7=25)))
+    _check("the next AT THE POST takes fresh figures, from the cups as they are then",
+           b.model()["closing"]["pot"] == 47.0 and b.model()["closing"]["horses"]["7"] == {"tokens": 25}, str(b.model()["closing"]))
     b.apply_snapshot(snap(phase=1, cups=post_cups(h7=25, h19=0, h1=0, h22=0)))
     _check("a return to BETTING OPEN drops them", b.model()["closing"] is None)
     _, lines = log_lines(log_dir)
-    _check("...logged as dropped", {"closing": None} in lines[-1]["changes"], str(lines[-1]))
+    _check("...logged as dropped, a reopen too", {"closing": None} in lines[-1]["changes"] and lines[-1].get("betting") == "reopened",
+           str(lines[-1]))
     b.apply_snapshot(snap(phase=3, cups=POST_CUPS))
     _check("closed again: taken again, from the cups as they are now", b.model()["closing"]["pot"] == 45.0)
     done = b.reset_betting()
     _check("Reset betting drops them (here with no bridge)", b.model()["closing"] is None and done["race_state"] == 0)
+    _, lines = log_lines(log_dir)
+    _check("...a reset, not a reopen: marked as the betting reset, no reopen mark",
+           lines[-1].get("reset") == "betting" and "betting" not in lines[-1] and "dropped" not in lines[-1], str(lines[-1]))
 
     b2, wall2, _ = fresh_board()
     b2.apply_snapshot(snap(phase=0, cups=POST_CUPS))
@@ -2578,9 +2593,9 @@ def _tokens_by_horse(model):
 def test_counted_pot_model():
     """The hand count: the pot and all three prizes come from it, through
     prizes_for, with the same split and rounding; bets per horse stay as the
-    scales read them; it is held with the figures at the post, through 4, 5,
-    6 and 2, and dropped by 0, 1 and Reset betting; it can be entered in 3-5
-    only, and only as a whole number of dollars."""
+    scales read them; it is held with the figures at the post, through 4, 5
+    and 6, and dropped by 0, 1, 2 (betting reopened) and Reset betting; it
+    can be entered in 3-5 only, and only as a whole number of dollars."""
     b, wall, log_dir = fresh_board()
     b.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
     m = b.model()
@@ -2671,7 +2686,7 @@ def test_counted_pot_model():
     _check("...the record holds no count any more", "pot_counted" not in b.store.closing)
     _check("clearing when there is none changes nothing", b.set_pot_counted(None)["pot_counted"] is None)
 
-    # Held: 3 -> 4 -> 5 -> 6, 2, and the cups emptied for the draw.
+    # Held: 3 -> 4 -> 5 -> 6 -> 5, and the cups emptied for the draw.
     b.set_pot_counted(152)
     held = b.model()["closing"]
     EMPTY = [dict(c_, count=0) for c_ in COUNT_CUPS]
@@ -2681,20 +2696,25 @@ def test_counted_pot_model():
         _check(f"state {phase}: the count and the figures at the post are held, and the pot is the count's",
                m["pot_counted"] == 152 and m["hand_counted"] is True and m["closing"] == held and m["pot"] == 152.0
                and m["prizes"] == real_prizes(152) and m["pot_scale"] == 150.0, str((m["pot_counted"], m["pot"])))
-    b.apply_snapshot(snap(phase=2, cups=EMPTY))
-    m = b.model()
-    _check("state 2 (FINAL CALL after the draw): the count is held with the figures, but betting is open again, "
-           "so the model's pot and prizes are the live ones and hand_counted says they are not the count",
-           m["pot_counted"] == 152 and m["closing"] == held and m["pot_scale"] == 150.0 and m["hand_counted"] is False
-           and m["pot"] == 0.0 and m["prizes"] == {"win": 0, "place": 0, "show": 0}, str((m["pot_counted"], m["pot"], m["hand_counted"])))
     b.apply_snapshot(snap(phase=5, cups=EMPTY))
     m = b.model()
-    _check("...and WINNER again: the count's, unchanged",
+    _check("...and WINNER again (HEARTBEAT after RESET): the count's, unchanged",
            m["pot_counted"] == 152 and m["hand_counted"] is True and m["pot"] == 152.0 and m["closing"] == held)
     _check("...the cups emptied for the draw show as they are (the count does not touch bets)",
            all(h["tokens"] == 0 for h in b.model()["horses"].values()) and b.model()["total_tokens"] == 0)
     b.apply_snapshot({})
     _check("a snapshot with no phase (no bridge) leaves it", b.model()["pot_counted"] == 152)
+    b.apply_snapshot(snap(phase=2, cups=EMPTY))
+    m = b.model()
+    _check("state 2 (FINAL CALL after the post) reopens betting: the count goes with the figures, the live figures",
+           (m["pot_counted"], m["pot_scale"], m["hand_counted"], m["closing"]) == (None, None, False, None)
+           and m["pot"] == 0.0 and "pot_counted" not in (b.store.closing or {}), str((m["pot_counted"], m["pot"], m["hand_counted"])))
+    _, lines = log_lines(log_dir)
+    _check("...and the log says what that reopen dropped: the scale pot, the count, the tokens",
+           lines[-1].get("betting") == "reopened" and lines[-1].get("dropped") == {"pot": 150.0, "pot_counted": 152, "total_tokens": 150},
+           str(lines[-1]))
+    b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
+    b.set_pot_counted(152)
 
     # Dropped by 1, by 0 and by Reset betting; a later post starts clean.
     b.apply_snapshot(snap(phase=1, cups=COUNT_CUPS))
@@ -2743,7 +2763,8 @@ def test_counted_pot_model():
         refusal[2] = None
     except betting.CountRefused as exc:
         refusal[2] = str(exc)
-    _check("state 2 with a held count: refused as well, the count stays", refusal[2] is not None and b.model()["pot_counted"] == 152)
+    _check("state 2 after a count: the count went with the figures (betting reopened), and a Clear there is refused",
+           refusal[2] is not None and "after betting closes" in refusal[2] and b.model()["pot_counted"] is None, str(refusal[2]))
     b.apply_snapshot(snap(phase=3, cups=COUNT_CUPS))
     b._closing = None                       # a post with no figures (what a database without them would leave)
     try:
@@ -3006,11 +3027,72 @@ def test_admin_page():
     _check("well under 700 lines", html.count("\n") < 700, str(html.count("\n")))
 
 
+def test_reopen_takes_fresh_figures():
+    """B1 of the gap review (Joey's OD1, 2026-10-13), through the routes on a real bridge: close at AT THE
+    GATE (86 tokens, #12 with 1) and count $80; AT THE GATE again with a late token takes nothing new; FINAL
+    CALL reopens betting, dropping the figures and the count; 9 more tokens on #12; AT THE GATE again takes
+    the second close's figures, which the TV's model shows. The log has the first close, the reopen with
+    what it dropped, and the second close, each marked. GET mode's at_post is what the dashboard's confirm
+    names: the scale pot and the count at the post, null while betting is open."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    log_dir = tmpdir() / "logs"
+    client = _make_board_app(b, log_dir=log_dir).test_client()
+    board = get_board()
+    client.post("/api/quiniela/mode", json={"mode": "BETTING_60"})
+    others = [n for n in range(1, 21) if n not in (12, 18)]
+    counts = {12: 1, 18: 0, **{n: (5 if i < 13 else 4) for i, n in enumerate(others)}}
+    for n, count in counts.items():
+        b.handle_raw_line(telem(mac_of(n), horse=n, count=count))
+    board.refresh()
+    _check("setup: 86 tokens across 19 cups, #12 with 1, betting open, nothing at the post",
+           board.model()["pot"] == 86.0 and board.model()["closing"] is None
+           and client.get("/api/quiniela/mode").get_json()["at_post"] is None, str(board.model()["pot"]))
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    first = board.model()["closing"]
+    _check("AT THE GATE: the figures at the post, pot $86, #12 at 1",
+           first["pot"] == 86.0 and first["horses"]["12"] == {"tokens": 1} and first["total_tokens"] == 86, str(first))
+    r = client.put("/api/quiniela/counted_pot", json={"amount": 80})
+    info = client.get("/api/quiniela/mode").get_json()
+    _check("counted $80; GET mode carries what a reopen would clear: the scale pot $86 and the count $80",
+           r.status_code == 200 and info["at_post"] == {"pot": 86.0, "pot_counted": 80}, str(info))
+    b.handle_raw_line(telem(mac_of(12), horse=12, count=2))                  # a late token, after the post
+    board.refresh()
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    m = board.model()
+    _check("AT THE GATE pressed again while at the post: a no-op, nothing taken again (the late token is not in it)",
+           m["pot_scale"] == 86.0 and m["closing"]["horses"]["12"] == {"tokens": 1} and m["pot_counted"] == 80, str(m["closing"]["horses"]["12"]))
+    client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL"})
+    m = board.model()
+    _check("FINAL CALL after the post reopens betting: the figures at the post and the count are cleared, the pot is live",
+           (m["race_state"], m["closing"], m["pot_counted"], m["pot_scale"], m["hand_counted"]) == (2, None, None, None, False)
+           and m["pot"] == 87.0 and client.get("/api/quiniela/mode").get_json()["at_post"] is None
+           and board.store.closing is None, str((m["race_state"], m["pot"], m["pot_counted"])))
+    b.handle_raw_line(telem(mac_of(12), horse=12, count=11))                 # nine more on #12: the live pot $96
+    board.refresh()
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    m = json.loads(board.model_json())
+    _check("AT THE GATE again: the second close's figures, pot $96, #12 at 11, in the model the TV reads",
+           m["closing"]["pot"] == 96.0 and m["closing"]["horses"]["12"] == {"tokens": 11} and m["pot"] == 96.0
+           and m["pot_scale"] == 96.0 and m["pot_counted"] is None and m["hand_counted"] is False, str(m["closing"]["pot"]))
+    _check("...and saved: a restart would show the same", board.store.closing["pot"] == 96.0)
+    _, lines = log_lines(log_dir)
+    marks = [(l["betting"], l.get("dropped"), next((c["closing"] for c in l["changes"] if "closing" in c), "none"))
+             for l in lines if "betting" in l]
+    _check("the log: the first close, the reopen with what it dropped, the second close, in that order",
+           marks == [("closed", None, {"pot": 86.0, "prizes": {"win": 51, "place": 22, "show": 13}, "total_tokens": 86}),
+                     ("reopened", {"pot": 86.0, "pot_counted": 80, "total_tokens": 86}, None),
+                     ("closed", None, {"pot": 96.0, "prizes": {"win": 58, "place": 24, "show": 14}, "total_tokens": 96})],
+           str(marks))
+
+
 def test_reset_betting_route():
     """POST /api/quiniela/reset: PRE_RACE, the closing time, the ticker and
     the results cleared, the cups' current counts the baseline. Names and
     both kinds of scratch stay; the cups keep their numbers, which are
-    theirs. Tokens still in a cup are not an error: the pot reads them."""
+    theirs. Tokens still in a cup are not an error: the pot reads them.
+    Only before the race (0) or after it (6): in 1-5 a 409 that says so and
+    nothing moves (Joey, 2026-10-13, gap review OD13)."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
     client = _make_board_app(b).test_client()
@@ -3035,10 +3117,28 @@ def test_reset_betting_route():
            and m["closes_at"] is not None and [(s["was"]["number"], s["now"] and s["now"]["number"]) for s in m["scratches"]] == [(3, 21), (15, None)]
            and m["results"] == {"win": 9, "place": 21, "show": 2} and m["cups_online"] == 21 and m["cups_no_horse"] == 1, str(m["pot"]))
     names_rev = m["names_rev"]
+    # Refused while a race is on: 1-5, each a 409 with the plain message, no line, nothing cleared.
+    refused = {}
+    for state in (2, 1, 3, 4, 5):
+        client.post("/api/quiniela/cmd", json={"cmd": f"state {state}"})
+        board.refresh()
+        before = (b.state_rev, len(port.lines()), board.model()["closes_at"], board.model()["results"])
+        r = client.post("/api/quiniela/reset")
+        board.refresh()
+        after = (b.state_rev, len(port.lines()), board.model()["closes_at"], board.model()["results"])
+        refused[state] = (r.status_code, r.get_json(), before == after and b.phase == state)
+    _check("Reset betting in states 1-5: 409, the message, and nothing moved (no state line, the results and closing time kept)",
+           all(code == 409 and body == {"ok": False, "error": board_mod.RESET_REFUSED} and still
+               for code, body, still in refused.values()), str(refused))
+    _check("...the message, word for word", board_mod.RESET_REFUSED == "Reset betting works only before the race (0) or after it (6). "
+                                                                       "Change the race state on the Control Center.")
+    # After the race (6) it works as it always did.
+    client.post("/api/quiniela/cmd", json={"cmd": "state 6"})
+    board.refresh()
     n_lines = len(port.lines())
     r = client.post("/api/quiniela/reset")
     body = r.get_json()
-    _check("POST /api/quiniela/reset 200 ok", r.status_code == 200 and body["ok"] is True, r.get_data(as_text=True))
+    _check("POST /api/quiniela/reset in AFTER PARTY (6): 200 ok", r.status_code == 200 and body["ok"] is True, r.get_data(as_text=True))
     _check("...PRE_RACE; the pot reads the tokens still in the cups and names those horses",
            body["race_state"] == 0 and body["pot"] == 15.0 and body["total_tokens"] == 15
            and body["horses_with_tokens"] == [9, 21], str(body))
@@ -3061,7 +3161,7 @@ def test_reset_betting_route():
     _check("...persisted", HorseStore(b.db).closes_at is None and HorseStore(b.db).scratches() == {3: 21, 15: None})
     _, log = log_lines(board._log_dir)
     _check("the log: a baseline record marked as the betting reset, with the state change",
-           log[-1].get("baseline") is True and log[-1].get("reset") == "betting" and {"race_state": [2, 0]} in log[-1]["changes"], str(log[-1]))
+           log[-1].get("baseline") is True and log[-1].get("reset") == "betting" and {"race_state": [6, 0]} in log[-1]["changes"], str(log[-1]))
     b.handle_raw_line(telem(mac_of(9), horse=9, count=11))
     board.refresh()
     m = board.model()
@@ -3072,7 +3172,7 @@ def test_reset_betting_route():
     _check("emptying the cups shows as removals", sorted(e["delta"] for e in board.model()["events"]) == [-11, -5, 1], str(board.model()["events"]))
     r = client.post("/api/quiniela/reset")
     body = r.get_json()
-    _check("reset with empty cups: pot 0, no tokens, no horses named, no events",
+    _check("reset with empty cups, before the race (0): pot 0, no tokens, no horses named, no events",
            body["pot"] == 0.0 and body["total_tokens"] == 0 and body["horses_with_tokens"] == [] and body["events"] == 0, str(body))
     n = len(log_lines(board._log_dir)[1])
     client.post("/api/quiniela/reset")
@@ -3155,11 +3255,12 @@ def test_settings_new_keys():
 
 
 # The table of the brief, adjusted to the modes the dashboard has: its
-# thirteen buttons by the names they use, HEARTBEAT added at 5 (the race is
-# over; the dashboard's own map calls it OFFICIAL) and RESET standing in for
-# the after-party mode it does not have.
+# buttons by the names they use, HEARTBEAT added at 5 (the race is over; the
+# dashboard's own map calls it OFFICIAL) and RESET standing in for the
+# after-party mode it does not have. TEST is not a mode: an LED test only
+# (Joey, 2026-10-13, gap review OD2).
 EXPECTED_MODE_STATES = {
-    "WELCOME": 0, "TEST": 0, "STANDBY": 0,
+    "WELCOME": 0, "STANDBY": 0,
     "BETTING_60": 1, "BETTING_30": 1,
     "FINAL_CALL": 2,
     "AT_THE_GATE": 3,
@@ -3172,7 +3273,8 @@ EXPECTED_MODE_STATES = {
 def test_modes_set_the_race_state():
     """One race state: every dashboard mode means a race state, and the cmd
     route, the admin page's buttons and the modes all set the same value."""
-    _check("the table: thirteen modes, the expected states", MODE_STATES == EXPECTED_MODE_STATES, str(MODE_STATES))
+    _check("the table: twelve modes, the expected states; TEST is not one", MODE_STATES == EXPECTED_MODE_STATES
+           and "TEST" not in MODE_STATES and "TEST" not in MODE_LABELS, str(MODE_STATES))
     _check("every mode has a label and every state 0..6 has a mode",
            set(MODE_LABELS) == set(MODE_STATES) and set(MODE_STATES.values()) == set(range(7)))
     b, port, sio, clk = _fresh_bridge()
@@ -3184,13 +3286,13 @@ def test_modes_set_the_race_state():
     _check("GET /api/quiniela/mode before anything was set: state 0, no mode, no source, the table, no-store",
            r.status_code == 200 and r.headers.get("Cache-Control") == "no-store"
            and body == {"ok": True, "state": 0, "state_name": "PRE_RACE", "mode": None, "label": None,
-                        "source": None, "modes": EXPECTED_MODE_STATES}, str(body))
+                        "source": None, "at_post": None, "modes": EXPECTED_MODE_STATES}, str(body))
     names = {0: "PRE_RACE", 1: "BETTING_OPEN", 2: "FINAL_CALL", 3: "AT_THE_POST", 4: "RUNNING", 5: "WINNER",
              6: "AFTER_PARTY"}
     # Walk the modes in an order in which every one changes the state, so every one sends a line.
-    order = ["BETTING_60", "WELCOME", "BETTING_30", "TEST", "FINAL_CALL", "STANDBY", "AT_THE_GATE", "GATES_BURST",
+    order = ["BETTING_60", "WELCOME", "BETTING_30", "FINAL_CALL", "STANDBY", "AT_THE_GATE", "GATES_BURST",
              "FINAL_CALL", "CHAOS", "AT_THE_GATE", "FINISH", "RESULTS", "RESET", "HEARTBEAT_COOLDOWN"]
-    _check("the walk covers all thirteen modes", set(order) == set(EXPECTED_MODE_STATES))
+    _check("the walk covers all twelve modes", set(order) == set(EXPECTED_MODE_STATES))
     rev = b.state_rev
     for mode in order:
         state = EXPECTED_MODE_STATES[mode]
@@ -3248,14 +3350,15 @@ def test_modes_set_the_race_state():
     r = client.post("/api/quiniela/mode", json={"mode": "RESULTS"})
     _check("WINNER goes down in ONE line with the results (and the scratched bit)",
            r.status_code == 200 and port.lines() == [state_line(rev + 1, 5, [7], [], [19, 1, 22])], str(port.lines()))
-    # Reset betting is a state change too: PRE_RACE, set by the reset.
+    # Reset betting is a state change too: PRE_RACE, set by the reset (after the race: RESET first).
+    client.post("/api/quiniela/mode", json={"mode": "RESET"})
     client.post("/api/quiniela/reset")
     info = client.get("/api/quiniela/mode").get_json()
     _check("after Reset betting: state 0, source reset, no mode", (info["state"], info["mode"], info["source"]) == (0, None, "reset"), str(info))
     _, lines = log_lines(log_dir)
     _check("the log recorded the state changes", {"race_state": [4, 5]} in [c for l in lines for c in l["changes"]])
     # Errors
-    for bad in ({"mode": "PARTY"}, {"mode": ""}, {"mode": 5}, {"mode": None}, {}, [], {"mode": "state 1"}):
+    for bad in ({"mode": "PARTY"}, {"mode": ""}, {"mode": 5}, {"mode": None}, {}, [], {"mode": "state 1"}, {"mode": "TEST"}):
         r = client.post("/api/quiniela/mode", json=bad)
         _check(f"POST mode {bad!r:.30} -> 400 naming the modes", r.status_code == 400 and r.get_json()["ok"] is False
                and "unknown mode" in r.get_json()["error"] and "BETTING_60" in r.get_json()["error"], str(r.get_json()))
@@ -3654,6 +3757,7 @@ def main():
     _run("renumber — the lifecycle of the pairs in the state line", test_renum_lifecycle)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
     _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
+    _run("closing — reopened from the post with FINAL CALL, the next close takes fresh figures (B1)", test_reopen_takes_fresh_figures)
     _run("closing — a database from before lq_closing gains it at start", test_lq_closing_on_an_existing_database)
     _run("closing — the results and the closing figures survive a restart", test_results_and_closing_survive_a_restart)
     _run("counted pot — the model: same function, held, dropped, refused, bad input", test_counted_pot_model)

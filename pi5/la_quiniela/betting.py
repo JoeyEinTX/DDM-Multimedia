@@ -28,7 +28,9 @@
 # and every horse's tokens, the live fields' shapes, plus "at"): taken when
 # the race state first reaches AT_THE_POST (or RUNNING or WINNER when that
 # was skipped), persisted, and dropped only by the between-races reset or a
-# state that reopens betting (PRE_RACE, BETTING_OPEN); null while there are
+# state that reopens betting (PRE_RACE, BETTING_OPEN, and FINAL_CALL: going
+# back to FINAL CALL after the post reopens betting, so the next AT THE GATE
+# takes fresh figures); null while there are
 # none. The TV board shows them in 3, 4 and 5, so a page loaded after the
 # cups were emptied for the draw, a second screen or a restart of pi5 all
 # show the numbers at the post. The live fields keep following the cups.
@@ -39,8 +41,7 @@
 # as the figures at the post are. While it is held the pot and the three
 # prizes are the count's (prizes_for(count), the same split and rounding), in
 # closing's pot and prizes and in the model's own from the post to the end
-# (3-6; in FINAL CALL betting is open again and the model's are the live
-# ones); the bets per horse stay the scales'. pot_scale is the scale pot frozen
+# (3-6); the bets per horse stay the scales'. pot_scale is the scale pot frozen
 # at the post, pot_counted the count (or null), hand_counted whether the
 # model's pot and prizes are the count's.
 # race is the race itself from the store (name, year, post time as unix
@@ -107,9 +108,13 @@ CMD_WHITELIST = frozenset({"state", "demo", "json"})
 # Betting is closed from AT_THE_POST on: the closing figures are taken the
 # first time the race state is one of these with none held, and dropped when
 # it is one of the reopening states (or by the between-races reset).
-# FINAL_CALL and AFTER_PARTY leave them as they are.
+# FINAL_CALL reopens betting too (Joey, 2026-10-13, gap review OD1): going
+# back from AT THE POST to FINAL CALL drops the figures and the hand count,
+# and the next AT THE GATE takes fresh ones (it used to keep the first
+# close's, so bets made in the second FINAL CALL were never counted).
+# AFTER_PARTY leaves them as they are.
 CLOSED_STATES = frozenset({int(P.Phase.AT_THE_POST), int(P.Phase.RUNNING), int(P.Phase.WINNER)})
-REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN)})
+REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
 
 # The hand count (the counted pot): after betting closes the host counts the
 # cash box's BETS compartment and types the dollars, and from then on the pot
@@ -120,19 +125,22 @@ REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN)})
 # few hundred dollars).
 COUNTED_POT_MAX = 10000
 # From the post to the end (3, 4, 5, 6) the model's pot and prizes are the
-# count's. The count is held through FINAL_CALL like the figures at the post,
-# but betting is open again there, so in 2 the model's pot is the live one.
+# count's: those are the states that hold one (FINAL_CALL drops it with the
+# figures at the post).
 COUNT_IN_FORCE = CLOSED_STATES | frozenset({int(P.Phase.AFTER_PARTY)})
 
-# One race state. The dashboard's modes (its thirteen buttons, which drive
-# the LEDs) are the source of truth, and La Quiniela's race state (the cups,
-# the TV board) is derived from the mode through this table. The keys are
-# the names the dashboard's buttons already use. A button names its mode to
-# POST /api/quiniela/mode; SET WINNERS and RESET are told by the dashboard
-# routes they call (/api/results once the results are applied,
-# /api/results/clear).
+# One race state. The dashboard's modes (its buttons, which drive the LEDs)
+# are the source of truth, and La Quiniela's race state (the cups, the TV
+# board) is derived from the mode through this table. The keys are the names
+# the dashboard's buttons already use. A button names its mode to POST
+# /api/quiniela/mode; SET WINNERS and RESET are told by the dashboard routes
+# they call (/api/results once the results are applied, /api/results/clear).
+# TEST is not here: it is an LED test only and never sets a race state (Joey,
+# 2026-10-13, gap review OD2; opening it at the post used to drop the figures
+# at the post and the hand count), so a page from before still sending it is
+# refused as an unknown mode.
 MODE_STATES: Dict[str, int] = {
-    "WELCOME": 0, "TEST": 0, "STANDBY": 0,          # PRE_RACE
+    "WELCOME": 0, "STANDBY": 0,                     # PRE_RACE
     "BETTING_60": 1, "BETTING_30": 1,               # BETTING_OPEN   60 MIN, 30 MIN
     "FINAL_CALL": 2,                                # FINAL_CALL
     "AT_THE_GATE": 3,                               # AT_THE_POST
@@ -143,7 +151,7 @@ MODE_STATES: Dict[str, int] = {
 }
 # What each button says, for messages.
 MODE_LABELS: Dict[str, str] = {
-    "WELCOME": "WELCOME", "TEST": "TEST", "STANDBY": "STANDBY",
+    "WELCOME": "WELCOME", "STANDBY": "STANDBY",
     "BETTING_60": "60 MIN", "BETTING_30": "30 MIN", "FINAL_CALL": "FINAL CALL",
     "AT_THE_GATE": "AT THE GATE", "GATES_BURST": "THEY'RE OFF", "CHAOS": "CHAOS", "FINISH": "FINISH",
     "RESULTS": "SET WINNERS", "HEARTBEAT_COOLDOWN": "HEARTBEAT", "RESET": "RESET",
@@ -496,6 +504,14 @@ def _closing_note(closing: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]
     if closing is None:
         return None
     return {"pot": closing["pot"], "prizes": closing["prizes"], "total_tokens": closing["total_tokens"]}
+
+
+def _dropped_note(closing: Dict[str, Any]) -> Dict[str, Any]:
+    """What the log records of figures at the post that a reopening state
+    dropped: the scale pot, the hand count (null when none was entered) and
+    the token count, so a replay can see what the second close replaced."""
+    return {"pot": closing.get("pot"), "pot_counted": _stored_count(closing),
+            "total_tokens": closing.get("total_tokens")}
 
 
 class CountRefused(Exception):
@@ -945,11 +961,16 @@ class BettingBoard:
         The closing figures (the model's closing) are taken here, from this
         snapshot's pot, prizes and counts, the first time the race state is
         3, 4 or 5 with none held; after that no count moves them. The
-        between-races reset (baseline=True) and a state of 0 or 1 drop them;
-        2 and 6 leave them, and so does a snapshot with no phase. Taking or
-        dropping them is saved (lq_closing) before the model is published,
-        and logged as a change ({"closing": {pot, prizes, total_tokens}} or
-        {"closing": null})."""
+        between-races reset (baseline=True) and a state of 0, 1 or 2 drop
+        them, the hand count with them (2: FINAL CALL after the post reopens
+        betting, and the next 3 takes fresh figures); 6 leaves them, and so
+        does a snapshot with no phase. Taking or dropping them is saved
+        (lq_closing) before the model is published, and logged as a change
+        ({"closing": {pot, prizes, total_tokens}} or {"closing": null}). The
+        record is marked too, so a close and a reopen read apart from a
+        reset: "betting": "closed" when they are taken, "betting": "reopened"
+        with "dropped": {pot, pot_counted, total_tokens} when a reopening
+        state drops them."""
         now_w = self._wall()
         horses, race_state, total, link_ok, extras = self._digest(snap)
         self._last_snap = snap
@@ -1021,7 +1042,8 @@ class BettingBoard:
 
             # The figures at the post: taken once when betting closes, then
             # held through the race, the draw (the cups being emptied) and a
-            # restart, until betting starts over.
+            # restart, until betting starts over (a reopening state, FINAL
+            # CALL included, or the between-races reset).
             closing = self._closing
             if baseline:
                 closing = None
@@ -1030,8 +1052,14 @@ class BettingBoard:
                     closing = None
                 elif race_state in CLOSED_STATES and closing is None:
                     closing = _closing_figures(pot, prizes, total, horses, now_w)
+            betting_mark: Optional[str] = None
+            dropped: Optional[Dict[str, Any]] = None
             if closing != self._closing:
                 changes.append({"closing": _closing_note(closing)})
+                if closing is not None:
+                    betting_mark = "closed"
+                elif not baseline and self._closing is not None:
+                    betting_mark, dropped = "reopened", _dropped_note(self._closing)
                 self._closing = closing
                 self._save_closing(closing)
 
@@ -1083,6 +1111,10 @@ class BettingBoard:
                     record["baseline"] = True       # counts moved by a reset, not by bets
                 if baseline:
                     record["reset"] = "betting"     # the between-races reset
+                if betting_mark is not None:
+                    record["betting"] = betting_mark          # "closed": figures taken; "reopened": dropped
+                if dropped is not None:
+                    record["dropped"] = dropped               # what the reopen dropped (the count among it)
         if record is not None:
             self._write_log(record)     # outside the lock: it touches the SD card
         return changed
@@ -1109,8 +1141,8 @@ class BettingBoard:
 
         The count goes into the figures-at-the-post record (the "pot_counted"
         key of lq_closing's row), so it is saved with them, survives a
-        restart, and is dropped by Reset betting and by a state of 0 or 1,
-        never by 3, 4, 5 or 6. The model then carries it: pot and prizes (and
+        restart, and is dropped by Reset betting and by a state of 0, 1 or 2
+        (betting reopened), never by 3, 4, 5 or 6. The model then carries it: pot and prizes (and
         closing's) from prizes_for(count), pot_scale, pot_counted and
         hand_counted. Bets per horse are the scales' and do not move.
 
@@ -1306,10 +1338,14 @@ class BettingBoard:
         return self.set_race_state(MODE_STATES[key], mode=key, source=source)
 
     def race_mode(self) -> Dict[str, Any]:
-        """{"state", "state_name", "mode", "label", "source"}: the race state
-        as the bridge holds it now, and the dashboard mode that set it. The
-        mode is only named while it still explains the state: a state set
-        directly since (the admin page, `state N`, a reset) has mode None."""
+        """{"state", "state_name", "mode", "label", "source", "at_post"}: the
+        race state as the bridge holds it now, and the dashboard mode that
+        set it. The mode is only named while it still explains the state: a
+        state set directly since (the admin page, `state N`, a reset) has
+        mode None. at_post is what a reopening button would clear, for the
+        dashboard's confirm: {"pot": the scale pot at the post, "pot_counted":
+        the hand count or None} while figures at the post are held, else
+        None."""
         bridge = self.bridge
         if bridge is not None:
             state = int(bridge.phase)
@@ -1318,10 +1354,14 @@ class BettingBoard:
                 state = int(self._model["race_state"])
         with self._lock:
             mode, source = self._race_mode, self._race_source
+            closing = self._closing
         if mode is not None and MODE_STATES.get(mode) != state:
             mode = None
+        at_post = None
+        if isinstance(closing, dict):
+            at_post = {"pot": closing.get("pot"), "pot_counted": _stored_count(closing)}
         return {"state": state, "state_name": race_state_name(state), "mode": mode,
-                "label": MODE_LABELS.get(mode) if mode else None, "source": source}
+                "label": MODE_LABELS.get(mode) if mode else None, "source": source, "at_post": at_post}
 
     def reset_betting(self) -> Dict[str, Any]:
         """The between-races reset: betting starts over. PRE_RACE, the

@@ -295,13 +295,19 @@ def test_buttons_carry_their_mode():
     _check("thirteen buttons on the four panels, each with a mode", len(found) == 13 and panels.count("<button") == 13, str(len(found)))
     _check("every button's mode and call are the expected ones",
            [(text, mode, call) for mode, call, text in found] == BUTTONS, str(found))
-    _check("every button's mode is in pi5's table, and the table has no mode without a button",
-           {mode for mode, _, _ in found} == set(MODE_STATES), str(set(MODE_STATES) ^ {m for m, _, _ in found}))
+    _check("every button's mode but TEST is in pi5's table, and the table has no mode without a button",
+           {mode for mode, _, _ in found} - {"TEST"} == set(MODE_STATES) and "TEST" not in MODE_STATES,
+           str(set(MODE_STATES) ^ {m for m, _, _ in found}))
     js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
     _check("a mode button names its mode to pi5 before the LEDs answer",
            "const raceSet = mode ? setRaceMode(mode) : null;" in js and "'/api/quiniela/mode'" in js
            and js.index("const raceSet = mode ? setRaceMode(mode) : null;") < js.index("showNotification(withRaceState(`Animation: ${animName}`, race), 'success');"))
-    _check("Standby and Test name theirs", "const raceSet = setRaceMode('STANDBY');" in js and "setRaceMode('TEST');" in js)
+    _check("Standby names its mode; TEST names none (an LED test only, Joey 2026-10-13)",
+           "const raceSet = setRaceMode('STANDBY');" in js and "setRaceMode('TEST')" not in js
+           and "setRaceMode" not in _js_function(js, "function openTestModal()")
+           and "/api/quiniela/mode" not in _js_function(js, "function openTestModal()"))
+    _check("pi5 refuses TEST as a mode: 400, the race state where it was",
+           rig.post("/api/quiniela/mode", {"mode": "TEST"}).status_code == 400 and rig.bridge.phase == 0)
     _check("the table is pi5's, not repeated in the page", "MODE_STATES" not in js.replace("la_quiniela/betting.py MODE_STATES", "")
            and "BETTING_60: 1" not in js)
     _check("the race state is read back every 5 s and the ticker shows it",
@@ -365,9 +371,9 @@ def test_results_and_reset_are_modes():
     _check("...the LED controller told after them (RESULTS:FINALIZE, which the page used to send) and it answered",
            rig.led == ["ANIM:RESULTS_ENTRY", "RESULTS:FINALIZE"] and body["leds"] == "ok"
            and body["response"] == "OK:RESULTS:FINALIZE", f"{rig.led} {body.get('leds')}")
-    _check("...and the race state it set: WINNER, mode RESULTS",
+    _check("...and the race state it set: WINNER, mode RESULTS, no error",
            body["race"] == {"rev": rev + 1, "state": 5, "state_name": "WINNER", "mode": "RESULTS", "source": "dashboard",
-                            "gateway_online": False}, str(body.get("race")))
+                            "gateway_online": False} and body["race_error"] is None, str(body.get("race")))
     _check("one state line: WINNER with the results and the renumber pair, byte-exact",
            rig.lines() == [state_line(rev + 1, 5, [], [(9, 22)], [19, 1, 22])], str(rig.lines()))
     _check("the file holds horse numbers", json.loads(rig.results_file.read_text())["show"] == 22)
@@ -402,9 +408,12 @@ def test_results_and_reset_are_modes():
     main.get_board = no_board
     try:
         r = rig.post("/api/results", {"win": 1, "place": 2, "show": 3})
-        _check("La Quiniela unavailable: the results are still saved, race null",
+        _check("La Quiniela unavailable: the results are still saved (checked against posts 1-20), race null, and why",
                r.status_code == 200 and r.get_json()["success"] is True and r.get_json()["race"] is None
-               and rig.results_file.exists())
+               and r.get_json()["race_error"] == "La Quiniela: La Quiniela board not initialised"
+               and rig.results_file.exists(), str(r.get_json()))
+        r = rig.post("/api/results", {"win": 21, "place": 2, "show": 3})
+        _check("...a horse outside 1-20 still refused then", r.status_code == 400)
         r = rig.post("/api/results/clear")
         _check("...and still cleared", r.status_code == 200 and r.get_json()["race"] is None and not rig.results_file.exists())
     finally:
@@ -421,6 +430,7 @@ def test_results_stand_without_the_leds():
     says the LEDs were unreachable."""
     rig = Rig(led_ok=False)
     rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
     rig.post("/api/quiniela/mode", {"mode": "FINISH"})
     rev = rig.bridge.state_rev
     rig.port.written.clear()
@@ -433,7 +443,7 @@ def test_results_stand_without_the_leds():
     _check("...saved all the same, horse numbers in the file",
            json.loads(rig.results_file.read_text()) | {"timestamp": None} == {"win": 19, "place": 1, "show": 22, "timestamp": None})
     _check("...WINNER with the results in one state line, byte-exact",
-           body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
+           body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [(9, 22)], [19, 1, 22])], str(rig.lines()))
     _check("...the TV's model has them", rig.model()["results"] == {"win": 19, "place": 1, "show": 22}
            and rig.model()["race_state"] == 5)
     _check("...the LED controller was tried once, after the results were saved", rig.led == ["RESULTS:FINALIZE"], str(rig.led))
@@ -489,6 +499,56 @@ def test_results_are_kept_when_pi5_starts():
     r = rig.client.get("/api/results")
     _check("a results file from before a restart is served as it is",
            r.get_json()["success"] is True and r.get_json()["results"]["place"] == 1)
+
+
+def test_results_need_all_three():
+    """B9 of the gap review: POST /api/results is a 400 unless win, place and show are all there, three
+    different horse numbers, each in the field as La Quiniela has it (the SET WINNERS pickers' own list: 22
+    standing in for 9, not 9; an also-eligible only while it stands in). A missing key is never filled in.
+    A 400 saves nothing, sends no state line, no LED command and no results event."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    rig.post("/api/quiniela/scratch", {"horse": 20})
+    rig.post("/api/quiniela/mode", {"mode": "FINISH"})
+    events = []
+    saved_broadcast = main.broadcast_sse
+    main.broadcast_sse = lambda event, data: events.append((event, data))
+    try:
+        cases = [
+            ("WIN missing", {"place": 1, "show": 22}, "win is missing"),
+            ("PLACE missing (the review's {win: 19, show: 22})", {"win": 19, "show": 22}, "place is missing"),
+            ("SHOW missing (the review's {win: 19, place: 1})", {"win": 19, "place": 1}, "show is missing"),
+            ("all missing", {}, "win is missing"),
+            ("a null", {"win": 19, "place": None, "show": 22}, "place is missing"),
+            ("a horse twice", {"win": 19, "place": 19, "show": 22}, "three different horses"),
+            ("9, replaced by 22", {"win": 9, "place": 1, "show": 22}, "horse 9 is not in the field"),
+            ("20, scratched with no replacement", {"win": 19, "place": 20, "show": 22}, "horse 20 is not in the field"),
+            ("21, an also-eligible standing in for nobody", {"win": 19, "place": 1, "show": 21}, "horse 21 is not in the field"),
+            ("25", {"win": 25, "place": 1, "show": 22}, "horse 25 is not in the field"),
+            ("0", {"win": 0, "place": 1, "show": 22}, "horse 0 is not in the field"),
+            ("a string", {"win": "19", "place": 1, "show": 22}, "win must be a horse number"),
+            ("a bool", {"win": True, "place": 1, "show": 22}, "win must be a horse number"),
+        ]
+        for name, body, words in cases:
+            rig.port.written.clear()
+            rig.led.clear()
+            rev = rig.bridge.state_rev
+            r = rig.post("/api/results", body)
+            reply = r.get_json() or {}
+            _check(f"/api/results {name}: 400 that says so, nothing saved, no line, no LEDs, no event",
+                   r.status_code == 400 and reply.get("success") is False and words in reply.get("error", "")
+                   and not rig.results_file.exists() and rig.port.written == [] and rig.led == [] and events == []
+                   and rig.bridge.state_rev == rev and rig.bridge.phase == 4, f"{r.status_code} {reply}")
+        r = rig.client.post("/api/results", data="not json", content_type="application/json")
+        _check("/api/results with a body that is not JSON: 400, nothing saved",
+               r.status_code == 400 and not rig.results_file.exists(), r.get_data(as_text=True)[:200])
+        r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
+        _check("all three, distinct, in the field (22 standing in for 9): 200, saved, WINNER, one results event",
+               r.status_code == 200 and r.get_json()["success"] is True and rig.results_file.exists()
+               and rig.bridge.phase == 5 and [e for e, _ in events] == ["results"], str(r.get_json()))
+    finally:
+        main.broadcast_sse = saved_broadcast
 
 
 # -----------------------------------------------------------------------------
@@ -1012,14 +1072,33 @@ def _admin_one_tap(picker_check, touch, requests, slow):
         chrome.wait_for("!document.getElementById('counted').hidden", timeout=15)
         chrome.eval("document.getElementById('counted-input').value = '150'; 1")
         for name, sel, method, path in (("Counted pot: Save count", "#counted-save", "PUT", "/api/quiniela/counted_pot"),
-                                         ("Counted pot: Clear", "#counted-clear", "PUT", "/api/quiniela/counted_pot"),
-                                         ("Reset betting (its confirm accepted)", "#reset-betting", "POST", "/api/quiniela/reset")):
+                                         ("Counted pot: Clear", "#counted-clear", "PUT", "/api/quiniela/counted_pot")):
             t = time.monotonic()
             double_tap(sel)
             settle(1.0)
             _check(f"admin page {mode}: a double tap on {name} sends one request", count(t, method, path) == 1,
                    str(count(t, method, path)))
-        _check(f"admin page {mode}: Reset betting asked once", chrome.eval("window.__confirms") == 1, str(chrome.eval("window.__confirms")))
+        # Reset betting at the post (3): pi5 refuses it (OD13); the page asks nothing first and says why.
+        t = time.monotonic()
+        double_tap("#reset-betting")
+        settle(1.0)
+        said = chrome.eval("(() => { const e = document.getElementById('reset-status'); return [e.textContent, e.className]; })()")
+        _check(f"admin page {mode}: Reset betting at the post: one request, no question, refused in red with the reason, the race where it was",
+               count(t, "POST", "/api/quiniela/reset") == 1 and chrome.eval("window.__confirms") == 0
+               and said == ["Reset betting works only before the race (0) or after it (6). Change the race state on the Control Center.",
+                            "status err"] and rig.model()["race_state"] == 3 and rig.model()["closing"] is not None,
+               str((count(t, "POST", "/api/quiniela/reset"), chrome.eval("window.__confirms"), said, rig.model()["race_state"])))
+        # After the race (RESET: 6) it asks once and goes, a double tap one request.
+        rig.post("/api/results/clear")
+        load()
+        chrome.wait_for("document.getElementById('state-now').textContent.indexOf('AFTER PARTY') >= 0", timeout=15)
+        t = time.monotonic()
+        double_tap("#reset-betting")
+        settle(1.0)
+        _check(f"admin page {mode}: Reset betting after the race: asked once, a double tap sends one request, back to 0",
+               count(t, "POST", "/api/quiniela/reset") == 1 and chrome.eval("window.__confirms") == 1
+               and rig.model()["race_state"] == 0,
+               str((count(t, "POST", "/api/quiniela/reset"), chrome.eval("window.__confirms"), rig.model()["race_state"])))
         _check(f"admin page {mode}: no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
     finally:
         slow.clear()
@@ -1268,7 +1347,8 @@ def _control_center_taps(picker_check, touch, requests, slow):
                         timeout=20)
         chrome.wait_for("typeof quinielaField !== 'undefined' && quinielaField !== null", timeout=20)
         chrome.eval("window.__confirms = 0; window.confirm = () => { window.__confirms++; return true; }; 1")
-        # Every mode button, a double tap each: one race state, one LED request (TEST opens its modal: no LEDs).
+        # Every mode button, a double tap each: one race state, one LED request (TEST opens its modal: no LEDs,
+        # and no race state, an LED test only).
         server.led_latency = 0.3
         sent = {}
         for m, led in CC_MODES:
@@ -1276,7 +1356,7 @@ def _control_center_taps(picker_check, touch, requests, slow):
                             "!document.getElementById('loader').classList.contains('show')", timeout=10)
             t = time.monotonic()
             double_tap(button(m))
-            end = time.monotonic() + 5.0             # until this button's requests have reached pi5
+            end = time.monotonic() + (1.0 if m == "TEST" else 5.0)       # until this button's requests have reached pi5
             while time.monotonic() < end and not (posts(t, "/api/quiniela/mode") and (posts(t, led) if led else True)):
                 settle(0.05)
             settle(0.6)
@@ -1284,8 +1364,8 @@ def _control_center_taps(picker_check, touch, requests, slow):
             if m == "TEST":
                 chrome.eval("closeTestModal(); 1")
                 settle(0.3)
-        _check(f"Control Center {mode}: a double tap on each mode button sends one race state and one LED request",
-               all(v == (1, 1) for v in sent.values()), str(sent))
+        _check(f"Control Center {mode}: a double tap on each mode button sends one race state and one LED request; TEST no race state",
+               all(v == ((0, 1) if m == "TEST" else (1, 1)) for m, v in sent.items()), str(sent))
         # A slower second tap, after the LEDs answered: still held, so it neither sends nor turns the animation off.
         settle(2.2)
         t = time.monotonic()
@@ -1296,7 +1376,9 @@ def _control_center_taps(picker_check, touch, requests, slow):
                and chrome.eval("document.querySelector(\"button[data-mode='AT_THE_GATE']\").classList.contains('active')"),
                str((posts(t, "/api/quiniela/mode"), posts(t, "/api/animation/AT_THE_GATE"), posts(t, "/api/command"))))
         # While a race state is on its way no mode button takes a tap; once pi5 has answered, another mode goes.
+        # (From PRE-RACE: 60 MIN in WINNER, where the walk above ended, would ask first, gap review OD2.)
         settle(2.2)
+        rig.post("/api/quiniela/mode", {"mode": "WELCOME"})
         slow[("POST", "/api/quiniela/mode")] = 3.0
         t = time.monotonic()
         chrome.tap(button("BETTING_60"))
@@ -1399,6 +1481,333 @@ def test_control_center_one_tap_one_send_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# Race-night guard: the figures at the post survive every tap (Joey, 2026-10-13)
+# -----------------------------------------------------------------------------
+# Gap review M2, B1, B2, B9; decisions OD1 (FINAL CALL after the post drops the figures and the count, behind a
+# confirm), OD2 (TEST is an LED test only; WELCOME, STANDBY, 60 MIN and 30 MIN in 3-5 ask first). All of it on
+# the Control Center in headless Chrome, every request counted where pi5 receives it.
+
+REOPENERS = (("WELCOME", "/api/animation/WELCOME"), ("STANDBY", "/api/led/all_off"),
+             ("BETTING_60", "/api/animation/BETTING_60"), ("BETTING_30", "/api/animation/BETTING_30"),
+             ("FINAL_CALL", "/api/animation/FINAL_CALL"))
+GUARD_MAC = "A0:B7:65:66:00:%02X"
+GUARD_COUNTS = {12: 1, 18: 0, **{n: (5 if i < 13 else 4) for i, n in enumerate(n for n in range(1, 21) if n not in (12, 18))}}
+GUARD_IDLE_JS = ("raceStateSending === null && modesHeld.size === 0 && askPending === null && askHold === null"
+                 " && !document.getElementById('loader').classList.contains('show')"
+                 " && !document.getElementById('ask-modal').classList.contains('active')")
+ASK_UP_JS = "document.getElementById('ask-modal').classList.contains('active') && askPending !== null"
+
+
+def reopen_text(count=None):
+    return ("This reopens betting. The figures at the post (pot $86)"
+            + (f" and the hand count (${count}) will be cleared." if count is not None else " will be cleared."))
+
+
+def _race_night_guards(picker_check, touch, requests, slow, full):
+    """One session of test_race_night_guards_in_a_browser. full: every reopening button in every state; else
+    one in each."""
+    from la_quiniela.betting import MODE_STATES
+    mode = "[touch]" if touch else "[mouse]"
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
+
+    def posts(since, path=None):
+        return sum(1 for t, m, p in requests if t >= since and m == "POST" and (path is None or p == path))
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def double_tap(sel):
+        x, y = chrome.center(sel)
+        chrome.tap_at(x, y)
+        chrome.tap_at(x, y)                          # the same spot, as a finger's second tap
+
+    def wait_posts(since, paths, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not all(posts(since, p) for p in paths):
+            settle(0.05)
+        return tuple(posts(since, p) for p in paths)
+
+    def button(m):
+        return f".panels button[data-mode='{m}']"
+
+    def ready():                                     # nothing on its way, nothing held, no question up; no button active
+        chrome.wait_for(GUARD_IDLE_JS, timeout=15)
+        chrome.eval("clearAllActiveButtons(); window.__asks = 0; 1")
+
+    def cups(**changes):
+        for n, count in {**GUARD_COUNTS, **{int(k[1:]): v for k, v in changes.items()}}.items():
+            rig.bridge.handle_raw_line(telem(GUARD_MAC % n, horse=n, count=count))
+        rig.board.refresh()
+
+    def race_at(state, count=None):                  # pi5 in `state`; from 3 on with figures at the post (pot $86)
+        rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})                  # any figures from before go
+        cups()
+        if state >= 3:
+            rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
+            if count is not None:
+                rig.client.put("/api/quiniela/counted_pot", json={"amount": count})
+            rig.post("/api/quiniela/mode", {"mode": {3: "AT_THE_GATE", 4: "GATES_BURST", 5: "HEARTBEAT_COOLDOWN"}[state]})
+        else:
+            rig.post("/api/quiniela/mode", {"mode": {0: "WELCOME", 1: "BETTING_60", 2: "FINAL_CALL"}[state]})
+        m = rig.model()
+        assert m["race_state"] == state and (m["pot_scale"] == 86.0) == (state >= 3), (state, m["race_state"], m["pot_scale"])
+
+    def ask():
+        return chrome.eval("[document.getElementById('ask-title').textContent, document.getElementById('ask-text').textContent,"
+                           " document.getElementById('ask-ok').textContent]")
+
+    try:
+        chrome.call("Page.navigate", url=server.url)
+        chrome.wait_for("document.readyState === 'complete' && typeof showResultsModal === 'function'", timeout=30)
+        chrome.wait_for("(() => { const s = document.getElementById('splash-screen'); return !s || s.style.display === 'none'; })()",
+                        timeout=20)
+        chrome.wait_for("raceModes !== null && typeof quinielaField !== 'undefined' && quinielaField !== null", timeout=20)
+        chrome.eval("window.__confirms = 0; window.confirm = () => { window.__confirms++; return true; };"
+                    " window.__asks = 0; const realAsk = askFirst; askFirst = (...a) => { window.__asks++; return realAsk(...a); }; 1")
+
+        # B2: at the post with a count, TEST opened, run, closed: state 3, the figures and the count as they were.
+        race_at(3, count=80)
+        ready()
+        t = time.monotonic()
+        chrome.tap(button("TEST"))
+        chrome.wait_for("document.getElementById('test-modal').classList.contains('active')", timeout=10)
+        settle(0.4)
+        if chrome.eval("typeof iro !== 'undefined'"):
+            chrome.tap(".preset-btn[data-name='ROSE']")
+        else:                                        # no internet for the colour wheel's script: the same command
+            chrome.eval("sendTestColor(225, 149, 171, currentBrightness); 1")
+        settle(0.4)
+        chrome.eval("(() => { const s = document.getElementById('brightness-slider'); s.value = '40';"
+                    " s.dispatchEvent(new Event('input')); return 1; })()")
+        settle(0.4)
+        chrome.tap("#test-modal .modal-buttons .btn")
+        settle(0.8)
+        m = rig.model()
+        _check(f"guards {mode}: TEST at the post (B2): the LED test runs and closes, no race state sent; state 3, the figures and the count intact",
+               posts(t, "/api/quiniela/mode") == 0 and posts(t, "/api/command") >= 2
+               and not chrome.eval("document.getElementById('test-modal').classList.contains('active')")
+               and (m["race_state"], m["pot_scale"], m["pot_counted"], m["closing"]["horses"]["12"]) == (3, 86.0, 80, {"tokens": 1}),
+               str((posts(t, "/api/quiniela/mode"), posts(t, "/api/command"), m["race_state"], m["pot_scale"], m["pot_counted"])))
+
+        # Each reopening button in 3, 4 and 5: the confirm with the real figures; Cancel sends nothing; Reopen betting, a
+        # double tap, sends once, and the figures and the count are cleared.
+        cases = [(m, s) for s in (3, 4, 5) for m, _ in REOPENERS] if full else [("FINAL_CALL", 3), ("BETTING_60", 4), ("WELCOME", 5)]
+        led_of = dict(REOPENERS)
+        out = {}
+        for m, s in cases:
+            count = None if s == 4 else 80                          # 4 without a count: the text says only the pot
+            race_at(s, count)
+            ready()
+            t = time.monotonic()
+            chrome.tap(button(m))
+            chrome.wait_for(ASK_UP_JS, timeout=10)
+            settle(0.3)
+            asked = (ask(), posts(t))
+            chrome.tap("#ask-cancel")
+            settle(0.9)
+            mm = rig.model()
+            cancelled = (posts(t), mm["race_state"], mm["pot_scale"], mm["pot_counted"],
+                         chrome.eval("document.getElementById('ask-modal').classList.contains('active')"))
+            ready()
+            t2 = time.monotonic()
+            chrome.tap(button(m))
+            chrome.wait_for(ASK_UP_JS, timeout=10)
+            double_tap("#ask-ok")
+            wait_posts(t2, ("/api/quiniela/mode", led_of[m]), 5.0)
+            settle(1.0)
+            mm = rig.model()
+            went = (posts(t2, "/api/quiniela/mode"), posts(t2, led_of[m]), posts(t2), mm["race_state"], mm["closing"],
+                    mm["pot_counted"], chrome.eval("window.__asks"))
+            out[(m, s)] = (asked == (["Reopen betting?", reopen_text(count), "Reopen betting"], 0)
+                           and cancelled == (0, s, 86.0, count, False) and went == (1, 1, 2, MODE_STATES[m], None, None, 1),
+                           str((asked, cancelled, went)))
+        bad = {k: v[1] for k, v in out.items() if not v[0]}
+        _check(f"guards {mode}: {len(out)} reopening taps in states 3-5: the confirm names the real figures, Cancel sends nothing, "
+               "Reopen betting (a double tap) sends once and clears the figures and the count", not bad, str(bad)[:900])
+
+        # In 0-2 the same buttons send at once: no question.
+        cases = [(m, s) for s in (0, 1, 2) for m, _ in REOPENERS] if full else [("STANDBY", 2), ("BETTING_30", 0)]
+        out = {}
+        for m, s in cases:
+            race_at(s)
+            ready()
+            t = time.monotonic()
+            chrome.tap(button(m))
+            got = wait_posts(t, ("/api/quiniela/mode", led_of[m]), 5.0)
+            settle(0.4)
+            out[(m, s)] = (got == (1, 1) and chrome.eval("window.__asks") == 0 and rig.model()["race_state"] == MODE_STATES[m]
+                           and not chrome.eval("document.getElementById('ask-modal').classList.contains('active')"),
+                           str((got, chrome.eval("window.__asks"), rig.model()["race_state"])))
+        bad = {k: v[1] for k, v in out.items() if not v[0]}
+        _check(f"guards {mode}: {len(out)} taps of the same buttons in states 0-2 send at once, no question", not bad, str(bad)[:600])
+
+        # B1: close, reopen (the confirm), more tokens, close again: the second close's figures, on the TV's model, and
+        # the log has both closes and the reopen.
+        race_at(3, count=80)
+        ready()
+        t = time.monotonic()
+        chrome.tap(button("FINAL_CALL"))
+        chrome.wait_for(ASK_UP_JS, timeout=10)
+        text = ask()[1]
+        chrome.tap("#ask-ok")
+        wait_posts(t, ("/api/quiniela/mode",), 5.0)
+        settle(0.5)
+        reopened = rig.model()
+        cups(h12=11)                                                # ten more on #12: the live pot $96
+        ready()
+        t = time.monotonic()
+        chrome.tap(button("AT_THE_GATE"))
+        wait_posts(t, ("/api/quiniela/mode",), 5.0)
+        settle(0.5)
+        tv = json.loads(rig.board.model_json())
+        log = [json.loads(line) for f in sorted((rig.dir / "logs").glob("quiniela_*.jsonl"))
+               for line in f.read_text(encoding="utf-8").splitlines() if line]
+        marks = [(r["betting"], (r.get("dropped") or {}).get("pot_counted"),
+                  next((c["closing"]["pot"] for c in r["changes"] if c.get("closing")), None)) for r in log if "betting" in r][-3:]
+        _check(f"guards {mode}: B1 through the page: FINAL CALL asks with $86 / $80, clears both; AT THE GATE takes $96 (#12 at 11), "
+               "which the TV's model shows; the log has the close, the reopen and the second close",
+               text == reopen_text(80) and (reopened["race_state"], reopened["closing"], reopened["pot_counted"]) == (2, None, None)
+               and tv["race_state"] == 3 and tv["closing"]["pot"] == 96.0 and tv["closing"]["horses"]["12"] == {"tokens": 11}
+               and tv["pot"] == 96.0 and marks == [("closed", None, 86.0), ("reopened", 80, None), ("closed", None, 96.0)],
+               str((text, reopened["race_state"], tv["closing"]["pot"], marks)))
+
+        # With the results set, the reopening buttons stay disabled, as before.
+        race_at(5)
+        rig.post("/api/results", {"win": 19, "place": 1, "show": 3})
+        chrome.wait_for("document.getElementById('results-reveal-modal').classList.contains('active')", timeout=10)
+        chrome.eval("revealWinners(); 1")
+        settle(0.3)
+        locked = chrome.eval("JSON.stringify(%s.map((m) => document.querySelector(`.panels button[data-mode='${m}']`).disabled))"
+                             % json.dumps([m for m, _ in REOPENERS]))
+        _check(f"guards {mode}: with the results set the reopening buttons are disabled, as before",
+               json.loads(locked) == [True] * len(REOPENERS), locked)
+
+        # CONFIRM RESULTS: a success names the race state it set; a La Quiniela refusal is red with its reason.
+        def confirm_results(horses):
+            ready()
+            chrome.eval("(() => { const n = document.getElementById('notification'); n.classList.remove('show');"
+                        " n.textContent = ''; return 1; })()")
+            chrome.tap(button("RESULTS"))
+            chrome.wait_for("document.getElementById('results-modal').classList.contains('active') && "
+                            "document.querySelectorAll('.winner-pick-btn').length > 0", timeout=15)
+            settle(0.3)
+            for h in horses:
+                chrome.tap(f".winner-pick-btn[data-horse='{h}']")
+                settle(0.3)
+            chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=10)
+            chrome.tap("#results-confirm-btn")
+            return chrome.wait_for("(() => { const n = document.getElementById('notification');"
+                                   " return n.classList.contains('show') && n.textContent.startsWith('Results set')"
+                                   " ? [n.textContent, n.classList.contains('error') ? 'red' : 'green'] : null; })()", timeout=15)
+
+        race_at(4)
+        good = confirm_results((7, 3, 12))
+        saved_mode = main.quiniela_mode
+        main.quiniela_mode = lambda m: (None, "La Quiniela: refused for the test")
+        try:
+            refused = confirm_results((5, 14, 2))
+        finally:
+            main.quiniela_mode = saved_mode
+        _check(f"guards {mode}: CONFIRM RESULTS says the race state it set, green: Results set ... · WINNER",
+               good == ["Results set: Win=7, Place=3, Show=12 · WINNER", "green"], str(good))
+        _check(f"guards {mode}: ...and when La Quiniela refuses WINNER, red with its reason",
+               refused == ["Results set: Win=5, Place=14, Show=2 · race state not set (La Quiniela: refused for the test)", "red"],
+               str(refused))
+        rig.post("/api/results/clear")
+        chrome.wait_for("bannerResults === null", timeout=15)
+        settle(1.0)
+
+        # AUTO: switched on at the post it asks first; while on, SET WINNERS, STANDBY and RESET (every mode button) are
+        # disabled and say "switch to MANUAL", and a tap on them sends nothing; MANUAL again needs no question.
+        switch = "label.race-control-switch:has(#race-control-toggle)"
+        race_at(3)
+        ready()
+        t = time.monotonic()
+        chrome.tap(switch)
+        chrome.wait_for(ASK_UP_JS, timeout=10)
+        asked = ask()
+        chrome.tap("#ask-cancel")
+        settle(0.9)
+        cancelled = (posts(t, "/api/racing/mode"), chrome.eval("raceControlMode"), chrome.eval("document.getElementById('race-control-toggle').checked"))
+        ready()
+        t = time.monotonic()
+        chrome.tap(switch)
+        chrome.wait_for(ASK_UP_JS, timeout=10)
+        chrome.tap("#ask-ok")
+        wait_posts(t, ("/api/racing/mode",), 5.0)
+        settle(0.6)
+        went = (posts(t, "/api/racing/mode"), chrome.eval("raceControlMode"), chrome.eval("document.getElementById('race-control-toggle').checked"))
+        held = json.loads(chrome.eval("JSON.stringify([...document.querySelectorAll('.panels button.btn')].map((b) =>"
+                                      " [b.dataset.mode, b.disabled, b.innerText.includes('switch to MANUAL')]))"))
+        _check(f"guards {mode}: AUTO switched on at the post asks first; Cancel leaves MANUAL and sends nothing; Switch to AUTO sends once",
+               asked[0] == "Switch to AUTO?" and "AT THE POST" in asked[1] and asked[2] == "Switch to AUTO"
+               and cancelled == (0, "manual", False) and went == (1, "auto", True), str((asked, cancelled, went)))
+        _check(f"guards {mode}: in AUTO every mode button is disabled and says 'switch to MANUAL' (SET WINNERS, STANDBY, RESET among them)",
+               len(held) == 13 and all(d and r for _, d, r in held)
+               and {m for m, d, r in held if d and r} >= {"RESULTS", "STANDBY", "RESET"}, str(held))
+        t = time.monotonic()
+        confirms = chrome.eval("window.__confirms")
+        for m in ("RESULTS", "STANDBY", "RESET"):
+            chrome.tap(button(m))
+            settle(0.6)
+        _check(f"guards {mode}: ...and a tap on SET WINNERS, STANDBY or RESET in AUTO does nothing at all",
+               posts(t) == 0 and chrome.eval("window.__confirms") == confirms
+               and not chrome.eval("document.getElementById('results-modal').classList.contains('active')"), str(posts(t)))
+        chrome.eval("window.__asks = 0; 1")
+        t = time.monotonic()
+        chrome.tap(switch)
+        wait_posts(t, ("/api/racing/mode",), 5.0)
+        settle(0.6)
+        back = json.loads(chrome.eval("JSON.stringify([...document.querySelectorAll('.panels button.btn')].map((b) =>"
+                                      " [b.disabled, !!b.querySelector('.btn-reason')]))"))
+        _check(f"guards {mode}: MANUAL again without a question: every mode button enabled, the reasons gone",
+               chrome.eval("window.__asks") == 0 and chrome.eval("raceControlMode") == "manual"
+               and all(not d and not r for d, r in back), str((chrome.eval("window.__asks"), back[:3])))
+        race_at(1)
+        ready()
+        t = time.monotonic()
+        chrome.tap(switch)
+        wait_posts(t, ("/api/racing/mode",), 5.0)
+        settle(0.6)
+        _check(f"guards {mode}: with betting open AUTO goes without a question",
+               chrome.eval("window.__asks") == 0 and chrome.eval("raceControlMode") == "auto", str(chrome.eval("raceControlMode")))
+        chrome.tap(switch)
+        wait_posts(time.monotonic() - 0.01, ("/api/racing/mode",), 3.0)
+        settle(0.6)
+        _check(f"guards {mode}: no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        slow.clear()
+        try:
+            main.racing_service.set_mode("manual")
+        except Exception:
+            pass
+        chrome.close()
+        server.close()
+
+
+def test_race_night_guards_in_a_browser():
+    """Joey, 2026-10-13 (gap review M2, B1, B2, B9; OD1, OD2): nothing drops the figures at the post by accident. In
+    headless Chrome at 1366 x 1024, touch (every reopening button in every state) and mouse (one in each), every
+    request counted: TEST at the post sends no race state and the figures and count stay; WELCOME, STANDBY, 60 MIN,
+    30 MIN and FINAL CALL in 3-5 show the in-page confirm with the real figures, Cancel sends nothing, Reopen
+    betting sends once (double tap) and clears them; in 0-2 they send at once; B1 through the page; with results the
+    buttons stay disabled; CONFIRM RESULTS says WINNER, or La Quiniela's reason in red; AUTO asks first at the post,
+    holds every mode button with the reason, and MANUAL again needs no question. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("race-night guard browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: [_race_night_guards(picker_check, touch, requests, slow, full=touch)
+                                                   for touch in (True, False)])
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -1412,6 +1821,7 @@ def main_():
     _run("one race state — the results make it WINNER, RESET makes it AFTER_PARTY", test_results_and_reset_are_modes)
     _run("results — saved and WINNER with the LED controller down", test_results_stand_without_the_leds)
     _run("results — kept when pi5 starts", test_results_are_kept_when_pi5_starts)
+    _run("results — all three, distinct and in the field, or a 400 and nothing saved (B9)", test_results_need_all_three)
     _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
     _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)
     _run("SET WINNERS — the figures at the post the picker reads, by horse number", test_bets_at_the_post_for_the_picker)
@@ -1425,6 +1835,7 @@ def main_():
     _run("admin page — one tap, one request; one scratch, one record, one reply; the rows reset", test_admin_one_tap_one_request_in_a_browser)
     _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
+    _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
 
     passed = sum(1 for r in _results if r[0] == "PASS")
     failed = sum(1 for r in _results if r[0] == "FAIL")

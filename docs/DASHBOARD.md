@@ -85,6 +85,33 @@ The dashboard has 4 main control panels arranged horizontally:
 - `REVEAL!` - (Shows when results exist)
 - `RESET RACE` - Clear all results and re-enable controls
 
+#### The race state and the guards (Joey, 2026-10-13)
+
+The panels' buttons are the race's state (`MODE_STATES` in `pi5/la_quiniela/betting.py`):
+WELCOME and STANDBY 0, 60 MIN and 30 MIN 1, FINAL CALL 2, AT THE GATE 3, THEY'RE OFF!, CHAOS
+and FINISH 4, SET WINNERS (once confirmed) and HEARTBEAT 5, RESET 6.
+
+- **TEST is an LED test only.** It opens the colour wheel and names no mode to pi5, so the
+  race state, the figures at the post and the hand count stay as they are (it used to set
+  PRE-RACE and drop them; pi5 now refuses `TEST` as a mode, so a page from before cannot
+  either).
+- **Reopening betting asks first.** At AT THE POST, RUNNING or WINNER (3-5), WELCOME,
+  STANDBY, 60 MIN, 30 MIN and FINAL CALL would reopen betting. The tap reads the state from
+  pi5 (`GET /api/quiniela/mode`, whose `at_post` carries the scale pot and the hand count at
+  the post) and shows the in-page confirm before anything is sent: `This reopens betting.
+  The figures at the post (pot $86) and the hand count ($80) will be cleared.` with
+  **Reopen betting** and **Cancel**. Cancel sends nothing; Reopen betting sends the mode and
+  the LEDs once. pi5 clears the figures and the count when the state arrives (FINAL CALL
+  after the post included), and the next AT THE GATE takes new ones. In 0-2, and in 6, the
+  buttons send at once. AT THE GATE, THEY'RE OFF!, CHAOS, FINISH and HEARTBEAT never ask.
+  With the results set the race-phase buttons stay disabled.
+- **AUTO / MANUAL** (the switch above the panels). Race night is MANUAL. AUTO is the mock
+  racing service's demo (`/api/racing/*`): a timer walks its own race states and drives the
+  LEDs by itself; La Quiniela does not follow it. While AUTO is on every mode button is
+  disabled and says `switch to MANUAL` on itself (SET WINNERS, STANDBY and RESET used to do
+  nothing silently). Switched on at AT THE POST, RUNNING or WINNER it asks first; MANUAL
+  never asks.
+
 ---
 
 ### Footer Section
@@ -363,6 +390,8 @@ LED:TEST:R,G,B,BRIGHTNESS
 - Clicking preset updates color wheel position
 - Dragging wheel updates LEDs in real-time
 - Close button sends `LED:ALL_OFF` command
+- LEDs only: opening, using and closing it never sends a race state (see "The race state and
+  the guards")
 
 ---
 
@@ -460,6 +489,35 @@ LED:TEST:R,G,B,BRIGHTNESS
 
 ---
 
+### 6. Ask First (the in-page confirm)
+
+**Trigger:** a tap that would lose something: a reopening button at AT THE POST, RUNNING or
+WINNER, or AUTO switched on then (`askFirst()` in `ddm_control.js`)
+
+**Layout:**
+```
+┌─────────────────────────────────────────────────────┐
+│                  Reopen betting?                     │
+│                                                      │
+│  This reopens betting. The figures at the post       │
+│  (pot $86) and the hand count ($80) will be cleared. │
+│                                                      │
+│        [ REOPEN BETTING ]     [ CANCEL ]             │
+└─────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- Nothing is sent until the first button; Cancel sends nothing and leaves the page as it was
+- No browser `confirm()`
+- An answer keeps the dialog up, its buttons off, for 0.6 s, so the second tap of a double tap
+  lands on it and not on the button under it; a double tap on Reopen betting sends once
+- While it is up no other mode button takes a tap
+- Tests: `la_quiniela/test_dashboard.py` (`test_race_night_guards_in_a_browser`: every
+  reopening button in 3, 4 and 5 and in 0-2, TEST at the post, a re-close, AUTO), and the
+  two buttons in `tap_checks` (44 px each way)
+
+---
+
 ## Real-time Sync
 
 ### Server-Sent Events (SSE)
@@ -507,7 +565,8 @@ eventSource.addEventListener('results', function(e) {
 **Class:** `.disabled`
 **Attribute:** `disabled`
 **Style:** Greyed out, no interaction
-**Usage:** Race-phase buttons disabled when results set
+**Usage:** Race-phase buttons disabled when results set; every mode button while AUTO is on
+(class `.auto-held`, dashed, with a `switch to MANUAL` line on the button, `updatePanelButtons()`)
 
 ---
 
@@ -543,7 +602,11 @@ eventSource.addEventListener('results', function(e) {
 **Examples:**
 - "Command sent: CHAOS"
 - "ESP32 disconnected"
-- "Results set: Win=5, Place=12, Show=8"
+- "Results set: Win=5, Place=12, Show=8 · WINNER" (green: the race state the results set)
+- "Results set: Win=5, Place=12, Show=8 · race state not set (La Quiniela: bridge not
+  initialised)" (red: saved, but La Quiniela refused WINNER; its reason). `POST
+  /api/results` takes all three, three different horses in the field, or answers a 400
+  that says which and saves nothing
 
 ---
 
