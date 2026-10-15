@@ -41,7 +41,7 @@ from la_quiniela import betting  # noqa: E402
 from la_quiniela import board as board_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
-    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, RENUM_LATE_S, RENUM_SETTLE_S, BettingBoard, clean_weather, clear_results,
+    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, RENUM_LATE_S, RENUM_RECENT_S, RENUM_SETTLE_S, BettingBoard, clean_weather, clear_results,
     load_board_settings,
     prizes_for, read_results, round_half_up, sse_events, validate_cmd,
 )
@@ -78,7 +78,7 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               "renumbering"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
-              "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
+              "conflict": False, "cups": [], "heard": None, "name": "", "replaced": None, "in_field": False, "odds": None}
 NO_RESULTS = None   # the model's results until the dashboard has them
 
 
@@ -285,7 +285,7 @@ def test_tokens_share_leader_online_conflict():
     h7, h3, h12 = m["horses"]["7"], m["horses"]["3"], m["horses"]["12"]
     _check("horse 7 entry: cup is the MAC, one claimer, no conflict",
            h7 == {"tokens": 23, "share": round(23 / 33, 4), "scratched": False, "online": True, "cup": MAC_A,
-                  "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": True, "odds": None}, str(h7))
+                  "conflict": False, "cups": [MAC_A], "heard": None, "name": "", "replaced": None, "in_field": True, "odds": None}, str(h7))
     _check("horse 3 tokens/share", h3["tokens"] == 10 and h3["share"] == round(10 / 33, 4))
     _check("horse 3 scratched (the state's bit) and offline, so out of the field",
            h3["scratched"] is True and h3["online"] is False and h3["in_field"] is False)
@@ -339,7 +339,7 @@ def test_odd_entries_never_raise():
            str(m["horses"]["5"]))
     _check("string fields are coerced", m["horses"]["8"] == {"tokens": 6, "share": 0.75, "scratched": False,
                                                               "online": True, "cup": mac_of(5), "conflict": False, "cups": [mac_of(5)],
-                                                              "name": "", "replaced": None, "in_field": True, "odds": None}, str(m["horses"]["8"]))
+                                                              "heard": None, "name": "", "replaced": None, "in_field": True, "odds": None}, str(m["horses"]["8"]))
     _check("negative tokens clamp to 0, cup kept", m["horses"]["10"]["tokens"] == 0 and m["horses"]["10"]["cup"] == mac_of(7)
            and m["horses"]["10"]["online"] is True)
     _check("float count", m["horses"]["14"]["tokens"] == 2 and m["horses"]["14"]["scratched"] is False)
@@ -441,7 +441,7 @@ def test_renumber_and_reset_produce_no_ghost_bets():
     m = b.model()
     _check("horse 2 now on cup 4 with that cup's count",
            m["horses"]["2"] == {"tokens": 7, "share": round(7 / 59, 4), "scratched": False, "online": True,
-                                "cup": mac_of(4), "conflict": False, "cups": [mac_of(4)], "name": "", "replaced": None,
+                                "cup": mac_of(4), "conflict": False, "cups": [mac_of(4)], "heard": None, "name": "", "replaced": None,
                                 "in_field": True, "odds": None}, str(m["horses"]["2"]))
     _check("no event for the cup change",
            len(m["events"]) == 2 and m["events"][0]["horse"] == 2 and m["events"][0]["delta"] == -1)
@@ -792,7 +792,7 @@ def test_real_bridge_feeds_the_board():
     m = board.model()
     _check("count -> tokens on the horse the cup reports",
            m["horses"]["7"] == {"tokens": 3, "share": 1.0, "scratched": True, "online": True, "cup": MAC_A,
-                                "conflict": False, "cups": [MAC_A], "name": "", "replaced": None, "in_field": False, "odds": None},
+                                "conflict": False, "cups": [MAC_A], "heard": None, "name": "", "replaced": None, "in_field": False, "odds": None},
            str(m["horses"]["7"]))
     _check("any line puts the gateway online -> link_ok", m["link_ok"] is True)
     _check("leader, pot (horse 7 is scratched: its 3 tokens count but are out of the pot)",
@@ -1296,7 +1296,7 @@ def test_names_and_replacement_scratch_in_the_model():
     m = b.model()
     _check("horse 22: the cup and its 12 tokens, OCELLI replacing ENCINO, in the field, not scratched",
            m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True,
-                                 "cup": mac_of(1), "conflict": False, "cups": [mac_of(1)], "name": "OCELLI",
+                                 "cup": mac_of(1), "conflict": False, "cups": [mac_of(1)], "heard": None, "name": "OCELLI",
                                  "replaced": "ENCINO", "in_field": True, "odds": None}, str(m["horses"]["22"]))
     _check("horse 9: no cup, no tokens, out of the field, its name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
@@ -2142,7 +2142,7 @@ def test_routes_scratch_and_unscratch():
     m = client.get("/api/quiniela").get_json()
     _check("the model: 22 on the cup with the 12 tokens, in the field, OCELLI replacing ENCINO",
            m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True, "cup": MAC_A,
-                                 "conflict": False, "cups": [MAC_A], "name": "OCELLI", "replaced": "ENCINO", "in_field": True, "odds": None},
+                                 "conflict": False, "cups": [MAC_A], "heard": None, "name": "OCELLI", "replaced": "ENCINO", "in_field": True, "odds": None},
            str(m["horses"]["22"]))
     _check("9 left the field: no cup, 0 tokens, name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
@@ -2465,7 +2465,7 @@ def test_undo_with_the_cup_off():
     _check("after RENUM_LATE_S: logged once, naming the cup, and in the model for the badge on horse 9",
            len(cap.messages("still says 22")) == 1 and MAC_A in cap.messages("still says 22")[0]
            and len(late) == 1 and (late[0]["from"], late[0]["to"], late[0]["mac"], late[0]["kind"], late[0]["online"]) == (22, 9, MAC_A, "undo", False)
-           and late[0]["waiting_s"] >= RENUM_LATE_S, str((cap.messages(), late)))
+           and late[0]["since"] == 1_700_000_000, str((cap.messages(), late)))
     _check("...and recorded once as a renum_late event", [(e["pair"], e["mac"]) for e in renum_events(b, "renum_late")] == [([22, 9], MAC_A)])
     # pi5 restarts while the cup is off: a new bridge and board over the same database
     b.close()
@@ -2563,6 +2563,105 @@ def test_a_stale_report_never_acknowledges():
            board.undo_renums() == [(22, 9)] and renum_events(b, "renum_ack") == [] and cup.horse == 22, str((board.undo_renums(), cup.history)))
     run_for(BenchCup.REPORT_S, b, clk, board, [cup], until=lambda: (22, 9) in b.renum)
     _check("...the cup says 22: [22, 9] goes down", (22, 9) in b.renum, str(b.renum))
+
+
+GHOST = "A4:F0:0F:5E:0B:08"          # a cup in the cache from an old restored database (DevPi, 2026-10-14)
+GHOST_SEEN = "2026-09-20T18:00:00Z"
+
+
+def add_ghost(b, horse, mac=GHOST, last_seen=GHOST_SEEN):
+    """A cup the cache holds but pi5 has not heard since it started, as _load_cups seeds one from an lq_cups row:
+    its last horse, offline, its last_seen from then, no "seen" on the bridge's clock."""
+    from la_quiniela.bridge import CupLive
+    ghost = CupLive(mac=mac)
+    ghost.horse, ghost.count, ghost.last_seen_ts, ghost.online = horse, 0, last_seen, False
+    b.cups[mac] = ghost
+    return ghost
+
+
+def test_a_ghost_cup_is_never_late():
+    """Item (z) on DevPi: a record in the cup cache from an old restored database (offline since before the scratch,
+    never heard since pi5 started) was on 19 when 19 -> 21 was scratched, and pi5 called it late. Now it gets no
+    warning, no renum_late and no entry in the model (no tag); the real cup on 19 follows as before; the ghost does
+    not hold up the undo either (it settles once the real cup reports 19); and the model says when the ghost was
+    last heard (horse 19's "heard", for the admin page)."""
+    from datetime import datetime, timezone
+    b, port, clk, board, (cup,) = bench(((MAC_A, 19),))
+    add_ghost(b, 19)
+    with capture_logs(LOGGER) as cap:
+        board.store.scratch_replace(19, 21)
+        run_for(3.0, b, clk, board, [cup])
+        _check("the real cup followed 19 -> 21", cup.horse == 21 and cup.reports[-1][1] == 21, str(cup.history))
+        run_for(RENUM_LATE_S + 10, b, clk, board, [cup], step=1.0)
+    _check("the ghost on 19, a minute and more on: no warning, no renum_late, nothing in the model (no tag on 21)",
+           cap.messages("still says") == [] and renum_events(b, "renum_late") == [] and board.model()["renumbering"] == [],
+           str((cap.messages("still says"), board.model()["renumbering"])))
+    m = board.model()
+    ghost_unix = int(datetime(2026, 9, 20, 18, 0, 0, tzinfo=timezone.utc).timestamp())
+    _check("horse 19 shows the ghost, offline, heard when its record was last written; 21 the real cup, online, heard null",
+           m["horses"]["19"]["cup"] == GHOST and m["horses"]["19"]["online"] is False and m["horses"]["19"]["heard"] == ghost_unix
+           and m["horses"]["21"]["cup"] == MAC_A and m["horses"]["21"]["heard"] is None,
+           str((m["horses"]["19"], m["horses"]["21"])))
+    board.queue_undo_renum(21, 19)
+    board.store.unscratch_replace(19)
+    run_for(BenchCup.REPORT_S + RENUM_SETTLE_S + 3, b, clk, board, [cup])
+    _check("the undo brings the real cup back and settles: the ghost on 19 holds nothing up",
+           cup.horse == 19 and board.undo_renums() == [] and b.renum == [], str((cup.history, board.undo_renums(), b.renum)))
+
+
+def test_who_can_be_late():
+    """A cup is called late on a pair only if pi5 heard it no longer than RENUM_RECENT_S (10 minutes) before the
+    scratch or undo, or since. Two cups gone quiet before a scratch: the one heard 11 minutes before is not late,
+    the one heard 9 minutes before is (it may be a cup switched off with tokens in it). A cup that was never heard
+    since pi5 started still gets the pair the moment it turns up, and its following is acknowledged."""
+    b, port, clk, board, (old, recent) = bench(((MAC_A, 6), (MAC_B, 7)))
+    old.on = False
+    run_for(120.0, b, clk, board, [old, recent], step=1.0)            # heard 2 minutes after the other
+    recent.on = False
+    run_for(RENUM_RECENT_S - 120 + 60, b, clk, board, [old, recent], step=5.0)   # now 11 and 9 minutes since
+    with capture_logs(LOGGER) as cap:
+        board.store.scratch_replace(6, 22)
+        board.store.scratch_replace(7, 23)
+        run_for(RENUM_LATE_S + 10, b, clk, board, [old, recent], step=1.0)
+    late = board.model()["renumbering"]
+    _check("heard 11 minutes before the scratch: not late; heard 9 minutes before: late, once, in the model",
+           [(r["mac"], r["from"], r["to"]) for r in late] == [(MAC_B, 7, 23)]
+           and len(cap.messages("still says")) == 1 and MAC_B in cap.messages("still says")[0], str((late, cap.messages())))
+    ghost = BenchCup(b, port, clk, GHOST, 5)
+    ghost.on = False
+    add_ghost(b, 5)
+    with capture_logs(LOGGER) as cap:
+        board.store.scratch_replace(5, 24)
+        run_for(RENUM_LATE_S + 10, b, clk, board, [ghost], step=1.0)
+        _check("a cup never heard since pi5 started, on 5 for a minute and more after 5 -> 24: never late",
+               cap.messages("still says 5") == [] and all(r["mac"] != GHOST for r in board.model()["renumbering"]),
+               str(cap.messages()))
+        ghost.on = True
+        ghost.next_report = clk() + 0.5
+        run_for(6.0, b, clk, board, [ghost], until=lambda: bool(ghost.reports) and ghost.reports[-1][1] == 24)
+    acks = [(a["mac"], a["pair"]) for a in renum_events(b, "renum_ack")]
+    _check("...it turns up saying 5: it gets [5, 24] at once and follows, acknowledged, and was never called late",
+           ghost.horse == 24 and (GHOST, [5, 24]) in acks and cap.messages("still says 5") == [], str((ghost.history, acks)))
+
+
+def test_a_late_cup_does_not_churn_the_model():
+    """A late entry says since when pi5 has waited for the cup ("since", unix seconds), not how long: the model, and
+    every page and TV reading it, must not change every second for as long as a cup is off."""
+    b, port, clk, board, (cup,) = bench(((MAC_A, 9),))
+    board.store.scratch_replace(9, 22)
+    run_for(3.0, b, clk, board, [cup])
+    cup.on = False
+    run_for(8.0, b, clk, board, [cup])
+    board.queue_undo_renum(22, 9)
+    board.store.unscratch_replace(9)
+    run_for(RENUM_LATE_S + 20, b, clk, board, [cup], step=1.0)       # late, and the gateway gone quiet meanwhile
+    late = board.model()["renumbering"]
+    q = board.subscribe()
+    run_for(10.0, b, clk, board, [cup], step=1.0)
+    _check("the late entry: since (the board's clock at the undo), no seconds-waited count",
+           len(late) == 1 and late[0]["since"] == 1_700_000_000 and "waiting_s" not in late[0], str(late))
+    _check("...and ten seconds of refreshes while it stays late publish nothing", q.qsize() == 0, str(q.qsize()))
+    board.unsubscribe(q)
 
 
 def test_results_from_the_dashboard_file():
@@ -4025,6 +4124,9 @@ def main():
     _run("renumber — undo then scratch again within a second: no bounce", test_undo_then_scratch_again)
     _run("renumber — two cups on one number: the pair reaches both, no flicker", test_two_cups_on_one_number)
     _run("renumber — a stale report never acknowledges a pair", test_a_stale_report_never_acknowledges)
+    _run("renumber — a ghost in the cup cache is never late and holds no undo (item z)", test_a_ghost_cup_is_never_late)
+    _run("renumber — only a cup heard within 10 minutes of the pair can be late; a ghost that turns up follows", test_who_can_be_late)
+    _run("renumber — a late cup does not change the model every second", test_a_late_cup_does_not_churn_the_model)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
     _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
     _run("closing — reopened from the post with FINAL CALL, the next close takes fresh figures (B1)", test_reopen_takes_fresh_figures)

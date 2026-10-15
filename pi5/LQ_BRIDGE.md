@@ -673,9 +673,12 @@ depends on this.
   while an online cup reports 22. It is kept until it has nothing left to
   do: no cup in the cache says 22 (online or not, so a cup that was off
   during the undo is brought back whenever it returns, five minutes or
-  five hours later) and every cup on 9 has reported more than
-  `RENUM_SETTLE_S` (5 s, over two report cycles) after the undo; then it
-  is settled and dropped. When 22 is a replacement again (9 scratched with
+  five hours later) and every cup on 9 that pi5 has heard since it
+  started has reported more than `RENUM_SETTLE_S` (5 s, over two report
+  cycles) after the undo; then it is settled and dropped. A cup on 9 in
+  the cache that has not been heard since pi5 started (a record restored
+  from an old database) cannot be one the renumber moved, so it holds
+  nothing up (on DevPi, 2026-10-14, such a record held an undo for good). When 22 is a replacement again (9 scratched with
   22 again, or another horse with 22) it is dropped at once. A restart
   keeps it (the table) and restarts its clock: any report after the
   restart counts.
@@ -702,7 +705,17 @@ a second or two of the scratch was ended by the cup's own last report of
 the cup then became 22 and stayed there.
 
 **Acknowledgements.** For every pair, a record's or an undo's, pi5
-watches the cups it sees on the pair's `from`. A watched cup whose report,
+watches the cups it sees on the pair's `from` that are part of tonight's
+picture: heard since pi5 started, and no longer than `RENUM_RECENT_S` (10
+minutes) before the scratch or the undo, or since (a cup that turns up
+later is watched from then). A cup in the cache that was not, a record
+restored from an old database or a cup put away hours ago, still gets the
+pair the moment it turns up and reports `from`, but it is never called
+late: on DevPi such a record (offline since before the scratch) drew a
+warning for the scratch 19 -> 21. Ten minutes rather than "heard since
+the scratch or undo": that would miss a cup switched off just before an
+undo, the very cup the warning is for, and one on when the scratch was
+made that went off before it could follow. A watched cup whose report,
 newer than the scratch or the undo, says the pair's `to` (or a number
 further down a chain in the line) has followed it: an INFO line, `cup
 A0:B7:65:12:34:57 followed 22 -> 9 (undo) 1.8 s after it was made`, and a
@@ -712,14 +725,18 @@ the cup ended up). A cup that leaves `from` for any other number (set by
 hand) is simply no longer watched.
 
 **Late.** A watched cup still on `from` `RENUM_LATE_S` (60 s) after pi5
-first saw it there is late: one WARNING naming it, `cup A0:B7:65:12:34:57
+began watching it is late: one WARNING naming it, `cup A0:B7:65:12:34:57
 still says 22 61 s after the undo; it should be 9 (it is off)` (or `it is
 online but has not followed`), one `renum_late` event (`{"mac", "pair",
 "kind", "waiting_s", "online"}`), and an entry in the model's
 `renumbering` for as long as it lasts, which puts `⏳ renumbering` on the
-admin page's row of the pair's `to`. The pair is still sent; when the cup
-follows, the entry goes and the acknowledgement is logged with its real
-delay.
+admin page's row of the pair's `to` within one 5 s poll. The entry says
+since when pi5 has waited (`since`), not for how long, so a late cup does
+not change the model every second. The pair is still sent; when the cup
+follows, the entry goes (the tag with it, within a poll) and the
+acknowledgement is logged with its real delay. The WARNING reaches the
+journal; the INFO lines do not (pi5 configures no logging, so only
+warnings print): the events table has every acknowledgement.
 
 ### Results
 
@@ -872,11 +889,15 @@ its appendix. Top to bottom:
   asking nothing first, shows its reason in red); and **Horses**, one row per horse 1..24 from the model
   and nothing to click: the number in its cloth colour, the name, the status
   (`● online`, `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup
-  claims the horse), the tokens, and `WIN` / `PLACE` / `SHOW` / `SCR` tags
-  from the results and the scratches, and `⏳ renumbering` (amber) on the
-  row a cup should have renumbered to while that cup is a minute late
-  (the model's `renumbering`; the tag's tooltip says `cup <MAC> still says
-  22 (off)`; "Renumber pairs: derived and acknowledged", above). The line above it reads `N cups online
+  claims the horse; an offline row says under it when its cup was last
+  heard, `heard 40 s ago`, `heard 3 min ago`, or a date such as `heard
+  Sep 20` for a record restored from an old database, a ghost rather than
+  a dead cup, from the model's `heard`), the tokens, and `WIN` / `PLACE` /
+  `SHOW` / `SCR` tags from the results and the scratches, and `⏳
+  renumbering` (amber) on the row a cup should have renumbered to while
+  that cup is a minute late (the model's `renumbering`; the tag's tooltip
+  says `cup <MAC> still says 22 (off)`; "Renumber pairs: derived and
+  acknowledged", above). The line above it reads `N cups online
   · M with no horse` (`cups_online` and `cups_no_horse` from the model; a cup
   showing `NO HORSE` is counted there and appears in no row). There is no
   cups table, no picker, nothing to adopt and nothing to forget: a cup's
@@ -918,6 +939,21 @@ Everything refreshes every 5 s from `GET /api/quiniela` alone, and every
 button reports into its own status line (the pressed row's, for a scratch),
 errors verbatim in red, network and non-JSON failures named. Vanilla JS, no
 CDN.
+
+**A page left open across an update reloads itself.** The iPad's Home
+Screen app keeps this page for days, and a page loaded before a pull goes
+on running its old script: on DevPi on 2026-10-14 the model listed a late
+cup for three minutes and the page, from before `7b53c2c`, had no tag to
+show it (the same flow on the rig, page loaded fresh, shows it within one
+poll). pi5 now fingerprints the page it serves (`ADMIN_PAGE_REV` in
+`board.py`: the template, read once as Flask's template cache does, and
+the stylesheet), renders it into the page (`<meta name="ddm-admin-page">`)
+and sends it with every model read (`X-Admin-Page`). When the two differ
+the page reloads itself, but only while idle: nothing focused, nothing
+typed since the last action that went through, no Confirm scratch open.
+Otherwise the line at the top says `pi5 has a newer version of this page:
+it reloads when you're done here.` and the next idle poll reloads it. A
+restart that changed nothing reloads nothing.
 
 ### The dashboard reads the names
 
@@ -1043,7 +1079,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`. |
+| `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`, and `X-Admin-Page`: the admin page's revision as this pi5 serves it ("Admin page", the page left open across an update). |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
 | `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "at_post": null, "modes": {...the table...}}`, `Cache-Control: no-store`. `at_post` is `{"pot": <the scale pot at the post>, "pot_counted": <the hand count or null>}` while figures at the post are held: what the dashboard's reopen confirm names. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |
@@ -1247,9 +1283,15 @@ the store and the results file as follows:
   while there is none. The TV's crawl reads it.
 - `renumbering`: the cups late on a renumber pair ("Renumber pairs:
   derived and acknowledged", above), `[{"from": 22, "to": 9, "mac":
-  "A0:B7:65:12:34:57", "kind": "undo", "waiting_s": 75, "online":
-  false}]`, sorted by `to` then MAC; `[]` while no cup is. The admin page's
-  `⏳ renumbering` tag reads it.
+  "A0:B7:65:12:34:57", "kind": "undo", "since": 1777662850, "online":
+  false}]` (`since`: unix seconds, when pi5 began waiting for that cup),
+  sorted by `to` then MAC; `[]` while no cup is. The admin page's `⏳
+  renumbering` tag reads it.
+- `horses[n].heard`: while no cup claiming horse n is online, when the
+  cup the row shows was last heard (unix seconds, from the cup cache's
+  `last_seen`); null while one is online (each report would change the
+  model) or no cup claims it. The admin page's `heard …` under an offline
+  status reads it.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -1453,7 +1495,10 @@ back to 9 with its tokens, an undo with the cup off for five minutes and
 across a restart, undo then scratch 9 -> 23 within a second ending on 23
 with no bounce and both acknowledgements logged, two cups on one number,
 a stale report never acknowledging, the late log line and `renumbering`
-after 60 s, the four-slot cap; a scratch before any cup says the horse; the in_field rule; the unused-number and not-in-the-field
+after 60 s, a record restored from an old database never late and never
+holding an undo, the ten-minute rule (heard 11 minutes before a scratch:
+not late; 9 minutes: late), a ghost that turns up following its pair,
+no model change every second while a cup is late, the four-slot cap; a scratch before any cup says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
 the names text parser for 24 lines, the closing time, the between-races
 one race state (each of the dashboard's twelve modes against the table,

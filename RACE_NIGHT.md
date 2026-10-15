@@ -208,8 +208,10 @@ python3 pi5/tools/wipe.py
       names back as they were before the scratch: a name the scratch gave the new number
       is cleared, one entered ahead in Horse names stays.
       Undo works at any time, however soon after the scratch; a cup that was off catches up
-      when it's back on. `⏳ renumbering` on a row means a cup hasn't followed for a minute
-      (hover or tap it: which cup, and whether it's off); switch it on or check its screen.
+      when it's back on. `⏳ renumbering` on a row of `ADMIN` → Race → Horses means a cup hasn't
+      followed for a minute (hover or tap it: which cup, and whether it's off); switch it on or
+      check its screen. An offline row says when its cup was last heard: a date (`heard Sep 20`)
+      is a leftover record from an old database, not a cup to look for.
 - The names and scratches entered here feed La Subasta too: the auction at
   `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
   entered in La Subasta. A scratch made during the auction voids its bids on that horse
@@ -540,6 +542,8 @@ sudo systemctl restart ddm-pi5 ddm-splash
 ```
 A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
 (it restarts both). A pull that changed the TV's page: F5 on the kiosk's keyboard too.
+`ADMIN` reloads itself within a few seconds of the restart when its page changed (an open
+page opened before this was added can't: close it and open it again, once).
 `git status` should be clean; `pi5/.env` doesn't show (it is git-ignored).
 
 **Once, on a box that still has a local edit of `pi5/config.py`** (`git status` lists it;

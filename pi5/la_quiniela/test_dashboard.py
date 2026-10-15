@@ -98,21 +98,22 @@ def tmpdir():
 class Rig:
     """main's app over a fresh bridge and board; the hardware stubbed."""
 
-    def __init__(self, led_ok=True):
+    def __init__(self, led_ok=True, real_time=False):
         # A database of its own per rig. main.py's import left connections
         # open on test_smoke's temp file (La Subasta shares it), and Windows
         # does not let an open file be replaced, so that one cannot be made
         # fresh again; a new path always is.
         self.dir = tmpdir()
         S._TMP_DB = str(self.dir / "la_quiniela_dash.db")
-        self.bridge, self.port, self.sio, self.clk = _fresh_bridge()
+        # real_time: the bridge and the board on the real clocks (a test that runs the board's own thread).
+        self.bridge, self.port, self.sio, self.clk = _fresh_bridge(clock=not real_time)
         self.bridge._open_port()
         init_la_quiniela(socketio=None, bridge=self.bridge)
         self.results_file = self.dir / "results.json"
         main.RESULTS_FILE = str(self.results_file)
-        self.wall = FakeClock(1_700_000_000.0)
-        self.board = init_board(bridge=self.bridge, log_dir=self.dir / "logs",
-                                results_path=self.results_file, wall=self.wall)
+        self.wall = None if real_time else FakeClock(1_700_000_000.0)
+        self.board = init_board(bridge=self.bridge, log_dir=self.dir / "logs", results_path=self.results_file,
+                                **({} if real_time else {"wall": self.wall}))
         self.led = []                   # every command the LED controller was sent
         self.led_ok = led_ok
 
@@ -1863,6 +1864,149 @@ def test_admin_renumbering_badge_in_a_browser():
         server.close()
 
 
+def test_admin_late_tag_in_real_time():
+    """Item (z) on DevPi: the renum_late event for horse 19 stood for three minutes and the admin page never showed
+    the tag. Here the real admin page is open from the start and does it all itself, with the board's own thread on
+    the real clock and a cup reporting every 2 s from a thread of its own (RENUM_LATE_S cut to 6 s), and a ghost on
+    19 (a cup in the cache from an old database, offline, heard on 2026-09-20). Scratch 19 -> 21 with the page's
+    Scratch and Confirm scratch: the cup follows; the ghost is never late (no tag on 21), and row 19 says when it was
+    last heard. The cup is switched off and the page's Undo pressed: the tag is on 19 within one 5 s poll of the
+    model listing the cup, and gone within one poll of the cup coming back to 19. Then the page left open across an
+    update: when GET /api/quiniela names another page, it reloads itself while idle, and while something is being
+    typed it says so and waits. Skipped where there is no Chrome."""
+    import threading
+    from la_quiniela import betting as betting_mod
+    from la_quiniela import board as board_mod
+    from la_quiniela.bridge import CupLive
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("real-time late tag browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    saved = (betting_mod.RENUM_LATE_S, board_mod.ADMIN_PAGE_REV)
+    betting_mod.RENUM_LATE_S = 6.0
+    rig = Rig(real_time=True)
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    ghost = CupLive(mac="A4:F0:0F:5E:0B:08")
+    ghost.horse, ghost.count, ghost.last_seen_ts = 19, 0, "2026-09-20T18:00:00Z"
+    rig.bridge.cups[ghost.mac] = ghost                 # as _load_cups seeds it from an old lq_cups row
+    cup = {"horse": 19, "on": True, "next": 0.0}
+    stop = threading.Event()
+
+    def the_cup():                                     # hears every state line at once, reports every 2 s
+        while not stop.is_set():
+            now = time.monotonic()
+            if cup["on"]:
+                lines = [l for l in rig.port.lines() if l.startswith('{"t":"state"')]
+                if lines:
+                    for f, t in json.loads(lines[-1])["renum"]:
+                        if f == cup["horse"]:
+                            cup["horse"] = t
+                if now >= cup["next"]:
+                    rig.bridge.handle_raw_line(telem(MAC_A, horse=cup["horse"], count=4))
+                    cup["next"] = now + 2.0
+            rig.bridge.tick(now)
+            stop.wait(0.1)
+
+    threading.Thread(target=the_cup, name="test-cup", daemon=True).start()
+    rig.board.start()
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    badge = ("(() => { const t = document.querySelector('#horses .hrow[data-horse=\"%d\"] .tag.ren');"
+             " return t ? [t.textContent, t.getAttribute('title')] : null; })()")
+    status = "document.querySelector('#horses .hrow[data-horse=\"%d\"] .hstat').innerText"
+
+    def late():
+        return rig.board.model()["renumbering"]
+
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && "
+                        "!!document.querySelector('#scratch-list .horse[data-horse=\"19\"] [data-scratch]')", timeout=20)
+        chrome.wait_for(("(%s).indexOf('online') >= 0" % (status % 19)), timeout=12)
+        chrome.tap('#scratch-list .horse[data-horse="19"] [data-repl-name]')
+        chrome.call("Input.insertText", text="TEST")
+        chrome.tap('#scratch-list .horse[data-horse="19"] [data-scratch]')
+        chrome.wait_for("!!document.querySelector('#scratch-list .horse[data-horse=\"19\"] [data-confirm]')", timeout=5)
+        chrome.tap('#scratch-list .horse[data-horse="19"] [data-confirm]')
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"19\"] [data-undo]')", timeout=10)
+        end = time.monotonic() + 10
+        while time.monotonic() < end and cup["horse"] != 21:
+            time.sleep(0.1)
+        _check("real time: the page's Scratch and Confirm made 19 -> 21 and the cup followed", cup["horse"] == 21, str(cup))
+        heard = chrome.wait_for("(() => { const s = %s; return s.indexOf('heard Sep 20') >= 0 ? s : null; })()" % (status % 19),
+                                timeout=12)
+        tags_on_21 = []
+        end = time.monotonic() + betting_mod.RENUM_LATE_S + 6
+        while time.monotonic() < end:
+            tags_on_21.append(chrome.eval(badge % 21))
+            time.sleep(0.25)
+        _check("...the ghost left alone on 19: its row says when it was last heard (heard Sep 20), and it is never "
+               "late: no tag on 21, nothing in the model", "offline" in heard and not any(tags_on_21) and late() == [],
+               str((heard, [t for t in tags_on_21 if t][:1], late())))
+        cup["on"] = False                               # unplugged
+        chrome.wait_for(("(%s).indexOf('offline') >= 0" % (status % 21)), timeout=15)
+        chrome.tap('#scratched-list .horse[data-horse="19"] [data-undo]')
+        chrome.wait_for("!!document.querySelector('#scratch-list .horse[data-horse=\"19\"] [data-scratch]')", timeout=10)
+        end = time.monotonic() + betting_mod.RENUM_LATE_S + 10
+        while time.monotonic() < end and not late():
+            time.sleep(0.05)
+        listed, t_model = late(), time.monotonic()
+        try:
+            shown = chrome.wait_for(badge % 19, timeout=10)
+        except TimeoutError:
+            shown = None
+        took = time.monotonic() - t_model
+        _check("the cup off at the Undo: the model lists it (21 -> 19, off) and the tag is on horse 19's row within one "
+               "5 s poll, naming the cup; none on 21",
+               [(r["from"], r["to"], r["online"]) for r in listed] == [(21, 19, False)] and took <= 6.5
+               and shown == [chr(0x23F3) + " renumbering", "cup %s still says 21 (off)" % MAC_A] and chrome.eval(badge % 21) is None,
+               "%s after %.1f s: %s" % (listed, took, shown))
+        cup["on"], cup["next"] = True, 0.0              # plugged back in
+        end = time.monotonic() + 10
+        while time.monotonic() < end and (late() or cup["horse"] != 19):
+            time.sleep(0.05)
+        t_ack = time.monotonic()
+        try:
+            gone = chrome.wait_for("(%s) === null" % (badge % 19), timeout=10)
+        except TimeoutError:
+            gone = False
+        took = time.monotonic() - t_ack
+        _check("...plugged back in: the cup is 19 again, and the tag goes within one poll",
+               cup["horse"] == 19 and late() == [] and gone is True and took <= 6.5, "%s after %.1f s" % (cup, took))
+        _check("...no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+
+        # The page left open across an update (the iPad's Home Screen app keeps it for days).
+        meta = "document.querySelector('meta[name=\"ddm-admin-page\"]').content"
+        _check("the page carries the revision pi5 serves, and so does GET /api/quiniela",
+               chrome.eval(meta) == board_mod.ADMIN_PAGE_REV != "" and
+               rig.client.get("/api/quiniela").headers.get("X-Admin-Page") == board_mod.ADMIN_PAGE_REV)
+        chrome.eval("window.__before = 1; 1")
+        board_mod.ADMIN_PAGE_REV = "updated-0001"
+        try:
+            reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-0001'"
+                                       % meta, timeout=12)
+        except TimeoutError:
+            reloaded = False
+        _check("pi5 serves another page: the open page reloads itself within a poll, idle", reloaded is True)
+        chrome.wait_for("!!document.querySelector('#names-text')", timeout=10)
+        chrome.eval("window.__before = 1; 1")
+        chrome.tap("#names-text")
+        chrome.call("Input.insertText", text="x")
+        board_mod.ADMIN_PAGE_REV = "updated-0002"
+        try:
+            noted = chrome.wait_for("document.getElementById('page-note').textContent", timeout=12)
+        except TimeoutError:
+            noted = ""
+        _check("...while something is being typed it does not reload, and says why at the top",
+               chrome.eval("window.__before") == 1 and "newer version of this page" in noted, repr(noted))
+    finally:
+        stop.set()
+        rig.board.stop()
+        chrome.close()
+        server.close()
+        betting_mod.RENUM_LATE_S, board_mod.ADMIN_PAGE_REV = saved
+
+
 # -----------------------------------------------------------------------------
 # The Control Center's ticker is gone (Joey, 2026-10-13, gap review OD9)
 # -----------------------------------------------------------------------------
@@ -1967,6 +2111,8 @@ def main_():
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
     _run("renumber — a cup late on its pair: the admin page's ⏳ renumbering badge, in a browser", test_admin_renumbering_badge_in_a_browser)
+    _run("renumber — item (z) in real time: the page open first, a ghost, the tag within a poll; a page left open across an update",
+         test_admin_late_tag_in_real_time)
     _run("no ticker — gone from the page, the script and the stylesheet, with its weather fetch", test_no_ticker)
     _run("no ticker — no element, no timer, no request, in a browser", test_no_ticker_in_a_browser)
 

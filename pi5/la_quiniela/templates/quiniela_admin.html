@@ -9,10 +9,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="LQ Admin">
 <title>La Quiniela admin</title>
+<!-- This page's revision as pi5 serves it: GET /api/quiniela says which one pi5 serves now (X-Admin-Page) -->
+<meta name="ddm-admin-page" content="{{ admin_page_rev or '' }}">
 <link rel="stylesheet" href="{{ static_url('css/quiniela_admin.css') if static_url is defined else url_for('static', filename='css/quiniela_admin.css') }}">
 </head>
 <body>
 <h1>LA QUINIELA · ADMIN</h1>
+<div id="page-note" class="status"></div>
 
 <section id="race">
   <h2>Race</h2>
@@ -135,6 +138,26 @@
     ["#C4B7A6", "#000"], ["#87CEEB", "#E31837"], ["#000080", "#fff"], ["#228B22", "#FFCD00"], ["#00008B", "#E31837"],
     ["#FF00FF", "#FFCD00"], ["#FFDAB9", "#000"], ["#008080", "#fff"], ["#808000", "#fff"], ["#2F4F4F", "#fff"]];
   var STATES = ["PRE-RACE", "BETTING OPEN", "FINAL CALL", "AT THE POST", "RUNNING", "WINNER", "AFTER PARTY"];
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  // ---- a newer page ----------------------------------------------------------
+  // A page left open across an update (the iPad's Home Screen app keeps this one for days) would go
+  // on running its old script, blind to anything the update added. Every model read says which page
+  // pi5 serves now (X-Admin-Page); when it is not this one, the page reloads itself, but only while
+  // nothing is being typed or confirmed here. Until then the line at the top says so.
+  var PAGE_REV = (document.querySelector('meta[name="ddm-admin-page"]') || {}).content || "";
+  var edited = false;             // typed into since the last action that went through
+  document.addEventListener("input", function () { edited = true; }, true);
+  function idle() {
+    var a = document.activeElement;
+    return !edited && !scratchBusy && !document.querySelector("[data-confirm]") &&
+           !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  function newerPage(rev) {
+    if (!rev || !PAGE_REV || rev === PAGE_REV) { return; }
+    if (idle()) { location.reload(); return; }
+    say("page-note", "pi5 has a newer version of this page: it reloads when you're done here.", "warn");
+  }
 
   function say(id, text, cls) {
     var el = $(id); el.textContent = text || ""; el.className = "status" + (cls ? " " + cls : "");
@@ -156,7 +179,8 @@
           var j;
           try { j = JSON.parse(t); } catch (e) { j = null; }
           if (!j || typeof j !== "object") { j = { ok: false, error: "non-JSON reply (HTTP " + r.status + ")" }; }
-          return { ok: r.ok, status: r.status, body: j };
+          if (r.ok && method !== "GET") { edited = false; }      // what was typed went through
+          return { ok: r.ok, status: r.status, body: j, rev: r.headers.get("X-Admin-Page") };
         });
       });
   }
@@ -305,6 +329,7 @@
         $("pills").textContent = why; renderState(why, false); return;
       }
       model = r.body; renderStatus(); renderScratches(force === true);
+      newerPage(r.rev);
     }).catch(function () {
       $("pills").textContent = "cannot reach pi5 (/api/quiniela)"; renderState("cannot reach pi5", false);
     });
@@ -323,7 +348,7 @@
       if (m.conflict) { stat = "\u26a0 " + (m.cups || []).length + " CUPS"; cls = "warn"; }
       else if (m.cup == null) { stat = "\u25cb no cup"; cls = ""; }
       else if (m.online) { stat = "\u25cf online"; cls = "on"; }
-      else { stat = "\u25cf offline"; cls = ""; }
+      else { stat = "\u25cf offline" + heardAgo(m.heard); cls = ""; }
       tag = res.win === n ? '<span class="tag win">WIN</span>' : res.place === n ? '<span class="tag place">PLACE</span>' :
             res.show === n ? '<span class="tag show">SHOW</span>' : "";
       if (m.scratched) { tag += '<span class="tag scr">SCR</span>'; }
@@ -344,6 +369,18 @@
     }
     $("horses").innerHTML = html;
     $("horses-line").textContent = (model.cups_online || 0) + " cups online \u00b7 " + (model.cups_no_horse || 0) + " with no horse";
+  }
+
+  // When an offline horse's cup was last heard, under its status: seconds or minutes for a cup that
+  // just went quiet, the date for a record an old database left in the cup cache (a ghost, not a dead cup).
+  function heardAgo(t) {
+    if (typeof t !== "number" || !model || typeof model.now !== "number") { return ""; }
+    var s = Math.max(0, model.now - t), d = new Date(t * 1000), when;
+    if (s < 90) { when = Math.round(s) + " s ago"; }
+    else if (s < 90 * 60) { when = Math.round(s / 60) + " min ago"; }
+    else if (s < 36 * 3600) { when = Math.round(s / 3600) + " h ago"; }
+    else { when = MONTHS[d.getMonth()] + " " + d.getDate() + (s > 300 * 86400 ? ", " + d.getFullYear() : ""); }
+    return '<span class="heard">heard ' + when + "</span>";
   }
 
   // ---- race info -------------------------------------------------------------

@@ -27,6 +27,7 @@ button, .state-link, .controls label { touch-action: manipulation; }
 .row > * { flex: 1 1 auto; }
 .status { color: var(--dim); font-size: 15px; margin-top: 8px; min-height: 1.3em; }
 .status.ok { color: var(--ok); } .status.err { color: var(--rose); font-weight: 600; }
+.status.warn { color: var(--gold); font-weight: 600; }
 .rowstatus { grid-column: 1 / -1; margin-top: 0; }   /* under the buttons of that very row, where the finger is */
 .horse { display: grid; grid-template-columns: 44px 1fr; gap: 6px 10px; align-items: center;
          padding: 10px 0; border-top: 1px solid var(--line); }
@@ -84,6 +85,8 @@ button.big { min-height: 68px; font-size: 22px; letter-spacing: .02em; }
 .tag.show { background: #cd7f32; color: #14140f; } .tag.scr { background: var(--rose); color: #fff; }
 /* A cup still on its old number a minute after a renumber pair (pi5 keeps sending it). */
 .tag.ren { background: #f0b429; color: #14140f; }
+/* When an offline cup was last heard, under its status: a ghost from an old database reads as a date. */
+.hrow .hstat .heard { display: block; font-size: 12px; text-align: right; }
 /* Race info: a name, then the date and the post time side by side, labelled above. */
 .field { display: block; color: var(--dim); font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
 .field input { margin-top: 4px; }

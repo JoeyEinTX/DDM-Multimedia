@@ -20,10 +20,11 @@
 # horses[n].cup holds: since protocol v2 it is the MAC of the cup claiming
 # that horse (null when none does), never a cup number. The board only tests
 # it for null. Additive keys: conflict and cups per horse, cups_online,
-# cups_no_horse, results, closing and renumbering on the model
-# (renumbering: the cups late on a renumber pair, RENUM_LATE_S and more,
-# [{"from", "to", "mac", "kind", "waiting_s", "online"}], for the admin
-# page's badge; empty when none). results is {"win",
+# cups_no_horse, results, closing and renumbering on the model, heard per
+# horse (renumbering: the cups late on a renumber pair, RENUM_LATE_S and
+# more, [{"from", "to", "mac", "kind", "since", "online"}], for the admin
+# page's badge, empty when none; heard: when the horse's cup was last heard,
+# unix seconds, while no cup claiming it is online, else null). results is {"win",
 # "place", "show"} (horse numbers) once the dashboard has them, null until
 # then: in WINNER the TV board shows its results screen from them, and the
 # frozen betting board under OFFICIAL RESULTS COMING while it is null.
@@ -80,7 +81,7 @@ import os
 import queue
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple
@@ -109,6 +110,7 @@ REFRESH_S = 1.0                      # the board thread's timeout between wake-u
 # kept until every cup has settled back. These two numbers only say when.
 RENUM_LATE_S = 60.0                  # a cup still on a pair's `from` this long is logged once and badged on the admin page
 RENUM_SETTLE_S = 5.0                 # an undo is settled by reports this much newer than it (over two cup report cycles)
+RENUM_RECENT_S = 600.0               # only a cup heard this long before a scratch or undo, or since, can be late on its pair
 
 CMD_WHITELIST = frozenset({"state", "demo", "json"})
 
@@ -426,7 +428,19 @@ def _unassigned() -> Dict[str, Any]:
     in the field with no cup yet still reads in_field true; 21..24 read
     false until they stand in for someone."""
     return {"tokens": 0, "share": 0.0, "scratched": False, "online": False, "cup": None,
-            "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
+            "conflict": False, "cups": [], "heard": None, "name": "", "replaced": None, "in_field": False,
+            "odds": None}
+
+
+def _iso_unix(text: Any) -> Optional[int]:
+    """A cup's last_seen (UTC ISO 8601 with a Z, whole seconds, as
+    models.utc_now_iso writes it) as unix seconds; None for anything else."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        return int(datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return None
 
 
 def clean_odds(odds: Any) -> Dict[int, str]:
@@ -637,11 +651,12 @@ class BettingBoard:
         self._events: List[Dict[str, Any]] = []
         # The renumber pairs' bookkeeping, on the bridge's clock (_bridge_now):
         # when each record's pair was first seen and each undo made, the cups
-        # watched on a pair's `from` (and since when), the cups already said
-        # to be late, and the late ones as the model reports them.
+        # watched on a pair's `from` (since when: the bridge's clock and the
+        # wall clock), the cups already said to be late, and the late ones as
+        # the model reports them.
         self._pair_since: Dict[Tuple[int, int], float] = {}
         self._undo_since: Dict[int, float] = {}
-        self._renum_watch: Dict[Tuple[str, int, int], Dict[str, float]] = {}
+        self._renum_watch: Dict[Tuple[str, int, int], Dict[str, Tuple[float, float]]] = {}
         self._renum_late_warned: set = set()
         self._renum_late: List[Dict[str, Any]] = []
         self._race_mode: Optional[str] = None      # the dashboard mode that last set the race state
@@ -877,6 +892,11 @@ class BettingBoard:
         horse is a conflict: "conflict" true and both MACs in "cups", with
         one WARNING per (horse, cups). A cup that has gone offline while
         another took its horse (a spare swapped in) is not a conflict.
+        "heard": while no cup claiming the horse is online, when the shown
+        cup was last heard (unix seconds, from its last_seen), so the admin
+        page can tell a cup that went quiet a minute ago from a record left
+        by an old database; null while one is online (its every report
+        would change the model) or none claims it.
         extras: cups_online (every online cup, horse or not), cups_no_horse
         (online cups reporting horse 0), the state's scratched list and
         results, and phase_known (the snapshot carried a phase at all: an
@@ -939,6 +959,7 @@ class BettingBoard:
                 "cup": str(primary.get("mac")),
                 "conflict": conflict,
                 "cups": macs,
+                "heard": None if online_claimers else _iso_unix(primary.get("last_seen")),
             }
 
         total = sum(h["tokens"] for h in horses.values())
@@ -1320,16 +1341,23 @@ class BettingBoard:
         a cycle is never sent (an undo pair in one is dropped, said once); at
         most RENUM_SLOTS, said once when more wait.
 
-        Bookkeeping: a cup seen on a pair's `from` is watched; when it reports
-        the pair's `to` (or a number further down the line's chain) in a
-        report newer than the pair, that is an acknowledgement (logged, a
-        renum_ack event with the delay); still on `from` after RENUM_LATE_S,
-        it is late (logged once, a renum_late event, the model's
-        renumbering list). An undone replacement is settled, and dropped,
-        once no cup reports `now` and every cup on `was` has reported more
-        than RENUM_SETTLE_S after the undo, and no other undo still leads a
-        cup to `now`."""
+        Bookkeeping: a cup seen on a pair's `from` is watched if it has been
+        heard since pi5 started and no longer than RENUM_RECENT_S before the
+        pair was made (or since: a cup that turns up later is watched from
+        then); a record in the cup cache from an old database, or a cup put
+        away hours ago, still gets the pair the moment it turns up, but is
+        never called late. When a watched cup reports the pair's `to` (or a
+        number further down the line's chain) in a report newer than the
+        pair, that is an acknowledgement (logged, a renum_ack event with the
+        delay); still on `from` RENUM_LATE_S after it was first watched, it
+        is late (logged once, a renum_late event, the model's renumbering
+        list with "since", when pi5 began waiting for it). An undone
+        replacement is settled, and dropped, once no cup reports `now`,
+        every cup on `was` heard since pi5 started has reported more than
+        RENUM_SETTLE_S after the undo, and no other undo still leads a cup
+        to `now`."""
         now_b = self._bridge_now()
+        now_w = self._wall()
         active = sorted((was, now) for was, now in records.items() if now is not None)
         active_now = {now for _, now in active}
         cups: Dict[str, Tuple[int, bool, Optional[float]]] = {}
@@ -1343,6 +1371,12 @@ class BettingBoard:
 
         def on(horse: int, online_only: bool = False) -> List[str]:
             return sorted(m for m, (h, online, _) in cups.items() if h == horse and (online or not online_only))
+
+        def recent(mac: str, since: float) -> bool:
+            # Part of tonight's picture for a pair made at `since`: heard since pi5 started, and no longer
+            # than RENUM_RECENT_S before the pair (a cup switched off just before or after it counts).
+            seen = cups[mac][2]
+            return seen is not None and seen >= since - RENUM_RECENT_S
 
         events: List[Tuple[Any, ...]] = []
         undone = self.store.undone_renums()
@@ -1400,12 +1434,13 @@ class BettingBoard:
                 kind, f, t = key
                 watch = self._renum_watch.setdefault(key, {})
                 for m in on(f):
-                    watch.setdefault(m, now_b)
+                    if m not in watch and recent(m, since):
+                        watch[m] = (now_b, now_w)
                 chain, h_ = {t}, t
                 while h_ in next_of and next_of[h_] not in chain:
                     h_ = next_of[h_]
                     chain.add(h_)
-                for m, first in list(watch.items()):
+                for m, (first, first_w) in list(watch.items()):
                     if m not in cups:
                         del watch[m]
                         continue
@@ -1413,8 +1448,9 @@ class BettingBoard:
                     if h == f:
                         waiting = now_b - first
                         if waiting > RENUM_LATE_S:
+                            # "since", not the seconds waited, so the model does not change every second
                             late.append({"from": f, "to": t, "mac": m, "kind": kind,
-                                         "waiting_s": int(waiting), "online": online})
+                                         "since": int(first_w), "online": online})
                             if (key, m) not in self._renum_late_warned:
                                 self._renum_late_warned.add((key, m))
                                 events.append(("late", kind, f, t, m, waiting, online))
@@ -1433,7 +1469,10 @@ class BettingBoard:
                 was, since = undone[to][0], self._undo_since[to]
                 if on(to) or any(undone[g][0] == to for g in undone if g != to and g not in settled):
                     continue
-                if all(cups[m][2] is not None and cups[m][2] > since + RENUM_SETTLE_S for m in on(was)):
+                # Every cup on `was` heard since pi5 started has reported after the undo. A cup in the
+                # cache not heard since (a record from an old database) cannot be one the renumber moved:
+                # it holds nothing up.
+                if all(cups[m][2] > since + RENUM_SETTLE_S for m in on(was) if cups[m][2] is not None):
                     settled.append(to)
             for to in settled:
                 del self._undo_since[to]
