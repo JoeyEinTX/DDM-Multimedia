@@ -323,7 +323,10 @@ class Simulator:
             return False
         if any(f in self.intended_gone for f, _ in gw.renum):
             return False                          # the undone record's pair is still in the packet
-        return all(tuple(pair) in gw.renum for pair in self.intended_renum)
+        # DevPi sends a record's pair while a cup is on its `was` (betting.py,
+        # _renum_plan), so a pair is owed only while a powered cup is on it.
+        on = {c.horse for c in self.cups.values() if c.powered}
+        return all(tuple(pair) in gw.renum for pair in self.intended_renum if pair[0] in on)
 
     def operator_state(self, desc: str, phase) -> OperatorStep:
         self.intended_phase = int(phase)
@@ -550,7 +553,11 @@ class Simulator:
             self._pending_deadline = now + self.operator_timeout
             self._pending_asked = now
             self._pending_error = None
-            if step.pred():
+            # A scratch or an undo is always asked of a driving operator: the
+            # line does not always show it (a record's pair is in the line only
+            # while a cup is on its `was`, so after the cup has followed, or
+            # with it off, the line reads the same before an undo as after).
+            if step.pred() and (self.operator is None or step.kind not in ("scratch", "unscratch")):
                 return True                       # already in that state
             self._dispatch_operator(step, now)
         return True

@@ -20,7 +20,10 @@
 # horses[n].cup holds: since protocol v2 it is the MAC of the cup claiming
 # that horse (null when none does), never a cup number. The board only tests
 # it for null. Additive keys: conflict and cups per horse, cups_online,
-# cups_no_horse, results and closing on the model. results is {"win",
+# cups_no_horse, results, closing and renumbering on the model
+# (renumbering: the cups late on a renumber pair, RENUM_LATE_S and more,
+# [{"from", "to", "mac", "kind", "waiting_s", "online"}], for the admin
+# page's badge; empty when none). results is {"win",
 # "place", "show"} (horse numbers) once the dashboard has them, null until
 # then: in WINNER the TV board shows its results screen from them, and the
 # frozen betting board under OFFICIAL RESULTS COMING while it is null.
@@ -101,7 +104,11 @@ MAX_EVENTS = 8                       # the "recent drops" ring the board shows
 SSE_HEARTBEAT_S = 5.0                # ping after this much silence
 SSE_QUEUE_SIZE = 32                  # per-subscriber queue; the oldest is dropped when full
 REFRESH_S = 1.0                      # the board thread's timeout between wake-ups
-UNDO_RENUM_S = 60.0                  # an undone renumber is sent back (to -> was) this long, or until a cup reports was
+# Renumber pairs have no time limit (Joey, 2026-10-13, gap review M7): a
+# pair goes out while a cup is on its `from`, and an undone replacement is
+# kept until every cup has settled back. These two numbers only say when.
+RENUM_LATE_S = 60.0                  # a cup still on a pair's `from` this long is logged once and badged on the admin page
+RENUM_SETTLE_S = 5.0                 # an undo is settled by reports this much newer than it (over two cup report cycles)
 
 CMD_WHITELIST = frozenset({"state", "demo", "json"})
 
@@ -628,7 +635,15 @@ class BettingBoard:
         self._subs: List["queue.Queue[str]"] = []
         self._seen_state = False
         self._events: List[Dict[str, Any]] = []
-        self._undo_renum: Dict[Tuple[int, int], float] = {}   # (to, was) -> deadline on self._clock
+        # The renumber pairs' bookkeeping, on the bridge's clock (_bridge_now):
+        # when each record's pair was first seen and each undo made, the cups
+        # watched on a pair's `from` (and since when), the cups already said
+        # to be late, and the late ones as the model reports them.
+        self._pair_since: Dict[Tuple[int, int], float] = {}
+        self._undo_since: Dict[int, float] = {}
+        self._renum_watch: Dict[Tuple[str, int, int], Dict[str, float]] = {}
+        self._renum_late_warned: set = set()
+        self._renum_late: List[Dict[str, Any]] = []
         self._race_mode: Optional[str] = None      # the dashboard mode that last set the race state
         self._race_source: Optional[str] = None    # "dashboard" | "cmd" | "reset"; None: nothing set since start
         self._dup_warned: set = set()
@@ -779,6 +794,7 @@ class BettingBoard:
             "hand_counted": money["hand_counted"],
             "race": self.race_view(),
             "weather": self._weather,
+            "renumbering": [],
         }
 
     def _name_horses(self, horses: Dict[str, Dict[str, Any]], state_scratched: Iterable[int] = ()
@@ -1095,6 +1111,7 @@ class BettingBoard:
                 "hand_counted": money["hand_counted"],
                 "race": self.race_view(),
                 "weather": dict(self._weather) if self._weather is not None else None,
+                "renumbering": [dict(item) for item in self._renum_late],
             }
             changed = model != old
             if changed:
@@ -1217,66 +1234,268 @@ class BettingBoard:
         with self._refresh_lock:
             snap = bridge.get_snapshot()
             changed = self.apply_snapshot(snap)
-            if self._sync_gateway(bridge, snap):
+            late_before = self._renum_late
+            # The pairs are worked out with the gateway's line (desired_state);
+            # a cup newly late on one changes the model too.
+            if self._sync_gateway(bridge, snap) or self._renum_late != late_before:
                 changed = self.apply_snapshot(bridge.get_snapshot()) or changed
             return changed
 
     # -- what goes down to the cups --------------------------------------------
+    # A replacement scratch is a renumber: the store's record 9 -> 22 makes the
+    # board send the pair [9, 22], and the cup that is 9 becomes 22. Undoing it
+    # sends [22, 9]. The rule (Joey, 2026-10-13, gap review M7): a pair goes out
+    # while a cup is on its `from` and the records still want it, with no time
+    # limit, and a cup has followed a pair only when it reports the pair's `to`
+    # in a report made after the pair (a snapshot's "seen", on the bridge's
+    # clock): a report from before the scratch or the undo never counts. The
+    # undo used to be dropped the moment any cup reported the restored number,
+    # and the cup's last report from before the renumber was such a report, so
+    # an Undo within about 2 s of a scratch never went out and stranded the cup
+    # (B11); and it was sent for 60 s at most, so a cup off for that minute kept
+    # the replacement's number for good.
+
+    def _bridge_now(self) -> float:
+        """The bridge's clock, which a snapshot's "seen" is measured on; the
+        board's own without a bridge (no cups to compare then)."""
+        bridge = self.bridge
+        if bridge is not None and callable(getattr(bridge, "now", None)):
+            try:
+                return float(bridge.now())
+            except Exception:
+                pass
+        return self._clock()
+
     def queue_undo_renum(self, to: int, was: int) -> None:
-        """An undone replacement scratch: send [to, was] for UNDO_RENUM_S, or
-        until a cup reports `was`, so the cup that became `to` goes back."""
+        """A replacement scratch was -> to is being undone (the route calls
+        this before it removes the record): the undo is kept in the store
+        (lq_renum_undo, so it survives a restart) and [to, was] goes out
+        while a cup reports `to`, until every cup has settled on `was`, or
+        until `to` is a replacement again. No time limit: a cup off now is
+        brought back whenever it returns."""
+        self.store.add_undone_renum(int(was), int(to), self._wall())
         with self._lock:
-            self._undo_renum[(int(to), int(was))] = self._clock() + UNDO_RENUM_S
+            self._undo_since[int(to)] = self._bridge_now()
+        self.wake()
 
     def undo_renums(self) -> List[Tuple[int, int]]:
-        """The undo pairs still being sent, oldest first (tests)."""
-        with self._lock:
-            return sorted(self._undo_renum, key=self._undo_renum.get)
+        """The undone replacements still held, as their pairs back (to, was),
+        oldest undo first (tests and the docs' examples)."""
+        undone = self.store.undone_renums()
+        return [(to, undone[to][0]) for to in sorted(undone, key=lambda n: (undone[n][1], n))]
 
     def desired_state(self, snap: Any = None) -> Tuple[List[int], List[Tuple[int, int]], List[int]]:
         """(scratched, renum, results) as the gateway's state line should
-        carry them: the store's no-replacement scratches; the replacement
-        records as [was, now] pairs, then the undo pairs still pending
-        (dropped when their time is up or when a cup reports the number they
-        restore, or when a fresh record contradicts them); the dashboard's
-        results. At most RENUM_SLOTS pairs: records first, one warning when
-        an undo pair has to wait."""
+        carry them: the store's no-replacement scratches; the renumber pairs
+        (_renum_plan: the undone replacements' pairs back first, then the
+        records' pairs, each only while a cup is on its `from`); the
+        dashboard's results. Records a cup following a pair, or late on one,
+        as an event (after the board's lock is released)."""
         records = self.store.scratches()
         scratched = sorted(was for was, now in records.items() if now is None)
-        pairs: List[Tuple[int, int]] = sorted((was, now) for was, now in records.items() if now is not None)
-        reported = set()
+        pairs, events = self._renum_plan(records, snap)
+        self._record_renum_events(events)
+        return scratched, pairs, read_results(self._results_path)
+
+    def _renum_plan(self, records: Dict[int, Optional[int]], snap: Any
+                    ) -> Tuple[List[Tuple[int, int]], List[Tuple[Any, ...]]]:
+        """The renumber pairs for the gateway's line, and what to record.
+
+        From the cups in the snapshot (each one's horse, online, and "seen",
+        when its last report arrived) and the store:
+          - an undone replacement (now -> was) is superseded, and dropped,
+            when `now` is a replacement again (its cups are right where they
+            are); otherwise its pair [now, was] is live while an online cup
+            reports `now`;
+          - a record's pair [was, now] is live while an online cup reports
+            `was`, except while a live undo is bringing a cup back to `was`:
+            then it waits, so that cup returns first and follows the record
+            only from `was` (undo 9 -> 22, then scratch 9 -> 23: a cup on 22
+            gets [22, 9], and [9, 23] once it is on 9, never a bounce);
+          - a pair whose `from` is the `to` of a live pair of the same kind
+            is live too, so a chain (9 -> 22, 22 -> 23, or two undos) goes in
+            one packet as the cup walks it.
+        The line carries the undo pairs (oldest first), then the records' (by
+        was, which is chain order); a `from` appears once, a record winning;
+        a cycle is never sent (an undo pair in one is dropped, said once); at
+        most RENUM_SLOTS, said once when more wait.
+
+        Bookkeeping: a cup seen on a pair's `from` is watched; when it reports
+        the pair's `to` (or a number further down the line's chain) in a
+        report newer than the pair, that is an acknowledgement (logged, a
+        renum_ack event with the delay); still on `from` after RENUM_LATE_S,
+        it is late (logged once, a renum_late event, the model's
+        renumbering list). An undone replacement is settled, and dropped,
+        once no cup reports `now` and every cup on `was` has reported more
+        than RENUM_SETTLE_S after the undo, and no other undo still leads a
+        cup to `now`."""
+        now_b = self._bridge_now()
+        active = sorted((was, now) for was, now in records.items() if now is not None)
+        active_now = {now for _, now in active}
+        cups: Dict[str, Tuple[int, bool, Optional[float]]] = {}
         if isinstance(snap, dict):
             for entry in snap.get("cups") or []:
-                if isinstance(entry, dict) and _as_bool(entry.get("online")):
-                    h = _as_int(entry.get("horse"), 0) or 0
-                    if h:
-                        reported.add(h)
-        now_mono = self._clock()
+                if not isinstance(entry, dict) or not isinstance(entry.get("mac"), str) or not entry.get("mac"):
+                    continue
+                seen = entry.get("seen")
+                seen = float(seen) if isinstance(seen, (int, float)) and not isinstance(seen, bool) else None
+                cups[entry["mac"]] = (_as_int(entry.get("horse"), 0) or 0, _as_bool(entry.get("online")), seen)
+
+        def on(horse: int, online_only: bool = False) -> List[str]:
+            return sorted(m for m, (h, online, _) in cups.items() if h == horse and (online or not online_only))
+
+        events: List[Tuple[Any, ...]] = []
+        undone = self.store.undone_renums()
+        for to in [n for n in undone if n in active_now]:
+            undone.pop(to)
+            self.store.drop_undone_renum(to)
+            events.append(("superseded", to))
         with self._lock:
-            for pair in list(self._undo_renum):
-                to, was = pair
-                # Contradicted by a record: the number it restores is scratched
-                # again (f == was), a record moves cups onto the number it moves
-                # them off (t == to: they would bounce), or a record has the
-                # same from (the gateway refuses a from twice). The record wins.
-                stale = (self._undo_renum[pair] <= now_mono or was in reported
-                         or any(f == was or t == to or f == to for f, t in pairs))
-                if stale:
-                    del self._undo_renum[pair]
-            undo = sorted(self._undo_renum, key=self._undo_renum.get)
-        for pair in undo:
-            if any(f == pair[0] for f, _ in pairs):
-                continue
-            pairs.append(pair)
-        if len(pairs) > P.RENUM_SLOTS:
-            waiting = pairs[P.RENUM_SLOTS:]
-            key = tuple(waiting)
+            for to in undone:
+                self._undo_since.setdefault(to, now_b)   # held over a restart: any report from now on is newer
+            for to in [n for n in self._undo_since if n not in undone]:
+                del self._undo_since[to]
+            order = sorted(undone, key=lambda n: (undone[n][1], n))
+            live_u = [to for to in order if on(to, online_only=True)]
+            grown = True
+            while grown:
+                grown = False
+                for to in order:
+                    if to not in live_u and any(undone[g][0] == to for g in live_u):
+                        live_u.append(to)
+                        grown = True
+            live_u = [to for to in order if to in live_u]
+            back_to = {undone[to][0] for to in live_u}
+            live_a = {was for was, _ in active if on(was, online_only=True) and was not in back_to}
+            grown = True
+            while grown:
+                grown = False
+                for was, _ in active:
+                    if was not in live_a and was not in back_to and any(records.get(g) == was for g in live_a):
+                        live_a.add(was)
+                        grown = True
+            record_pairs = [(was, now) for was, now in active if was in live_a]
+            record_froms = {was for was, _ in record_pairs}
+            pairs = [(to, undone[to][0]) for to in live_u if to not in record_froms] + record_pairs
+            pairs = self._without_cycles(pairs, record_froms)
+            if len(pairs) > P.RENUM_SLOTS:
+                waiting = pairs[P.RENUM_SLOTS:]
+                key = tuple(waiting)
+                if key not in self._sync_warned:
+                    self._sync_warned.add(key)
+                    log.warning("La Quiniela board: %d renumber pair(s) waiting for a free slot: %s",
+                                len(waiting), waiting)
+                pairs = pairs[:P.RENUM_SLOTS]
+
+            # Who has followed, who is late.
+            for was, now in active:
+                self._pair_since.setdefault((was, now), now_b)
+            for pair in [p for p in self._pair_since if p not in set(active)]:
+                del self._pair_since[pair]
+            wanted = {("undo", to, undone[to][0]): self._undo_since[to] for to in undone}
+            wanted.update({("scratch", was, now): self._pair_since[(was, now)] for was, now in active})
+            next_of = dict(pairs)
+            late: List[Dict[str, Any]] = []
+            for key, since in wanted.items():
+                kind, f, t = key
+                watch = self._renum_watch.setdefault(key, {})
+                for m in on(f):
+                    watch.setdefault(m, now_b)
+                chain, h_ = {t}, t
+                while h_ in next_of and next_of[h_] not in chain:
+                    h_ = next_of[h_]
+                    chain.add(h_)
+                for m, first in list(watch.items()):
+                    if m not in cups:
+                        del watch[m]
+                        continue
+                    h, online, seen = cups[m]
+                    if h == f:
+                        waiting = now_b - first
+                        if waiting > RENUM_LATE_S:
+                            late.append({"from": f, "to": t, "mac": m, "kind": kind,
+                                         "waiting_s": int(waiting), "online": online})
+                            if (key, m) not in self._renum_late_warned:
+                                self._renum_late_warned.add((key, m))
+                                events.append(("late", kind, f, t, m, waiting, online))
+                        continue
+                    if seen is not None and seen > since and h in chain:
+                        events.append(("ack", kind, f, t, m, seen - since, h))
+                    del watch[m]                 # it left `from`: followed, or set by hand
+                    self._renum_late_warned.discard((key, m))
+            for key in [k for k in self._renum_watch if k not in wanted]:
+                del self._renum_watch[key]
+                self._renum_late_warned = {w for w in self._renum_late_warned if w[0] != key}
+
+            # An undo is settled once nothing is left for it to do.
+            settled = []
+            for to in order:
+                was, since = undone[to][0], self._undo_since[to]
+                if on(to) or any(undone[g][0] == to for g in undone if g != to and g not in settled):
+                    continue
+                if all(cups[m][2] is not None and cups[m][2] > since + RENUM_SETTLE_S for m in on(was)):
+                    settled.append(to)
+            for to in settled:
+                del self._undo_since[to]
+                self._renum_watch.pop(("undo", to, undone[to][0]), None)
+            self._renum_late = sorted(late, key=lambda d: (d["to"], d["mac"]))
+        for to in settled:
+            self.store.drop_undone_renum(to)
+            events.append(("settled", to, undone[to][0]))
+        return pairs, events
+
+    def _without_cycles(self, pairs: List[Tuple[int, int]], record_froms: set) -> List[Tuple[int, int]]:
+        """The pairs with any cycle broken: an undo pair on a cycle is dropped
+        (said once). The records alone cannot make one (a replacement number
+        is unused when it is taken)."""
+        out = list(pairs)
+        while True:
+            nxt = dict(out)
+            cycle = None
+            for start in nxt:
+                seen, h = [start], nxt[start]
+                while h in nxt and h not in seen:
+                    seen.append(h)
+                    h = nxt[h]
+                if h == start:
+                    cycle = seen
+                    break
+            if cycle is None:
+                return out
+            drop = next((f for f in cycle if f not in record_froms), None)
+            if drop is None:
+                return out
+            key = ("cycle", tuple(sorted(cycle)))
             if key not in self._sync_warned:
                 self._sync_warned.add(key)
-                log.warning("La Quiniela board: %d renumber pair(s) waiting for a free slot: %s",
-                            len(waiting), waiting)
-            pairs = pairs[:P.RENUM_SLOTS]
-        return scratched, pairs, read_results(self._results_path)
+                log.warning("La Quiniela board: renumber pairs would make a cycle %s; the pair back from %d waits",
+                            cycle, drop)
+            out = [p for p in out if p[0] != drop]
+
+    def _record_renum_events(self, events: List[Tuple[Any, ...]]) -> None:
+        """Log and record what _renum_plan found, outside the board's lock."""
+        bridge = self.bridge
+        record = getattr(bridge, "record_event", None) if bridge is not None else None
+        for ev in events:
+            kind = ev[0]
+            if kind == "ack":
+                _, which, f, t, mac, delay, h = ev
+                log.info("La Quiniela board: cup %s followed %d -> %d (%s) %.1f s after it was made%s",
+                         mac, f, t, which, delay, "" if h == t else ", on to %d" % h)
+                if record:
+                    record("renum_ack", t, {"mac": mac, "pair": [f, t], "kind": which,
+                                            "delay_s": round(delay, 1), "horse": h})
+            elif kind == "late":
+                _, which, f, t, mac, waiting, online = ev
+                log.warning("La Quiniela board: cup %s still says %d %.0f s after the %s; it should be %d (%s)",
+                            mac, f, waiting, which, t, "it is online but has not followed" if online else "it is off")
+                if record:
+                    record("renum_late", t, {"mac": mac, "pair": [f, t], "kind": which,
+                                             "waiting_s": int(waiting), "online": bool(online)})
+            elif kind == "settled":
+                log.info("La Quiniela board: the undo of %d -> %d is settled: no cup is left on %d", ev[2], ev[1], ev[1])
+            elif kind == "superseded":
+                log.info("La Quiniela board: %d is a replacement again; its undo has nothing left to do", ev[1])
 
     def _sync_gateway(self, bridge: Any, snap: Any) -> bool:
         """Push the desired scratched bits, renumber pairs and results to the

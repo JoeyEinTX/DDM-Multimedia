@@ -41,7 +41,7 @@ from la_quiniela import betting  # noqa: E402
 from la_quiniela import board as board_mod  # noqa: E402
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
-    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, UNDO_RENUM_S, BettingBoard, clean_weather, clear_results,
+    DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, RENUM_LATE_S, RENUM_SETTLE_S, BettingBoard, clean_weather, clear_results,
     load_board_settings,
     prizes_for, read_results, round_half_up, sse_events, validate_cmd,
 )
@@ -73,7 +73,9 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive with the crawl's live items: pi5's weather
               "weather",
               # additive with the counted pot: the scale pot frozen at the post, the hand count, whether there is one
-              "pot_scale", "pot_counted", "hand_counted"}
+              "pot_scale", "pot_counted", "hand_counted",
+              # additive with the renumber rule (M7): the cups late on a pair, for the admin page's badge
+              "renumbering"}
 LOGGER = "la_quiniela.betting"
 UNASSIGNED = {"tokens": 0, "share": 0, "scratched": False, "online": False, "cup": None,
               "conflict": False, "cups": [], "name": "", "replaced": None, "in_field": False, "odds": None}
@@ -249,7 +251,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 27 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 27, str(sorted(m)))
+    _check("exactly the 28 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 28, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -1086,7 +1088,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 27 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 28 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -1510,9 +1512,10 @@ def test_routes_scratch_rejections():
     _check("3 -> 21: a second record, 21 unnamed", r.status_code == 200 and r.get_json()["now"] == {"number": 21, "name": "Mugatu"}
            and get_board().store.scratches() == {9: 22, 20: None, 3: 21}, str(r.get_json()))
     r = client.post("/api/quiniela/scratch", json={"horse": 22, "replacement": {"number": 23}})
-    _check("22 -> 23: records chain, both pairs in the line, the cup that says 22 named", r.status_code == 200
+    _check("22 -> 23: records chain, the cup that says 22 named; the line carries the pairs whose `from` a cup says "
+           "([3, 21], [22, 23]), not [9, 22]: its cup is on 22 already", r.status_code == 200
            and r.get_json()["cup"] == mac_of(9) and get_board().store.scratches() == {9: 22, 20: None, 3: 21, 22: 23}
-           and b.renum == [(3, 21), (9, 22), (22, 23)], str((r.get_json(), b.renum)))
+           and b.renum == [(3, 21), (22, 23)], str((r.get_json(), b.renum)))
     b.handle_raw_line(telem(mac_of(9), horse=23, count=0))        # the cup walked the chain to 23
     b.handle_raw_line(telem(mac_of(3), horse=21, count=0))
     get_board().refresh()
@@ -1550,18 +1553,23 @@ def test_scratch_before_any_cup_reports_the_horse():
     port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
     body = r.get_json()
-    _check("a scratch before any cup says 9: recorded, cup null, the pair goes down all the same",
-           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": None, "renum": [9, 22], "rev": 2,
+    _check("a scratch before any cup says 9: recorded, cup null; its pair waits for a cup on 9 (no line yet, rev 1)",
+           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": None, "renum": [9, 22], "rev": 1,
                                              "gateway_online": False, "names_rev": 2,
                                              "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}
-           and port.lines() == [state_line(2, 0, [], [(9, 22)])], str((body, port.lines())))
+           and port.lines() == [] and b.renum == [], str((body, port.lines())))
     m = client.get("/api/quiniela").get_json()
     _check("the model: 9 out, 22 in on no cup, the record listed",
            m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["in_field"] is True and m["horses"]["22"]["cup"] is None
            and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}], str(m["scratches"]))
-    # A cup set to 9 on its own screen hears the pair and reports 22.
+    # A cup set to 9 on its own screen: the pair goes down; it hears it and reports 22; the pair leaves the line.
+    b.handle_raw_line(telem(MAC_A, horse=9, count=0))
+    get_board().refresh()
+    _check("a cup says 9: the pair goes down, byte-exact", port.lines() == [state_line(2, 0, [], [(9, 22)])], str(port.lines()))
+    clk.advance(1.0)
     b.handle_raw_line(telem(MAC_A, horse=22, count=0))
     get_board().refresh()
+    _check("...it reports 22: the pair leaves the line", b.renum == [] and port.lines()[-1] == state_line(3, 0), str(port.lines()))
     m = client.get("/api/quiniela").get_json()
     _check("a cup reporting 22 is 22's cup; 9 has none", m["horses"]["22"]["cup"] == MAC_A and m["horses"]["9"]["cup"] is None)
     b.handle_raw_line(telem(MAC_B, horse=24, count=1))
@@ -1587,8 +1595,9 @@ def test_scratch_before_any_cup_reports_the_horse():
     get_board().refresh()
     _check("the cup walked the chain to 23", client.get("/api/quiniela").get_json()["horses"]["23"]["cup"] == MAC_A)
     r = client.post("/api/quiniela/unscratch", json={"horse": 22})
-    _check("undo 22: [23, 22] down, the 9 -> 22 record stands", r.status_code == 200 and r.get_json()["renum"] == [23, 22]
-           and get_board().store.scratches() == {9: 22} and b.renum == [(9, 22), (23, 22)], str(b.renum))
+    _check("undo 22: [23, 22] down (the cup says 23), the 9 -> 22 record stands (no cup says 9: its pair is not in the line)",
+           r.status_code == 200 and r.get_json()["renum"] == [23, 22]
+           and get_board().store.scratches() == {9: 22} and b.renum == [(23, 22)], str(b.renum))
     b.handle_raw_line(telem(MAC_A, horse=22, count=0))
     get_board().refresh()
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
@@ -1880,8 +1889,9 @@ def test_reset_clears_closes_at_and_keeps_names():
     m = board.model()
     _check("after the reset: closes_at cleared", m["closes_at"] is None and board.store.closes_at is None)
     _check("...in the database too", HorseStore(b.db).closes_at is None)
-    _check("...names and the record stay, names_rev untouched, the pair still in the line", m["horses"]["9"]["name"] == "ENCINO"
-           and m["scratches"] == [record] and m["names_rev"] == 2 and m["horses"]["21"]["in_field"] is True and b.renum == [(3, 21)])
+    _check("...names and the record stay, names_rev untouched (its pair goes out when a cup says 3: none here)",
+           m["horses"]["9"]["name"] == "ENCINO"
+           and m["scratches"] == [record] and m["names_rev"] == 2 and m["horses"]["21"]["in_field"] is True and b.renum == [])
     _check("...PRE_RACE, the cup still on its horse, no ghosts", m["race_state"] == 0 and m["events"] == []
            and m["horses"]["9"]["cup"] == MAC_A and m["pot"] == 10.0)
     board.store.set_closes_at(1_700_000_900.0)
@@ -2086,9 +2096,11 @@ def test_routes_closes_at():
 
 def test_routes_scratch_and_unscratch():
     """The renumber on a real bridge, through the routes: 9 -> 22 sends the
-    pair, the cup that says 9 comes back saying 22 with its tokens, no
-    events, the pot never moves; undo sends the pair back until the cup
-    reports 9. Then the no-replacement kind, and the routes without a
+    pair while the cup says 9, the cup comes back saying 22 with its tokens
+    and the pair leaves the line, no events, the pot never moves; undo sends
+    the pair back while the cup says 22, the cup's report of 9 is its
+    acknowledgement, and the undo is settled once the cup has kept saying 9
+    (gap review M7). Then the no-replacement kind, and the routes without a
     bridge."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
@@ -2122,8 +2134,11 @@ def test_routes_scratch_and_unscratch():
     _check("until the cup reports 22, 9 still shows on it (the record is in, the cup has not spoken)",
            m["horses"]["9"]["cup"] == MAC_A and m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["cup"] is None
            and m["horses"]["22"]["in_field"] is True, str((m["horses"]["9"], m["horses"]["22"])))
+    clk.advance(1.0)
     b.handle_raw_line(telem(MAC_A, horse=22, count=12))         # the cup followed the pair
     get_board().refresh()
+    _check("no cup says 9 any more: the pair left the line (rev 4)", b.renum == [] and port.lines()[-1] == state_line(4, 1),
+           str(port.lines()))
     m = client.get("/api/quiniela").get_json()
     _check("the model: 22 on the cup with the 12 tokens, in the field, OCELLI replacing ENCINO",
            m["horses"]["22"] == {"tokens": 12, "share": round(12 / 17, 4), "scratched": False, "online": True, "cup": MAC_A,
@@ -2155,10 +2170,13 @@ def test_routes_scratch_and_unscratch():
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     body = r.get_json()
     _check("unscratch 9: kind replacement, the cup that says 22, the pair back, names_rev 3",
-           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": MAC_A, "renum": [22, 9], "rev": 4,
+           r.status_code == 200 and body == {"ok": True, "kind": "replacement", "cup": MAC_A, "renum": [22, 9], "rev": 5,
                                              "gateway_online": True, "names_rev": 3,
                                              "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}, str(body))
-    _check("the line carries [22, 9] and no longer [9, 22], byte-exact", port.lines() == [state_line(4, 1, [], [(22, 9)])], str(port.lines()))
+    _check("the line carries [22, 9] (the cup says 22), byte-exact", port.lines() == [state_line(5, 1, [], [(22, 9)])], str(port.lines()))
+    _check("...and the undo is held, in the store and on the database", get_board().undo_renums() == [(22, 9)]
+           and set(HorseStore(b.db).undone_renums()) == {22})
+    clk.advance(1.0)
     b.handle_raw_line(telem(MAC_A, horse=9, count=13))          # the cup went back
     get_board().refresh()
     m = client.get("/api/quiniela").get_json()
@@ -2169,7 +2187,17 @@ def test_routes_scratch_and_unscratch():
            and m["horses"]["22"]["name"] == "OCELLI" and client.get("/api/quiniela/horses").get_json()["22"] == {"name": "Ocelli"})
     _check("no events from the undo, pot still 18, no scratches", m["events"] == events_before and m["pot"] == 18.0 and m["scratches"] == [],
            str(m["events"]))
-    _check("the undo pair left the line once the cup reported 9", b.renum == [] and port.lines()[-1] == state_line(5, 1), str(port.lines()))
+    _check("the undo pair left the line once the cup reported 9", b.renum == [] and port.lines()[-1] == state_line(6, 1), str(port.lines()))
+    acks = [json.loads(r["detail"]) for r in b.db.query("SELECT detail FROM events WHERE type = 'renum_ack' ORDER BY id")]
+    _check("the cup's two acknowledgements recorded: 9 -> 22 (the scratch), 22 -> 9 (the undo) 1.0 s after it",
+           [(a["pair"], a["kind"], a["mac"]) for a in acks] == [([9, 22], "scratch", MAC_A), ([22, 9], "undo", MAC_A)]
+           and acks[1]["delay_s"] == 1.0, str(acks))
+    _check("the undo is held until the cup has settled on 9", get_board().undo_renums() == [(22, 9)])
+    clk.advance(RENUM_SETTLE_S + 1)
+    b.handle_raw_line(telem(MAC_A, horse=9, count=13))
+    get_board().refresh()
+    _check("...settled once a report of 9 comes more than RENUM_SETTLE_S after the undo: dropped, from the database too",
+           get_board().undo_renums() == [] and HorseStore(b.db).undone_renums() == {} and b.renum == [])
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     _check("neither kind applies -> 400", r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9 is not scratched"})
     # The no-replacement kind: recorded in pi5 (was 9, now None) and the bit goes down. A repeat is a 400.
@@ -2178,11 +2206,11 @@ def test_routes_scratch_and_unscratch():
     got = r.get_json()
     _check("{'horse': 9} -> kind gateway, the cup that says 9, names_rev 4", r.status_code == 200 and got["ok"] is True and got["kind"] == "gateway"
            and got["cup"] == MAC_A and got["horse"] == 9 and got["scratched"] is True and got["gateway_online"] is True
-           and got["names_rev"] == 4 and got["was"] == {"number": 9, "name": "Encino"} and got["rev"] == 6, str(got))
+           and got["names_rev"] == 4 and got["was"] == {"number": 9, "name": "Encino"} and got["rev"] == 7, str(got))
     for body in ({"horse": 9, "replacement": None}, {"horse": "9"}):
         r = client.post("/api/quiniela/scratch", json=body)
         _check(f"{body!r:.45} again -> 400 already scratched", r.status_code == 400 and r.get_json()["error"] == "horse 9 is already scratched", str(r.get_json()))
-    _check("one state line went down, byte-exact", port.lines() == [state_line(6, 1, [9])], str(port.lines()))
+    _check("one state line went down, byte-exact", port.lines() == [state_line(7, 1, [9])], str(port.lines()))
     _check("persisted as a record with no replacement", HorseStore(b.db).scratches() == {9: None})
     m = client.get("/api/quiniela").get_json()
     _check("the model: scratched, out of the field, tokens out of the pot, a no-replacement entry in scratches",
@@ -2193,14 +2221,14 @@ def test_routes_scratch_and_unscratch():
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     got = r.get_json()
     _check("unscratch clears the bit and the record", r.status_code == 200 and got["kind"] == "gateway" and got["scratched"] is False
-           and got["rev"] == 7 and port.lines()[-1] == state_line(7, 1) and HorseStore(b.db).scratches() == {}, str(got))
+           and got["rev"] == 8 and port.lines()[-1] == state_line(8, 1) and HorseStore(b.db).scratches() == {}, str(got))
     m = client.get("/api/quiniela").get_json()
     _check("the pot is back, 9 in the field, no scratches", m["pot"] == 18.0 and m["horses"]["9"]["in_field"] is True and m["scratches"] == [])
     port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 15})
     got = r.get_json()
     _check("the no-replacement kind on a horse no cup says: recorded, cup null, the bit sent all the same",
-           r.status_code == 200 and got["kind"] == "gateway" and got["cup"] is None and port.lines() == [state_line(8, 1, [15])], str(got))
+           r.status_code == 200 and got["kind"] == "gateway" and got["cup"] is None and port.lines() == [state_line(9, 1, [15])], str(got))
     m = client.get("/api/quiniela").get_json()
     _check("...15 scratched and out of the field with no cup, in scratches with now null",
            m["horses"]["15"]["scratched"] is True and m["horses"]["15"]["in_field"] is False and m["horses"]["15"]["cup"] is None
@@ -2209,9 +2237,9 @@ def test_routes_scratch_and_unscratch():
     _check("...and undone", r.status_code == 200 and r.get_json()["kind"] == "gateway" and r.get_json()["cup"] is None, str(r.get_json()))
     port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 15, "replacement": {"number": 21}})
-    _check("...a replacement scratch needs no cup either: recorded with cup null, the pair sent", r.status_code == 200
-           and r.get_json()["kind"] == "replacement" and r.get_json()["cup"] is None and port.lines() == [state_line(10, 1, [], [(15, 21)])],
-           str(r.get_json()))
+    _check("...a replacement scratch needs no cup either: recorded with cup null; its pair waits for a cup on 15 (none: no line)",
+           r.status_code == 200 and r.get_json()["kind"] == "replacement" and r.get_json()["cup"] is None and port.lines() == []
+           and b.renum == [], str((r.get_json(), port.lines())))
     m = client.get("/api/quiniela").get_json()
     _check("...21 in the field on no cup, DOMESTIC PRODUCT as replaced, its own stored name",
            m["horses"]["21"]["in_field"] is True and m["horses"]["21"]["cup"] is None and m["horses"]["21"]["replaced"] == "DOMESTIC PRODUCT"
@@ -2236,69 +2264,305 @@ def test_routes_scratch_and_unscratch():
     _check("nothing left to undo without a bridge -> 400", r.status_code == 400)
 
 
-def test_renum_lifecycle():
-    """What the state line carries over time: a record's pair for as long as
-    the record stands; an undone pair sent back for UNDO_RENUM_S or until a
-    cup reports the restored number; a fresh record that contradicts a
-    pending undo wins; at most four pairs, records first."""
+class BenchCup:
+    """One cup on a real bridge (its fake port and fake clock), as ddm_cup.ino behaves: it reports its horse and
+    count in a telem line every REPORT_S, and follows the renumber pairs of the last state line the bridge wrote,
+    walking them in order (a chain in one packet). `hears` is False while it is off: it neither hears nor reports.
+    Every number it takes is kept in `history`."""
+
+    REPORT_S = 2.0
+
+    def __init__(self, bridge, port, clk, mac, horse, count=7, next_report=0.0):
+        self.bridge, self.port, self.clk = bridge, port, clk
+        self.mac, self.horse, self.count = mac, horse, count
+        self.history = [horse]
+        self.reports = []                    # (time, horse) of every report sent
+        self.renums = 0
+        self.on = True
+        self.next_report = clk() + next_report
+
+    def last_line(self):
+        lines = [l for l in self.port.lines() if l.startswith('{"t":"state"')]
+        return json.loads(lines[-1]) if lines else None
+
+    def hear(self):
+        line = self.last_line()
+        if not self.on or line is None:
+            return
+        for f, t in line["renum"]:
+            if f == self.horse and t != f:
+                self.horse = t
+                self.renums += 1
+                self.history.append(t)
+
+    def report(self):
+        self.bridge.handle_raw_line(telem(self.mac, horse=self.horse, count=self.count))
+        self.reports.append((self.clk(), self.horse))
+
+
+def bench(cups_spec=((MAC_A, 9),), phase=1):
+    """A real bridge (fake port, fake clock) and a board on it, the cups reporting; returns (b, port, clk, board,
+    cups). The board's clock is the bridge's, so its bookkeeping and a snapshot's "seen" agree."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    mono = FakeClock(5000.0)
-    board = BettingBoard(bridge=b, clock=mono, wall=FakeClock(1_700_000_000.0), log_dir=tmpdir(), results_path=tmpdir() / "r.json")
+    board = BettingBoard(bridge=b, clock=clk, wall=FakeClock(1_700_000_000.0), log_dir=tmpdir(), results_path=tmpdir() / "r.json")
+    b.set_state(phase=phase)
+    cups = [BenchCup(b, port, clk, mac, horse) for mac, horse in cups_spec]
+    for cup in cups:
+        cup.report()
+        cup.next_report = clk() + BenchCup.REPORT_S
+    board.refresh()
+    for cup in cups:
+        cup.hear()
+    return b, port, clk, board, cups
+
+
+def run_for(seconds, b, clk, board, cups, step=0.1, until=None):
+    """Time passes in steps: each cup due reports, the bridge's offline timer ticks, the board refreshes (as its
+    thread does on a wake), and each cup hears the line the gateway now broadcasts. Stops early once until()."""
+    end = clk() + seconds
+    while clk() < end - 1e-9:
+        clk.advance(step)
+        for cup in cups:
+            if cup.on and clk() >= cup.next_report - 1e-9:
+                cup.report()
+                cup.next_report += BenchCup.REPORT_S
+        b.tick(clk())
+        board.refresh()
+        for cup in cups:
+            cup.hear()
+        if until is not None and until():
+            return True
+    return until() if until is not None else True
+
+
+def renum_events(b, type_):
+    return [json.loads(r["detail"]) for r in b.db.query("SELECT detail FROM events WHERE type = ? ORDER BY id", (type_,))]
+
+
+def test_renum_lifecycle():
+    """What the state line carries (gap review M7): a record's pair only while a cup is on its `was`; a chain in one
+    packet; an undo's pair while a cup is on the undone number, with no time limit; a fresh record for that number
+    supersedes the undo; more than four live pairs wait, said once; and desired_state() agrees with the line."""
+    b, port, clk, board, (cup,) = bench(((MAC_A, 5),))
     board.store.scratch_replace(9, 22)
     board.refresh()
-    _check("a record: its pair in the line", b.renum == [(9, 22)] and port.lines()[-1] == state_line(2, 0, [], [(9, 22)]))
-    board.queue_undo_renum(22, 9)
+    _check("a record with no cup on 9: its pair is not in the line", b.renum == [] and board.desired_state(b.get_snapshot())[1] == [])
+    b.handle_raw_line(telem(MAC_B, horse=9, count=1))
+    board.refresh()
+    _check("a cup says 9: the pair goes down", b.renum == [(9, 22)] and port.lines()[-1] == state_line(b.state_rev, 1, [], [(9, 22)]))
+    board.store.scratch_replace(22, 23)
+    board.refresh()
+    _check("a chain 9 -> 22 -> 23 with the cup on 9: both pairs, in chain order, so it walks to 23 in one packet",
+           b.renum == [(9, 22), (22, 23)], str(b.renum))
+    clk.advance(1)
+    b.handle_raw_line(telem(MAC_B, horse=23, count=1))
+    board.refresh()
+    _check("the cup reports 23: the chain leaves the line", b.renum == [], str(b.renum))
+    board.queue_undo_renum(23, 22)
+    board.store.unscratch_replace(22)
+    board.refresh()
+    _check("undo 22 -> 23 with the cup on 23: [23, 22]; the 9 -> 22 record's pair waits (no cup on 9)",
+           b.renum == [(23, 22)] and board.undo_renums() == [(23, 22)], str(b.renum))
+    clk.advance(3600)                                     # an hour: no window any more
+    b.tick(clk())
+    board.refresh()
+    _check("an hour later, the cup off: the undo is still held (it goes out when the cup is back), nothing in the line",
+           board.undo_renums() == [(23, 22)] and b.renum == [], str((board.undo_renums(), b.renum)))
+    b.handle_raw_line(telem(MAC_B, horse=23, count=1))
+    board.refresh()
+    _check("...the cup reports 23 again: [23, 22] goes down", b.renum == [(23, 22)], str(b.renum))
+    board.store.scratch_replace(22, 23)                   # 22 -> 23 again: the cup on 23 is right after all
+    board.refresh()
+    _check("a fresh record making 23 a replacement again supersedes the undo: dropped, no ping-pong",
+           board.undo_renums() == [] and (23, 22) not in b.renum, str((board.undo_renums(), b.renum)))
+    board.store.unscratch_replace(22)
     board.store.unscratch_replace(9)
-    board.refresh()
-    _check("undone: the pair back, in the line", b.renum == [(22, 9)] and board.undo_renums() == [(22, 9)])
-    mono.advance(UNDO_RENUM_S - 1)
-    board.refresh()
-    _check("still sent a second before the deadline", b.renum == [(22, 9)])
-    mono.advance(2)
-    board.refresh()
-    _check("dropped after UNDO_RENUM_S with no cup reporting 9", b.renum == [] and board.undo_renums() == [])
-    board.store.scratch_replace(9, 22)
-    board.refresh()
-    board.queue_undo_renum(22, 9)
-    board.store.unscratch_replace(9)
-    board.refresh()
-    b.handle_raw_line(telem(MAC_A, horse=9, count=1))
-    board.refresh()
-    _check("dropped the moment a cup reports the restored number", b.renum == [] and board.undo_renums() == [])
-    board.store.scratch_replace(9, 22)
-    board.refresh()
-    board.queue_undo_renum(22, 9)
-    board.store.unscratch_replace(9)
-    board.refresh()
-    board.store.scratch_replace(9, 22)                   # scratched again while the undo is pending
-    board.refresh()
-    _check("a fresh record contradicting a pending undo wins: no ping-pong", b.renum == [(9, 22)] and board.undo_renums() == [])
-    board.store.unscratch_replace(9)
-    board.store.scratch_replace(1, 21)
-    board.store.scratch_replace(2, 22)
-    board.store.scratch_replace(3, 23)
-    board.store.scratch_replace(4, 24)
-    for to, was in ((21, 1), (22, 2), (10, 5)):        # (10, 5): as if 5 -> 10 had been undone
-        board.queue_undo_renum(to, was)
+    for was, now in ((1, 21), (2, 22), (3, 23), (4, 24)):
+        board.store.scratch_replace(was, now)
+    for n, mac in ((1, "A0:B7:65:00:01:01"), (2, "A0:B7:65:00:01:02"), (3, "A0:B7:65:00:01:03"), (4, "A0:B7:65:00:01:04")):
+        b.handle_raw_line(telem(mac, horse=n, count=0))
+    b.handle_raw_line(telem("A0:B7:65:00:01:0A", horse=10, count=0))
+    board.store.add_undone_renum(5, 10, 1_700_000_001.0)  # as if 5 -> 10 had been undone, a cup still on 10
     with capture_logs(LOGGER) as cap:
         board.refresh()
-    _check("four records fill the slots; the undo pairs they contradict are dropped, the other waits, one warning",
-           b.renum == [(1, 21), (2, 22), (3, 23), (4, 24)] and board.undo_renums() == [(10, 5)]
-           and len(cap.messages("waiting for a free slot")) == 1, str((b.renum, board.undo_renums(), cap.messages())))
+    _check("five live pairs: the undo pair first, then the records, four sent; the rest waits, one warning",
+           b.renum == [(10, 5), (1, 21), (2, 22), (3, 23)] and len(cap.messages("waiting for a free slot")) == 1,
+           str((b.renum, cap.messages())))
     with capture_logs(LOGGER) as cap:
         board.refresh()
     _check("...warned once, not on every refresh", cap.messages() == [], str(cap.messages()))
-    mono.advance(1)
-    board.store.unscratch_replace(4)
-    board.queue_undo_renum(24, 4)
+    _check("desired_state() says the same as the line", board.desired_state(b.get_snapshot())[1] == b.renum)
+
+
+def test_undo_brings_the_cup_back():
+    """Gap review B11, as reproduced on the rig: scratch 9 -> 22, then Undo 0.3, 0.6, 1.5 and 2.5 s later, the cup's
+    last report still the old number (it reports every 2 s). The cup hears the scratch's pair at once and takes 22.
+    In every case it is back on 9 within one report cycle after the undo's pair lands, 9 shows its cup with its
+    tokens, 22 is out of the field, nothing is held or sent once it has settled, and the board recorded the cup
+    following each pair. On the old code the short delays strand the cup on 22."""
+    for delay in (0.3, 0.6, 1.5, 2.5):
+        b, port, clk, board, (cup,) = bench(((MAC_A, 9),))
+        board.store.set_names({9: "Encino", 22: "Ocelli"})
+        run_for(1.0, b, clk, board, [cup])                # one second into the cup's report cycle
+        board.store.scratch_replace(9, 22)
+        board.refresh()
+        cup.hear()                                         # the gateway's broadcast: the cup is 22 now, not yet said
+        heard_scratch = cup.horse == 22
+        run_for(delay, b, clk, board, [cup])
+        undo_at = clk()
+        board.queue_undo_renum(22, 9)                       # what POST /api/quiniela/unscratch does
+        board.store.unscratch_replace(9)
+        board.refresh()
+        cup.hear()
+        landed = {}
+
+        def back():
+            if (22, 9) in b.renum and "at" not in landed:
+                landed["at"] = clk()
+            return bool(cup.reports) and cup.reports[-1][1] == 9 and cup.reports[-1][0] > undo_at
+        run_for(12.0, b, clk, board, [cup], until=back)
+        back_at = cup.reports[-1][0] if cup.reports else None
+        run_for(8.0, b, clk, board, [cup])                 # more reports on 9: nothing may move it again
+        m = board.model()
+        within = landed.get("at") is None or (back_at is not None and back_at - landed["at"] <= BenchCup.REPORT_S + 0.11)
+        _check(f"undo {delay} s after the scratch: the cup is back on 9 within one report cycle of the pair landing, and stays",
+               heard_scratch and cup.horse == 9 and cup.history[-1] == 9 and within and cup.history in ([9, 22, 9], [9]),
+               str((cup.history, landed, back_at)))
+        _check(f"undo {delay} s: 9 shows its cup and its 7 tokens, 22 is out of the field",
+               m["horses"]["9"]["cup"] == MAC_A and m["horses"]["9"]["tokens"] == 7 and m["horses"]["9"]["in_field"] is True
+               and m["horses"]["22"]["in_field"] is False and m["horses"]["22"]["cup"] is None, str((m["horses"]["9"], m["horses"]["22"])))
+        _check(f"undo {delay} s: settled, nothing held, nothing in the line", board.undo_renums() == [] and b.renum == [],
+               str((board.undo_renums(), b.renum)))
+        acks = [(a["pair"], a["kind"]) for a in renum_events(b, "renum_ack")]
+        _check(f"undo {delay} s: the cup's acknowledgements recorded, the undo's among them",
+               ([22, 9], "undo") in acks and ([9, 22], "scratch") not in acks or acks == [([9, 22], "scratch"), ([22, 9], "undo")],
+               str(acks))
+
+
+def test_undo_with_the_cup_off():
+    """The cup (now 22) is off when the scratch is undone and comes back five minutes later: nothing is sent for it
+    meanwhile, the undo is held (no window), after RENUM_LATE_S it is logged once as late, the model's renumbering
+    list carries it (the admin page's badge, on horse 9), and on its first reports it gets [22, 9] and is 9 again;
+    then the late entry goes and the undo settles. A pi5 restart while it is off keeps the undo."""
+    b, port, clk, board, (cup,) = bench(((MAC_A, 9),))
+    board.store.scratch_replace(9, 22)
+    run_for(3.0, b, clk, board, [cup])
+    _check("setup: the cup followed the scratch and said so", cup.horse == 22 and cup.reports[-1][1] == 22, str(cup.history))
+    cup.on = False
+    run_for(8.0, b, clk, board, [cup])                     # the bridge marks it offline
+    board.queue_undo_renum(22, 9)
+    board.store.unscratch_replace(9)
+    with capture_logs(LOGGER) as cap:
+        run_for(RENUM_LATE_S - 1, b, clk, board, [cup], step=1.0)
+    _check("off: nothing in the line for it, the undo held, not late yet",
+           b.renum == [] and board.undo_renums() == [(22, 9)] and board.model()["renumbering"] == [] and cap.messages("still says") == [],
+           str((b.renum, board.undo_renums(), board.model()["renumbering"])))
+    with capture_logs(LOGGER) as cap:
+        run_for(5.0, b, clk, board, [cup], step=1.0)
+        run_for(30.0, b, clk, board, [cup], step=1.0)
+    late = board.model()["renumbering"]
+    _check("after RENUM_LATE_S: logged once, naming the cup, and in the model for the badge on horse 9",
+           len(cap.messages("still says 22")) == 1 and MAC_A in cap.messages("still says 22")[0]
+           and len(late) == 1 and (late[0]["from"], late[0]["to"], late[0]["mac"], late[0]["kind"], late[0]["online"]) == (22, 9, MAC_A, "undo", False)
+           and late[0]["waiting_s"] >= RENUM_LATE_S, str((cap.messages(), late)))
+    _check("...and recorded once as a renum_late event", [(e["pair"], e["mac"]) for e in renum_events(b, "renum_late")] == [([22, 9], MAC_A)])
+    # pi5 restarts while the cup is off: a new bridge and board over the same database
+    b.close()
+    b2 = LqBridge(settings={"LQ_SERIAL_PORT": "/dev/fake", "LQ_SERIAL_BAUD": 115200, "LQ_CUP_OFFLINE_S": 6,
+                            "LQ_GATEWAY_OFFLINE_S": 12}, db_path=S._TMP_DB, serial_factory=lambda p, baud, t: port,
+                  clock=clk, console=S.ConsoleCapture())
+    b2._open_port()
+    board2 = BettingBoard(bridge=b2, clock=clk, wall=FakeClock(1_700_000_400.0), log_dir=tmpdir(), results_path=tmpdir() / "r2.json")
+    board2.refresh()
+    _check("after a restart the undo is still held (lq_renum_undo)", board2.undo_renums() == [(22, 9)], str(board2.undo_renums()))
+    cup.bridge = b2
+    run_for(300.0 - 100, b2, clk, board2, [cup], step=5.0)
+    cup.on = True
+    cup.next_report = clk() + 0.5
+    run_for(6.0, b2, clk, board2, [cup], until=lambda: cup.reports[-1][1] == 9)
+    _check("five minutes on, the cup back: on its first reports it gets [22, 9] and is 9 again",
+           cup.horse == 9 and cup.history == [9, 22, 9] and cup.reports[-1][1] == 9, str((cup.history, cup.reports[-3:])))
+    run_for(RENUM_SETTLE_S + 3, b2, clk, board2, [cup])
+    m = board2.model()
+    _check("...the badge goes, the undo settles, nothing in the line, 9 on its cup",
+           m["renumbering"] == [] and board2.undo_renums() == [] and b2.renum == [] and m["horses"]["9"]["cup"] == MAC_A,
+           str((m["renumbering"], board2.undo_renums(), b2.renum)))
+    acks = renum_events(b2, "renum_ack")
+    _check("...its acknowledgement recorded, minutes after the undo was taken up again at the restart",
+           [(a["pair"], a["mac"]) for a in acks] == [([9, 22], MAC_A), ([22, 9], MAC_A)] and acks[-1]["delay_s"] > 100, str(acks))
+    b2.close()
+
+
+def test_undo_then_scratch_again():
+    """Undo 9 -> 22 and, within a second, scratch 9 -> 23: the cup (on 22) first gets [22, 9] alone, and [9, 23]
+    only once it says 9; it ends on 23 with one renumber at a time (22 -> 9, 9 -> 23), no line ever carries both
+    pairs, and the log has both acknowledgements."""
+    b, port, clk, board, (cup,) = bench(((MAC_A, 9),))
+    board.store.scratch_replace(9, 22)
+    run_for(3.0, b, clk, board, [cup])
+    _check("setup: the cup is 22 and said so", cup.horse == 22 and cup.reports[-1][1] == 22, str(cup.history))
+    n = len(port.lines())
+    board.queue_undo_renum(22, 9)
+    board.store.unscratch_replace(9)
     board.refresh()
-    _check("a freed slot takes the oldest waiting undo pair first", b.renum == [(1, 21), (2, 22), (3, 23), (10, 5)], str(b.renum))
-    mono.advance(UNDO_RENUM_S - 1)                         # the older pair's minute is up, the newer one has a second left
+    cup.hear()
+    run_for(0.5, b, clk, board, [cup])
+    board.store.scratch_replace(9, 23)
     board.refresh()
-    _check("...and the next one once that expires", b.renum == [(1, 21), (2, 22), (3, 23), (24, 4)]
-           and board.undo_renums() == [(24, 4)], str(b.renum))
-    _check("desired_state() says the same", board.desired_state(b.get_snapshot())[1] == b.renum)
+    cup.hear()
+    run_for(10.0, b, clk, board, [cup], until=lambda: cup.reports[-1][1] == 23)
+    lines = [json.loads(l)["renum"] for l in port.lines()[n:] if l.startswith('{"t":"state"')]
+    _check("the cup ends on 23 through 9, one renumber at a time", cup.horse == 23 and cup.history == [9, 22, 9, 23], str(cup.history))
+    _check("no line ever carried [22, 9] and [9, 23] together; [22, 9] came first",
+           not any([22, 9] in r and [9, 23] in r for r in lines) and lines and lines[0] == [[22, 9]], str(lines))
+    acks = [(a["pair"], a["kind"]) for a in renum_events(b, "renum_ack")]
+    _check("both acknowledgements in the log: the undo's and the new scratch's",
+           ([22, 9], "undo") in acks and ([9, 23], "scratch") in acks, str(acks))
+
+
+def test_two_cups_on_one_number():
+    """A replacement scratch reaches every cup on the scratched number: one on 9, and a spare set to 9 later both
+    become 22 (two cups on 22 is the conflict the page already shows, B4, out of scope); the line settles once both
+    have followed, and nothing toggles on its own. And an undo brings both back."""
+    b, port, clk, board, cups = bench(((MAC_A, 9),))
+    board.store.scratch_replace(9, 22)
+    run_for(3.0, b, clk, board, cups)
+    spare = BenchCup(b, port, clk, MAC_B, 9)
+    cups.append(spare)
+    spare.report()
+    spare.next_report = clk() + BenchCup.REPORT_S
+    n = len(port.lines())
+    run_for(6.0, b, clk, board, cups)
+    _check("the spare set to 9 gets the pair too: both cups on 22", [c.horse for c in cups] == [22, 22], str([c.history for c in cups]))
+    lines = port.lines()[n:]
+    run_for(10.0, b, clk, board, cups)
+    _check("the line settles (the pair went down once and left once): no flicker", len(lines) == 2 and port.lines()[n:] == lines
+           and b.renum == [], str(port.lines()[n:]))
+    board.queue_undo_renum(22, 9)
+    board.store.unscratch_replace(9)
+    run_for(4.0 + RENUM_SETTLE_S, b, clk, board, cups)
+    _check("an undo brings both back to 9, and settles", [c.horse for c in cups] == [9, 9] and board.undo_renums() == [] and b.renum == [],
+           str(([c.history for c in cups], board.undo_renums(), b.renum)))
+
+
+def test_a_stale_report_never_acknowledges():
+    """The cup's last report of 9 is from before the scratch and the undo; it has taken 22 meanwhile without saying
+    so. That old report must not count as the cup being back: the undo is held, no acknowledgement is recorded, and
+    the pair goes down as soon as the cup says 22."""
+    b, port, clk, board, (cup,) = bench(((MAC_A, 9),))
+    run_for(0.5, b, clk, board, [cup])
+    board.store.scratch_replace(9, 22)
+    board.refresh()
+    cup.hear()
+    clk.advance(0.3)
+    board.queue_undo_renum(22, 9)
+    board.store.unscratch_replace(9)
+    board.refresh()
+    _check("the stale report of 9: the undo held, no acknowledgement, nothing settled",
+           board.undo_renums() == [(22, 9)] and renum_events(b, "renum_ack") == [] and cup.horse == 22, str((board.undo_renums(), cup.history)))
+    run_for(BenchCup.REPORT_S, b, clk, board, [cup], until=lambda: (22, 9) in b.renum)
+    _check("...the cup says 22: [22, 9] goes down", (22, 9) in b.renum, str(b.renum))
 
 
 def test_results_from_the_dashboard_file():
@@ -3146,8 +3410,9 @@ def test_reset_betting_route():
            body["events"] == 0 and body["closes_at"] is None and body["cups_online"] == 21 and body["rev"] == b.state_rev
            and isinstance(body["gateway_online"], bool) and body["names_rev"] == names_rev, str(body))
     lines = port.lines()
-    _check("exactly one line to the gateway: PRE_RACE with the same bit and pair, the results cleared, byte-exact",
-           len(lines) == n_lines + 1 and lines[-1] == state_line(b.state_rev, 0, [15], [(3, 21)]), str(lines[-1:]))
+    _check("exactly one line to the gateway: PRE_RACE with the same bit, the results cleared (no pair: the cup that was 3 "
+           "says 21 already), byte-exact",
+           len(lines) == n_lines + 1 and lines[-1] == state_line(b.state_rev, 0, [15]), str(lines[-1:]))
     m = board.model()
     _check("the model: PRE_RACE, pot 15, tokens still on 9 and 21 on their cups, no events, no closes_at, no results",
            m["race_state"] == 0 and m["pot"] == 15.0 and m["horses"]["9"]["tokens"] == 10 and m["horses"]["9"]["cup"] == mac_of(9)
@@ -3755,6 +4020,11 @@ def main():
     _run("payout — GET/PUT /api/quiniela/horses", test_routes_horses_get_and_put)
     _run("renumber — POST /api/quiniela/scratch and /unscratch on a real bridge", test_routes_scratch_and_unscratch)
     _run("renumber — the lifecycle of the pairs in the state line", test_renum_lifecycle)
+    _run("renumber — Undo 0.3 to 2.5 s after a scratch brings the cup back (M7, B11)", test_undo_brings_the_cup_back)
+    _run("renumber — the cup off at the undo, five minutes, a restart, the late badge", test_undo_with_the_cup_off)
+    _run("renumber — undo then scratch again within a second: no bounce", test_undo_then_scratch_again)
+    _run("renumber — two cups on one number: the pair reaches both, no flicker", test_two_cups_on_one_number)
+    _run("renumber — a stale report never acknowledges a pair", test_a_stale_report_never_acknowledges)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
     _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
     _run("closing — reopened from the post with FINAL CALL, the next close takes fresh figures (B1)", test_reopen_takes_fresh_figures)

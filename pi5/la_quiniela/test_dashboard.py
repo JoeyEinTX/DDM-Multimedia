@@ -374,8 +374,8 @@ def test_results_and_reset_are_modes():
     _check("...and the race state it set: WINNER, mode RESULTS, no error",
            body["race"] == {"rev": rev + 1, "state": 5, "state_name": "WINNER", "mode": "RESULTS", "source": "dashboard",
                             "gateway_online": False} and body["race_error"] is None, str(body.get("race")))
-    _check("one state line: WINNER with the results and the renumber pair, byte-exact",
-           rig.lines() == [state_line(rev + 1, 5, [], [(9, 22)], [19, 1, 22])], str(rig.lines()))
+    _check("one state line: WINNER with the results, byte-exact (no renumber pair: no cup says 9)",
+           rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
     _check("the file holds horse numbers", json.loads(rig.results_file.read_text())["show"] == 22)
     m = rig.model()
     _check("the model: state 5, the results", m["race_state"] == 5 and m["results"] == {"win": 19, "place": 1, "show": 22}, str(m["results"]))
@@ -390,8 +390,8 @@ def test_results_and_reset_are_modes():
     _check("POST /api/results/clear: success, the race ended: AFTER_PARTY, mode RESET",
            r.status_code == 200 and body["success"] is True and body["race"]["state"] == 6
            and body["race"]["state_name"] == "AFTER_PARTY" and body["race"]["mode"] == "RESET", str(body))
-    _check("one state line: AFTER_PARTY, the results cleared, the pair kept",
-           rig.lines() == [state_line(rev + 2, 6, [], [(9, 22)])], str(rig.lines()))
+    _check("one state line: AFTER_PARTY, the results cleared",
+           rig.lines() == [state_line(rev + 2, 6, [], [])], str(rig.lines()))
     _check("the file is gone, the model's results are null", not rig.results_file.exists()
            and rig.model()["results"] is None)
     _check("the board keeps the TV in WINNER and hands it back in AFTER_PARTY",
@@ -443,7 +443,7 @@ def test_results_stand_without_the_leds():
     _check("...saved all the same, horse numbers in the file",
            json.loads(rig.results_file.read_text()) | {"timestamp": None} == {"win": 19, "place": 1, "show": 22, "timestamp": None})
     _check("...WINNER with the results in one state line, byte-exact",
-           body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [(9, 22)], [19, 1, 22])], str(rig.lines()))
+           body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
     _check("...the TV's model has them", rig.model()["results"] == {"win": 19, "place": 1, "show": 22}
            and rig.model()["race_state"] == 5)
     _check("...the LED controller was tried once, after the results were saved", rig.led == ["RESULTS:FINALIZE"], str(rig.led))
@@ -1808,6 +1808,62 @@ def test_race_night_guards_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# Undo always brings the cup back: the admin page's renumbering badge (gap review M7)
+# -----------------------------------------------------------------------------
+
+def test_admin_renumbering_badge_in_a_browser():
+    """A cup that has not followed its renumber pair a minute on (here: off when the scratch was undone) is shown on
+    the LQ admin page as ⏳ renumbering beside the horse it should be (9), from the model's renumbering list; when
+    the cup is back and has followed, the badge goes. Skipped where there is no Chrome (the source check is not)."""
+    rig = Rig()
+    html = rig.client.get("/quiniela/admin").get_data(as_text=True)
+    _check("the admin page reads the model's renumbering list and badges the horse it names",
+           "model.renumbering" in html and "r.to === n" in html and (chr(0x23F3) + " renumbering") in html and 'class="tag ren"' in html)
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.bridge.handle_raw_line(telem(MAC_A, horse=9, count=4))
+    rig.board.refresh()
+    rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    rig.clk.advance(1)
+    rig.bridge.handle_raw_line(telem(MAC_A, horse=22, count=4))      # the cup followed the scratch
+    rig.board.refresh()
+    rig.clk.advance(8)
+    rig.bridge.tick(rig.clk())                                         # then it went off
+    rig.post("/api/quiniela/unscratch", {"horse": 9})
+    rig.clk.advance(61)
+    rig.bridge.tick(rig.clk())
+    rig.board.refresh()
+    late = rig.model()["renumbering"]
+    _check("a minute on with the cup off: the model lists it, 22 -> 9, offline",
+           [(r["from"], r["to"], r["mac"], r["online"]) for r in late] == [(22, 9, MAC_A, False)], str(late))
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("renumbering badge browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    badge = ("(() => { const t = document.querySelector('#horses .hrow[data-horse=\"%d\"] .tag.ren');"
+             " return t ? [t.textContent, t.getAttribute('title')] : null; })()")
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#horses .hrow')", timeout=20)
+        shown = chrome.wait_for(badge % 9, timeout=15)
+        _check("the badge on horse 9's row: ⏳ renumbering, the cup and what it still says in its title; none on 22",
+               shown == [chr(0x23F3) + " renumbering", "cup %s still says 22 (off)" % MAC_A] and chrome.eval(badge % 22) is None,
+               str(shown))
+        rig.bridge.handle_raw_line(telem(MAC_A, horse=22, count=4))  # the cup is back, still 22: the pair goes down
+        rig.board.refresh()
+        rig.clk.advance(2)
+        rig.bridge.handle_raw_line(telem(MAC_A, horse=9, count=4))   # it followed
+        rig.board.refresh()
+        gone = chrome.wait_for("(%s) === null" % (badge % 9), timeout=12)
+        _check("the cup back and on 9: the badge goes on the page's own refresh", gone is True and rig.model()["renumbering"] == [])
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+# -----------------------------------------------------------------------------
 # The Control Center's ticker is gone (Joey, 2026-10-13, gap review OD9)
 # -----------------------------------------------------------------------------
 # The TV's crawl is the only crawl. The ticker went with its markup, CSS, JS, its two timers (the step every
@@ -1910,6 +1966,7 @@ def main_():
     _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
+    _run("renumber — a cup late on its pair: the admin page's ⏳ renumbering badge, in a browser", test_admin_renumbering_badge_in_a_browser)
     _run("no ticker — gone from the page, the script and the stylesheet, with its weather fetch", test_no_ticker)
     _run("no ticker — no element, no timer, no request, in a browser", test_no_ticker_in_a_browser)
 

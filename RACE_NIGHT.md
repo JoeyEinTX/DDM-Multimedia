@@ -207,6 +207,9 @@ python3 pi5/tools/wipe.py
       scratch first if there were several (the page greys out the others). Undo puts the
       names back as they were before the scratch: a name the scratch gave the new number
       is cleared, one entered ahead in Horse names stays.
+      Undo works at any time, however soon after the scratch; a cup that was off catches up
+      when it's back on. `⏳ renumbering` on a row means a cup hasn't followed for a minute
+      (hover or tap it: which cup, and whether it's off); switch it on or check its screen.
 - The names and scratches entered here feed La Subasta too: the auction at
   `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
   entered in La Subasta. A scratch made during the auction voids its bids on that horse

@@ -25,8 +25,9 @@
 # {was: 9, now: 22} in the store; the board's refresh() turns it into the
 # renumber pair [9, 22] in the gateway's state line, and the cup that says
 # it is 9 becomes 22 on its own. A no-replacement scratch is a record with
-# now None and a bit in the state line. Undoing sends the pair back for a
-# while. The horse and scratch commands of v1 are gone from /api/quiniela/cmd.
+# now None and a bit in the state line. Undoing sends the pair back, with no
+# time limit, until the cup is back (betting.py, _renum_plan). The horse and
+# scratch commands of v1 are gone from /api/quiniela/cmd.
 #
 # Same conventions as blueprint.py: a module-level init called from main.py,
 # an accessor, and a start called from main.py's __main__ block only, so
@@ -488,8 +489,8 @@ def api_quiniela_scratch():
     of any record (400 "22 is in use"; 22 == 9 is in use too). The store
     records {was: 9, now: 22}, names 22 if a name was given (keeping the
     name it had, for Undo), bumps names_rev, and the board's refresh() puts
-    the pair [9, 22] in the gateway's state line: the cup that says it is 9
-    becomes 22 on its own, tokens and all.
+    the pair [9, 22] in the gateway's state line while a cup says it is 9:
+    that cup becomes 22 on its own, tokens and all.
     Reply {"ok": true, "kind": "replacement", "was": {"number", "name"},
     "now": {"number", "name"}, "cup": <MAC of the cup claiming 9, or null>,
     "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N},
@@ -546,8 +547,10 @@ def api_quiniela_unscratch():
     """{"horse": 9}: if 9 is the "was" of a record, the record is removed,
     22's name goes back to what it was before the scratch (a name the
     scratch gave is cleared, one entered ahead stays), names_rev bumps, and
-    the board sends the pair [22, 9] down for a minute or until a cup
-    reports 9, so the cup that became 22 goes back to 9; reply {"ok": true,
+    the undo is kept (lq_renum_undo): the board sends the pair [22, 9] down
+    while a cup reports 22, with no time limit, so the cup that became 22
+    goes back to 9 even if it was off at the time (betting.py,
+    _renum_plan); reply {"ok": true,
     "kind": "replacement", "was", "now", "cup": <MAC claiming 22, or null>,
     "renum": [22, 9], "names_rev"}. A chain (9 -> 22, then 22 -> 23) is
     undone last record first: while 22 -> 23 stands, undoing 9 is a 400

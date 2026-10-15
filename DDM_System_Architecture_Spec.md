@@ -327,6 +327,10 @@ There is no roster line. A v1 `roster` line is ignored.
 
 - A scratch of either kind is entered once, on the admin page, and can be undone (a chain
   undoes last record first). [BUILT]
+- A renumber pair goes down while a cup still says its old number, until the cup reports
+  the new one (no time window), so Undo works at any time and a cup that was off catches up
+  when it returns; a cup a minute late is logged and tagged `⏳ renumbering` on the admin
+  page (gap review M7, B11). [BUILT]
 - Undo puts a replacement's name back as it was before the scratch: a name the scratch gave
   the also-eligible is cleared, one entered ahead in Horse names stays. [BUILT]
 - La Subasta must read the same scratch. [BUILT, section 8]

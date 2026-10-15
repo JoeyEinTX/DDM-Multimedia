@@ -1077,7 +1077,11 @@ class LqBridge:
 
     def get_snapshot(self) -> Dict[str, Any]:
         """The whole picture: the link, DevPi's state (keyed by horse), and
-        every cup in the cache by MAC with the horse it claims."""
+        every cup in the cache by MAC with the horse it claims. Each cup also
+        carries "seen": when its last report arrived, on this bridge's clock
+        (now()), or null for a cup not heard since pi5 started; the board
+        tells a report made after a scratch or an undo from one made before
+        it by this, never by last_seen (whole seconds)."""
         with self._lock:
             return {
                 "link": self._link_payload(),
@@ -1085,8 +1089,23 @@ class LqBridge:
                           "scratched": list(self.scratched),
                           "renum": [[f, t] for f, t in self.renum],
                           "results": list(self.results)},
-                "cups": [self._cup_payload(self.cups[mac]) for mac in sorted(self.cups)],
+                "cups": [dict(self._cup_payload(self.cups[mac]), seen=self.cups[mac].last_seen_mono)
+                         for mac in sorted(self.cups)],
             }
+
+    def now(self) -> float:
+        """This bridge's clock (monotonic seconds): what a snapshot's "seen"
+        is measured on."""
+        return self._clock()
+
+    def record_event(self, type_: str, horse: Optional[int], detail: Optional[Dict[str, Any]]) -> None:
+        """One row in the events table, for the betting board's own events
+        (a cup following a renumber pair). Never raises."""
+        try:
+            with self._lock:
+                self._event(type_, horse, detail)
+        except Exception as exc:
+            logger.warning("La Quiniela bridge: event %s not recorded (%s)", type_, exc)
 
     # -- public API -------------------------------------------------------------
 

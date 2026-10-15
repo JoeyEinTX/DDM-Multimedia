@@ -101,8 +101,8 @@ STATE_NAMES = {0: "PRE-RACE", 1: "BETTING OPEN", 2: "FINAL CALL", 3: "AT THE POS
                4: "RUNNING", 5: "WINNER", 6: "AFTER PARTY"}
 
 # The tables the list names, line by line; any other table's rows are listed as other rows.
-LQ_TABLES = ("lq_horses", "lq_race", "lq_scratches", "lq_scratch_names", "lq_board", "lq_link_state",
-             "lq_closing", "lq_cups", "telemetry", "events")
+LQ_TABLES = ("lq_horses", "lq_race", "lq_scratches", "lq_scratch_names", "lq_renum_undo", "lq_board",
+             "lq_link_state", "lq_closing", "lq_cups", "telemetry", "events")
 LS_TABLES = ("auction_state", "bidders", "bids", "ownership", "payouts", "auction_overrides",
              "settings_audit_log")
 # La Quiniela's one-row tables: emptied, each gets its row back at the next start
@@ -508,15 +508,17 @@ def report_lines(s: Survey) -> List[Tuple[str, List[Tuple[str, str]]]]:
         lq.append(("Race info", f"{title}, post {when(race[2]) if race[2] is not None else 'not set'}"))
     else:
         lq.append(("Race info", none))
+    extra = [f"{plural(rows['lq_scratch_names'], 'name')} for Undo"] if rows.get("lq_scratch_names") else []
+    if rows.get("lq_renum_undo"):
+        extra.append(f"{plural(rows['lq_renum_undo'], 'undone replacement')} whose cup may still be on its number")
     if d["scratches"]:
         parts = [f"{was} -> {now}" if now is not None else f"{was} no replacement" for was, now in d["scratches"]]
         text = f"{len(d['scratches'])}: {', '.join(parts)}"
-        if rows.get("lq_scratch_names"):
-            text += f" (and {plural(rows['lq_scratch_names'], 'name')} for Undo)"
+        if extra:
+            text += f" (and {', '.join(extra)})"
         lq.append(("Scratches", text))
     else:
-        lq.append(("Scratches", f"none (but {plural(rows['lq_scratch_names'], 'name')} for Undo)"
-                   if rows.get("lq_scratch_names") else none))
+        lq.append(("Scratches", f"none (but {', '.join(extra)})" if extra else none))
     lq.append(("Betting closes", when(d["closes_at"]) if d["closes_at"] is not None else none))
     state = d["state"] if isinstance(d["state"], dict) else {}
     phase = state.get("phase", 0) if d["state"] != "unreadable" else None

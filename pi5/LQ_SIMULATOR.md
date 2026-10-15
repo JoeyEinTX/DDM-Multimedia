@@ -126,6 +126,9 @@ watch things happen more slowly; leave `--ideal` on for exact counts.
 | `normal` | A full party: uneven betting with two favourites, a rush at final call, then every phase through to the after-party. |
 | `scratch-rebet` | Betting is under way, one horse with tokens in its cup is scratched with no replacement (the cup shows its X), that cup is emptied, and the same tokens are dropped into other cups. |
 | `scratch-renumber` | Horse 9 is scratched with 22 drawing in: the cup that was 9 becomes 22 on its own, tokens and all. Then the scratch is undone and the cup goes back to 9. |
+| `undo-quick` | Horse 9 is scratched with 22 and the scratch is undone at once, 0.3, 0.6, 1.5 and 2.5 seconds later: the cup always ends on 9 with its tokens. |
+| `undo-cup-off` | Horse 9 is scratched with 22; the cup (now 22) is switched off, the scratch is undone, and five minutes later the cup comes back and returns to 9 on its own. |
+| `undo-rescratch` | Horse 9 is scratched with 22, undone, and half a second later scratched again with 23: the cup goes 22 to 9 to 23 without bouncing, then that scratch is undone too. |
 | `late-tokens` | Normal betting, then a few more tokens land in two cups after the horses are at the post. |
 | `dropout-reboot` | One cup goes silent for 20 seconds and comes back with the same count and the same horse; another cup blinks off for 3 seconds. |
 | `empty-show-cup` | Betting where one horse gets no tokens at all, and that horse is meant to finish third. |
@@ -136,6 +139,9 @@ watch things happen more slowly; leave `--ideal` on for exact counts.
 python -m la_quiniela.simulator --scenario normal --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario scratch-rebet --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario scratch-renumber --ideal --devpi http://localhost:5000 --check http://localhost:5000
+python -m la_quiniela.simulator --scenario undo-quick --ideal --devpi http://localhost:5000 --check http://localhost:5000
+python -m la_quiniela.simulator --scenario undo-cup-off --ideal --devpi http://localhost:5000 --check http://localhost:5000
+python -m la_quiniela.simulator --scenario undo-rescratch --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario late-tokens --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario dropout-reboot --ideal --devpi http://localhost:5000 --check http://localhost:5000
 python -m la_quiniela.simulator --scenario empty-show-cup --ideal --devpi http://localhost:5000 --check http://localhost:5000

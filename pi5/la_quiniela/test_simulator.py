@@ -115,8 +115,14 @@ class LocalOperator:
     """A fake DevPi for in-memory runs. It holds the state DevPi would hold
     (phase, no-replacement scratches, replacement records, results), sends
     the gateway the same state line the bridge would, answers a hello with
-    it, and undoes a renumber the way the board does: the pair is sent back
-    until a cup reports the restored number."""
+    it, and sends the renumber pairs by the board's rule (betting.py,
+    _renum_plan), from the cups' reports as they arrive: a record's pair
+    while a cup reports its `was`, an undone record's pair back while a cup
+    reports its `now` (the record's pair waiting meanwhile), the undo kept
+    until no cup is on `now` and every cup on `was` has reported
+    RENUM_SETTLE_S after it."""
+
+    CUP_ONLINE_S = 6.0         # a report this recent counts as an online cup (the bridge's LQ_CUP_OFFLINE_S here)
 
     def __init__(self, sim):
         self.sim = sim
@@ -124,15 +130,34 @@ class LocalOperator:
         self.phase = int(Phase.PRE_RACE)
         self.scratched = set()
         self.records = {}          # was -> now (replacement scratches)
-        self.undo = []             # (to, was) pairs being sent back
+        self.undo = []             # (to, was, when) undone records being sent back, oldest first
+        self.reports = {}          # mac -> (horse, when) the cups' last reports
         self.results = [0, 0, 0]
         self.sent = []
+        self.pairs = []            # the pairs in the last line sent
         sim.on_tx = self.on_line
+
+    def _on(self, horse, online_only=True):
+        now = self.sim.clock.now()
+        return [m for m, (h, t) in self.reports.items() if h == horse and (not online_only or now - t < self.CUP_ONLINE_S)]
+
+    def _plan(self):
+        live_u = [(to, was) for to, was, _ in self.undo if self._on(to)]
+        back = {was for _, was in live_u}
+        live_a = {w for w in self.records if self._on(w) and w not in back}
+        grown = True
+        while grown:
+            grown = False
+            for w in self.records:
+                if w not in live_a and w not in back and any(self.records[g] == w for g in live_a):
+                    live_a.add(w)
+                    grown = True
+        return live_u + sorted((w, n) for w, n in self.records.items() if w in live_a)
 
     def _send_state(self):
         self.rev += 1
-        pairs = sorted(self.records.items()) + [p for p in self.undo if p[0] not in self.records]
-        line = state_line(self.rev, self.phase, self.scratched, pairs, self.results)
+        self.pairs = self._plan()
+        line = state_line(self.rev, self.phase, self.scratched, self.pairs, self.results)
         self.sent.append(line)
         self.sim.gw.handle_line(line.encode(), self.sim.clock.now())
 
@@ -156,7 +181,7 @@ class LocalOperator:
         horse = int(horse)
         if horse in self.records:
             now = self.records.pop(horse)
-            self.undo.append((now, horse))
+            self.undo = [u for u in self.undo if u[0] != now] + [(now, horse, self.sim.clock.now())]
         else:
             self.scratched.discard(horse)
         self._send_state()
@@ -170,11 +195,17 @@ class LocalOperator:
     def on_line(self, line):
         if line.startswith('{"t":"hello"'):
             self._resend()                              # the bridge answers every hello with its state
-        elif line.startswith('{"t":"telem"') and self.undo:
-            horse = json.loads(line).get("horse")
-            done = [p for p in self.undo if p[1] == horse]
-            if done:
-                self.undo = [p for p in self.undo if p not in done]
+        elif line.startswith('{"t":"telem"'):
+            msg = json.loads(line)
+            now = self.sim.clock.now()
+            self.reports[msg.get("mac")] = (int(msg.get("horse") or 0), now)
+            from la_quiniela.betting import RENUM_SETTLE_S
+            replacements = set(self.records.values())
+            self.undo = [(to, was, t) for to, was, t in self.undo
+                         if to not in replacements                                # a replacement again: nothing to do
+                         and (self._on(to, online_only=False)                    # a cup still on it
+                              or any(self.reports[m][1] <= t + RENUM_SETTLE_S for m in self._on(was, online_only=False)))]
+            if self._plan() != self.pairs:
                 self._send_state()
 
 
@@ -570,8 +601,16 @@ def test_in_memory_scenarios():
     sim, rc = in_memory_run("scratch-renumber", seed=5)
     _check("scratch-renumber: cup 9 went to 22 and came back (two pairs followed), tokens kept",
            rc == 0 and sim.cup(9).horse == 9 and sim.cup(9).renums == 2 and sim.tokens_in(9) > 0, "; ".join(sim.failures))
-    _check("scratch-renumber: the undo pair left the line once the cup reported 9",
+    _check("scratch-renumber: the undo pair left the line once the cup was back on 9",
            sim.operator.undo == [] and sim.gw.renum == [], str((sim.operator.undo, sim.gw.renum)))
+    for name, renums in (("undo-quick", None), ("undo-cup-off", 2), ("undo-rescratch", 4)):
+        sim, rc = in_memory_run(name, seed=5)
+        _check("%s: cup 9 ends on 9 with its tokens, nothing held, nothing in the line%s"
+               % (name, "" if renums is None else ", %d renumbers in all (no bounce)" % renums),
+               rc == 0 and not sim.failures and sim.cup(9).horse == 9 and sim.tokens_in(9) > 0
+               and sim.operator.undo == [] and sim.gw.renum == []
+               and (renums is None or sim.cup(9).renums == renums),
+               "; ".join(sim.failures) + " " + str((sim.cup(9).horse, sim.cup(9).renums, sim.operator.undo, sim.gw.renum)))
     sim, rc = in_memory_run("gateway-reboot", seed=3)
     _check("gateway-reboot: the gateway booted twice and the state line was the first thing applied after the reboot",
            sim.gw.boots == 2 and [k for k, _ in sim.gw.applied_log][sim.reboot_log_mark:][:1] == ["state"])
@@ -788,6 +827,23 @@ def test_e2e_scratch_renumber():
     _check("scratch-renumber: cup_horse events for 22 and back to 9, no cup_offline",
            events.count("cup_horse") >= 22 and "cup_offline" not in events, str(events.count("cup_horse")))
     print("      elapsed %.1f s" % elapsed)
+
+
+def test_e2e_undo_brings_the_cup_back():
+    """Gap review M7 / B11 against the real bridge and board: an Undo 0.3 s to 2.5 s after a replacement scratch
+    (the cup's last report still the old number), with the cup off for five minutes, and an undo followed within a
+    second by another scratch: the cup always ends where the records say, nothing left in the line, and the board
+    logged each cup that followed a pair (renum_ack)."""
+    for name in ("undo-quick", "undo-cup-off", "undo-rescratch"):
+        started, sim, rc, snap, events, elapsed, link, bridge, board = _e2e(name)
+        c9 = _by_mac(snap)[cup_mac(9)]
+        _check("%s: PASS (%.0f s)" % (name, elapsed), rc == 0, "; ".join(sim.failures))
+        _check("%s: cup 9 is horse 9 in the snapshot, online, tokens kept" % name,
+               c9["horse"] == 9 and c9["online"] and c9["count"] == sim.tokens_in(9), str(c9))
+        _check("%s: no record, nothing left to undo, no pair in the line" % name,
+               board.store.scratches() == {} and board.undo_renums() == [] and bridge.renum == [],
+               str((board.store.scratches(), board.undo_renums(), bridge.renum)))
+        _check("%s: the board recorded each cup that followed a pair (renum_ack)" % name, "renum_ack" in events, str(set(events)))
 
 
 def test_e2e_real_gateway_after_a_simulator_run():
@@ -1168,6 +1224,7 @@ E2E = [
     ("end to end — gateway-reboot", test_e2e_gateway_reboot),
     ("end to end — cup-swap", test_e2e_cup_swap),
     ("end to end — scratch-renumber", test_e2e_scratch_renumber),
+    ("end to end — undo-quick, undo-cup-off, undo-rescratch (M7, B11)", test_e2e_undo_brings_the_cup_back),
     ("end to end — a real gateway after a simulator run", test_e2e_real_gateway_after_a_simulator_run),
     ("end to end — a newline-free torrent on a real port", test_e2e_newline_free_torrent_over_a_real_port),
     ("end to end — noise on the first open, a clean reopen", test_e2e_bad_first_open),

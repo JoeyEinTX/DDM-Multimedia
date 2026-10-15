@@ -3,8 +3,8 @@
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
 # lq_cups, telemetry, events, lq_link_state, and the betting board's
-# lq_horses, lq_scratches, lq_scratch_names, lq_board, lq_closing and
-# lq_race. Raw sqlite3, like la_subasta/models.
+# lq_horses, lq_scratches, lq_scratch_names, lq_renum_undo, lq_board,
+# lq_closing and lq_race. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -118,6 +118,19 @@ CREATE TABLE IF NOT EXISTS lq_scratch_names (
     name_set    TEXT    NOT NULL
 );
 
+-- An undone replacement scratch (was -> now) whose cup may still be on
+-- `now`: the board sends the pair [now, was] while a cup reports `now`, and
+-- drops the row once every cup has settled on `was` after the undo (or when
+-- `now` is a replacement again), however long that takes; a cup off at the
+-- time of the undo is brought back when it returns. Keyed by `now`, the
+-- number a cup must leave. undone_at is unix time. A table of its own, so
+-- lq_scratches keeps its shape.
+CREATE TABLE IF NOT EXISTS lq_renum_undo (
+    now       INTEGER PRIMARY KEY CHECK (now BETWEEN 1 AND 24),
+    was       INTEGER NOT NULL CHECK (was BETWEEN 1 AND 24),
+    undone_at REAL    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS lq_board (
     id        INTEGER PRIMARY KEY CHECK (id = 1),
     names_rev INTEGER NOT NULL DEFAULT 0,
@@ -166,6 +179,7 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_horses": ["horse", "name", "replaced"],
     "lq_scratches": ["was", "now"],
     "lq_scratch_names": ["was", "now", "name_before", "name_set"],
+    "lq_renum_undo": ["now", "was", "undone_at"],
     "lq_board": ["id", "names_rev", "closes_at"],
     "lq_closing": ["id", "closing"],
     "lq_race": ["id", "name", "year", "post_at", "migrated"],
@@ -501,6 +515,23 @@ class LqDb:
     def delete_scratch_name(self, was: int) -> None:
         with self.txn() as conn:
             conn.execute("DELETE FROM lq_scratch_names WHERE was = ?", (int(was),))
+
+    def load_renum_undo(self) -> Dict[int, Tuple[int, float]]:
+        """{now: (was, undone_at)}: the undone replacements whose cups the
+        board may still have to bring back."""
+        return {int(r["now"]): (int(r["was"]), float(r["undone_at"]))
+                for r in self.query("SELECT now, was, undone_at FROM lq_renum_undo")}
+
+    def save_renum_undo(self, now: int, was: int, undone_at: float) -> None:
+        with self.txn() as conn:
+            conn.execute(
+                "INSERT INTO lq_renum_undo (now, was, undone_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(now) DO UPDATE SET was = excluded.was, undone_at = excluded.undone_at",
+                (int(now), int(was), float(undone_at)))
+
+    def delete_renum_undo(self, now: int) -> None:
+        with self.txn() as conn:
+            conn.execute("DELETE FROM lq_renum_undo WHERE now = ?", (int(now),))
 
     def load_board(self) -> Dict[str, Any]:
         row = self.query_one("SELECT names_rev, closes_at FROM lq_board WHERE id = 1")

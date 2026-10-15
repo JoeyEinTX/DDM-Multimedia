@@ -317,7 +317,7 @@
   // are in. Nothing to click: a cup's number is set on the cup.
   function renderHorses() {
     if (!model) { return; }
-    var res = model.results || {}, html = "", n, m, stat, cls, tag, c;
+    var res = model.results || {}, html = "", n, m, stat, cls, tag, c, late;
     for (n = 1; n <= HORSES; n++) {
       m = horseState(n);
       if (m.conflict) { stat = "\u26a0 " + (m.cups || []).length + " CUPS"; cls = "warn"; }
@@ -327,6 +327,14 @@
       tag = res.win === n ? '<span class="tag win">WIN</span>' : res.place === n ? '<span class="tag place">PLACE</span>' :
             res.show === n ? '<span class="tag show">SHOW</span>' : "";
       if (m.scratched) { tag += '<span class="tag scr">SCR</span>'; }
+      // A cup that should be this horse but has still not followed its renumber pair after a minute
+      // (it is off, or out of range): pi5 keeps sending the pair until it does.
+      late = (model.renumbering || []).filter(function (r) { return r.to === n; });
+      if (late.length) {
+        tag += '<span class="tag ren" title="' + esc(late.map(function (r) {
+          return "cup " + r.mac + " still says " + r.from + (r.online ? "" : " (off)");
+        }).join("; ")) + '">⏳ renumbering</span>';
+      }
       c = CLOTH[n] || ["#808080", "#fff"];
       html += '<div class="hrow' + (m.cup == null || !m.online || !m.in_field ? " dimmed" : "") + '" data-horse="' + n + '">' +
         '<div class="cloth" style="background:' + c[0] + ';color:' + c[1] + '">' + n + "</div>" +

@@ -118,6 +118,77 @@ def scratch_renumber(ctx):
     yield ctx.wait(3)
 
 
+def _tokens_on(ctx, rng, horse: int):
+    """Betting with `horse` a favourite, and at least one token in its cup."""
+    yield from _betting(ctx, rng, 10, favourites=[horse])
+    if ctx.tokens_in(horse) == 0:
+        ctx.drop(horse, 3)
+        yield ctx.wait(2)
+
+
+@scenario("undo-quick", "horse 9 is scratched with 22 drawing in and the scratch is undone at once, 0.3 s to 2.5 s later: the cup always ends on 9 (gap review B11)")
+def undo_quick(ctx):
+    yield from ctx.prologue()
+    yield from _tokens_on(ctx, ctx.rng, 9)
+    held = ctx.tokens_in(9)
+    for delay in (0.3, 0.6, 1.5, 2.5):
+        yield ctx.operator_scratch("scratch horse 9 with 22 as the replacement (POST /api/quiniela/scratch)",
+                                   horse=9, replacement=22, name="Ocelli")
+        yield ctx.wait(delay, min_real=delay)
+        yield ctx.operator_unscratch("undo it %.1f s later (POST /api/quiniela/unscratch)" % delay, horse=9)
+        yield ctx.until("cup 9 is horse 9 again (undone %.1f s after the scratch)" % delay,
+                        lambda: ctx.cup(9).horse == 9, timeout=20)
+        yield ctx.wait(8, min_real=8)          # a few reports on 9: nothing may move it again
+        ctx.assert_equal("cup 9 still horse 9 after an undo %.1f s after the scratch" % delay, ctx.cup(9).horse, 9)
+        ctx.assert_equal("its tokens stayed (undo at %.1f s)" % delay, ctx.tokens_in(9), held)
+
+
+@scenario("undo-cup-off", "horse 9 is scratched with 22 drawing in; the cup (now 22) is off when the scratch is undone and comes back five minutes later: it returns to 9 on its first reports")
+def undo_cup_off(ctx):
+    yield from ctx.prologue()
+    yield from _tokens_on(ctx, ctx.rng, 9)
+    held = ctx.tokens_in(9)
+    yield ctx.operator_scratch("scratch horse 9 with 22 as the replacement (POST /api/quiniela/scratch)",
+                               horse=9, replacement=22, name="Ocelli")
+    yield ctx.until("cup 9 now says it is horse 22", lambda: ctx.cup(9).horse == 22, timeout=20)
+    ctx.note("cup 9 (horse 22) loses power; the scratch is undone while it is off")
+    ctx.kill(9)
+    ctx.expect_event("cup_offline", 22)
+    yield ctx.wait(8, min_real=8)
+    yield ctx.operator_unscratch("undo the scratch of horse 9 with the cup off (POST /api/quiniela/unscratch)", horse=9)
+    yield ctx.wait(300, min_real=8)
+    ctx.note("the cup is powered again, five minutes later; it still says 22")
+    ctx.boot(9)
+    yield ctx.until("cup 9 is horse 9 again", lambda: ctx.cup(9).horse == 9, timeout=30)
+    yield ctx.wait(8, min_real=8)
+    ctx.assert_equal("cup 9 stays horse 9", ctx.cup(9).horse, 9)
+    ctx.assert_equal("its tokens stayed", ctx.tokens_in(9), held)
+
+
+@scenario("undo-rescratch", "horse 9 is scratched with 22, undone, and within a second scratched again with 23: the cup goes 22 -> 9 -> 23 without bouncing; then that scratch is undone too")
+def undo_rescratch(ctx):
+    yield from ctx.prologue()
+    yield from _tokens_on(ctx, ctx.rng, 9)
+    held = ctx.tokens_in(9)
+    yield ctx.operator_scratch("scratch horse 9 with 22 as the replacement (POST /api/quiniela/scratch)",
+                               horse=9, replacement=22, name="Ocelli")
+    yield ctx.until("cup 9 now says it is horse 22", lambda: ctx.cup(9).horse == 22, timeout=20)
+    before = ctx.cup(9).renums
+    yield ctx.operator_unscratch("undo it (POST /api/quiniela/unscratch)", horse=9)
+    yield ctx.wait(0.5, min_real=0.5)
+    yield ctx.operator_scratch("scratch horse 9 again, now with 23 (POST /api/quiniela/scratch)",
+                               horse=9, replacement=23, name="Epic Ride")
+    yield ctx.until("cup 9 now says it is horse 23", lambda: ctx.cup(9).horse == 23, timeout=30)
+    yield ctx.wait(6, min_real=6)
+    ctx.assert_equal("cup 9 ends on 23", ctx.cup(9).horse, 23)
+    ctx.assert_equal("two renumbers, 22 -> 9 and 9 -> 23: no bounce", ctx.cup(9).renums - before, 2)
+    ctx.assert_equal("its tokens stayed", ctx.tokens_in(9), held)
+    yield ctx.operator_unscratch("undo the second scratch (POST /api/quiniela/unscratch)", horse=9)
+    yield ctx.until("cup 9 is horse 9 again", lambda: ctx.cup(9).horse == 9, timeout=20)
+    yield ctx.wait(8, min_real=8)
+    ctx.assert_equal("cup 9 stays horse 9", ctx.cup(9).horse, 9)
+
+
 @scenario("late-tokens", "normal betting, then a few more tokens land in two cups after AT_THE_POST")
 def late_tokens(ctx):
     rng = ctx.rng

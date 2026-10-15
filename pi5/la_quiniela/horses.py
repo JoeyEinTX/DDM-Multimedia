@@ -224,6 +224,7 @@ class HorseStore:
             n: {"name": ""} for n in range(1, HORSE_COUNT + 1)}
         self._scratches: Dict[int, Optional[int]] = {}      # was -> now, or None: no replacement
         self._scratch_names: Dict[int, Tuple[str, str]] = {}   # was -> (now's name before the scratch, the name it gave)
+        self._undone: Dict[int, Tuple[int, float]] = {}       # now -> (was, undone_at): undone replacements to bring cups back from
         self._names_rev = 0
         self._closes_at: Optional[float] = None
         self._closing: Optional[Dict[str, Any]] = None
@@ -270,6 +271,15 @@ class HorseStore:
             log.error("La Quiniela horses: cannot read lq_scratch_names (%s); "
                       "an Undo will leave a replacement's name as it is", exc)
         try:
+            for now, (was, at) in self._db.load_renum_undo().items():
+                if 1 <= now <= HORSE_COUNT and 1 <= was <= HORSE_COUNT and now != was:
+                    self._undone[now] = (was, at)
+        except sqlite3.Error as exc:
+            # lq_renum_undo is newer still: without it an undone replacement
+            # whose cup has not come back yet is forgotten at a restart.
+            log.error("La Quiniela horses: cannot read lq_renum_undo (%s); "
+                      "a cup still on an undone replacement's number will not be brought back", exc)
+        try:
             self._closing = _parse_closing(self._db.load_closing())
         except sqlite3.Error as exc:
             # lq_closing is newer than the rest: without it only the closing
@@ -312,6 +322,42 @@ class HorseStore:
         except sqlite3.Error as exc:
             log.error("La Quiniela horses: cannot write lq_scratch_names for horse %d (%s); "
                       "after a restart an Undo may leave that replacement's name as it is", was, exc)
+
+    def _save_undone(self, now: int) -> None:
+        """Write, or drop, the undone replacement keyed by `now`. A database
+        that refuses costs only the restart: the board holds it in memory."""
+        if self._db is None:
+            return
+        try:
+            if now in self._undone:
+                was, at = self._undone[now]
+                self._db.save_renum_undo(now, was, at)
+            else:
+                self._db.delete_renum_undo(now)
+        except sqlite3.Error as exc:
+            log.error("La Quiniela horses: cannot write lq_renum_undo for %d (%s); "
+                      "a restart would forget that its cup must go back", now, exc)
+
+    # -- undone replacements (the board's renumber pairs back) ---------------------
+
+    def undone_renums(self) -> Dict[int, Tuple[int, float]]:
+        """{now: (was, undone_at)}, a copy: replacement scratches that were
+        undone and whose cup the board may still have to bring back."""
+        with self._lock:
+            return dict(self._undone)
+
+    def add_undone_renum(self, was: int, now: int, at: float) -> None:
+        """Record that the replacement was -> now was undone at unix time
+        `at`. A row for the same `now` is replaced. No listener is told: the
+        field does not change, only what the board sends the cups."""
+        with self._lock:
+            self._undone[int(now)] = (int(was), float(at))
+            self._save_undone(int(now))
+
+    def drop_undone_renum(self, now: int) -> None:
+        with self._lock:
+            if self._undone.pop(int(now), None) is not None:
+                self._save_undone(int(now))
 
     def _save_board(self) -> None:
         if self._db is not None:

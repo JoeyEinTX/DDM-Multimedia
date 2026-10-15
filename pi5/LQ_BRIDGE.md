@@ -107,6 +107,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are handed back to be re-bet). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
 | `lq_scratch_names` | one row per replacement record whose scratch changed its now's name: `was` (PK, the record's), `now`, `name_before` (`''` for none), `name_set`. Undo puts `name_before` back while the name is still `name_set`, and drops the row; a record without a row (one from before this table, or one whose scratch kept the stored name) leaves the name. Added at start like `lq_closing` |
+| `lq_renum_undo` | one row per undone replacement whose cup may still need bringing back: `now` (PK, 1..24, the number the cup took), `was` (the number it goes back to), `undone_at` (unix time). Written by Undo; dropped once the undo is settled or `now` is a replacement again ("Renumber pairs: derived and acknowledged", below), so an undo outlives a restart. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`) |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
 | `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes. While the host's hand count is held it is one more key of this JSON, `pot_counted` (whole dollars), so the count is saved, held and dropped exactly as the figures are ("The counted pot", below); no schema change |
 | `lq_race` | one row, the race: `name` (as typed, `''` for the default KENTUCKY DERBY), `year`, `post_at` (unix time; NULL while unset), `migrated` (1 once the old Race Setup file has been looked at). Reset betting never touches it. Added at start like `lq_closing` |
@@ -139,8 +140,9 @@ Event types: `cup_online`, `cup_offline`, `cup_horse` (`{"mac","from","to"}`,
 also for a cup first heard with a horse, `from` 0), `cups_forgotten`,
 `gateway_hello`, `gateway_reboot`, `gateway_err`, `state_set` (with what
 changed), `bridge_reopen`, `bridge_bad_open` (both under "The watchdog" and
-"A bad open", below). The `horse` column of a cup event is the horse the
-cup reports (NULL for none).
+"A bad open", below), and the betting board's `renum_ack` and `renum_late`
+("Renumber pairs: derived and acknowledged", below). The `horse` column of
+a cup event is the horse the cup reports (NULL for none).
 
 To start fresh before a party, pi5 stopped: `python3 pi5/tools/wipe.py` (try
 `--dry-run` first) empties every table of this database, La Subasta's too, and
@@ -468,7 +470,12 @@ date):
 ```
 
 `devpi` is the state DevPi holds, keyed by horse (above). Two cups claiming
-one horse are both in `cups`; the betting board decides what to show.
+one horse are both in `cups`; the betting board decides what to show. Each
+cup here also carries `seen`: when its last report arrived, on the bridge's
+own monotonic clock (`now()`), or null for a cup not heard since pi5
+started. It means nothing outside the process; the betting board tells a
+report made after a scratch or an undo from one made before it by this,
+never by `last_seen` (whole seconds). `lq_update` does not carry it.
 
 ## Python API (`la_quiniela.get_bridge()`)
 
@@ -477,6 +484,8 @@ one horse are both in `cups`; the betting board decides what to show.
 | `set_state(phase=None, scratched=None, renum=None, results=None) -> rev` | Change any part of the state, the others kept. Validated exactly as the gateway does (`ValueError` on bad input: phase 0..6, scratched horses 1..24, at most 4 renum pairs with `from != to` and no `from` twice, exactly 3 results 0..24). Bumps `state_rev`, persists, logs `state_set`, sends if the port is open, emits `lq_snapshot`. Identical values are a no-op returning the current rev. |
 | `forget_cups(mac_prefix=None) -> int` | Drop cups from the cache (all, or those whose MAC starts with the prefix), in memory and in `lq_cups`; a `cups_forgotten` event and a fresh `lq_snapshot`. Returns how many went. Decides nothing (above). |
 | `get_snapshot() -> dict` | The `lq_snapshot` payload. |
+| `now() -> float` | The bridge's clock (monotonic seconds), what a snapshot cup's `seen` is measured on. |
+| `record_event(type, horse, detail)` | One row in `events`, for the betting board's own (`renum_ack`, `renum_late`). Never raises. |
 | `set_gateway_debug(on) -> bool` | Sends `{"t":"debug","on":...}`; True if it went out. |
 | `add_listener(fn)` | `fn()` is called after every emit and at the end of `set_state()` (the betting board's hook, below). |
 
@@ -574,27 +583,30 @@ is not in the field.
    cup whose horse is 9 hears it, becomes 22, saves 22 and reports 22 from
    then on, tokens and all, because it is the same cup; 9 leaves the field;
    the board lists whoever is in the field in numeric order. Nothing is
-   physically moved on the mantle and no cup is addressed: **the pair stays
-   in the line for as long as the record stands**, so a cup set to 9 later
-   (a spare, a cup that was off) becomes 22 the moment it hears the gateway,
-   and a cup that has already followed it no longer matches. With no cup
-   saying 9 yet, only the record is made and the pair still goes down. The
-   name-swap of 726d4c2 (same number, new name) is gone: a bare string
-   `replacement` is a 400 that says the shape.
+   physically moved on the mantle and no cup is addressed: **the pair goes
+   in the line whenever an online cup says 9, for as long as the record
+   stands**, so a cup set to 9 later (a spare, a cup that was off) becomes
+   22 within a report or two, and the pair leaves the line once no cup says
+   9. With no cup saying 9 yet, only the record is made. The name-swap of
+   726d4c2 (same number, new name) is gone: a bare string `replacement` is
+   a 400 that says the shape. How the pairs are derived and when a cup has
+   followed one: "Renumber pairs: derived and acknowledged", below.
 
    **Undo** (`POST /api/quiniela/unscratch {"horse": 9}`) removes the record
    and puts 22's name back as it was before the scratch (a name the scratch
    gave is cleared, one entered ahead stays, one changed since the scratch
    stays; `lq_scratch_names` keeps what the scratch did, and a record from
-   before that table leaves the name), bumps `names_rev`, and the board sends the pair
-   back, `[22, 9]`, for `UNDO_RENUM_S` (60 s) or until a cup reports 9,
-   whichever is first, so the cup that became 22 goes back to 9. A fresh
-   record that contradicts a pending undo pair (9 scratched again with 22, a
-   record moving cups onto 22, a record with the same `from`) wins and the
-   undo pair is dropped, so the line never asks a cup to bounce. At most
-   `RENUM_SLOTS` (4) pairs fit the line: records first, an undo pair waits
-   for a free slot with one warning (four also-eligibles make more than four
-   records impossible through the routes).
+   before that table leaves the name), bumps `names_rev`, and keeps a small
+   record of the undo in `lq_renum_undo` (`now` 22, `was` 9, `undone_at`).
+   **Undo works at any time**: the pair back, `[22, 9]`, goes in the line
+   whenever a cup reports 22, with no time limit, so the cup that became 22
+   goes back to 9 whether the undo came 0.3 s after the scratch (before the
+   cup had even followed it) or an hour later, and a cup that was off during
+   the undo goes back whenever it returns. The undo record goes once it has
+   nothing left to do, or when 22 is a replacement again (the cups on 22 are
+   then where they belong). Undo 9 -> 22 then scratch 9 -> 23 within a
+   second: a cup still on 22 gets `[22, 9]` first and `[9, 23]` only once it
+   reports 9, so it ends on 23 with no bounce.
 2. **No replacement** (`{"horse": 9}` alone, or `"replacement": null`): a
    scratch is about the horse, not the cup (bench, 2026-09-26: with one cup
    online, scratching 20 answered "not on any cup"). pi5 records it in
@@ -643,6 +655,71 @@ move as `"cup": ["A0:B7:65:12:34:56", null]` and `"cup": [null,
 lands in the renumbered cup in the very packet that carries the renumber is
 counted, in the pot and in the log, but not tickered, because on that horse
 the count change is also a cup move.
+
+### Renumber pairs: derived and acknowledged
+
+The line's `renum` pairs are derived afresh on every `refresh()`
+(`desired_state()`, `_renum_plan()` in `betting.py`) from the store and
+the cups in the bridge's snapshot, each with its horse, whether it is
+online and `seen` (when its last report arrived, on the bridge's clock).
+There is no time window anywhere: **a pair goes in the line while an
+online cup reports its `from`, and a cup has followed it only when a
+report newer than the pair says its `to`.** Nothing else about scratches
+depends on this.
+
+- **A record** `9 -> 22` (a replacement scratch standing): `[9, 22]` while
+  an online cup reports 9.
+- **An undone record** (`lq_renum_undo`: `now` 22, `was` 9): `[22, 9]`
+  while an online cup reports 22. It is kept until it has nothing left to
+  do: no cup in the cache says 22 (online or not, so a cup that was off
+  during the undo is brought back whenever it returns, five minutes or
+  five hours later) and every cup on 9 has reported more than
+  `RENUM_SETTLE_S` (5 s, over two report cycles) after the undo; then it
+  is settled and dropped. When 22 is a replacement again (9 scratched with
+  22 again, or another horse with 22) it is dropped at once. A restart
+  keeps it (the table) and restarts its clock: any report after the
+  restart counts.
+- **An undo leads.** While an undo is bringing a cup back to 9, a record
+  whose `from` is 9 waits: undo 9 -> 22 and scratch 9 -> 23 within a
+  second, and a cup still on 22 gets `[22, 9]` first and `[9, 23]` only
+  once it reports 9 (two cups on one number: each gets the pair that fits
+  what it says).
+- **Chains go in one packet.** A pair whose `from` is the `to` of a live
+  pair of the same kind is live too (9 -> 22 and 22 -> 23 both ride while
+  a cup says 9; the cup walks them in order).
+- **Order and limits.** Undo pairs first, oldest undo first, then the
+  records by `was` (chain order). A `from` appears once, a record winning
+  over an undo. Pairs that would make a cycle lose the undo pair in it,
+  with one warning. At most `RENUM_SLOTS` (4) pairs; more wait for a free
+  slot, with one warning.
+
+A stale report is harmless both ways. A cup that has already followed no
+longer matches the pair still in the line, and a report made before an
+undo can neither acknowledge nor settle it. That was gap review B11: the
+old undo pair lived for 60 s or until a cup reported 9, so an undo within
+a second or two of the scratch was ended by the cup's own last report of
+9, made before the scratch's pair (already on its way) had reached it;
+the cup then became 22 and stayed there.
+
+**Acknowledgements.** For every pair, a record's or an undo's, pi5
+watches the cups it sees on the pair's `from`. A watched cup whose report,
+newer than the scratch or the undo, says the pair's `to` (or a number
+further down a chain in the line) has followed it: an INFO line, `cup
+A0:B7:65:12:34:57 followed 22 -> 9 (undo) 1.8 s after it was made`, and a
+`renum_ack` event, horse the pair's `to`, detail `{"mac", "pair": [22,
+9], "kind": "undo" or "scratch", "delay_s", "horse"}` (`horse`: where
+the cup ended up). A cup that leaves `from` for any other number (set by
+hand) is simply no longer watched.
+
+**Late.** A watched cup still on `from` `RENUM_LATE_S` (60 s) after pi5
+first saw it there is late: one WARNING naming it, `cup A0:B7:65:12:34:57
+still says 22 61 s after the undo; it should be 9 (it is off)` (or `it is
+online but has not followed`), one `renum_late` event (`{"mac", "pair",
+"kind", "waiting_s", "online"}`), and an entry in the model's
+`renumbering` for as long as it lasts, which puts `⏳ renumbering` on the
+admin page's row of the pair's `to`. The pair is still sent; when the cup
+follows, the entry goes and the acknowledgement is logged with its real
+delay.
 
 ### Results
 
@@ -796,7 +873,10 @@ its appendix. Top to bottom:
   and nothing to click: the number in its cloth colour, the name, the status
   (`● online`, `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup
   claims the horse), the tokens, and `WIN` / `PLACE` / `SHOW` / `SCR` tags
-  from the results and the scratches. The line above it reads `N cups online
+  from the results and the scratches, and `⏳ renumbering` (amber) on the
+  row a cup should have renumbered to while that cup is a minute late
+  (the model's `renumbering`; the tag's tooltip says `cup <MAC> still says
+  22 (off)`; "Renumber pairs: derived and acknowledged", above). The line above it reads `N cups online
   · M with no horse` (`cups_online` and `cups_no_horse` from the model; a cup
   showing `NO HORSE` is counted there and appears in no row). There is no
   cups table, no picker, nothing to adopt and nothing to forget: a cup's
@@ -971,7 +1051,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
 | `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. Both work without a bridge (recorded, `cup` null, `rev` null). |
-| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the pair `[22, 9]` goes down for a minute or until a cup reports 9: `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
+| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the undo is kept (`lq_renum_undo`): the pair `[22, 9]` goes down whenever a cup reports 22, with no time limit, until the cups have settled on 9 ("Renumber pairs: derived and acknowledged", above): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order: the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
 | `PUT /api/quiniela/counted_pot` | The host's hand count of the cash box: `{"amount": 152}` sets it (whole dollars, 0 to 10000; again overwrites), `{"amount": null}` clears it. `{"ok": true, "pot_counted": 152, "pot_scale": 154.0, "pot": 152.0, "prizes": {"win": 91, "place": 38, "show": 23}, "hand_counted": true, "race_state": 3, "saved": true}`. 400 `the count must be a whole number of dollars, 0 to 10000 ...` for anything else (a float, a string, a bool, a negative, over the ceiling) or a body with no `amount`; 409 when the race is not in 3, 4 or 5 (in 6 a saved count is read-only) or there are no figures at the post yet. See "The counted pot". |
@@ -1165,6 +1245,11 @@ the store and the results file as follows:
   from `main.py`'s feed (above), strings trimmed and cut at 40
   characters, the temperature a whole number, a missing part null; null
   while there is none. The TV's crawl reads it.
+- `renumbering`: the cups late on a renumber pair ("Renumber pairs:
+  derived and acknowledged", above), `[{"from": 22, "to": 9, "mac":
+  "A0:B7:65:12:34:57", "kind": "undo", "waiting_s": 75, "online":
+  false}]`, sorted by `to` then MAC; `[]` while no cup is. The admin page's
+  `⏳ renumbering` tag reads it.
 - `share` and `leader` stay as they were; nothing new depends on `share`.
 
 ### One race state
@@ -1296,8 +1381,9 @@ timeout is the backstop). `refresh()` takes `get_snapshot()` without holding
 the board's own lock, applies it under that lock, and then **keeps the
 gateway's state line in step with what pi5 knows** (`_sync_gateway()`): the
 no-replacement scratches from `lq_scratches` as the `scr` list, the
-replacement records as `[was, now]` pairs plus any undo pairs still being
-sent, and the dashboard's results; when the bridge's `devpi` state differs,
+renumber pairs as "Renumber pairs: derived and acknowledged" (above)
+derives them from the records, the undos and the cups, and the
+dashboard's results; when the bridge's `devpi` state differs,
 one `set_state()` goes out and the fresh snapshot is applied. So every path
 agrees: a scratch made without a bridge reaches the gateway on the first
 refresh after one appears, a cup set to a scratched horse tomorrow finds its
@@ -1361,10 +1447,13 @@ horse 0 counted but in no row, the cup-move rule by MAC), the log, the
 settings, the listener hook, the thread, the `state` command (byte-exact
 against `protocol.build_state_line`; the v1 commands refused), the prize
 rounding, both kinds of scratch (the renumber 9 -> 22 on a real bridge: the
-pair in the line, the cup's tokens under 22, no events, the pot unchanged,
-undo with the pair sent back until the cup reports 9 or 60 s pass, a fresh
-record beating a pending undo, the four-slot cap; a scratch before any cup
-says the horse; the in_field rule; the unused-number and not-in-the-field
+pair in the line, the cup's tokens under 22, no events, the pot unchanged;
+undo at 0.3, 0.6, 1.5 and 2.5 s after the scratch always bringing the cup
+back to 9 with its tokens, an undo with the cup off for five minutes and
+across a restart, undo then scratch 9 -> 23 within a second ending on 23
+with no bounce and both acknowledgements logged, two cups on one number,
+a stale report never acknowledging, the late log line and `renumbering`
+after 60 s, the four-slot cap; a scratch before any cup says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
 the names text parser for 24 lines, the closing time, the between-races
 one race state (each of the dashboard's twelve modes against the table,
