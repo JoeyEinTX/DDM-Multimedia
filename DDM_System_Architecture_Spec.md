@@ -1,7 +1,7 @@
 # DDM System Architecture Spec
 
-**Version:** 1.0
-**Date:** 2026-09-29
+**Version:** 1.1
+**Date:** 2026-10-14
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
 **Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
@@ -30,6 +30,7 @@ detail**. If one disagrees with a rule marked [DECIDED] here, that is a bug to f
 | `RACE_NIGHT.md` | The race-night runbook |
 | `splash_display/README.md` | The TV slideshow and the LQ board |
 | `DDM_La_Subasta_Spec.md` | La Subasta |
+| `DDM_Archive_Spec.md` | The DDM Archive: past years, photos, close-out, backups |
 
 `DDM_La_Quiniela_Spec.md` (v2.3, May 2026) is **superseded**. It describes one controller
 reading all 20 scales and driving LED matrices, which is not how the system was built.
@@ -153,6 +154,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 | `pi5/data/results.json` | WIN, PLACE, SHOW horse numbers. The single store: the dashboard writes it, La Quiniela reads it |
 | In memory only | Track odds, weather, the dashboard mode that set the state |
 | On each cup (NVS) | Horse number, counts per token, orientation, brightness; the saved empty reading and last count (section 5) [BUILT, cup sketch v0.7] |
+| `archive_*` tables, `pi5/data/archive/` | The DDM Archive. See section 16 and `DDM_Archive_Spec.md` [PROPOSED] |
 
 - **No per-token or per-guest data** is stored anywhere. Token numbers exist only on the
   plastic.
@@ -447,7 +449,8 @@ Rules for either:
 ## 9. Derby Dash
 
 - Loosely coupled; the game does not need the race state to run.
-- It could post high scores to pi5 for a leaderboard slide. [PROPOSED]
+- It could post high scores to pi5 for a leaderboard slide, and the archive keeps each
+  year's top scores (section 16). [PROPOSED]
 - It could pause or show "race in progress" during RUNNING. [PROPOSED]
 
 ---
@@ -518,7 +521,7 @@ Rules for either:
 | TV or splash reloads | Fetches the model; shows the figures at the post, not emptied cups. [BUILT] |
 | LED controller unreachable | The race state and results still apply; the dashboard says `LEDs unreachable`. [BUILT] |
 | No internet | No odds and no weather; nothing else notices. [BUILT] |
-| SD card failure | SQLite copied off the box on a schedule, and a cloned SD card on hand. [PROPOSED] |
+| SD card failure | SQLite and the archive copied off the box nightly (`DDM_Archive_Spec.md` section 8), and a cloned SD card on hand. [PROPOSED] |
 | Starting fresh before a party | `pi5/tools/wipe.py` on DevPi, pi5 stopped (it refuses otherwise). It copies every data file to `backups/wipe-<date-time>/` and checks each copy (size, SHA-256) before it clears anything. Then it empties every table (none recreated, so `check_shape()` passes; the id counters stay) and removes the results, the betting logs and the old Race Setup file. `--restore` puts a backup back byte for byte. The cups, the gateway and guests' phones keep their own; it says so (`RACE_NIGHT.md`, "Before the party: start fresh"). [BUILT] |
 
 - pi5 and the splash start on their own after a power cycle, under systemd only: the services
@@ -546,6 +549,8 @@ Rules for either:
    screen shows the address it really has, which is what goes in `pi5/.env`.
 6. **The bridge's SocketIO events:** keep them for a future screen (HUB75), or remove them
    as unused?
+7. **The DDM Archive's open questions** (names, which past years, webcam, backup target,
+   guest extras) are in `DDM_Archive_Spec.md` section 12.
 
 Resolved since v0.9: cup counting (the cup counts; the settled weight decides), odds on
 the board (none; bets only), LED sub-phases (the mode table), display transport (HTTP and
@@ -608,6 +613,8 @@ One single-concern Claude Code prompt each, in this order:
 7. ~~pi5 as a systemd service.~~ Done (2026-10-09; listed under Done).
 8. JoeyAI as an odds and names source, if open question 2 says yes.
 9. HUB75 renderer, if it earns its place.
+10. **The DDM Archive**, prompts A1–A9 in `DDM_Archive_Spec.md` section 13. A1–A5 must
+    land before the code freeze.
 
 ### Housekeeping
 
@@ -615,3 +622,18 @@ One single-concern Claude Code prompt each, in this order:
 - Mark `DDM_La_Quiniela_Spec.md` superseded, at its top.
 - Update the vault status page. The repo's `CLAUDE.md` tells Claude Code to trust the vault
   over the repo docs, so a stale vault page misleads every session.
+
+---
+
+## 16. The DDM Archive [DECIDED 2026-10-14 that it exists; details PROPOSED]
+
+A memory of every Derby de Mayo on pi5: each year's results, photos and stories, shown on
+the Control Center and the TV. `DDM_Archive_Spec.md` owns the details. In short:
+
+- **An archive year is a frozen copy.** A close-out button copies the year's La Quiniela,
+  La Subasta, race and Derby Dash figures into the archive's own tables, so later changes to
+  the live tables never change an old year.
+- **Photos** come from the host's uploads, guests' phones (approved by the host first), and
+  an optional webcam that fires on the race states. They are files on DevPi, never in git.
+- **The archive costs nothing on race night.** Nothing in the race waits on it.
+- **It is backed up off the box nightly**, because it is the one thing pi5 cannot rebuild.
