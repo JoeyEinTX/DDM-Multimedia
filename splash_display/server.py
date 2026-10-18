@@ -19,6 +19,7 @@ from __future__ import annotations
 
 # The splash runs as the ddm-splash service (deploy/), never alongside it: a copy
 # started by hand refuses while the service is active, before the link to pi5 starts.
+import page_rev
 import service_mode
 if __name__ == "__main__":
     service_mode.refuse_alongside_the_service("ddm-splash")
@@ -69,20 +70,11 @@ logging.basicConfig(
 log = logging.getLogger("splash_display")
 
 
-def static_url(filename: str) -> str:
-    """url_for('static') with ?v=<the file's modification time>. Flask sends
-    Last-Modified and no max-age, and Chromium then keeps a file for a tenth
-    of its age without asking, so after a pull the kiosk could keep running
-    the old script. A changed file is a new URL: a pull and a restart always
-    serve the new code, no hard reload."""
-    try:
-        version = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
-    except OSError:
-        version = 0
-    return url_for("static", filename=filename, v=version)
-
-
-app.jinja_env.globals["static_url"] = static_url
+# The kiosk comes up fresh after a pull (page_rev.py): static URLs carry the
+# pages' revision (?v=), every response says it (X-Page-Rev), every HTML
+# page is Cache-Control: no-store. The one place for the splash.
+page_rev.init_app(app)
+static_url = page_rev.static_url
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +429,13 @@ def display():
         transitions_json=json.dumps(transitions),
         quiniela_look=board_look(request.args.get("look")),
     )
+
+
+@app.route("/api/page_rev")
+def api_page_rev():
+    """The revision of the pages the splash serves now; the slideshow reloads
+    itself when it is not the one it was served with."""
+    return jsonify({"rev": page_rev.PAGE_REV})
 
 
 @app.route("/api/slides")

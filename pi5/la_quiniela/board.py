@@ -33,7 +33,6 @@
 # an accessor, and a start called from main.py's __main__ block only, so
 # importing the app starts no thread.
 
-import hashlib
 import json
 import logging
 import os
@@ -60,28 +59,6 @@ STREAM_HEADERS = {
     "X-Accel-Buffering": "no",
     "Connection": "keep-alive",
 }
-
-
-def _admin_page_rev() -> str:
-    """A short fingerprint of the admin page as this process serves it: its
-    template (read once, as Flask's template cache does) and its stylesheet.
-    GET /api/quiniela carries it in X-Admin-Page and the page keeps the one
-    it was served with, so a page left open across an update (the iPad's
-    Home Screen app keeps one for days, running its old script) sees the
-    difference and reloads itself."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    digest = hashlib.sha1()
-    for path in (os.path.join(here, "templates", "quiniela_admin.html"),
-                 os.path.join(os.path.dirname(here), "static", "css", "quiniela_admin.css")):
-        try:
-            with open(path, "rb") as fh:
-                digest.update(fh.read())
-        except OSError:
-            digest.update(path.encode("utf-8"))
-    return digest.hexdigest()[:12]
-
-
-ADMIN_PAGE_REV = _admin_page_rev()
 
 DEMO_REFUSED = ("demo is not routed through pi5: the bridge speaks the JSON line protocol, "
                 "and every state line turns demo off")
@@ -232,7 +209,6 @@ def migrate_race_setup(path: Any, board: Optional[BettingBoard] = None) -> Dict[
 def api_quiniela_model():
     resp = jsonify(get_board().model())
     resp.headers["Cache-Control"] = "no-store"
-    resp.headers["X-Admin-Page"] = ADMIN_PAGE_REV     # the admin page's own revision (above)
     return resp
 
 
@@ -779,6 +755,7 @@ def api_quiniela_odds_stop():
 def quiniela_admin_page():
     """The phone page: the Race section (state buttons, the figures, Reset
     betting, the Horses list), then the race's name and post time, names,
-    scratches and the closing time. It carries ADMIN_PAGE_REV and reloads
-    itself, when idle, once GET /api/quiniela says pi5 serves another."""
-    return render_template("quiniela_admin.html", admin_page_rev=ADMIN_PAGE_REV)
+    scratches and the closing time. It carries pi5's page revision and
+    reloads itself, when idle, once a model read says pi5 serves another
+    (page_rev.py, static/js/page_rev.js)."""
+    return render_template("quiniela_admin.html")

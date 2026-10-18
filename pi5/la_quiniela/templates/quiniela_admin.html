@@ -9,8 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="LQ Admin">
 <title>La Quiniela admin</title>
-<!-- This page's revision as pi5 serves it: GET /api/quiniela says which one pi5 serves now (X-Admin-Page) -->
-<meta name="ddm-admin-page" content="{{ admin_page_rev or '' }}">
+<!-- The revision of pi5's pages this one was served with; every reply says the one pi5 serves now (X-Page-Rev) -->
+<meta name="ddm-page-rev" content="{{ page_rev or '' }}">
+<script src="{{ static_url('js/page_rev.js') if static_url is defined else url_for('static', filename='js/page_rev.js') }}"></script>
 <link rel="stylesheet" href="{{ static_url('css/quiniela_admin.css') if static_url is defined else url_for('static', filename='css/quiniela_admin.css') }}">
 </head>
 <body>
@@ -141,11 +142,8 @@
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   // ---- a newer page ----------------------------------------------------------
-  // A page left open across an update (the iPad's Home Screen app keeps this one for days) would go
-  // on running its old script, blind to anything the update added. Every model read says which page
-  // pi5 serves now (X-Admin-Page); when it is not this one, the page reloads itself, but only while
-  // nothing is being typed or confirmed here. Until then the line at the top says so.
-  var PAGE_REV = (document.querySelector('meta[name="ddm-admin-page"]') || {}).content || "";
+  // A page left open across an update reloads itself (static/js/page_rev.js, off every model read), only while
+  // nothing is being typed or confirmed here; until then the line at the top says so.
   var edited = false;             // typed into since the last action that went through
   document.addEventListener("input", function () { edited = true; }, true);
   function idle() {
@@ -154,9 +152,8 @@
            !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
   }
   function newerPage(rev) {
-    if (!rev || !PAGE_REV || rev === PAGE_REV) { return; }
-    if (idle()) { location.reload(); return; }
-    say("page-note", "pi5 has a newer version of this page: it reloads when you're done here.", "warn");
+    if (!window.DDMPageRev) { return; }
+    DDMPageRev.check(rev, idle, function () { say("page-note", "pi5 has a newer version of this page: it reloads when you're done here.", "warn"); });
   }
 
   function say(id, text, cls) {
@@ -180,7 +177,7 @@
           try { j = JSON.parse(t); } catch (e) { j = null; }
           if (!j || typeof j !== "object") { j = { ok: false, error: "non-JSON reply (HTTP " + r.status + ")" }; }
           if (r.ok && method !== "GET") { edited = false; }      // what was typed went through
-          return { ok: r.ok, status: r.status, body: j, rev: r.headers.get("X-Admin-Page") };
+          return { ok: r.ok, status: r.status, body: j, rev: r.headers.get("X-Page-Rev") };
         });
       });
   }

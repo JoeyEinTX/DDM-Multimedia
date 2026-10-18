@@ -196,13 +196,13 @@ def test_menu_and_page():
            {"/api/quiniela/race", "/api/quiniela/odds", "/api/quiniela/odds/start", "/api/quiniela/odds/stop", "/api/race"} <= rules)
     _check("main.py keeps nothing of the old store", not any(hasattr(main, f) for f in ("load_race_setup", "save_race_setup", "poll_odds")))
     _check("/api/quiniela/field is registered", "/api/quiniela/field" in rules)
-    # A pull and a restart must serve the new CSS and JS: every link carries its file's modification time.
+    # A pull and a restart must serve the new CSS and JS: every link carries pi5's page revision (page_rev.py).
     import re
+    import page_rev
     for path in ("css/ddm_style.css", "js/ddm_control.js"):
-        mtime = int(os.path.getmtime(os.path.join(main.app.static_folder, path)))
-        _check(f"the page asks for /static/{path}?v=<its mtime>", f'/static/{path}?v={mtime}"' in html,
+        _check(f"the page asks for /static/{path}?v=<pi5's page revision>", f'/static/{path}?v={page_rev.PAGE_REV}"' in html,
                str(re.findall(r'/static/[^"]*' + re.escape(path.split("/")[-1]) + r'[^"]*', html)))
-        _check(f"...and the versioned URL serves it", rig.client.get(f"/static/{path}?v={mtime}").status_code == 200)
+        _check(f"...and the versioned URL serves it", rig.client.get(f"/static/{path}?v={page_rev.PAGE_REV}").status_code == 200)
 
 
 def test_race_roster_is_la_quinielas():
@@ -1383,6 +1383,76 @@ def test_admin_number_list_and_typed_number_in_a_browser():
     _with_counted_requests(lambda requests, slow: [_admin_gremlins_check(picker_check, touch, requests, slow) for touch in (True, False)])
 
 
+def test_pages_come_up_fresh():
+    """Pages come up fresh after a pull (Joey, 2026-10-14; page_rev.py). Every HTML page pi5 serves (the Control
+    Center, the LQ admin page, La Subasta's, the rest) answers Cache-Control: no-store, while the API keeps its own;
+    every static URL on the Control Center and the admin page carries pi5's page revision; every response says it
+    (X-Page-Rev). In headless Chrome over the DevTools protocol, the Control Center reloads itself off its 5 s poll
+    when the revision changes, with the admin page's mechanism (static/js/page_rev.js), and not otherwise: not while
+    the revision is the same, and not while a modal is open."""
+    import page_rev
+    rig = Rig()
+    rev = page_rev.PAGE_REV
+    _check("pi5's page revision: twelve hex digits over its templates and static JS and CSS, as they are",
+           re.fullmatch(r"[0-9a-f]{12}", rev) is not None and page_rev.compute() == rev, rev)
+    pages, not_fresh = [], []
+    for rule in main.app.url_map.iter_rules():
+        if "GET" not in rule.methods or rule.arguments or rule.rule.startswith(("/api/", "/static", "/la-subasta/api/")):
+            continue
+        try:
+            r = rig.client.get(rule.rule)
+        except Exception:                           # /spectator: renders spectator.html without its horses (a 500 before this too)
+            continue
+        if r.mimetype == "text/html":
+            pages.append(rule.rule)
+            if r.headers.get("Cache-Control") != "no-store" or r.headers.get("X-Page-Rev") != rev:
+                not_fresh.append((rule.rule, r.headers.get("Cache-Control")))
+    _check("every HTML page pi5 serves answers no-store and says the revision (the Control Center, the admin page, "
+           "La Subasta's included)", not not_fresh and {"/", "/quiniela/admin", "/la-subasta/", "/la-subasta/admin"} <= set(pages),
+           str((sorted(pages), not_fresh)))
+    api = {path: rig.client.get(path) for path in ("/api/quiniela", "/api/quiniela/mode", "/api/results", "/api/quiniela/race")}
+    _check("the API keeps its own caching: JSON is not made no-store (GET /api/quiniela was no-store already)",
+           api["/api/quiniela"].headers.get("Cache-Control") == "no-store"
+           and all(r.mimetype == "application/json" for r in api.values())
+           and all(r.headers.get("Cache-Control") in (None, "no-store") for r in api.values())
+           and api["/api/results"].headers.get("Cache-Control") is None,
+           str({p: r.headers.get("Cache-Control") for p, r in api.items()}))
+    for path in ("/", "/quiniela/admin"):
+        page = rig.client.get(path).get_data(as_text=True)
+        statics = re.findall(r'(?:src|href)="(/static/[^"?]+[.](?:js|css)[^"]*)"', page)
+        _check(f"{path}: every static JS and CSS URL carries the revision (?v={rev}), and the page its meta",
+               bool(statics) and all(("v=" + rev) in u for u in statics) and ('name="ddm-page-rev" content="%s"' % rev) in page,
+               str(statics))
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("Control Center reload browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    meta = "(document.querySelector('meta[name=\"ddm-page-rev\"]') || {}).content"
+    try:
+        chrome.call("Page.navigate", url=server.url)
+        chrome.wait_for("document.readyState === 'complete' && !!window.DDMPageRev", timeout=20)
+        chrome.eval("window.__before = 1; 1")
+        time.sleep(7)
+        _check("Control Center: the same revision, more than a poll: no reload", chrome.eval("window.__before") == 1)
+        chrome.eval("document.getElementById('device-modal').classList.add('active'); 1")
+        page_rev.PAGE_REV = "updated-cc01"
+        time.sleep(7)
+        _check("Control Center: another revision while a modal is open: it waits", chrome.eval("window.__before") == 1)
+        chrome.eval("document.getElementById('device-modal').classList.remove('active'); 1")
+        try:
+            reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-cc01'"
+                                       % meta, timeout=12)
+        except TimeoutError:
+            reloaded = False
+        _check("Control Center: the modal closed, the next poll reloads it, with the new revision", reloaded is True)
+    finally:
+        page_rev.PAGE_REV = rev
+        chrome.close()
+        server.close()
+
+
 def _with_counted_requests(run):
     """run(requests, slow) with every request pi5 receives counted, as (time, method, path), and the replies of the
     (method, path) keys in `slow` held back that many seconds after the work is done, as a busy pi5's are."""
@@ -1996,13 +2066,13 @@ def test_admin_late_tag_in_real_time():
     typed it says so and waits. Skipped where there is no Chrome."""
     import threading
     from la_quiniela import betting as betting_mod
-    from la_quiniela import board as board_mod
+    import page_rev
     from la_quiniela.bridge import CupLive
     picker_check = _picker_check()
     if not picker_check.available():
         _check("real-time late tag browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
         return
-    saved = (betting_mod.RENUM_LATE_S, board_mod.ADMIN_PAGE_REV)
+    saved = (betting_mod.RENUM_LATE_S, page_rev.PAGE_REV)
     betting_mod.RENUM_LATE_S = 6.0
     rig = Rig(real_time=True)
     rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
@@ -2096,12 +2166,12 @@ def test_admin_late_tag_in_real_time():
         _check("...no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
 
         # The page left open across an update (the iPad's Home Screen app keeps it for days).
-        meta = "document.querySelector('meta[name=\"ddm-admin-page\"]').content"
+        meta = "document.querySelector('meta[name=\"ddm-page-rev\"]').content"
         _check("the page carries the revision pi5 serves, and so does GET /api/quiniela",
-               chrome.eval(meta) == board_mod.ADMIN_PAGE_REV != "" and
-               rig.client.get("/api/quiniela").headers.get("X-Admin-Page") == board_mod.ADMIN_PAGE_REV)
+               chrome.eval(meta) == page_rev.PAGE_REV != "" and
+               rig.client.get("/api/quiniela").headers.get("X-Page-Rev") == page_rev.PAGE_REV)
         chrome.eval("window.__before = 1; 1")
-        board_mod.ADMIN_PAGE_REV = "updated-0001"
+        page_rev.PAGE_REV = "updated-0001"
         try:
             reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-0001'"
                                        % meta, timeout=12)
@@ -2112,7 +2182,7 @@ def test_admin_late_tag_in_real_time():
         chrome.eval("window.__before = 1; 1")
         chrome.tap("#names-text")
         chrome.call("Input.insertText", text="x")
-        board_mod.ADMIN_PAGE_REV = "updated-0002"
+        page_rev.PAGE_REV = "updated-0002"
         try:
             noted = chrome.wait_for("document.getElementById('page-note').textContent", timeout=12)
         except TimeoutError:
@@ -2124,7 +2194,7 @@ def test_admin_late_tag_in_real_time():
         rig.board.stop()
         chrome.close()
         server.close()
-        betting_mod.RENUM_LATE_S, board_mod.ADMIN_PAGE_REV = saved
+        betting_mod.RENUM_LATE_S, page_rev.PAGE_REV = saved
 
 
 # -----------------------------------------------------------------------------
@@ -2235,6 +2305,8 @@ def main_():
          test_admin_late_tag_in_real_time)
     _run("admin page — the number lists after Scratch and Undo; a typed #21 in the replacement name (Joey, DevPi, 2026-10-14)",
          test_admin_number_list_and_typed_number_in_a_browser)
+    _run("pages come up fresh — no-store HTML, versioned static URLs, the Control Center reloads on a new revision",
+         test_pages_come_up_fresh)
     _run("no ticker — gone from the page, the script and the stylesheet, with its weather fetch", test_no_ticker)
     _run("no ticker — no element, no timer, no request, in a browser", test_no_ticker_in_a_browser)
 

@@ -587,9 +587,16 @@ async function setRaceMode(mode) {
 // The race state as pi5 holds it now, with the figures at the post (GET /api/quiniela/mode: state,
 // at_post, the modes table); what was read last when pi5 does not answer.
 let raceModes = null;      // pi5's table, {mode: race state}, from the last GET that carried it
+// A page left open across an update reloads itself (static/js/page_rev.js, the admin page's mechanism), off this
+// 5 s poll, and only while no modal is open and nothing is being typed. Nothing else reloads the page.
+function controlCenterIdle() {
+    const a = document.activeElement;
+    return !document.querySelector('.modal.active, .results-reveal-modal.active') && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
 async function freshRaceMode() {
     try {
         const response = await fetch('/api/quiniela/mode', { cache: 'no-store' });
+        if (window.DDMPageRev) DDMPageRev.check(response.headers.get(DDMPageRev.header), controlCenterIdle);
         const data = await response.json();
         if (data && data.ok) {
             raceModeInfo = data;

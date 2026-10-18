@@ -3,6 +3,8 @@
 {% block title %}DDM Splash Display{% endblock %}
 
 {% block head %}
+{# The revision of the splash's pages this one was served with (page_rev.py): it reloads itself on another #}
+<meta name="ddm-page-rev" content="{{ page_rev }}" />
 {# La Quiniela live board (Phase 1.22) — static/css/quiniela_board.css #}
 <link rel="stylesheet" href="{{ static_url('css/quiniela_board.css') }}" />
 {% endblock %}
@@ -458,7 +460,26 @@
         return slide.duration_ms || 10000;
     }
 
+    // ---- a newer page: the kiosk comes up fresh after a pull ----------
+    // GET /api/page_rev every PAGE_REV_CHECK_S (15 s; ?page_rev_s= for a
+    // test). When the splash serves another revision than this page's, the
+    // page reloads at the next slide change, or two checks later at the
+    // latest (well within a minute). Nothing else ever reloads it.
+    const PAGE_REV = (document.querySelector('meta[name="ddm-page-rev"]') || {}).content || '';
+    const PAGE_REV_CHECK_S = Math.max(0.2, Number(new URLSearchParams(location.search).get('page_rev_s')) || 15);
+    let pageRevChanged = 0;                      // checks since another revision was seen; 0: none
+    async function checkPageRev() {
+        try {
+            const resp = await fetch('/api/page_rev', { cache: 'no-store' });
+            const rev = resp.headers.get('X-Page-Rev');
+            if (rev && PAGE_REV && rev !== PAGE_REV) pageRevChanged += 1;
+        } catch (err) { /* the splash restarting: try again */ }
+        if (pageRevChanged > 2) location.reload();
+    }
+    setInterval(checkPageRev, PAGE_REV_CHECK_S * 1000);
+
     function showSlideAt(i) {
+        if (pageRevChanged) { location.reload(); return; }   // a quiet moment: between slides
         clearTimers();
         if (!playlist.length) {
             scheduleRefetch();

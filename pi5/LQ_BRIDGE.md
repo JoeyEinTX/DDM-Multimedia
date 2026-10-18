@@ -953,15 +953,20 @@ Screen app keeps this page for days, and a page loaded before a pull goes
 on running its old script: on DevPi on 2026-10-14 the model listed a late
 cup for three minutes and the page, from before `7b53c2c`, had no tag to
 show it (the same flow on the rig, page loaded fresh, shows it within one
-poll). pi5 now fingerprints the page it serves (`ADMIN_PAGE_REV` in
-`board.py`: the template, read once as Flask's template cache does, and
-the stylesheet), renders it into the page (`<meta name="ddm-admin-page">`)
-and sends it with every model read (`X-Admin-Page`). When the two differ
-the page reloads itself, but only while idle: nothing focused, nothing
-typed since the last action that went through, no Confirm scratch open.
-Otherwise the line at the top says `pi5 has a newer version of this page:
-it reloads when you're done here.` and the next idle poll reloads it. A
-restart that changed nothing reloads nothing.
+poll). pi5 fingerprints the pages it serves (`PAGE_REV` in
+`pi5/page_rev.py`: a hash of every template and static JS and CSS file,
+read once at start, as Flask reads a template), renders it into the page
+(`<meta name="ddm-page-rev">`) and sends it with every response
+(`X-Page-Rev`); `static/js/page_rev.js` compares the two on each model
+read, the one implementation the Control Center uses too (off its 5 s
+poll). When they differ the page reloads itself, but only while idle:
+nothing focused, nothing typed since the last action that went through,
+no Confirm scratch open. Otherwise the line at the top says `pi5 has a
+newer version of this page: it reloads when you're done here.` and the
+next idle poll reloads it. A restart that changed nothing reloads nothing.
+The same revision is the `?v=` of every static URL, and every HTML page
+pi5 serves is `Cache-Control: no-store` (one `after_request`,
+`page_rev.init_app`).
 
 ### The dashboard reads the names
 
@@ -1087,7 +1092,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`, and `X-Admin-Page`: the admin page's revision as this pi5 serves it ("Admin page", the page left open across an update). |
+| `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`, and `X-Page-Rev` (as every pi5 response): the revision of pi5's pages ("Admin page", the page left open across an update). |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
 | `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
 | `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "at_post": null, "modes": {...the table...}}`, `Cache-Control: no-store`. `at_post` is `{"pot": <the scale pot at the post>, "pot_counted": <the hand count or null>}` while figures at the post are held: what the dashboard's reopen confirm names. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |

@@ -541,9 +541,10 @@ cd ~/DDM-Multimedia && git pull
 sudo systemctl restart ddm-pi5 ddm-splash
 ```
 A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
-(it restarts both). A pull that changed the TV's page: F5 on the kiosk's keyboard too.
-`ADMIN` reloads itself within a few seconds of the restart when its page changed (an open
-page opened before this was added can't: close it and open it again, once).
+(it restarts both). After the restart the pages come up fresh by themselves: `ADMIN` and the
+Control Center reload within a few seconds when a pull changed them (not while you're typing
+or a dialog is open), the TV within a minute, between slides. Pages opened before 2026-10-18
+can't: close both iPad apps and open them again, and F5 on the kiosk, once.
 `git status` should be clean; `pi5/.env` doesn't show (it is git-ignored).
 
 **Once, on a box that still has a local edit of `pi5/config.py`** (`git status` lists it;

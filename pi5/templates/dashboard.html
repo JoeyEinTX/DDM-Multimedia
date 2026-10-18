@@ -9,6 +9,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="DDM">
     <title>{{ system_name }}</title>
+    <!-- The revision of pi5's pages this one was served with: it reloads itself when pi5 serves another (page_rev.js) -->
+    <meta name="ddm-page-rev" content="{{ page_rev }}">
     <link rel="stylesheet" href="{{ static_url('css/ddm_style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -644,6 +646,7 @@
         </div>
     </div>
 
+    <script src="{{ static_url('js/page_rev.js') }}"></script>
     <script src="{{ static_url('js/ddm_control.js') }}"></script>
     <script>
     // Race Info toggle — show/hide spectator panel

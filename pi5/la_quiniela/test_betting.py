@@ -3400,7 +3400,11 @@ def test_admin_page():
     _check("talks to the routes", all(path in html for path in ("/api/quiniela/horses", "/api/quiniela/scratch",
                                                                 "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela",
                                                                 "/api/quiniela/reset")))
-    _check("no CDN, no external script", "<script src=" not in html and "https://" not in html and "http://" not in html)
+    import re
+    scripts = re.findall(r'<script src="([^"]+)"', html)
+    _check("no CDN, no external script: one script file, pi5's own (static/js/page_rev.js, the shared self-reload)",
+           len(scripts) == 1 and scripts[0].startswith("/static/js/page_rev.js") and "https://" not in html and "http://" not in html,
+           str(scripts))
     # Build-order item 5: the race state changes on the Control Center only (its buttons run the LEDs with it).
     _check("no state buttons and nothing that sets a state: no data-state, no state command, no cmd route",
            not any(s in html for s in ("data-state", 'cmd: "state', "/api/quiniela/cmd", 'id="states"', "state-status")))

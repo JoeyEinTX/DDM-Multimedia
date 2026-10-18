@@ -36,6 +36,7 @@ from la_quiniela import racetime
 from la_quiniela.board import field_by_post, migrate_race_setup
 from la_quiniela.odds import init_odds
 import config as _config
+import page_rev
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -59,20 +60,12 @@ RESULTS_FILE = os.path.join(DATA_DIR, 'results.json')
 RACE_SETUP_FILE = getattr(_config, 'RACE_SETUP_FILE', None) or os.path.join(DATA_DIR, 'race_setup.json')
 
 
-def static_url(filename):
-    """url_for('static') with ?v=<the file's modification time>. Flask sends
-    Last-Modified and no max-age, and a browser then keeps a file for a
-    tenth of its age without asking: after a pull the touchscreen kept the
-    dashboard's old JavaScript. A changed file is a new URL, so a pull and a
-    restart always serve the new code without a hard reload."""
-    try:
-        version = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
-    except OSError:
-        version = 0
-    return url_for('static', filename=filename, v=version)
-
-
-app.jinja_env.globals['static_url'] = static_url
+# Pages come up fresh after a pull (page_rev.py): static URLs carry the pages'
+# revision (?v=), every response says it (X-Page-Rev) for the pages that
+# reload themselves, and every HTML page is Cache-Control: no-store, the
+# La Subasta pages included. The one place for all of pi5.
+page_rev.init_app(app)
+static_url = page_rev.static_url
 
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)

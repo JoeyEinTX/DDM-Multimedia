@@ -851,12 +851,12 @@ class ApiTests(RouteCase):
 
     def test_the_page_asks_for_the_css_and_js_it_has(self) -> None:
         # A pull and a restart serve the new code without a hard reload: every
-        # stylesheet and script URL carries its file's modification time.
+        # stylesheet and script URL carries the splash's page revision (page_rev.py).
+        import page_rev
         html = self.client.get("/display").get_data(as_text=True)
         for path in ("css/ddm_style.css", "css/quiniela_board.css", "js/quiniela_board.js"):
-            mtime = int((HERE / "static" / path).stat().st_mtime)
-            self.assertIn(f'/static/{path}?v={mtime}"', html, path)
-            r = self.client.get(f"/static/{path}?v={mtime}")
+            self.assertIn(f'/static/{path}?v={page_rev.PAGE_REV}"', html, path)
+            r = self.client.get(f"/static/{path}?v={page_rev.PAGE_REV}")
             self.assertEqual(r.status_code, 200, path)
             r.close()
         self.assertNotIn("url_for('static'", (HERE / "templates" / "base.html").read_text(encoding="utf-8"))
@@ -3173,6 +3173,78 @@ class ServerStartupTests(unittest.TestCase):
         for gone in ("GATEWAY_PORT", "TOKEN_VALUE", "QUINIELA_LOG", "QUINIELA_BOARD_STATES",
                      "DDM_2026_POST_TIME_ISO", "DASHBOARD_RACE_URL", "RACE_DATA_STALENESS_S"):
             self.assertFalse(hasattr(config, gone), gone)
+
+
+class FreshPageTests(RouteCase):
+    """Pages come up fresh after a pull (Joey, 2026-10-14; page_rev.py): every HTML page the splash serves is
+    Cache-Control: no-store and the API keeps its own; every static URL on the kiosk's page carries the splash's
+    page revision; every response says it (X-Page-Rev); and the kiosk reloads itself when it changes, in headless
+    Chrome over the DevTools protocol (pi5's harness), and never otherwise."""
+
+    def test_html_is_no_store_and_static_urls_carry_the_revision(self) -> None:
+        import page_rev
+        rev = page_rev.PAGE_REV
+        self.assertRegex(rev, r"^[0-9a-f]{12}$")
+        self.assertEqual(page_rev.compute(), rev, "the revision is the content of the pages as they are")
+        r = self.client.get("/display")
+        self.assertEqual((r.status_code, r.mimetype, r.headers.get("Cache-Control")), (200, "text/html", "no-store"))
+        self.assertEqual(r.headers.get("X-Page-Rev"), rev)
+        page = r.get_data(as_text=True)
+        statics = re.findall(r'(?:src|href)="(/static/[^"?]+\.(?:js|css)[^"]*)"', page)
+        self.assertGreaterEqual(len(statics), 2, "the kiosk's page links its scripts and stylesheets")
+        for url in statics:
+            self.assertIn("v=" + rev, url, url)
+        self.assertIn('<meta name="ddm-page-rev" content="%s"' % rev, page)
+        slides = self.client.get("/api/slides")
+        self.assertEqual(slides.mimetype, "application/json")
+        self.assertNotEqual(slides.headers.get("Cache-Control"), "no-store", "the API keeps its own caching")
+        seen_html = 0
+        data = slides.get_json()
+        for slide in (data if isinstance(data, list) else (data or {}).get("slides", []))[:6]:
+            sid = slide.get("id") if isinstance(slide, dict) else None
+            if not sid:
+                continue
+            s = self.client.get("/api/slide/" + sid)
+            if s.mimetype == "text/html":
+                seen_html += 1
+                self.assertEqual(s.headers.get("Cache-Control"), "no-store", sid)
+        p = self.client.get("/api/page_rev")
+        self.assertEqual((p.get_json(), p.headers.get("X-Page-Rev")), ({"rev": rev}, rev))
+        self.assertNotEqual(p.headers.get("Cache-Control"), "no-store")
+
+    def test_the_kiosk_reloads_itself_when_the_revision_changes_and_not_otherwise(self) -> None:
+        import page_rev
+        spec = importlib.util.spec_from_file_location("picker_check_for_splash", HERE.parent / "pi5" / "tools" / "picker_check.py")
+        pc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pc)
+        sys.path[:] = [p for p in sys.path if p != str(pc.PI5_DIR)]   # pi5's modules must not shadow the splash's
+        if not pc.available():
+            self.skipTest("no Chrome or Chromium, or no simple_websocket")
+        from werkzeug.serving import WSGIRequestHandler, make_server
+
+        class Quiet(WSGIRequestHandler):
+            def log_request(self, *args, **kwargs):
+                pass
+        httpd = make_server("127.0.0.1", 0, server.app, threaded=True, request_handler=Quiet)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        saved = page_rev.PAGE_REV
+        chrome = pc.Chrome(touch=False, size=(1920, 1080))
+        meta = "(document.querySelector('meta[name=\"ddm-page-rev\"]') || {}).content"
+        try:
+            chrome.call("Page.navigate", url="http://127.0.0.1:%d/display?page_rev_s=0.5" % httpd.server_port)
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            self.assertEqual(chrome.eval(meta), saved)
+            chrome.eval("window.__before = 1; 1")
+            time.sleep(3)
+            self.assertEqual(chrome.eval("window.__before"), 1, "the same revision: six checks, no reload")
+            page_rev.PAGE_REV = "updated-tv01"
+            reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-tv01'"
+                                       % meta, timeout=15)
+            self.assertTrue(reloaded, "another revision: the kiosk reloaded itself")
+        finally:
+            page_rev.PAGE_REV = saved
+            chrome.close()
+            httpd.shutdown()
 
 
 if __name__ == "__main__":
