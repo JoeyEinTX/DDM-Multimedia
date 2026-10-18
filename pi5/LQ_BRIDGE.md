@@ -933,7 +933,14 @@ its appendix. Top to bottom:
   reason, on a record whose `now` was scratched in turn: the later record is
   undone first). The 5 s refresh never rebuilds the scratch rows while the
   operator is in them and carries a pick, a typed name or a ticked box over
-  into rebuilt rows.
+  into rebuilt rows; only what the operator picked or typed comes over, so a
+  row's default number follows the model (after an Undo the cup still says
+  21 for a report or two, which makes 21 in use; once it is back on 19
+  every untouched row offers #21 again). A replacement name typed with its
+  number in front (`#21 Test`, `21 Test`, `21. Test`, `21 - Test`) with #21
+  picked is `Test`, in the confirm step and the record; another horse's
+  number in front is refused in the row, nothing sent: `You typed #22 but
+  #21 is selected. Pick #22 in the list, or take it out of the name.`
 - **Betting closes**: a date-time picker plus +15 / +30 / +60 min and Clear.
 
 Everything refreshes every 5 s from `GET /api/quiniela` alone, and every

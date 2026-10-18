@@ -480,10 +480,12 @@
       if (key === scratchKey) { return; }
       if (list.contains(document.activeElement) || done.contains(document.activeElement)) { return; }     // mid-typing: next tick
     }
+    // Only a pick or a name the host made comes over (data-picked, data-typed): a default follows the model.
     var saved = {};
     Array.prototype.forEach.call(freshRows ? [] : list.querySelectorAll(".horse"), function (row) {
       var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]"), c = row.querySelector("[data-norepl]");
-      saved[row.getAttribute("data-horse")] = { num: s ? s.value : "", name: r ? r.value : "", norepl: !!(c && c.checked) };
+      saved[row.getAttribute("data-horse")] = { num: s && s.hasAttribute("data-picked") ? s.value : "",
+                                                name: r && r.hasAttribute("data-typed") ? r.value : null, norepl: !!(c && c.checked) };
     });
     buildScratches(list, done);
     scratchKey = key;
@@ -491,12 +493,10 @@
       var row = list.querySelector('.horse[data-horse="' + n + '"]');
       if (!row) { return; }                                          // just scratched: nothing left to carry
       var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]");
-      var kept = !!(saved[n].num && s.querySelector('option[value="' + saved[n].num + '"]'));
-      if (kept) { s.value = saved[n].num; }
-      // The name comes over with its pick, or when it was typed (not the old
-      // pick's prefill); otherwise the row keeps the prefill for the new first
-      // free number, so a Scratch cannot name it after the number that is gone.
-      if (kept || saved[n].name !== storedName(Number(saved[n].num))) { r.value = saved[n].name; }
+      if (saved[n].num && s.querySelector('option[value="' + saved[n].num + '"]')) {
+        s.value = saved[n].num; s.setAttribute("data-picked", ""); r.value = storedName(Number(saved[n].num));
+      }
+      if (saved[n].name !== null) { r.value = saved[n].name; r.setAttribute("data-typed", ""); }   // else the pick's prefill
       row.querySelector("[data-norepl]").checked = saved[n].norepl;
     });
   }
@@ -546,7 +546,8 @@
   }
   $("scratch-list").addEventListener("change", function (ev) {
     var sel = ev.target.closest("[data-repl-num]"); if (!sel) { return; }
-    sel.closest(".horse").querySelector("[data-repl-name]").value = storedName(Number(sel.value));
+    var r = sel.closest(".horse").querySelector("[data-repl-name]");
+    sel.setAttribute("data-picked", ""); r.value = storedName(Number(sel.value)); r.removeAttribute("data-typed");
   });
   // Every outcome of a Scratch or Undo is written once, into the row of the
   // horse it was about (a scratched one's under its Scratched line): the
@@ -564,8 +565,7 @@
   function askHtml() {
     var who = "#" + ask.horse + (storedName(ask.horse) ? " " + storedName(ask.horse).toUpperCase() : ""), r = ask.body && ask.body.replacement;
     if (!ask.body) { return "<p>No replacement? Tick No replacement, or enter the replacement's name.</p><button data-ask-norepl>No replacement</button>"; }
-    // Once betting is open (the model's betting_open) tokens never move to another horse (Joey, 2026-10-14). After
-    // the figures are taken (3-5) a replacement is gap review OD3's case (M6): its line as it was.
+    // Betting open (the model's betting_open): tokens never move to another horse (Joey, 2026-10-14); 3-5: OD3, as before.
     var open = !!(model && model.betting_open), post = !!(model && model.race_state >= 3 && model.race_state <= 5);
     return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in." + (open ? " Betting is open: " +
                            "empty this cup and hand the tokens back to re-bet; #" + r.number + " starts empty." : "")
@@ -604,6 +604,11 @@
       var name = row.querySelector("[data-repl-name]").value.trim();
       var norepl = row.querySelector("[data-norepl]").checked;
       if (!norepl && !num) { clearRowNotes(); report("no free number: tick No replacement", "err"); return; }
+      var typed = /^#?\s*(\d{1,2})(?:\s*[-.:)]\s*|\s+)(\S.*)$/.exec(name);   // #21 Test, 21 Test, 21. Test, 21 - Test
+      if (typed && !norepl && Number(typed[1]) >= 1 && Number(typed[1]) <= HORSES) {
+        if (Number(typed[1]) !== Number(num)) { clearRowNotes(); return report("You typed #" + Number(typed[1]) + " but #" + num + " is selected. Pick #" + Number(typed[1]) + " in the list, or take it out of the name.", "err"); }
+        name = typed[2].trim();
+      }
       if (!norepl && name) { body.replacement = { number: Number(num), name: name }; }
       ask = { horse: horse, body: (norepl || name) ? body : null };
       clearRowNotes(); return;
@@ -632,6 +637,7 @@
   ["input", "change"].forEach(function (type) {    // a pick, a name or the box changed: the step no longer says what it would send
     $("scratch-list").addEventListener(type, function (ev) {
       var row = ev.target.closest(".horse");
+      if (type === "input" && ev.target.hasAttribute("data-repl-name")) { ev.target.setAttribute("data-typed", ""); }
       if (ask && row && Number(row.getAttribute("data-horse")) === ask.horse) { ask = null; applyRowNotes(); }
     });
   });

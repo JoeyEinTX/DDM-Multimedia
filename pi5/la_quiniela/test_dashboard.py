@@ -1275,6 +1275,114 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         server.close()
 
 
+def _admin_gremlins_check(picker_check, touch, requests, slow):
+    """One session of test_admin_number_list_and_typed_number_in_a_browser."""
+    mode = "[touch]" if touch else "[mouse]"
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={str(n): {"name": DERBY[n - 1]} for n in range(1, 21)})
+    rig.bridge.handle_raw_line(telem(MAC_A, horse=19, count=3))       # the bench cup, on 19
+    rig.board.refresh()
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
+    row = '#scratch-list .horse[data-horse="19"] '
+    step_js = "(() => { const el = document.querySelector(`" + row + "[data-rowstatus]`); return el ? el.innerText.trim() : null; })()"
+
+    def posts(since):
+        return sum(1 for t, m, p in requests if t >= since and m == "POST" and p == "/api/quiniela/scratch")
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def picks():                                     # the numbers the in-field rows' lists show, as a set
+        return json.loads(chrome.eval("JSON.stringify([...new Set([...document.querySelectorAll('#scratch-list .horse "
+                                      "[data-repl-num]')].map((s) => s.value))])"))
+
+    def wait_picks(value, timeout=13.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and picks() != [value]:
+            time.sleep(0.2)
+        return picks()
+
+    def type_name(text):
+        chrome.eval("(() => { document.querySelector('" + row + "[data-repl-name]').value = ''; return 1; })()")
+        chrome.tap(row + "[data-repl-name]")
+        chrome.call("Input.insertText", text=text)
+        settle(0.3)
+
+    def scratch():
+        chrome.tap(row + "[data-scratch]")
+        settle(0.4)
+        return chrome.eval(step_js) or ""
+
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('" + row + "[data-scratch]')", timeout=20)
+        _check(f"admin lists {mode}: every in-field row offers #21, the first free number", picks() == ["21"], str(picks()))
+        type_name("Test")
+        scratch()
+        chrome.tap(row + "[data-confirm]")
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"19\"] [data-undo]')", timeout=10)
+        rig.bridge.handle_raw_line(telem(MAC_A, horse=21, count=3))   # the cup followed 19 -> 21
+        rig.board.refresh()
+        _check(f"admin lists {mode}: after Scratch 19 -> #21, every row offers #22", wait_picks("22") == ["22"], str(picks()))
+        chrome.tap('#scratched-list .horse[data-horse="19"] [data-undo]')
+        chrome.wait_for("!!document.querySelector('" + row + "[data-scratch]')", timeout=10)
+        settle(0.5)                                  # the rows as the Undo left them: the cup still says 21
+        rig.bridge.handle_raw_line(telem(MAC_A, horse=19, count=3))   # a report later it is back on 19
+        rig.board.refresh()
+        _check(f"admin lists {mode}: after the Undo, once the cup is back on 19, every row offers #21 again (it stayed on #22)",
+               wait_picks("21") == ["21"], str(picks()))
+        _check(f"admin lists {mode}: ...and 21's name went back to blank", rig.board.store.name_of(21) == "", rig.board.store.name_of(21))
+        for typed in ("#21 Test", "21 Test", "21. Test", "21 - Test"):
+            type_name(typed)
+            said = scratch()
+            _check(f"admin name {mode}: {typed!r} with #21 selected: the confirm step names it TEST",
+                   said.startswith("Scratch #19 ") and ": #21 TEST draws in." in said, repr(said))
+            chrome.tap(row + "[data-cancel]")
+            settle(0.3)
+        type_name("#22 Test")
+        t = time.monotonic()
+        said = scratch()
+        _check(f"admin name {mode}: '#22 Test' with #21 selected is refused in the row, nothing sent",
+               said == "You typed #22 but #21 is selected. Pick #22 in the list, or take it out of the name." and posts(t) == 0,
+               repr(said))
+        type_name("50 Cent")
+        said = scratch()
+        _check(f"admin name {mode}: a name that starts with a number no horse has is left as typed",
+               ": #21 50 CENT draws in." in said, repr(said))
+        chrome.tap(row + "[data-cancel]")
+        type_name("#21 Test")
+        scratch()
+        t = time.monotonic()
+        chrome.tap(row + "[data-confirm]")
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"19\"] [data-undo]')", timeout=10)
+        _check(f"admin name {mode}: Confirm sends and stores Test, not #21 Test",
+               posts(t) == 1 and rig.board.store.name_of(21) == "Test"
+               and rig.model()["scratches"][0]["now"] == {"number": 21, "name": "TEST"}, str(rig.model()["scratches"]))
+        _check(f"admin lists {mode}: no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+def test_admin_number_list_and_typed_number_in_a_browser():
+    """Two gremlins from Joey's DevPi check (2026-10-14, 4e66ab9), on the LQ admin page in headless Chrome at
+    1366 x 1024, touch and mouse, requests counted. (1) After Scratch 19 -> #21 and Undo, every row's number list
+    must come back to #21 once the cup is back on 19 (it stayed on #22: the rows were rebuilt while the cup still
+    said 21, which makes 21 in use, and the next rebuild kept that default as if the host had picked it). (2) A
+    replacement name typed as "#21 Test" (or 21 Test, 21. Test, 21 - Test) with #21 selected is Test, in the
+    confirm step and the record; "#22 Test" with #21 selected is refused in the row and nothing is sent; a plain
+    name, or one starting with a number no horse has, is untouched. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("admin page gremlins check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: [_admin_gremlins_check(picker_check, touch, requests, slow) for touch in (True, False)])
+
+
 def _with_counted_requests(run):
     """run(requests, slow) with every request pi5 receives counted, as (time, method, path), and the replies of the
     (method, path) keys in `slow` held back that many seconds after the work is done, as a busy pi5's are."""
@@ -2125,6 +2233,8 @@ def main_():
     _run("renumber — a cup late on its pair: the admin page's ⏳ renumbering badge, in a browser", test_admin_renumbering_badge_in_a_browser)
     _run("renumber — item (z) in real time: the page open first, a ghost, the tag within a poll; a page left open across an update",
          test_admin_late_tag_in_real_time)
+    _run("admin page — the number lists after Scratch and Undo; a typed #21 in the replacement name (Joey, DevPi, 2026-10-14)",
+         test_admin_number_list_and_typed_number_in_a_browser)
     _run("no ticker — gone from the page, the script and the stylesheet, with its weather fetch", test_no_ticker)
     _run("no ticker — no element, no timer, no request, in a browser", test_no_ticker_in_a_browser)
 
