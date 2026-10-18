@@ -208,10 +208,11 @@ python3 pi5/tools/wipe.py
       names back as they were before the scratch: a name the scratch gave the new number
       is cleared, one entered ahead in Horse names stays.
       Undo works at any time, however soon after the scratch; a cup that was off catches up
-      when it's back on. `⏳ renumbering` on a row of `ADMIN` → Race → Horses means a cup hasn't
-      followed for a minute (hover or tap it: which cup, and whether it's off); switch it on or
-      check its screen. An offline row says when its cup was last heard: a date (`heard Sep 20`)
-      is a leftover record from an old database, not a cup to look for.
+      when it's back on. `⏳ renumbering` on a row (Race → Horses, not the Scratches rows) means
+      a cup hasn't followed for a minute (hover or tap it: which cup, and whether it's off);
+      switch it on or check its screen. An offline row (Race → Horses, not the Scratches rows)
+      says when its cup was last heard: a date (`heard Sep 20`) is a leftover record from an
+      old database, not a cup to look for.
 - The names and scratches entered here feed La Subasta too: the auction at
   `/la-subasta` lists the field as it stands, by number (22 OCELLI, no 9). Nothing is
   entered in La Subasta. A scratch made during the auction voids its bids on that horse
@@ -298,10 +299,9 @@ While open:
 - A cup that gets bumped or lifted freezes its count (`HANDLED` on its diag) and
   re-reads itself when it's set down. Don't touch it; wait five seconds.
 - Someone takes a token back out: the count drops and the pot drops. That's correct.
-- Enter any also-eligible replacement before pressing **60 MIN**; after betting opens,
-  every change is a same-day scratch with *No replacement* (an also-eligible can only
-  draw in before 9 a.m. ET on the Friday, so a real replacement is always known before
-  betting opens).
+- Enter any also-eligible replacement before pressing **60 MIN**. After 60 MIN every scratch
+  means: empty that cup and hand the tokens back to re-bet. If a replacement is known, enter
+  it: it draws in with the empty cup (the row and the TV say `re-bet`).
 - A same-day scratch (vet scratch, gate scratch): `ADMIN` → Scratches → In the field →
   that horse's row → tick *No replacement* → Scratch. The row leaves the board, the crawl
   says `RE-BET YOUR TOKENS`, its tokens leave the pot. Empty that cup and hand the tokens

@@ -106,6 +106,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_link_state` | one row: `state_rev`, `state_json` (`{"phase","scratched","renum","results"}`); how the bridge answers a `hello` after a restart |
 | `lq_horses` | the betting board's: `horse` (PK, 1..24: 1..20 the field, 21..24 the also-eligibles), `name` (as typed), `replaced` (legacy, from the name-swap replacement of 275a64f; kept NULL and never read except for one WARNING at load, `legacy name-swap replacement on horse N ignored; scratch it again with a number`) |
 | `lq_scratches` | one row per scratch: `was` (PK, 1..24, the horse that left the field), `now` (1..24, the horse standing in for it, on the same cup; NULL for a no-replacement scratch, whose tokens are handed back to be re-bet). A table created with `now NOT NULL` (c70d894) is rebuilt by `init_schema()` (`_migrate_lq_scratches`), rows kept |
+| `lq_scratch_entered` | one row per scratch record entered since it exists: `was` (PK), `state` (the race state at entry, 0..6), `at` (unix time). The model's `rebet` comes from it; a record without a row is from before it and reads as before. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`) |
 | `lq_scratch_names` | one row per replacement record whose scratch changed its now's name: `was` (PK, the record's), `now`, `name_before` (`''` for none), `name_set`. Undo puts `name_before` back while the name is still `name_set`, and drops the row; a record without a row (one from before this table, or one whose scratch kept the stored name) leaves the name. Added at start like `lq_closing` |
 | `lq_renum_undo` | one row per undone replacement whose cup may still need bringing back: `now` (PK, 1..24, the number the cup took), `was` (the number it goes back to), `undone_at` (unix time). Written by Undo; dropped once the undo is settled or `now` is a replacement again ("Renumber pairs: derived and acknowledged", below), so an undo outlives a restart. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`) |
 | `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
@@ -1239,7 +1240,13 @@ the store and the results file as follows:
   upper-cased and `""` when unnamed: a replacement record `{"was":
   {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}}`,
   a no-replacement scratch `{"was": {"number": 20, "name": "SOCIETY MAN"},
-  "now": null}`. A renumber never changes `pot` (the cup keeps counting
+  "now": null}`, each with `rebet`: whether its cup's tokens are handed back
+  to re-bet (Joey, 2026-10-14: no replacement always; a replacement when it
+  was entered while betting was open, `BETTING_OPEN_STATES` 1-2, the race
+  state at entry kept in `lq_scratch_entered`; a record from before that
+  table reads as before). The model's `betting_open` is the same one test,
+  for the admin page's confirm step; the TV adds `· RE-BET YOUR TOKENS` to a
+  replacement whose `rebet` is true. A renumber never changes `pot` (the cup keeps counting
   under its new number); a no-replacement scratch takes its horse's tokens
   out of it.
 - `cups_online`: every online cup, whatever it says; `cups_no_horse`: the

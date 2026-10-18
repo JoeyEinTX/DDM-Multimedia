@@ -2274,6 +2274,13 @@ class StepCrawlTests(unittest.TestCase):
         # Spec section 6: only a scratch with no replacement says RE-BET YOUR TOKENS; the replacements say neither.
         replaced_only = crawl_model(post_in=74 * 60 + 30)
         replaced_only["scratches"] = [s for s in replaced_only["scratches"] if s.get("now") is not None]
+        # Joey's rule (2026-10-14): 9 -> 22 entered after betting opened: pi5's record says rebet, its cup's tokens
+        # were handed back, and the board says so after the replacement's item. The board reads the flag only.
+        rebet = crawl_model(post_in=74 * 60 + 30)
+        for s in rebet["scratches"]:
+            if s.get("now") is not None:
+                s["rebet"] = s["was"]["number"] == 9
+        rebet["names_rev"] += 1
         undone = crawl_model(post_in=74 * 60 + 30)                  # 9 -> 22 undone on the admin page
         undone["scratches"] = [s for s in undone["scratches"] if s["was"]["number"] != 9]
         undone["names_rev"] += 1
@@ -2297,6 +2304,9 @@ class StepCrawlTests(unittest.TestCase):
             "exotic": ([exotic], plain),
             "replaced-only": ([replaced_only], plain),
             "replaced-only-impact": ([replaced_only], dict(look="impact", styled=True)),
+            "rebet": ([rebet, {"__sample": 14000}], dict(plain, query="crawl_tps=60")),
+            "rebet-numbers": ([rebet], dict(look="numbers", styled=True)),
+            "rebet-impact": ([rebet], dict(look="impact", styled=True)),
         })
 
     def got(self, name: str) -> List[dict]:
@@ -2607,6 +2617,31 @@ class StepCrawlTests(unittest.TestCase):
         self.assertIn('\u25b6', scratch, 'impact: the replacements are there, as they were')
         self.assertNotIn("RE-BET", scratch.upper())
         self.assertNotIn("REFUND", " ".join(items).upper())
+
+    def test_a_replacement_entered_after_betting_opened_says_re_bet_your_tokens(self) -> None:
+        # Joey's rule (2026-10-14): once betting is open, every scratch hands the cup's tokens back, a replacement
+        # drawing in with an empty cup. When pi5's record says rebet the replacement's item ends with the same note
+        # as a same-day scratch, in every look; the other replacements (rebet false) say nothing, as before.
+        line = "9 THE PUMA SCRATCHED - 22 OCELLI DRAWS IN"
+        loop, looks = self.loop_cells("rebet")
+        self.assertIn(self.GAP + line + " \u00b7 RE-BET YOUR TOKENS" + self.GAP, loop, "dots: the note after the line, a blank between")
+        for other in ("5 RIGHT TO PARTY SCRATCHED - 21 GREAT WHITE DRAWS IN", "13 SILENT TACTIC SCRATCHED - 23 ROBUSTA DRAWS IN"):
+            self.assertIn(self.GAP + other + self.GAP, loop, f"{other}: no note")
+        self.assertEqual(loop.count("RE-BET YOUR TOKENS"), 2, "the replacement's and the same-day scratch's")
+        note = loop.index(line) + len(line) + 1
+        name = loop.index("OCELLI", loop.index(line))
+        lit = {looks[name + i] for i in range(len("OCELLI"))}
+        self.assertEqual(len(lit), 1, "dots: the name's tiles, one look")
+        self.assertEqual({looks[note + i] for i, ch in enumerate("\u00b7 RE-BET YOUR TOKENS") if ch != " "}, lit,
+                         "dots: every character of the note on a tile lit like the name's")
+        for run in ("rebet-numbers", "rebet-impact"):
+            items = self.got(run)[0]["crawl"]["items"]
+            scratch = next(i for i in items if i.upper().startswith("SCRATCHED"))
+            self.assertIn("9THE PUMA\u25b622OCELLI\u00b7 RE-BET YOUR TOKENS13SILENT TACTIC", scratch, run)
+            self.assertIn("5RIGHT TO PARTY\u25b621GREAT WHITE9THE PUMA", scratch, f"{run}: 5 -> 21 without the note")
+            self.assertEqual(scratch.count("RE-BET YOUR TOKENS"), 2, run)
+            n = self.got(run)[-1]["crawl"]["note"]
+            self.assertEqual(n["note"], n["name"], f"{run}: the note as bright as the name before it")
 
     def test_a_character_the_face_lacks_is_its_base_letter_or_a_blank(self) -> None:
         # "Se\u00f1or  Ocelli \u2603 [x] \u00bd \u00df \u0178 \u00ff \u017e \u0100 ...": capitals; the face's own

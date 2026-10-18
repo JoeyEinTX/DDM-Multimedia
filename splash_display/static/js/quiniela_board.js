@@ -1254,7 +1254,10 @@
     // (DALLAS 88°F SUNNY; left out when there is none); SCRATCHED and every
     // scratch when there are any (a replacement: the scratched horse's
     // badge and name struck through, the arrow, the replacement's badge and
-    // name; no replacement: badge, name and "· RE-BET YOUR TOKENS", as
+    // name, and "· RE-BET YOUR TOKENS" after it when pi5's record says
+    // rebet (a replacement entered after betting opened: its cup's tokens
+    // were handed back; the board reads the flag, it decides nothing); no
+    // replacement: badge, name and "· RE-BET YOUR TOKENS", as
     // bright as the name, since it tells the bettors what to do; an
     // unnamed horse prints HORSE n); the remaining chyron lines. Gold
     // diamonds between items. (The dots look says the scratches in words,
@@ -1297,7 +1300,7 @@
         // The scratches as the crawl reads them, not as the JSON happened to order their keys: the model the relay
         // hands a page when it loads and pi5's stream carry the same record with its keys in two orders, and that
         // is no update.
-        const said = scratches.map((x) => [scratchSide(x && x.was), x && x.now == null ? 'none' : scratchSide(x && x.now)]);
+        const said = scratches.map((x) => [scratchSide(x && x.was), x && x.now == null ? 'none' : scratchSide(x && x.now), !!(x && x.rebet === true)]);
         const key = JSON.stringify([lines, said, m.names_rev == null ? null : m.names_rev, shape]);
         if (key === crawlKey) { updateLive(live); return; }
         crawlKey = key;
@@ -1407,13 +1410,14 @@
             items.push(item('<span class="qb-crawl-text qb-crawl-live" data-live="' + kind + '">' + esc(text) + '</span>'));
         }
         const parts = [];
+        const note = crawlText('· RE-BET YOUR TOKENS', 'qb-crawl-note');
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
                 parts.push(crawlBadge(was.n)
                     + crawlText(was.name)
-                    + crawlText('· RE-BET YOUR TOKENS', 'qb-crawl-note'));
+                    + note);
                 continue;
             }
             const now = scratchSide(x.now);
@@ -1422,7 +1426,8 @@
                 + crawlText(was.name, 'qb-crawl-was')
                 + crawlText('▶', 'qb-crawl-arrow')
                 + crawlBadge(now.n)
-                + crawlText(now.name));
+                + crawlText(now.name)
+                + (x.rebet === true ? note : ''));
         }
         if (parts.length) {
             items.push(item(crawlText('Scratched', 'qb-crawl-lbl') + parts.join('<span class="qb-crawl-gap"></span>')));
@@ -1583,13 +1588,15 @@
         // PUMA SCRATCHED - 22 OCELLI DRAWS IN, in the model's order (pi5's: by
         // number). The same-day scratches follow in one item under a red
         // SCRATCHED, each its number, name and · RE-BET YOUR TOKENS, a two-tile
-        // gap between them.
+        // gap between them. A replacement whose record says rebet (entered
+        // after betting opened) ends with the same note, after a blank.
         const sameDay = [];
+        const note = () => { gap(1); words('· RE-BET YOUR TOKENS'); };
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
-                sameDay.push(() => { words(String(was.n)); gap(1); words(was.name); gap(1); words('· RE-BET YOUR TOKENS'); });
+                sameDay.push(() => { words(String(was.n)); gap(1); words(was.name); note(); });
                 continue;
             }
             const now = scratchSide(x.now);
@@ -1600,6 +1607,7 @@
                 const red = ch.length + tileChars(was.n + ' ' + was.name).length + 1;
                 words(was.n + ' ' + was.name + ' SCRATCHED - ' + now.n + ' ' + now.name + ' DRAWS IN');
                 st.fill(TS_LABEL, red, red + 'SCRATCHED'.length);
+                if (x.rebet === true) note();
             });
         }
         if (sameDay.length) {

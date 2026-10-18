@@ -3,8 +3,8 @@
 # Lives in the app's one database (the file La Subasta uses, see
 # la_subasta/config.py DB_PATH) but creates and touches only its own tables:
 # lq_cups, telemetry, events, lq_link_state, and the betting board's
-# lq_horses, lq_scratches, lq_scratch_names, lq_renum_undo, lq_board,
-# lq_closing and lq_race. Raw sqlite3, like la_subasta/models.
+# lq_horses, lq_scratches, lq_scratch_entered, lq_scratch_names,
+# lq_renum_undo, lq_board, lq_closing and lq_race. Raw sqlite3, like la_subasta/models.
 # The bridge owns one connection, shared between its thread and the Flask
 # request threads behind a lock.
 #
@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS lq_scratches (
     now INTEGER CHECK (now IS NULL OR now BETWEEN 1 AND 24)
 );
 
+-- When a scratch was entered: the race state then (0..6) and the time
+-- (unix), one row per record, keyed like it. The board derives from it
+-- whether the scratch hands its cup's tokens back to re-bet (Joey,
+-- 2026-10-14: once betting is open every scratch does, a replacement drawing
+-- in with an empty cup). A record without a row is from before this table
+-- and reads as it always did (no replacement: re-bet; a replacement: not).
+-- A table of its own, so the live lq_scratches keeps its shape.
+CREATE TABLE IF NOT EXISTS lq_scratch_entered (
+    was   INTEGER PRIMARY KEY CHECK (was BETWEEN 1 AND 24),
+    state INTEGER NOT NULL CHECK (state BETWEEN 0 AND 6),
+    at    REAL    NOT NULL
+);
+
 -- What a replacement scratch did to its now's name, so that Undo can put
 -- it back: one row per record whose scratch changed the name, keyed like
 -- the record, with the name before the scratch ('' for none) and the name
@@ -178,6 +191,7 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_link_state": ["id", "state_rev", "state_json"],
     "lq_horses": ["horse", "name", "replaced"],
     "lq_scratches": ["was", "now"],
+    "lq_scratch_entered": ["was", "state", "at"],
     "lq_scratch_names": ["was", "now", "name_before", "name_set"],
     "lq_renum_undo": ["now", "was", "undone_at"],
     "lq_board": ["id", "names_rev", "closes_at"],
@@ -497,6 +511,23 @@ class LqDb:
     def delete_scratch(self, was: int) -> None:
         with self.txn() as conn:
             conn.execute("DELETE FROM lq_scratches WHERE was = ?", (int(was),))
+
+    def load_scratch_entered(self) -> Dict[int, Tuple[int, float]]:
+        """{was: (race state at entry, unix time)} for every record entered
+        since lq_scratch_entered exists."""
+        return {int(r["was"]): (int(r["state"]), float(r["at"]))
+                for r in self.query("SELECT was, state, at FROM lq_scratch_entered")}
+
+    def save_scratch_entered(self, was: int, state: int, at: float) -> None:
+        with self.txn() as conn:
+            conn.execute(
+                "INSERT INTO lq_scratch_entered (was, state, at) VALUES (?, ?, ?) "
+                "ON CONFLICT(was) DO UPDATE SET state = excluded.state, at = excluded.at",
+                (int(was), int(state), float(at)))
+
+    def delete_scratch_entered(self, was: int) -> None:
+        with self.txn() as conn:
+            conn.execute("DELETE FROM lq_scratch_entered WHERE was = ?", (int(was),))
 
     def load_scratch_names(self) -> Dict[int, Tuple[int, str, str]]:
         """{was: (now, the name before the scratch, the name it gave)} for

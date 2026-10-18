@@ -35,6 +35,7 @@ import logging
 import re
 import sqlite3
 import threading
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from la_quiniela import protocol as P
@@ -224,6 +225,7 @@ class HorseStore:
             n: {"name": ""} for n in range(1, HORSE_COUNT + 1)}
         self._scratches: Dict[int, Optional[int]] = {}      # was -> now, or None: no replacement
         self._scratch_names: Dict[int, Tuple[str, str]] = {}   # was -> (now's name before the scratch, the name it gave)
+        self._entered: Dict[int, Tuple[int, float]] = {}       # was -> (race state at entry, unix time); none: from before
         self._undone: Dict[int, Tuple[int, float]] = {}       # now -> (was, undone_at): undone replacements to bring cups back from
         self._names_rev = 0
         self._closes_at: Optional[float] = None
@@ -270,6 +272,15 @@ class HorseStore:
             # leaves a replacement's name as it is, as it did before.
             log.error("La Quiniela horses: cannot read lq_scratch_names (%s); "
                       "an Undo will leave a replacement's name as it is", exc)
+        try:
+            for was, (state, at) in self._db.load_scratch_entered().items():
+                if was in self._scratches and 0 <= state <= 6:   # a row whose record is gone is stale
+                    self._entered[was] = (state, at)
+        except sqlite3.Error as exc:
+            # lq_scratch_entered is newer than lq_scratches: without it every
+            # record reads as one from before it (no replacement: re-bet).
+            log.error("La Quiniela horses: cannot read lq_scratch_entered (%s); "
+                      "a replacement scratched after betting opened will not say re-bet after a restart", exc)
         try:
             for now, (was, at) in self._db.load_renum_undo().items():
                 if 1 <= now <= HORSE_COUNT and 1 <= was <= HORSE_COUNT and now != was:
@@ -322,6 +333,29 @@ class HorseStore:
         except sqlite3.Error as exc:
             log.error("La Quiniela horses: cannot write lq_scratch_names for horse %d (%s); "
                       "after a restart an Undo may leave that replacement's name as it is", was, exc)
+
+    def _save_entered(self, was: int) -> None:
+        """Write, or drop, when record `was` was entered. A database that
+        refuses costs only the restart (the record reads as one from before)."""
+        if self._db is None:
+            return
+        try:
+            if was in self._entered:
+                state, at = self._entered[was]
+                self._db.save_scratch_entered(was, state, at)
+            else:
+                self._db.delete_scratch_entered(was)
+        except sqlite3.Error as exc:
+            log.error("La Quiniela horses: cannot write lq_scratch_entered for horse %d (%s)", was, exc)
+
+    def _enter(self, was: int, state: Any, at: Any) -> None:
+        """Note the race state and time a record was entered with (lock
+        held); no state given (a caller from before) leaves none."""
+        if isinstance(state, int) and not isinstance(state, bool) and 0 <= state <= 6:
+            self._entered[was] = (state, float(at) if isinstance(at, (int, float)) else time.time())
+        else:
+            self._entered.pop(was, None)
+        self._save_entered(was)
 
     def _save_undone(self, now: int) -> None:
         """Write, or drop, the undone replacement keyed by `now`. A database
@@ -423,6 +457,13 @@ class HorseStore:
         None when there is no record or it is a no-replacement scratch."""
         with self._lock:
             return self._scratches.get(was)
+
+    def scratch_entries(self) -> Dict[int, Tuple[int, float]]:
+        """{was: (race state at entry, unix time)}, a copy, for the records
+        entered since lq_scratch_entered exists; a record missing here is
+        from before it."""
+        with self._lock:
+            return dict(self._entered)
 
     def record(self, was: int) -> Optional[Tuple[str, Optional[int]]]:
         """("replacement", now) or ("gateway", None) for the record whose
@@ -544,7 +585,8 @@ class HorseStore:
 
     # -- replacement scratches --------------------------------------------------
 
-    def scratch_replace(self, was: Any, now: Any, name: Any = None) -> Dict[str, Any]:
+    def scratch_replace(self, was: Any, now: Any, name: Any = None, state: Any = None,
+                        at: Any = None) -> Dict[str, Any]:
         """Record that horse `was` left the field and horse `now` stands in
         for it (the cup's renumbering itself is the bridge's business; see
         board.py). A non-empty name is stored as now's name, else the stored
@@ -555,7 +597,9 @@ class HorseStore:
         Only what the records alone can tell is checked here: was != now, was
         not already scratched, now not the was or now of another record. The
         route adds what needs the bridge (is `was` in the field, is `now`
-        carried by a cup or in the field)."""
+        carried by a cup or in the field). state / at: the race state and
+        unix time it is entered at (lq_scratch_entered), from which the
+        board tells whether it hands the cup's tokens back to re-bet."""
         was = _horse_number(was)
         now = _horse_number(now, "replacement number")
         new_name = _clean_name(name, "replacement name") if name is not None else ""
@@ -579,6 +623,7 @@ class HorseStore:
             self._names_rev += 1
             self._save_scratch(was)
             self._save_scratch_name(was)
+            self._enter(was, state, at)
             self._save_board()
             result = {"was": {"number": was, "name": self._horses[was]["name"]},
                       "now": {"number": now, "name": self._horses[now]["name"]}}
@@ -606,13 +651,15 @@ class HorseStore:
             self._names_rev += 1
             self._save_scratch(was)
             self._save_scratch_name(was)
+            self._entered.pop(was, None)
+            self._save_entered(was)
             self._save_board()
         self._changed()
         return now
 
     # -- no-replacement scratches -----------------------------------------------
 
-    def scratch_gateway(self, was: Any) -> Dict[str, Any]:
+    def scratch_gateway(self, was: Any, state: Any = None, at: Any = None) -> Dict[str, Any]:
         """Record that horse `was` is scratched with no replacement: out of
         the field, its tokens handed back to re-bet. The cup carrying it, if any, gets the
         gateway's scratched flag from the caller (board.py) or from the
@@ -626,6 +673,7 @@ class HorseStore:
             self._scratches[was] = None
             self._names_rev += 1
             self._save_scratch(was)
+            self._enter(was, state, at)
             self._save_board()
             result = {"was": {"number": was, "name": self._horses[was]["name"]}}
         self._changed()
@@ -641,6 +689,8 @@ class HorseStore:
             del self._scratches[was]
             self._names_rev += 1
             self._save_scratch(was)
+            self._entered.pop(was, None)
+            self._save_entered(was)
             self._save_board()
         self._changed()
         return True

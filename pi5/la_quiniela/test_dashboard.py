@@ -1142,6 +1142,9 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
     server = picker_check.Server(rig)
     chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
     who = "#9 " + DERBY[8].upper()
+    # Joey's rule (2026-10-14): with betting open (the model's betting_open: 60 MIN to FINAL CALL) a replacement's step
+    # says to empty the cup and hand the tokens back; at the post and after (OD3's case) the line of 58eb25e stays.
+    new_line = "Betting is open: empty this cup and hand the tokens back to re-bet; #21 starts empty."
     open_line = "Betting is open: the tokens in this cup will ride on #21. After 60 MIN, use No replacement."
 
     def posts(since, path="/api/quiniela/scratch"):
@@ -1200,7 +1203,8 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         settle(0.3)
         said = scratch()
         _check(f"admin page {mode}: with a name, the confirm step: Scratch {who}: #21 TEST draws in (no betting-open line before betting opens)",
-               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line not in said and posts(t) == 0, repr(said))
+               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line not in said and new_line not in said
+               and posts(t) == 0, repr(said))
         tap("[data-repl-name]")
         chrome.call("Input.insertText", text="y")
         settle(0.3)
@@ -1215,20 +1219,24 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         lines = {}
         for n in (1, 2, 3, 4, 5, 6, 0):
             state(n)
-            lines[n] = open_line in scratch()
+            said = scratch()
+            lines[n] = (new_line in said, open_line in said)
             tap("[data-cancel]")
-        _check(f"admin page {mode}: the betting-open line in race states 1-5 only (with a replacement)",
-               lines == {0: False, 1: True, 2: True, 3: True, 4: True, 5: True, 6: False}, str(lines))
+        _check(f"admin page {mode}: with a replacement, the empty-the-cup line while betting is open (1, 2), the old line at "
+               "the post and after (3-5, OD3's case), neither before or after the race",
+               lines == {0: (False, False), 1: (True, False), 2: (True, False), 3: (False, True), 4: (False, True),
+                         5: (False, True), 6: (False, False)}, str(lines))
         state(1)
         tap("[data-norepl]")
         said = scratch()
-        _check(f"admin page {mode}: ...and never with No replacement", said.startswith(f"Scratch {who}, no replacement") and open_line not in said,
-               repr(said))
+        _check(f"admin page {mode}: ...and with No replacement the no-replacement line as before, neither of the others",
+               said.startswith(f"Scratch {who}, no replacement: its tokens are handed back to re-bet.")
+               and open_line not in said and new_line not in said, repr(said))
         tap("[data-cancel]")
         tap("[data-norepl]")
         said = scratch()
-        _check(f"admin page {mode}: betting open, the replacement's confirm step carries the line",
-               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line in said and posts(t) == 0, repr(said))
+        _check(f"admin page {mode}: betting open, the replacement's confirm step: Scratch {who}: #21 TEST draws in. {new_line}",
+               said.startswith(f"Scratch {who}: #21 TEST draws in. {new_line}") and posts(t) == 0, repr(said))
         slow[("POST", "/api/quiniela/scratch")] = 0.8
         t = time.monotonic()
         x, y = chrome.center(ADMIN_ROW9 + "[data-confirm]")
@@ -1237,10 +1245,14 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
         settle(0.6)
         slow.clear()
-        reply = "Scratched 9 " + chr(0x2192) + " #21 TEST"
-        _check(f"admin page {mode}: a double tap on Confirm scratch sends one request: one record, 9 -> 21 TEST, one reply line",
-               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": {"number": 21, "name": "TEST"}}]
+        reply = "Scratched 9 " + chr(0x2192) + " #21 TEST \u00b7 re-bet"
+        _check(f"admin page {mode}: a double tap on Confirm scratch sends one request: one record, 9 -> 21 TEST, re-bet, one reply line",
+               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": {"number": 21, "name": "TEST"},
+                                                              "rebet": True}]
                and chrome.eval(ADMIN_LINES_JS % json.dumps(reply)) == 1, f"{posts(t)} requests, {rig.model()['scratches']}")
+        row_note = chrome.eval("document.querySelector('#scratched-list .horse[data-horse=\"9\"] .note').innerText")
+        _check(f"admin page {mode}: ...and its Scratched row says re-bet, so the host knows to empty that cup",
+               row_note == "replaced by #21 TEST \u00b7 re-bet", repr(row_note))
         t = time.monotonic()
         chrome.tap('#scratched-list .horse[data-horse="9"] [data-undo]')
         chrome.wait_for("!!document.querySelector('" + ADMIN_ROW9 + "[data-scratch]')", timeout=10)
@@ -1253,7 +1265,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         tap("[data-confirm]")
         chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
         _check(f"admin page {mode}: Confirm sends what the step said: 9 scratched with no replacement",
-               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": None}],
+               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": None, "rebet": True}],
                str(rig.model()["scratches"]))
         _check(f"admin page {mode}: no confirm() or alert() dialog anywhere, no page errors",
                chrome.eval("window.__dialogs") == 0 and not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])

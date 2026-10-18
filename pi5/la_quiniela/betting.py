@@ -24,7 +24,11 @@
 # horse (renumbering: the cups late on a renumber pair, RENUM_LATE_S and
 # more, [{"from", "to", "mac", "kind", "since", "online"}], for the admin
 # page's badge, empty when none; heard: when the horse's cup was last heard,
-# unix seconds, while no cup claiming it is online, else null). results is {"win",
+# unix seconds, while no cup claiming it is online, else null), betting_open
+# on the model and rebet per scratch (Joey, 2026-10-14: once betting is open
+# every scratch hands its cup's tokens back to re-bet; BETTING_OPEN_STATES is
+# the one test, and the admin page and the TV read these two, never the race
+# state, for it). results is {"win",
 # "place", "show"} (horse numbers) once the dashboard has them, null until
 # then: in WINNER the TV board shows its results screen from them, and the
 # frozen betting board under OFFICIAL RESULTS COMING while it is null.
@@ -124,6 +128,29 @@ CMD_WHITELIST = frozenset({"state", "demo", "json"})
 # AFTER_PARTY leaves them as they are.
 CLOSED_STATES = frozenset({int(P.Phase.AT_THE_POST), int(P.Phase.RUNNING), int(P.Phase.WINNER)})
 REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
+# Betting is open from 60 MIN (BETTING_OPEN) until the figures are taken at the
+# post (AT THE GATE, AT_THE_POST): the one test of it. Once it is open, tokens
+# never move to another horse (Joey, 2026-10-14): every scratch hands the
+# tokens in that cup back to re-bet, a replacement drawing in with an empty
+# cup. A scratch after the figures are taken (3-5) is gap review OD3's case
+# (M6) and reads as before. The model carries it as betting_open and per
+# scratch as rebet; the admin page and the TV read those.
+BETTING_OPEN_STATES = frozenset({int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
+
+
+def betting_open(race_state: Any) -> bool:
+    """Whether betting is open in this race state (BETTING_OPEN_STATES)."""
+    return isinstance(race_state, int) and not isinstance(race_state, bool) and race_state in BETTING_OPEN_STATES
+
+
+def scratch_rebets(now: Optional[int], entered: Optional[Tuple[int, float]]) -> bool:
+    """Whether a scratch hands its cup's tokens back to re-bet: one with no
+    replacement always; a replacement only when it was entered while betting
+    was open. A record from before lq_scratch_entered has no state at entry
+    and reads as it always did: a replacement does not re-bet."""
+    if now is None:
+        return True
+    return entered is not None and betting_open(entered[0])
 
 # The hand count (the counted pot): after betting closes the host counts the
 # cash box's BETS compartment and types the dollars, and from then on the pot
@@ -786,6 +813,7 @@ class BettingBoard:
             "link_ok": False,
             "race_state": 0,
             "race_state_name": race_state_name(0),
+            "betting_open": False,
             "token_value": self._token_value(),
             "pot": money["pot"],
             "total_tokens": 0,
@@ -824,9 +852,11 @@ class BettingBoard:
         stands in for (the "was" of the record whose "now" is n), else None.
         odds: the track's odds for program number n (set_odds()), else None.
         scratches: one entry per scratch ordered by was.number, {"was":
-        {"number", "name"}, "now": {"number", "name"}} for a replacement
-        record and {"was": {...}, "now": None} for a no-replacement scratch;
-        names upper-cased, "" when unnamed.
+        {"number", "name"}, "now": {"number", "name"}, "rebet"} for a
+        replacement record and {"was": {...}, "now": None, "rebet": true}
+        for a no-replacement scratch; names upper-cased, "" when unnamed.
+        rebet: the cup's tokens are handed back to re-bet (scratch_rebets:
+        no replacement, or a replacement entered while betting was open).
 
         A no-replacement scratch is about the horse, not the cup: the record
         (now None) marks the horse scratched whether or not a cup claims it,
@@ -857,10 +887,12 @@ class BettingBoard:
             entry["replaced"] = named(by_now[n])["name"] if n in by_now else None
             entry["in_field"] = in_field(n, records, gateway)
             entry["odds"] = odds.get(n)
+        entered = self.store.scratch_entries()
         scratches: List[Dict[str, Any]] = []
         for was in sorted(set(records) | gateway):
             now = records.get(was)
-            scratches.append({"was": named(was), "now": named(now) if now is not None else None})
+            scratches.append({"was": named(was), "now": named(now) if now is not None else None,
+                              "rebet": scratch_rebets(now, entered.get(was))})
         return horses, scratches
 
     def model(self) -> Dict[str, Any]:
@@ -1109,6 +1141,7 @@ class BettingBoard:
                 "link_ok": bool(link_ok),
                 "race_state": race_state,
                 "race_state_name": race_state_name(race_state),
+                "betting_open": betting_open(race_state),
                 "token_value": token_value,
                 "pot": money["pot"],
                 "total_tokens": total,
@@ -1595,6 +1628,15 @@ class BettingBoard:
             raise ValueError("unknown mode %r; one of %s" % (mode, " ".join(MODE_STATES)))
         return self.set_race_state(MODE_STATES[key], mode=key, source=source)
 
+    def race_state_now(self) -> int:
+        """The race state as the bridge holds it now (the model's without a
+        bridge): what a scratch is entered at."""
+        bridge = self.bridge
+        if bridge is not None:
+            return int(bridge.phase)
+        with self._lock:
+            return int(self._model["race_state"])
+
     def race_mode(self) -> Dict[str, Any]:
         """{"state", "state_name", "mode", "label", "source", "at_post"}: the
         race state as the bridge holds it now, and the dashboard mode that
@@ -1604,12 +1646,7 @@ class BettingBoard:
         dashboard's confirm: {"pot": the scale pot at the post, "pot_counted":
         the hand count or None} while figures at the post are held, else
         None."""
-        bridge = self.bridge
-        if bridge is not None:
-            state = int(bridge.phase)
-        else:
-            with self._lock:
-                state = int(self._model["race_state"])
+        state = self.race_state_now()
         with self._lock:
             mode, source = self._race_mode, self._race_source
             closing = self._closing

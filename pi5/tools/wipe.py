@@ -101,7 +101,7 @@ STATE_NAMES = {0: "PRE-RACE", 1: "BETTING OPEN", 2: "FINAL CALL", 3: "AT THE POS
                4: "RUNNING", 5: "WINNER", 6: "AFTER PARTY"}
 
 # The tables the list names, line by line; any other table's rows are listed as other rows.
-LQ_TABLES = ("lq_horses", "lq_race", "lq_scratches", "lq_scratch_names", "lq_renum_undo", "lq_board",
+LQ_TABLES = ("lq_horses", "lq_race", "lq_scratches", "lq_scratch_entered", "lq_scratch_names", "lq_renum_undo", "lq_board",
              "lq_link_state", "lq_closing", "lq_cups", "telemetry", "events")
 LS_TABLES = ("auction_state", "bidders", "bids", "ownership", "payouts", "auction_overrides",
              "settings_audit_log")

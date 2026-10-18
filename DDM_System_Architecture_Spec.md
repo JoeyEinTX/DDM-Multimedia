@@ -317,6 +317,10 @@ There is no roster line. A v1 `roster` line is ignored.
    keeps its own program number, as at Churchill (2026: #22 Ocelli ran for #9 The Puma).
    The admin page records `9 → 22`, the cup that says 9 becomes 22 on its own, and nothing
    moves on the mantle. Normally this happens before betting opens, so the cup is empty.
+   **Once betting is open, tokens never move to another horse.** [DECIDED 2026-10-14] Every scratch
+   after 60 MIN, with or without a replacement, hands the tokens in that cup back to the bettors to
+   re-bet; a replacement entered then still draws in, with an empty cup, and the board says
+   `· RE-BET YOUR TOKENS` after it. A scratch after the figures are taken at the post is OD3's case.
 2. **Same day, no replacement: re-bet.** [DECIDED]
    - The horse leaves the field, its cup shows the red X, and its tokens drop out of the pot
      while they are in that cup.

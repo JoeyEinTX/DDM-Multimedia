@@ -534,7 +534,7 @@
       html += '<div class="horse" data-horse="' + was.number + '">' +
         '<div class="num' + (was.number > FIELD ? " ae" : "") + '">' + was.number + "</div>" +
         '<div><div class="name">' + esc(was.name || "(no name)") + "</div>" +
-          '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") +
+          '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") + (s.rebet ? " · re-bet" : "") +
                                             (chained ? " · undo #" + now.number + " first" : "")
                                           : "no replacement: out of the race, tokens out of the pot") + "</div></div>" +
         '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
@@ -564,9 +564,13 @@
   function askHtml() {
     var who = "#" + ask.horse + (storedName(ask.horse) ? " " + storedName(ask.horse).toUpperCase() : ""), r = ask.body && ask.body.replacement;
     if (!ask.body) { return "<p>No replacement? Tick No replacement, or enter the replacement's name.</p><button data-ask-norepl>No replacement</button>"; }
-    return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in."
+    // Once betting is open (the model's betting_open) tokens never move to another horse (Joey, 2026-10-14). After
+    // the figures are taken (3-5) a replacement is gap review OD3's case (M6): its line as it was.
+    var open = !!(model && model.betting_open), post = !!(model && model.race_state >= 3 && model.race_state <= 5);
+    return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in." + (open ? " Betting is open: " +
+                           "empty this cup and hand the tokens back to re-bet; #" + r.number + " starts empty." : "")
                          : "Scratch " + who + ", no replacement: its tokens are handed back to re-bet.") + "</p>" +
-      (r && model && model.race_state >= 1 && model.race_state <= 5 ? "<p>Betting is open: the tokens in this cup will ride on #" +
+      (r && post ? "<p>Betting is open: the tokens in this cup will ride on #" +
         r.number + ". After 60 MIN, use No replacement.</p>" : "") + '<button class="danger" data-confirm>Confirm scratch</button><button data-cancel>Cancel</button>';
   }
   function applyRowNotes() {
@@ -615,7 +619,8 @@
       } else if (r.body.kind === "gateway") {
         what = "Scratched " + horse + (r.body.cup == null ? " (no cup is on that number yet)" : "");
       } else {
-        what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "");
+        what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "") +
+               (r.body.rebet ? " · re-bet" : "");
       }
       report(what, "ok");
       freshRows = true;

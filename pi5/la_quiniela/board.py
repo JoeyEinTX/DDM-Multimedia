@@ -37,6 +37,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, Optional, Set, Tuple
 
 from flask import Blueprint, Response, jsonify, render_template, request
@@ -44,7 +45,7 @@ from flask import Blueprint, Response, jsonify, render_template, request
 from la_quiniela import protocol as P
 from la_quiniela import racetime
 from la_quiniela.betting import (
-    COUNTED_POT_MAX, MODE_STATES, BettingBoard, CountRefused, load_board_settings, sse_events, validate_cmd,
+    COUNTED_POT_MAX, MODE_STATES, BettingBoard, betting_open, CountRefused, load_board_settings, sse_events, validate_cmd,
 )
 from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
@@ -540,9 +541,10 @@ def api_quiniela_scratch():
     if not in_field(horse, records, gateway):
         return _bad(f"horse {horse} is not in the field")
     replacement = body.get("replacement")
+    entered = {"state": board.race_state_now(), "at": time.time()}     # whether it re-bets (betting.scratch_rebets)
     if replacement is None:
         try:
-            done = board.store.scratch_gateway(horse)
+            done = board.store.scratch_gateway(horse, **entered)
         except ValueError as exc:
             return _bad(str(exc))
         board.refresh()
@@ -557,13 +559,13 @@ def api_quiniela_scratch():
             or number in records or number in records.values()):
         return _bad(f"{number} is in use")
     try:
-        done = board.store.scratch_replace(horse, number, name)
+        done = board.store.scratch_replace(horse, number, name, **entered)
     except ValueError as exc:
         return _bad(str(exc))
     board.refresh()
     return jsonify({"ok": True, "kind": "replacement", "cup": on_cups.get(horse),
                     "renum": [horse, number], "rev": _rev(board), "gateway_online": _gateway_online(snap),
-                    "names_rev": board.store.names_rev, **done})
+                    "names_rev": board.store.names_rev, "rebet": betting_open(entered["state"]), **done})
 
 
 @quiniela_board_bp.route("/api/quiniela/unscratch", methods=["POST"])
