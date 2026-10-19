@@ -29,6 +29,7 @@ from communication.esp32_client import esp32, check_esp32_connection
 from communication.tote_client import init_tote_client
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
+from routes.guest import spectator as guest_spectator
 from la_subasta import la_subasta_bp, init_la_subasta, follow_la_quiniela
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
                          quiniela_board_bp, init_board, start_board, get_board)
@@ -151,8 +152,11 @@ def dashboard():
 
 @app.route('/spectator')
 def spectator():
-    """Full-screen tote board display for spectator TV"""
-    return render_template('spectator.html')
+    """Full-screen tote board display for spectator TV: the same page as
+    /guest/spectator (routes/guest.py), which the Control Center links. It
+    used to render spectator.html without the horses the template needs, so
+    it answered 500."""
+    return guest_spectator()
 
 
 @app.route('/api/ping', methods=['GET'])

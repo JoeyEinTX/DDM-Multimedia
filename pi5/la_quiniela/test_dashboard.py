@@ -1399,10 +1399,7 @@ def test_pages_come_up_fresh():
     for rule in main.app.url_map.iter_rules():
         if "GET" not in rule.methods or rule.arguments or rule.rule.startswith(("/api/", "/static", "/la-subasta/api/")):
             continue
-        try:
-            r = rig.client.get(rule.rule)
-        except Exception:                           # /spectator: renders spectator.html without its horses (a 500 before this too)
-            continue
+        r = rig.client.get(rule.rule)
         if r.mimetype == "text/html":
             pages.append(rule.rule)
             if r.headers.get("Cache-Control") != "no-store" or r.headers.get("X-Page-Rev") != rev:
@@ -1410,6 +1407,10 @@ def test_pages_come_up_fresh():
     _check("every HTML page pi5 serves answers no-store and says the revision (the Control Center, the admin page, "
            "La Subasta's included)", not not_fresh and {"/", "/quiniela/admin", "/la-subasta/", "/la-subasta/admin"} <= set(pages),
            str((sorted(pages), not_fresh)))
+    spectator, guest = rig.client.get("/spectator"), rig.client.get("/guest/spectator")
+    _check("/spectator is the spectator TV page, the same as /guest/spectator (it rendered without its horses: a 500)",
+           spectator.status_code == 200 and guest.status_code == 200 and "/spectator" in pages
+           and spectator.get_data() == guest.get_data(), str((spectator.status_code, guest.status_code)))
     api = {path: rig.client.get(path) for path in ("/api/quiniela", "/api/quiniela/mode", "/api/results", "/api/quiniela/race")}
     _check("the API keeps its own caching: JSON is not made no-store (GET /api/quiniela was no-store already)",
            api["/api/quiniela"].headers.get("Cache-Control") == "no-store"
