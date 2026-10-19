@@ -499,6 +499,112 @@ def test_installer():
            run.returncode in (0, 1) and ("Dry run" in run.stdout or "STOP" in run.stdout), run.stdout[-600:])
 
 
+# -----------------------------------------------------------------------------
+# The TV box (deploy/tv_box.sh, run on DevPi; deploy/tv_box/ copied to the box)
+# -----------------------------------------------------------------------------
+
+TV_BOX = DEPLOY / "tv_box"
+TV_SCRIPTS = (DEPLOY / "tv_box.sh", TV_BOX / "ddm-tv-launch.sh", TV_BOX / "setup_box.sh")
+
+
+def test_tv_box_scripts():
+    """The TV box's shell scripts: bash -n, shellcheck when there is one; the installer's dry run (what it would copy,
+    the one config file, setup over ssh -t, the launcher restarted) and its refusals; the launcher's browser line;
+    the box's autostart entry and holding page."""
+    sh = bash()
+    if not sh:
+        print("  (skipped: no bash here)")
+        return
+    for script in TV_SCRIPTS:
+        run = subprocess.run([sh, "-n", str(script)], capture_output=True, text=True)
+        _check(f"{script.name}: bash -n", run.returncode == 0, run.stderr)
+        if shutil.which("shellcheck"):
+            run = subprocess.run(["shellcheck", "-x", str(script)], capture_output=True, text=True)
+            _check(f"{script.name}: shellcheck", run.returncode == 0, run.stdout[-1500:])
+    if not shutil.which("shellcheck"):
+        print("  (shellcheck is not installed here)")
+    run = subprocess.run([sh, str(DEPLOY / "tv_box.sh"), "install", "joey@ddm-tv.local", "--dry-run"],
+                         capture_output=True, text=True, timeout=60)
+    out = run.stdout
+    _check("install --dry-run: copies the box's five files to ~/.local/share/ddm-tv/ over scp, with DevPi's key only",
+           run.returncode == 0 and "scp -q -o BatchMode=yes" in out
+           and all(name in out for name in ("holding.html", "ddm-tv-launch.sh", "setup_box.sh", "ddm-tv-box.desktop",
+                                            "kiosk_autostart.py"))
+           and "joey@ddm-tv.local:.local/share/ddm-tv/" in out, out[-1500:])
+    _check("...writes the one config file with the board's address, by default DevPi's own name .local on 5001",
+           "~/.config/ddm-tv/ddm-tv.conf" in out and ".local:5001/display" in out
+           and "DDM_TV_URL=http://" in out, out[-800:])
+    _check("...runs the box's setup over ssh -t (sudo asks for the password there), then restarts the launcher",
+           "ssh -t joey@ddm-tv.local bash $HOME/.local/share/ddm-tv/setup_box.sh" in out
+           and "ddm-tv-launch.sh >/dev/null 2>&1 &" in out, out[-800:])
+    run = subprocess.run([sh, str(DEPLOY / "tv_box.sh"), "install", "joey@ddm-tv.local", "--server",
+                          "http://10.0.0.37:5001/display?look=dots", "--overlay", "on", "--reboot", "--dry-run"],
+                         capture_output=True, text=True, timeout=60)
+    _check("--server, --overlay on and --reboot: the address as given, setup with --overlay on, a reboot",
+           run.returncode == 0 and "DDM_TV_URL=http://10.0.0.37:5001/display?look=dots" in run.stdout
+           and "setup_box.sh --overlay on" in run.stdout and "sudo reboot" in run.stdout, run.stdout[-800:])
+    for args, needle in ((["install"], "needs the box"), (["install", "joey@ddm-tv.local", "--server", "ddm-tv"], "must be a URL"),
+                         (["install", "joey@ddm-tv.local", "--overlay", "maybe"], "on or off"), (["bogus", "x"], "unknown command")):
+        run = subprocess.run([sh, str(DEPLOY / "tv_box.sh")] + args, capture_output=True, text=True, timeout=60)
+        _check(f"tv_box.sh {' '.join(args)}: refused, saying why", run.returncode == 2 and needle in run.stderr, run.stderr)
+    run = subprocess.run([sh, str(DEPLOY / "tv_box.sh"), "status", "joey@ddm-tv.local", "--dry-run"],
+                         capture_output=True, text=True, timeout=60)
+    _check("status --dry-run: asks the box's launcher (--status) and says DevPi's revision",
+           run.returncode == 0 and "ddm-tv-launch.sh --status" in run.stdout and "DevPi serves:" in run.stdout, run.stdout)
+    conf = scratch_dir("ddm_tv_conf_")
+    (conf / "ddm-tv.conf").write_text("# a comment\nDDM_TV_URL=http://joeydevpi.local:5001/display\n", encoding="utf-8")
+    env = dict(ENV, DDM_TV_DIR="/home/joey/.local/share/ddm-tv", DDM_TV_CONF_DIR=str(conf), CHROMIUM_BIN="chromium")
+    run = subprocess.run([sh, str(TV_BOX / "ddm-tv-launch.sh"), "--command"], env=env, capture_output=True, text=True, timeout=30)
+    args = run.stdout.split()
+    _check("the launcher's browser: kiosk, no first run, no keyring prompt, no error dialogs, no restore bubble, no translate",
+           run.returncode == 0 and all(a in args for a in ("--kiosk", "--no-first-run", "--password-store=basic", "--noerrdialogs",
+                                                         "--disable-session-crashed-bubble", "--incognito"))
+           and any(a.startswith("--disable-features=Translate") for a in args), str(args))
+    _check("...on the box's own holding page, the board's address from the config file in its query",
+           args[-1] == "file:///home/joey/.local/share/ddm-tv/holding.html?board=http%3A%2F%2Fjoeydevpi.local%3A5001%2Fdisplay",
+           args[-1] if args else "")
+    _check("...its debugging port on the box's localhost only (the status reads the title)",
+           "--remote-debugging-port=9222" in args and not any(a.startswith("--remote-debugging-address") for a in args))
+    desktop = (TV_BOX / "ddm-tv-box.desktop").read_text(encoding="utf-8")
+    _check("the box's autostart entry runs the launcher from ~/.local/share/ddm-tv",
+           "Exec=/bin/bash @HOME@/.local/share/ddm-tv/ddm-tv-launch.sh" in desktop and "Type=Application" in desktop)
+    holding = (TV_BOX / "holding.html").read_text(encoding="utf-8")
+    _check("the holding page: no pointer, says Waiting for DDM, takes the board from its query, no script from anywhere",
+           "cursor: none" in holding and "Waiting for DDM" in holding and 'q.get("board")' in holding
+           and "<script src" not in holding)
+    setup = (TV_BOX / "setup_box.sh").read_text(encoding="utf-8")
+    _check("the box's setup: autologin, no blanking, HDMI0 at 1920x1080, chromium and wtype, no NOPASSWD, overlay off to install",
+           "do_boot_behaviour B4" in setup and "do_blanking 1" in setup and "video=HDMI-A-1:1920x1080@60D" in setup
+           and "NOPASSWD" not in setup.replace("adds NOPASSWD", "") and "exit 3" in setup and "enable_overlayfs" in setup)
+
+
+def test_tv_launcher_restarts_the_browser():
+    """The launcher with a fake browser that dies at once: it starts it again, 3 s later, for ever."""
+    sh = bash()
+    if not sh:
+        print("  (skipped: no bash here)")
+        return
+    base = scratch_dir("ddm_tv_launch_")
+    conf, log = base / "conf", base / "log"
+    conf.mkdir()
+    (conf / "ddm-tv.conf").write_text("DDM_TV_URL=http://joeydevpi.local:5001/display\n", encoding="utf-8")
+    fake = base / "fake-chromium"
+    fake.write_text("#!/usr/bin/env bash\necho run >> \"$FAKE_LOG\"\nexit 1\n", encoding="utf-8")
+    fake.chmod(0o755)
+    env = dict(ENV, HOME=str(base), DDM_TV_DIR=str(base), DDM_TV_CONF_DIR=str(conf), CHROMIUM_BIN=str(fake).replace("\\", "/"),
+               FAKE_LOG=str(log))
+    errfile = base / "stderr.txt"
+    with open(errfile, "w", encoding="utf-8") as err:
+        proc = subprocess.Popen([sh, str(TV_BOX / "ddm-tv-launch.sh")], env=env, stdout=subprocess.DEVNULL, stderr=err)
+        time.sleep(8)
+        proc.kill()
+        proc.wait(timeout=10)
+    runs = log.read_text().count("run") if log.is_file() else 0
+    text = errfile.read_text(encoding="utf-8", errors="replace")
+    _check("a browser that dies is started again (three runs in 8 s, 3 s apart)", runs >= 2 and "starting it again in 3 s" in text,
+           f"{runs} runs; {text[-600:]}")
+
+
 def env_checks(root):
     """deploy/env_check.py on a scratch repo, as the installer runs it: {level: [texts]}, the
     raw output."""
@@ -1130,6 +1236,8 @@ def main():
     _run("the LED controller client logs on change", test_led_client_logs_on_change)
     _run("the installer", test_installer)
     _run("the installer's pi5/.env check", test_env_check)
+    _run("the TV box: scripts, installer dry run, launcher line, autostart, holding page", test_tv_box_scripts)
+    _run("the TV box's launcher starts a dead browser again", test_tv_launcher_restarts_the_browser)
     _run("the kiosk script and its desktop entry", test_kiosk_files)
     _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
     _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=DDM TV box
+Comment=DDM's board full screen on the TV (DDM-Multimedia deploy/tv_box.sh, installed from DevPi)
+Exec=/bin/bash @HOME@/.local/share/ddm-tv/ddm-tv-launch.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

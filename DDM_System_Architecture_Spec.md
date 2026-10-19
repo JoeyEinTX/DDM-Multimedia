@@ -68,8 +68,9 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
                 figures at the post · counted pot              │
        USB serial │          TCP :5005 │        HTTP + event stream
             Gateway ESP32      LED controller ESP32       splash display, port 5001
-       ESP-NOW ch 6 │          (the mantle's cup LEDs)    slideshow + LQ board → TV
-         up to 24 cups
+       ESP-NOW ch 6 │          (the mantle's cup LEDs)    slideshow + LQ board
+         up to 24 cups                                          │ HTTP, the LAN
+                                                         TV box ddm-tv (Pi 5) → TV
                                           JoeyAI box (optional source of odds and names)
 ```
 
@@ -80,7 +81,8 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
 | Betting cups (CYD + HX711), 20 plus spares | Weigh tokens, show their horse number | ESP-NOW via the gateway | Horse number and scale settings in NVS |
 | LED controller (ESP32, TCP 5005 at the address in DevPi's `pi5/.env`) | Mantle LED animations | TCP | Nothing |
 | Splash display (Flask app, port 5001) | TV slideshow and the LQ board | HTTP and the `/api/quiniela/stream` event stream from pi5 | Nothing about the race |
-| TV kiosk | Chromium on the splash's `/display` | HTTP | Nothing |
+| TV box (`ddm-tv`, a Raspberry Pi 5 behind the TV, Pi OS with desktop) | Shows the board full screen and nothing else: Chromium in kiosk mode on the box's own holding page, which holds the splash's `/display` in a frame and shows `Waiting for DDM…` while it can't be reached. Runs no DDM code, needs no repo; set up and updated from DevPi over SSH (`deploy/tv_box.sh install`); the board's own self-reload brings a pull to the TV. HDMI0 at 1920x1080. A second display is the same with another box and another page. | HTTP to the splash (port 5001) over the LAN | One setting: the board's address (`~/.config/ddm-tv/ddm-tv.conf`) |
+| DevPi's kiosk (fallback) | Chromium on DevPi's own screen (`install_services.sh --kiosk on`), off unless the TV box dies | Same box | Nothing |
 | DDM Control Center | The touchscreen dashboard at `/` | Same server | Nothing |
 | LQ admin page | `/quiniela/admin`, on a phone | Same server | Nothing |
 | Guest phones | La Subasta at `/la-subasta` | Same server | Nothing |

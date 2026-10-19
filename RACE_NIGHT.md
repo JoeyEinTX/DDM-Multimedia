@@ -90,30 +90,29 @@ cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
       `journalctl -u ddm-pi5 -f` and `journalctl -u ddm-splash -f` (Ctrl+C stops the reading,
       not the app). Restart: `sudo systemctl restart ddm-pi5` (or `ddm-splash`, or both).
       Updating DevPi and running an app in a terminal: the end of this runbook.
-- [ ] The TV's kiosk starts with DevPi's desktop too (the same install adds it): Chromium full
-      screen on the splash, `http://localhost:5001/display`, once the splash answers (it waits
-      up to 2 minutes, then starts anyway), with screen blanking off and the pointer hidden.
-      After the install, reboot once and check the TV: the slideshow, no pointer, and it never
-      blanks. (Files: `splash_display/deploy/kiosk.sh`, `deploy/kiosk_autostart.py`.)
-      Off while you work on DevPi's own screen, on again for the party:
-      `~/DDM-Multimedia/deploy/install_services.sh --kiosk off` (it also closes a running
-      kiosk), `--kiosk on` (from the next login; it says how to start it now), `--kiosk status`.
-      Re-running the installer keeps it as it is.
+- [ ] The TV board is on its own box, `ddm-tv` ("The TV box", below), set up from DevPi with
+      `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local --reboot`. Check the TV: the
+      slideshow, no pointer, and it never blanks.
+- [ ] DevPi's own kiosk stays off: `~/DDM-Multimedia/deploy/install_services.sh --kiosk status`
+      says off (`--kiosk off` if not). It is the fallback if the TV box dies: `--kiosk on`, from
+      the next login, Chromium full screen on `http://localhost:5001/display` on DevPi's screen.
+      (Files: `splash_display/deploy/kiosk.sh`, `deploy/kiosk_autostart.py`.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
 - [ ] The board on the TV is the tote look (`dots`, the default: amber dots on black
       tiles, each row one strip with the bets at its end, a long name scrolling). Check it
       on the TV itself: with betting open (`DASH` → **60 MIN**) and names
       that scroll on the board, drop a token while you watch: the count must tick and the
-      crawl and the names keep moving without a hitch (`d` on the kiosk's keyboard shows
+      crawl and the names keep moving without a hitch (`d` on a keyboard plugged into the TV box shows
       the FPS). `impact` (the board before the tote look) and `numbers` (the tote look's
       figures, names in Impact) stay: `http://joeydevpi.local:5001/?look=impact` from a
-      laptop or phone; on the TV `pkill -f chromium`, then
-      `SPLASH_URL='http://localhost:5001/display?look=impact' ~/DDM-Multimedia/splash_display/deploy/kiosk.sh &`
-      (the next boot brings the default back).
-      To change the default on this box: `DDM_QUINIELA_LOOK=impact` in `splash_display/.env`
-      (copy `splash_display/.env.example`), then
-      `sudo systemctl restart ddm-splash` and F5 on the kiosk's keyboard.
+      laptop or phone; on the TV,
+      `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local --server http://joeydevpi.local:5001/display?look=impact`
+      (install again without `--server` to bring the default back).
+      To change the default: `DDM_QUINIELA_LOOK=impact` in `splash_display/.env`
+      (copy `splash_display/.env.example`), then `sudo systemctl restart ddm-splash` and
+      restart the TV's browser: `ssh joey@ddm-tv.local pkill -f ddm-tv/chromium` (the box starts
+      it again in 3 s; a setting is not a new page revision, so the TV doesn't reload on its own).
 - [ ] Every cup and the gateway: flashed from the current firmware (cup v0.7, the brownout
       build, and the protocol v2 gateway), sleeve installed, orientation right, touch working
       (`p` in serial shows touches), `CAL 10` done with the sleeve on, then **tared empty**
@@ -396,10 +395,42 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 ---
 
+## The TV box (ddm-tv)
+
+The TV board has its own box: a Raspberry Pi 5 behind the TV (`ddm-tv`, Pi OS with desktop), which
+does nothing but show DevPi's board full screen. DevPi runs the servers and the gateway; its own
+kiosk stays off. The box runs no DDM code and has no repo: DevPi sets it up over SSH, and a pull on
+DevPi updates the board as before (the TV reloads itself within a minute of the restart).
+
+- The TV goes in **HDMI0**, the micro-HDMI port next to the USB-C power. The box sets it to
+  1920x1080, the board's size, whatever the TV.
+- **Power-on order doesn't matter.** Until DevPi's board answers, the TV shows the box's own
+  holding screen, `Waiting for DDM…`, and it switches to the board by itself, within about 30 s of
+  DevPi answering. The same when `ddm-splash` restarts, DevPi is off for a while, the box's cable
+  comes out, or the box loses power: no touch needed.
+- **The holding screen stays up:** is DevPi on? Is `ddm-splash` running
+  (`systemctl status ddm-splash` on DevPi)? Is the box's network cable in? The line under
+  `Waiting for DDM…` says what it last saw.
+- **Status, from DevPi:** `~/DDM-Multimedia/deploy/tv_box.sh status joey@ddm-tv.local`: the board's
+  address, whether DevPi answers the box, Chromium running, what the TV shows (`board <revision>`,
+  the same revision as DevPi's within a minute of a pull and restart, or `waiting`).
+- **The box's log:** `ssh joey@ddm-tv.local journalctl -t ddm-tv -b`.
+- **Setting it up or updating it,** from DevPi, after a pull:
+  `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local` (sudo asks for the box's password;
+  the first time add `--reboot`). The board's address is DevPi's name, `http://joeydevpi.local:5001/display`;
+  `--server http://<address>:5001/display` sets another (`?look=impact` for the old look). A second
+  display is the same command with another box and another `--server`.
+- **Read-only SD card (optional):** `--overlay on` makes the box's root read-only, so a yanked power
+  cord can't corrupt the card. Turn it off before installing again (`--overlay off`, reboot, install).
+- **Fallback, if the box dies on the day:** plug the TV into DevPi (HDMI0) and
+  `~/DDM-Multimedia/deploy/install_services.sh --kiosk on`, then log out and in (or reboot DevPi).
+  `--kiosk off` when the box is back.
+
 ## If something goes wrong
 
 | You see | It means | Do |
 |---|---|---|
+| `Waiting for DDM…` on the TV | the TV box can't reach DevPi's board | Is DevPi on, `ddm-splash` running, the box's cable in? It switches back by itself. `deploy/tv_box.sh status joey@ddm-tv.local` on DevPi ("The TV box"). |
 | `NO LINK` in the board's corner on the TV | splash can't reach pi5, or pi5 can't hear the gateway | `ADMIN` → Race. `NO LINK` there too: the gateway (cable, `DDM_LQ_SERIAL_PORT`). `LINK OK` there: the splash can't reach pi5 (`systemctl status ddm-splash` running? on DevPi it looks for pi5 on the same box; a `DDM_PI5_URL` in `splash_display/.env` overrides that); `sudo systemctl restart ddm-splash`. |
 | Gateway `hello` lines forever, never answered | pi5 isn't reading that port (wrong `DDM_LQ_SERIAL_PORT`, or pi5 is down); pi5 answers every hello with its state by itself | Check `DDM_LQ_SERIAL_PORT` in `pi5/.env` and that pi5's log says `bridge started` (`journalctl -u ddm-pi5 -n 50`). |
 | `ddm-pi5 is running under systemd. Stop it first: …` when you type `python main.py` (or `ddm-splash …` for `python3 server.py`) | the service is running; a second copy would fight it for the gateway and the port | Do what it says: `sudo systemctl stop ddm-pi5`, work by hand, then `sudo systemctl start ddm-pi5` (end of this runbook). |
@@ -543,8 +574,10 @@ sudo systemctl restart ddm-pi5 ddm-splash
 A pull that changed `deploy/`: run `~/DDM-Multimedia/deploy/install_services.sh` again
 (it restarts both). After the restart the pages come up fresh by themselves: `ADMIN` and the
 Control Center reload within a few seconds when a pull changed them (not while you're typing
-or a dialog is open), the TV within a minute, between slides. Pages opened before 2026-10-18
-can't: close both iPad apps and open them again, and F5 on the kiosk, once.
+or a dialog is open), the TV within a minute, between slides, and never into a splash that
+isn't answering. Pages opened before 2026-10-18 can't: close both iPad apps and open them again,
+once. A pull that changed `deploy/tv_box/`: run `~/DDM-Multimedia/deploy/tv_box.sh install
+joey@ddm-tv.local` too.
 `git status` should be clean; `pi5/.env` doesn't show (it is git-ignored).
 
 **Once, on a box that still has a local edit of `pi5/config.py`** (`git status` lists it;
@@ -587,7 +620,6 @@ The splash the same way: `sudo systemctl stop ddm-splash`,
 `cd ~/DDM-Multimedia/splash_display && python3 server.py`, `sudo systemctl start ddm-splash`.
 Forget the stop and the copy you start refuses with `ddm-pi5 is running under systemd. Stop it
 first: …`. Forget the start and it stays stopped until DevPi next boots.
-The TV's kiosk takes DevPi's own screen: `~/DDM-Multimedia/deploy/install_services.sh --kiosk off`
-while you work at it, `--kiosk on` before the party.
+DevPi's own kiosk stays off: the TV box shows the board. `--kiosk on` is the fallback ("The TV box").
 The logs leave out a line per request and per answer to the dashboard's 5 s LED `STATUS` poll;
 `DDM_ACCESS_LOG=1 python main.py` prints them all.

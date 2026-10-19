@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<!--
+  deploy/tv_box/holding.html - the TV box's own page, from its SD card (deploy/tv_box.sh copies it).
+
+  Chromium on the box opens this file, never DevPi's page directly, so the TV never shows a
+  Chromium error page: this page is always there. It holds DevPi's board in a full-screen frame
+  and shows "Waiting for DDM..." whenever the board can't be reached:
+    - every PROBE_S (3 s) it asks the board's server for /api/page_rev (a no-cors fetch: it
+      only needs to know that something answers);
+    - the board page (splash_display/templates/slideshow.html) says it is up every 2 s
+      (postMessage); the frame is shown once it does, and only then;
+    - two failed probes in a row: the holding screen, and the frame is emptied, so a return
+      always loads the board afresh;
+    - the server answers but the board has not spoken for QUIET_S (20 s: an error page or a
+      crashed frame inside it): the frame is loaded again.
+  The title says what is on the screen ("DDM TV · board <revision>" or "DDM TV · waiting"):
+  deploy/tv_box.sh status reads it.
+
+  Query: board=<the board's URL> (the launcher, from ~/.config/ddm-tv/ddm-tv.conf);
+  probe_s, quiet_s and fails for tests.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DDM TV · waiting</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0b0b; cursor: none; }
+  #board { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; background: #000; visibility: hidden; }
+  #hold { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+          color: #d4a000; font: 700 72px/1.2 "DejaVu Sans", system-ui, sans-serif; letter-spacing: .04em; text-align: center; }
+  #why { margin-top: 28px; font-size: 28px; font-weight: 400; color: #8a8a8a; letter-spacing: 0; }
+  body.up #board { visibility: visible; }
+  body.up #hold { display: none; }
+</style>
+</head>
+<body>
+<div id="hold"><div>Waiting for DDM…</div><div id="why">starting</div></div>
+<iframe id="board" title="DDM board" allow="autoplay; fullscreen"></iframe>
+<script>
+(function () {
+  "use strict";
+  var q = new URLSearchParams(location.search);
+  var num = function (name, dflt) { var v = Number(q.get(name)); return v > 0 ? v : dflt; };
+  var BOARD = q.get("board") || "";
+  var PROBE_S = num("probe_s", 3), QUIET_S = num("quiet_s", 20), FAILS = num("fails", 2);
+  var frame = document.getElementById("board"), why = document.getElementById("why");
+  var state = "waiting";            // waiting: holding screen, empty frame; loading: frame set, not heard yet; up
+  var fails = 0, heard = 0, loadedAt = 0, rev = "";
+  var probeUrl = null;
+  try { probeUrl = new URL("api/page_rev", BOARD).href; } catch (e) { probeUrl = null; }
+
+  function title() {
+    document.title = state === "up" ? "DDM TV · board " + (rev || "?") : "DDM TV · waiting";
+  }
+  function hold(text) {
+    state = "waiting";
+    document.body.classList.remove("up");
+    if (frame.getAttribute("src") !== "about:blank") { frame.setAttribute("src", "about:blank"); }
+    why.textContent = text;
+    title();
+  }
+  function load() {                 // a fresh load of the board; the holding screen stays until it speaks
+    state = "loading";
+    loadedAt = Date.now();
+    document.body.classList.remove("up");
+    frame.setAttribute("src", BOARD);
+    why.textContent = "DDM answered: loading the board";
+    title();
+  }
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (ev.source !== frame.contentWindow || !d || d.ddm !== "board") { return; }
+    heard = Date.now();
+    rev = String(d.rev || "");
+    if (state !== "up") { state = "up"; document.body.classList.add("up"); }
+    title();
+  });
+  function probe() {
+    var ctl = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) { ctl.abort(); } }, Math.min(2500, PROBE_S * 900));
+    return fetch(probeUrl + "?t=" + Date.now(), { mode: "no-cors", cache: "no-store", signal: ctl ? ctl.signal : undefined })
+      .then(function () { return true; }, function () { return false; })
+      .then(function (ok) { clearTimeout(timer); return ok; });
+  }
+  function tick() {
+    if (!probeUrl) { hold("no board address set (deploy/tv_box.sh install)"); return; }
+    probe().then(function (ok) {
+      var now = Date.now();
+      if (!ok) {
+        fails += 1;
+        if (state !== "waiting" && fails >= FAILS) { hold("DDM isn't answering: is DevPi on, and the box's cable in?"); }
+        else if (state === "waiting") { why.textContent = "DDM isn't answering yet"; }
+        return;
+      }
+      fails = 0;
+      if (state === "waiting") { load(); return; }
+      var since = Math.max(heard, loadedAt);
+      if (now - since > QUIET_S * 1000) { load(); }   // answering, but the board has gone quiet: load it again
+    });
+  }
+  hold("starting");
+  tick();
+  setInterval(tick, PROBE_S * 1000);
+})();
+</script>
+</body>
+</html>

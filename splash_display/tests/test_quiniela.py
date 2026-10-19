@@ -3247,5 +3247,165 @@ class FreshPageTests(RouteCase):
             httpd.shutdown()
 
 
+def _cdp_harness():
+    """pi5's Chrome-over-DevTools harness (pi5/tools/picker_check.py), loaded by path; None without Chrome."""
+    spec = importlib.util.spec_from_file_location("picker_check_for_splash", HERE.parent / "pi5" / "tools" / "picker_check.py")
+    pc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pc)
+    sys.path[:] = [p for p in sys.path if p != str(pc.PI5_DIR)]   # pi5's modules must not shadow the splash's
+    return pc if pc.available() else None
+
+
+def _serve(app, port=0):
+    """app on 127.0.0.1 in a thread, its request log quiet; the werkzeug server (server_port, shutdown)."""
+    from werkzeug.serving import WSGIRequestHandler, make_server
+
+    class Quiet(WSGIRequestHandler):
+        def log_request(self, *args, **kwargs):
+            pass
+    httpd = make_server("127.0.0.1", port, app, threaded=True, request_handler=Quiet)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd
+
+
+class KioskReloadTests(RouteCase):
+    """The kiosk's self-reload never lands on an error page (the TV box, 2026-10-19; scout item 5)."""
+
+    def test_the_board_page_only_uses_relative_urls(self) -> None:
+        # The TV box opens the board from another machine on the LAN (scout item 2, 2026-10-19: nothing assumed the
+        # browser was on DevPi). A guard: no absolute address, no localhost, no port, in anything the page loads.
+        files = [HERE / "templates" / "slideshow.html", HERE / "templates" / "base.html", HERE / "static" / "js" / "quiniela_board.js"]
+        files += sorted((HERE / "templates" / "splash").glob("*.html")) + sorted((HERE / "templates" / "trivia").glob("*.html"))
+        for path in files:
+            text = re.sub(r'xmlns="http://www\.w3\.org/2000/svg"', "", path.read_text(encoding="utf-8"))
+            for needle in ("http://", "https://", "localhost", "127.0.0.1", ":5000", ":5001", "ws://"):
+                self.assertNotIn(needle, text, f"{path.name}: {needle}")
+        r = self.client.get("/display")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(config.FLASK_HOST, "0.0.0.0", "the splash listens on the LAN, not only on DevPi")
+
+    def test_the_kiosk_never_reloads_into_a_server_that_is_not_answering(self) -> None:
+        # The splash answers /api/page_rev once with a new revision and then goes away (a second restart, DevPi off
+        # right after a pull). The page must not reload at the next slide change into a server that is not
+        # answering: it stays on the board it has, and reloads once the server answers again with the new revision.
+        import page_rev
+        pc = _cdp_harness()
+        if pc is None:
+            self.skipTest("no Chrome or Chromium, or no simple_websocket")
+        saved = page_rev.PAGE_REV
+        seen_new = threading.Event()
+
+        def app(environ, start_response):
+            if environ.get("PATH_INFO") == "/api/page_rev" and page_rev.PAGE_REV != saved:
+                seen_new.set()
+            return server.app(environ, start_response)
+        httpd = _serve(app)
+        port = httpd.server_port
+        chrome = pc.Chrome(touch=False, size=(1920, 1080))
+        meta = "(document.querySelector('meta[name=\"ddm-page-rev\"]') || {}).content"
+        second = None
+        try:
+            chrome.call("Page.navigate", url="http://127.0.0.1:%d/display?page_rev_s=0.5" % port)
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            chrome.eval("window.__before = 1; 1")
+            page_rev.PAGE_REV = "updated-tv02"
+            self.assertTrue(seen_new.wait(10), "the page asked for the revision")
+            httpd.shutdown()
+            httpd.server_close()                          # the port is closed: nothing answers
+            time.sleep(22)                                # every slide is 18 s or less: a slide change happens
+            where = chrome.eval("location.href")
+            self.assertTrue(where.startswith("http://127.0.0.1:%d/display" % port), where)
+            self.assertEqual(chrome.eval("window.__before"), 1, "no reload while the server does not answer")
+            second = _serve(server.app, port)            # the splash is back, with the new revision
+            reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-tv02'"
+                                       % meta, timeout=15)
+            self.assertTrue(reloaded, "back: the page reloads into the new revision")
+        finally:
+            page_rev.PAGE_REV = saved
+            chrome.close()
+            for h in (httpd, second):
+                if h is not None:
+                    try:
+                        h.shutdown()
+                        h.server_close()
+                    except Exception:
+                        pass
+
+
+class TvBoxHoldingPageTests(RouteCase):
+    """The TV box's own page (deploy/tv_box/holding.html, opened from the box's SD card) in headless Chrome: the
+    holding screen while the board's server does not answer, the board as soon as it does, back to the holding
+    screen when it goes away, and never a Chromium error page; a board that stops speaking is loaded again."""
+
+    def test_holding_page_follows_the_server(self) -> None:
+        import page_rev
+        pc = _cdp_harness()
+        if pc is None:
+            self.skipTest("no Chrome or Chromium, or no simple_websocket")
+        probe = _serve(lambda e, s: (s("200 OK", []), [b""])[1])
+        port = probe.server_port                     # a free port: nothing listens on it once this one is closed
+        probe.shutdown()
+        probe.server_close()
+        page = (HERE.parent / "deploy" / "tv_box" / "holding.html").resolve().as_uri()
+        board = "http://127.0.0.1:%d/display" % port
+        url = page + "?" + "&".join(["board=" + board, "probe_s=0.5", "quiet_s=3", "fails=2"])
+        chrome = pc.Chrome(touch=False, size=(1920, 1080))
+        state_js = ("JSON.stringify([document.body.classList.contains('up'), document.title, "
+                    "document.getElementById('board').getAttribute('src'), location.href.slice(0, 8)])")
+        servers = []
+        try:
+            chrome.call("Page.navigate", url=url)
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            time.sleep(2)
+            up, title, src, where = json.loads(chrome.eval(state_js))
+            self.assertEqual((up, title, where), (False, "DDM TV \u00b7 waiting", "file:///"), "no server: the holding screen")
+            self.assertIn(src, ("about:blank", None))
+            servers.append(_serve(server.app, port))     # DevPi's splash comes up
+            chrome.wait_for("document.body.classList.contains('up') && document.title === 'DDM TV \u00b7 board %s'"
+                            % page_rev.PAGE_REV, timeout=15)
+            servers[-1].shutdown()
+            servers[-1].server_close()                 # it goes away
+            chrome.wait_for("!document.body.classList.contains('up') && document.title === 'DDM TV \u00b7 waiting' "
+                            "&& document.getElementById('board').getAttribute('src') === 'about:blank'", timeout=8)
+            self.assertEqual(chrome.eval("location.href.slice(0, 8)"), "file:///", "never an error page")
+            servers.append(_serve(server.app, port))     # and comes back
+            chrome.wait_for("document.body.classList.contains('up')", timeout=15)
+            servers[-1].shutdown()
+            servers[-1].server_close()
+            chrome.wait_for("!document.body.classList.contains('up')", timeout=8)
+            loads = []
+
+            def mute(environ, start_response):         # answers, but its board never says it is up
+                if environ.get("PATH_INFO") == "/display":
+                    loads.append(time.monotonic())
+                start_response("200 OK", [("Content-Type", "text/html")])
+                return [b"<!DOCTYPE html><title>not the board</title><p>nothing here</p>"]
+            servers.append(_serve(mute, port))
+            time.sleep(9)
+            self.assertFalse(chrome.eval("document.body.classList.contains('up')"), "a page that is not the board is never shown")
+            self.assertGreaterEqual(len(loads), 2, "a quiet board is loaded again")
+            self.assertEqual(chrome.eval("location.href.slice(0, 8)"), "file:///")
+        finally:
+            chrome.close()
+            for h in servers:
+                try:
+                    h.shutdown()
+                    h.server_close()
+                except Exception:
+                    pass
+
+    def test_holding_page_without_an_address_says_so(self) -> None:
+        pc = _cdp_harness()
+        if pc is None:
+            self.skipTest("no Chrome or Chromium, or no simple_websocket")
+        chrome = pc.Chrome(touch=False, size=(1920, 1080))
+        try:
+            chrome.call("Page.navigate", url=(HERE.parent / "deploy" / "tv_box" / "holding.html").resolve().as_uri())
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            self.assertIn("no board address", chrome.wait_for("document.getElementById('why').textContent", timeout=5))
+        finally:
+            chrome.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

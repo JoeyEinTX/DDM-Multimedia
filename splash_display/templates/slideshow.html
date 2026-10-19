@@ -464,22 +464,49 @@
     // GET /api/page_rev every PAGE_REV_CHECK_S (15 s; ?page_rev_s= for a
     // test). When the splash serves another revision than this page's, the
     // page reloads at the next slide change, or two checks later at the
-    // latest (well within a minute). Nothing else ever reloads it.
+    // latest (well within a minute). Nothing else ever reloads it, and it
+    // never reloads into a splash that is not answering at that moment: a
+    // reload into a dead server is Chromium's error page, which nothing
+    // brings back (the TV box, 2026-10-19). Until it answers, the board it
+    // has stays up.
     const PAGE_REV = (document.querySelector('meta[name="ddm-page-rev"]') || {}).content || '';
     const PAGE_REV_CHECK_S = Math.max(0.2, Number(new URLSearchParams(location.search).get('page_rev_s')) || 15);
-    let pageRevChanged = 0;                      // checks since another revision was seen; 0: none
-    async function checkPageRev() {
+    let pageRevChanged = 0;                      // answering checks since another revision was seen; 0: none
+    let pageRevReloading = false;
+    async function servedPageRev() {             // the revision the splash serves now; null: it does not answer
         try {
             const resp = await fetch('/api/page_rev', { cache: 'no-store' });
-            const rev = resp.headers.get('X-Page-Rev');
-            if (rev && PAGE_REV && rev !== PAGE_REV) pageRevChanged += 1;
-        } catch (err) { /* the splash restarting: try again */ }
-        if (pageRevChanged > 2) location.reload();
+            return resp.ok ? resp.headers.get('X-Page-Rev') : null;
+        } catch (err) {
+            return null;
+        }
+    }
+    async function checkPageRev() {
+        const rev = await servedPageRev();
+        if (!rev || !PAGE_REV) return;           // not answering: never reload into it
+        if (rev === PAGE_REV) { pageRevChanged = 0; return; }
+        pageRevChanged += 1;
+        if (pageRevChanged > 2) location.reload();   // it answered just now
+    }
+    async function reloadIfAnswering() {         // a quiet moment, between slides
+        if (pageRevReloading) return;
+        pageRevReloading = true;
+        const rev = await servedPageRev();
+        if (rev && PAGE_REV && rev !== PAGE_REV) location.reload();
+        else pageRevReloading = false;
     }
     setInterval(checkPageRev, PAGE_REV_CHECK_S * 1000);
+    // On the TV box the board runs in a frame of the box's own holding page
+    // (deploy/tv_box/holding.html), which shows "Waiting for DDM" instead when
+    // it stops hearing this: the board says it is up, every 2 s.
+    if (window.parent !== window) {
+        const beat = () => window.parent.postMessage({ ddm: 'board', rev: PAGE_REV }, '*');
+        beat();
+        setInterval(beat, 2000);
+    }
 
     function showSlideAt(i) {
-        if (pageRevChanged) { location.reload(); return; }   // a quiet moment: between slides
+        if (pageRevChanged) reloadIfAnswering();
         clearTimers();
         if (!playlist.length) {
             scheduleRefetch();
