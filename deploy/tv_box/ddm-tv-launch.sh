@@ -12,8 +12,12 @@
 #   - The board's address: DDM_TV_URL in ~/.config/ddm-tv/ddm-tv.conf, the one
 #     config file, written by the installer.
 #   - Screen blanking off: the session's swayidle (Pi OS's Screen Blanking) is
-#     stopped now and every 30 s; the HDMI output kept on, at 1920x1080 where
-#     wlr-randr can set it (the kernel's video= in cmdline.txt sets it at boot).
+#     stopped now and every 30 s.
+#   - The screen: whichever HDMI port it is on, at 1920x1080 when it offers that,
+#     else its own preferred mode (ddm_tv_outputs.py, from `wlr-randr --json`).
+#     Nothing is forced at boot; every 5 s the launcher looks again, and when a
+#     screen comes, goes or is switched on later it sets it and starts the browser
+#     again on it. What it chose is in ~/.config/ddm-tv/screen (for --status).
 #   - The pointer off: the board and the holding page draw none (cursor: none),
 #     and Alt+Super+H, labwc's HideCursor keybind the installer puts in
 #     ~/.config/labwc/rc.xml, is pressed with wtype once the browser is up.
@@ -33,8 +37,7 @@ CONF_DIR="${DDM_TV_CONF_DIR:-$HOME/.config/ddm-tv}"
 CONF="$CONF_DIR/ddm-tv.conf"
 PROFILE="$CONF_DIR/chromium"
 DEBUG_PORT=9222                    # localhost only: the status reads the page's title from it
-OUTPUT="${DDM_TV_OUTPUT:-HDMI-A-1}"     # HDMI0, the port next to the USB-C power
-MODE="${DDM_TV_MODE:-1920x1080}"
+SCREEN_FILE="$CONF_DIR/screen"     # the output and mode in use, written by the screen watcher
 HIDE_POINTER=(-M alt -M logo -k h -m logo -m alt)
 
 log() {
@@ -98,24 +101,53 @@ browser_args() {
         "$(page_url)"
 }
 
+server_base() {                   # http://host:port of the board's address
+    printf '%s' "$1" | sed -E 's|^(https?://[^/?]+).*|\1|'
+}
+
+# The screen: choose the output and mode (ddm_tv_outputs.py) and set them when they
+# are not set that way. Prints the choice ("HDMI-A-2 1024x600@60.000" or "none").
+screen_once() {
+    local plan choice state
+    if ! command -v wlr-randr >/dev/null 2>&1; then
+        echo "unknown (no wlr-randr)"
+        return 0
+    fi
+    plan="$( { wlr-randr --json 2>/dev/null || wlr-randr 2>/dev/null; } | python3 "$DIR/ddm_tv_outputs.py" 2>/dev/null)"
+    choice="$(printf '%s\n' "$plan" | sed -n 1p)"
+    state="$(printf '%s\n' "$plan" | sed -n 2p)"
+    if [ "$state" = change ]; then
+        local args=()
+        mapfile -t args < <(printf '%s\n' "$plan" | tail -n +3)
+        wlr-randr "${args[@]}" >/dev/null 2>&1 || log "wlr-randr could not set ${args[*]}"
+    fi
+    echo "${choice:-none}"
+}
+
 status() {
-    local url showing
+    local url base showing
     url="$(conf_url)"
+    base="$(server_base "$url")"
     echo "board address:   ${url:-(none: deploy/tv_box.sh install)}"
     if [ -n "$url" ]; then
-        if curl -fsS -o /dev/null --max-time 4 "${url%%/display*}/api/page_rev" 2>/dev/null; then
+        if curl -fsS -o /dev/null --max-time 4 "$base/api/page_rev" 2>/dev/null; then
             echo "DevPi answers:   yes"
-            echo "DevPi serves:    $(curl -fsS -D - -o /dev/null --max-time 4 "${url%%/display*}/api/page_rev" 2>/dev/null \
+            echo "DevPi serves:    $(curl -fsS -D - -o /dev/null --max-time 4 "$base/api/page_rev" 2>/dev/null \
                                      | sed -n 's/^[Xx]-[Pp]age-[Rr]ev: *//p' | tr -d '\r')"
         else
             echo "DevPi answers:   no"
         fi
     fi
+    if [ -s "$SCREEN_FILE" ]; then
+        echo "screen:          $(LC_ALL=C tr -cd '\11\12\40-\176' < "$SCREEN_FILE" | head -n 1)"
+    else
+        echo "screen:          (not chosen yet: no screen, or the launcher has not run)"
+    fi
     if pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
         echo "Chromium:        running"
         showing="$(curl -fsS --max-time 3 "http://127.0.0.1:$DEBUG_PORT/json/list" 2>/dev/null \
                    | sed -n 's/.*"title": *"\(DDM TV[^"]*\)".*/\1/p' | head -n 1)"
-        echo "the TV shows:    ${showing:-(unknown)}"
+        echo "the TV shows:    $(printf '%s' "${showing:-(unknown)}" | LC_ALL=C tr -cd '\40-\176')"
     else
         echo "Chromium:        not running"
     fi
@@ -149,17 +181,35 @@ fi
 log "started; the board is at ${DDM_TV_URL:-$(conf_url)}"
 [ -n "$(conf_url)" ] || log "no DDM_TV_URL in $CONF: the TV says so (deploy/tv_box.sh install)"
 
-# Screen blanking off, and the output on, for as long as the launcher runs.
+# Screen blanking off for as long as the launcher runs.
 (
     while kill -0 "$$" 2>/dev/null; do
         pkill -u "$(id -u)" -x swayidle >/dev/null 2>&1 || true
-        command -v wlr-randr >/dev/null 2>&1 && wlr-randr --output "$OUTPUT" --on >/dev/null 2>&1
         sleep 30
     done
 ) 9>&- &
-if command -v wlr-randr >/dev/null 2>&1; then
-    wlr-randr --output "$OUTPUT" --mode "$MODE" >/dev/null 2>&1 || log "wlr-randr could not set $OUTPUT to $MODE (the boot's video= stands)"
-fi
+
+# The screen, before the browser starts, and then every 5 s: a screen plugged into
+# the other port, switched on after the box, or swapped for another gets its mode and
+# the browser again (the supervisor below starts it on the screen that is there).
+chosen="$(screen_once)"
+printf '%s (since %s)\n' "$chosen" "$(date '+%H:%M:%S')" > "$SCREEN_FILE"
+log "screen: $chosen"
+(
+    last="$chosen"
+    while kill -0 "$$" 2>/dev/null; do
+        sleep 5
+        now="$(screen_once)"
+        if [ "$now" != "$last" ]; then
+            printf '%s (since %s)\n' "$now" "$(date '+%H:%M:%S')" > "$SCREEN_FILE"
+            log "screen: $now (was $last)"
+            if [ "$now" != none ]; then
+                pkill -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1 || true
+            fi
+            last="$now"
+        fi
+    done
+) 9>&- &
 
 BROWSER="$(browser_bin)" || { log "no chromium in PATH (sudo apt install chromium)"; exit 1; }
 while true; do

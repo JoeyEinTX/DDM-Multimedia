@@ -31,6 +31,7 @@ import hashlib
 import importlib
 import importlib.util
 import io
+import json
 import logging
 import os
 import re
@@ -526,13 +527,13 @@ def test_tv_box_scripts():
     run = subprocess.run([sh, str(DEPLOY / "tv_box.sh"), "install", "joey@ddm-tv.local", "--dry-run"],
                          capture_output=True, text=True, timeout=60)
     out = run.stdout
-    _check("install --dry-run: copies the box's five files to ~/.local/share/ddm-tv/ over scp, with DevPi's key only",
+    _check("install --dry-run: copies the box's six files to ~/.local/share/ddm-tv/ over scp, with DevPi's key only",
            run.returncode == 0 and "scp -q -o BatchMode=yes" in out
            and all(name in out for name in ("holding.html", "ddm-tv-launch.sh", "setup_box.sh", "ddm-tv-box.desktop",
-                                            "kiosk_autostart.py"))
+                                            "ddm_tv_outputs.py", "kiosk_autostart.py"))
            and "joey@ddm-tv.local:.local/share/ddm-tv/" in out, out[-1500:])
-    _check("...writes the one config file with the board's address, by default DevPi's own name .local on 5001",
-           "~/.config/ddm-tv/ddm-tv.conf" in out and ".local:5001/display" in out
+    _check("...writes the one config file with the board's address, by default the La Quiniela page on DevPi's own name",
+           "~/.config/ddm-tv/ddm-tv.conf" in out and ".local:5001/board" in out
            and "DDM_TV_URL=http://" in out, out[-800:])
     _check("...runs the box's setup over ssh -t (sudo asks for the password there), then restarts the launcher",
            "ssh -t joey@ddm-tv.local bash $HOME/.local/share/ddm-tv/setup_box.sh" in out
@@ -573,9 +574,69 @@ def test_tv_box_scripts():
            "cursor: none" in holding and "Waiting for DDM" in holding and 'q.get("board")' in holding
            and "<script src" not in holding)
     setup = (TV_BOX / "setup_box.sh").read_text(encoding="utf-8")
-    _check("the box's setup: autologin, no blanking, HDMI0 at 1920x1080, chromium and wtype, no NOPASSWD, overlay off to install",
-           "do_boot_behaviour B4" in setup and "do_blanking 1" in setup and "video=HDMI-A-1:1920x1080@60D" in setup
+    _check("the box's setup: autologin, no blanking, chromium and wtype, no NOPASSWD, overlay off to install",
+           "do_boot_behaviour B4" in setup and "do_blanking 1" in setup
            and "NOPASSWD" not in setup.replace("adds NOPASSWD", "") and "exit 3" in setup and "enable_overlayfs" in setup)
+
+
+# What `wlr-randr --json` prints on the box, for the screens of Joey's bench (2026-10-19) and the party.
+def _out(name, modes, enabled=True):
+    return {"name": name, "description": name, "enabled": enabled,
+            "modes": [dict(width=w, height=h, refresh=r, preferred=p, current=c) for (w, h, r, p, c) in modes]}
+
+
+PANEL_10 = [(1024, 600, 60.0, True, True), (800, 480, 60.0, False, False)]          # the 10.2" touchscreen
+TV_1080 = [(1920, 1080, 60.0, True, False), (1920, 1080, 50.0, False, False), (1280, 720, 60.0, False, True)]
+TV_4K = [(3840, 2160, 30.0, True, True), (1920, 1080, 59.94, False, False), (1920, 1080, 60.0, False, False)]
+
+
+def screen_plan(outputs):
+    run = subprocess.run([sys.executable, str(TV_BOX / "ddm_tv_outputs.py")], input=json.dumps(outputs),
+                         capture_output=True, text=True, timeout=30)
+    return run.stdout.splitlines()
+
+
+def test_tv_box_picks_the_screen_that_is_there():
+    """The box's screen (ddm_tv_outputs.py, from what wlr-randr reports on the box): the output a screen is on,
+    either port, and a mode the screen offers: 1920x1080 when it can, else its own preferred mode; the other output
+    off; nothing to do when it is already so; nothing at all with no screen. Joey's bench: the 10.2" panel on HDMI1
+    got the desktop while Chromium sat on a phantom HDMI0 (the kernel's forced video=...D), and on HDMI0 stayed black
+    at the forced 1920x1080. Nothing is forced at boot now."""
+    plan = screen_plan([_out("HDMI-A-2", PANEL_10)])
+    _check("the 10.2\" panel on HDMI1 alone: the board on HDMI-A-2 at the panel's own 1024x600, not a forced 1080p",
+           plan[:2] == ["HDMI-A-2 1024x600@60.000", "current"], str(plan))
+    plan = screen_plan([_out("HDMI-A-1", PANEL_10, enabled=True)])
+    _check("...on HDMI0: HDMI-A-1 at 1024x600", plan[0] == "HDMI-A-1 1024x600@60.000", str(plan))
+    plan = screen_plan([_out("HDMI-A-1", TV_1080)])
+    _check("a TV that offers 1920x1080 (here at 720p): set to 1920x1080 at 60 Hz",
+           plan[:2] == ["HDMI-A-1 1920x1080@60.000", "change"]
+           and plan[2:] == ["--output", "HDMI-A-1", "--on", "--mode", "1920x1080@60.000000Hz", "--pos", "0,0"], str(plan))
+    plan = screen_plan([_out("HDMI-A-2", TV_4K)])
+    _check("a 4K TV: 1920x1080, the refresh nearest 60 Hz, not its preferred 4K", plan[0] == "HDMI-A-2 1920x1080@60.000", str(plan))
+    plan = screen_plan([_out("HDMI-A-2", TV_1080), _out("HDMI-A-1", PANEL_10)])
+    _check("screens on both ports: the board on HDMI0 (HDMI-A-1), HDMI1 switched off",
+           plan[0] == "HDMI-A-1 1024x600@60.000" and plan[-3:] == ["--output", "HDMI-A-2", "--off"], str(plan))
+    plan = screen_plan([_out("HDMI-A-1", PANEL_10, enabled=True), _out("HDMI-A-2", TV_1080, enabled=False)])
+    _check("already so (the chosen screen on at its mode, the other off): nothing to change", plan[1] == "current", str(plan))
+    _check("no screen at all: none, nothing to run", screen_plan([]) == ["none"], str(screen_plan([])))
+    text = ('HDMI-A-2 "Waveshare 10.2inch HDMI LCD (HDMI-A-2)"\n  Enabled: yes\n  Modes:\n'
+            '    1024x600 px, 60.000000 Hz (preferred, current)\n    800x480 px, 60.000000 Hz\n')
+    run = subprocess.run([sys.executable, str(TV_BOX / "ddm_tv_outputs.py")], input=text, capture_output=True, text=True, timeout=30)
+    _check("an older wlr-randr without --json: its plain report read the same way",
+           run.stdout.splitlines()[:2] == ["HDMI-A-2 1024x600@60.000", "current"], run.stdout)
+    launcher = (TV_BOX / "ddm-tv-launch.sh").read_text(encoding="utf-8")
+    _check("the launcher sets the screen from that choice, before the browser and every 5 s, and starts the browser again "
+           "when the screen changes; no output or mode of its own",
+           "ddm_tv_outputs.py" in launcher and "sleep 5" in launcher and "HDMI-A-1" not in launcher.split("screen_once()")[0]
+           and "--mode \"$MODE\"" not in launcher and "pkill -u \"$(id -u)\" -f -- \"--user-data-dir=$PROFILE\"" in launcher)
+    setup = (TV_BOX / "setup_box.sh").read_text(encoding="utf-8")
+    _check("the box's setup forces no mode at boot, and takes out the video=...D an earlier install put in cmdline.txt",
+           "1 s/$/" not in setup and "s/ ?video=HDMI-A-1:1920x1080@60D//g" in setup)
+    for path in (DEPLOY / "tv_box.sh", TV_BOX / "ddm-tv-launch.sh", TV_BOX / "holding.html"):
+        text = path.read_text(encoding="utf-8")
+        status_text = text if path.suffix == ".sh" else re.search(r"document\.title = [^;]*;", text).group(0)
+        _check(f"{path.name}: what the status prints is plain ASCII (no \u00b7, which DevPi's terminal garbled)",
+               "\u00b7" not in status_text, path.name)
 
 
 def test_tv_launcher_restarts_the_browser():
@@ -1238,6 +1299,7 @@ def main():
     _run("the installer's pi5/.env check", test_env_check)
     _run("the TV box: scripts, installer dry run, launcher line, autostart, holding page", test_tv_box_scripts)
     _run("the TV box's launcher starts a dead browser again", test_tv_launcher_restarts_the_browser)
+    _run("the TV box picks the screen that is there, at a mode it offers", test_tv_box_picks_the_screen_that_is_there)
     _run("the kiosk script and its desktop entry", test_kiosk_files)
     _run("kiosk.sh with a fake browser", test_kiosk_script_runs)
     _run("the kiosk's autostart and the hide-pointer keybind", test_kiosk_autostart)

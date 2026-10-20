@@ -22,13 +22,19 @@
    set is rebuilt whenever it changes, with no motion of its own: a horse
    that draws in appears with its count, the scratched one is gone.
 
-   Takeover rule: while model.race_state is in model.board_states (the
-   server exposes pi5's QUINIELA_BOARD_STATES as "board_states"; nothing is
-   hard-coded here) the board crossfades in over the playlist and calls
-   window.ddmSlideshow.hold(); when the state leaves that set it fades out
-   and calls release(), which restarts the same slide's timer from zero.
-   pi5's set is 1-5: the board keeps the TV through WINNER, when the prizes
-   are needed, and hands it back in 0 (PRE_RACE) and 6 (AFTER_PARTY).
+   Takeover rule: while model.race_state is in the page's board states the
+   board crossfades in over the playlist and calls window.ddmSlideshow.hold();
+   when the state leaves that set it fades out and calls release(), which
+   restarts the same slide's timer from zero. The page's board states are
+   the board element's data-board-states, which the server writes per page
+   (Joey's three screens, 2026-10-19): "all" on /board, the La Quiniela
+   page of the TV by the cups (every state, nothing else ever); "3,4,5" on
+   /living-room (config.LIVING_ROOM_BOARD_STATES: from AT THE POST through
+   WINNER, so both rooms see the finish); empty on /display, where pi5's
+   QUINIELA_BOARD_STATES (the model's "board_states", 1-5) decide as before.
+   Nothing is hard-coded here. A model from before pi5 is heard (the
+   splash's empty model, board_states empty) moves nothing on a page with
+   its own set: a page loaded during a restart waits for pi5's state.
 
    A lost link never hides the board: it stays up with its last data and
    a small NO LINK mark appears after 10 s without any SSE message (data
@@ -244,6 +250,14 @@
     // ---- DOM ---------------------------------------------------------
     const board = document.getElementById('quiniela-board');
     if (!board) return;                       // not the slideshow page
+    // The page's own board states (the takeover rule, above): null, pi5's.
+    const PAGE_STATES = (() => {
+        const raw = String(board.dataset.boardStates || '').trim().toLowerCase();
+        if (!raw) return null;
+        if (raw === 'all') return 'all';
+        return raw.split(',').map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n));
+    })();
+    let known = false;                        // a model from pi5 has arrived (board_states not empty)
     const $ = (id) => document.getElementById(id);
 
     // ---- Look --------------------------------------------------------
@@ -397,7 +411,12 @@
             cls: 'qb-banner--closed',
             frozen: false,
         });
-        const inBoard = Array.isArray(m.board_states) && m.board_states.includes(state);
+        const fromPi5 = Array.isArray(m.board_states) && m.board_states.length > 0;
+        known = known || fromPi5;
+        let inBoard;
+        if (PAGE_STATES === 'all') inBoard = true;
+        else if (PAGE_STATES) inBoard = fromPi5 ? PAGE_STATES.includes(state) : visible;   // before pi5: as it is
+        else inBoard = fromPi5 && m.board_states.includes(state);
 
         // Banner always follows the state.
         renderBanner(spec);
@@ -800,6 +819,7 @@
     // snapshot of the crawl of "dots" (null in the other looks), for tuning
     // on the TV and for the tests.
     window.ddmQuiniela = {
+        known: () => known,                   // pi5's model has arrived: the slideshow's first slide waits for it
         race: () => (model && model.race && typeof model.race === 'object') ? model.race : null,
         now: () => serverNow(),
         fillRoster,

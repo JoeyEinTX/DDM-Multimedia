@@ -5,8 +5,10 @@
 # The TV board has its own box behind the TV (ddm-tv, a Raspberry Pi 5 on Pi OS with
 # desktop) that does nothing but show DevPi's board full screen. The box runs no DDM
 # code and needs no git or repo: this script, run on DevPi, copies the few files it
-# needs over SSH and sets it up. A second display later is the same command with
-# another box and another --server page. DevPi's own kiosk (install_services.sh
+# needs over SSH and sets it up. Two boxes (Joey's three screens, 2026-10-19): the
+# TV by the cups, ddm-tv, shows the La Quiniela page (/board, the default); the
+# living room's TV, ddm-tv2, the slideshow that switches to the board for the race
+# (--server http://joeydevpi.local:5001/living-room). DevPi's own kiosk (install_services.sh
 # --kiosk) stays off; it is the fallback.
 #
 #   deploy/tv_box.sh install joey@ddm-tv.local [--server URL] [--overlay on|off] [--reboot] [--dry-run]
@@ -17,9 +19,9 @@
 #     and deploy/kiosk_autostart.py to ~/.local/share/ddm-tv/ on the box;
 #   - writes the one config file, ~/.config/ddm-tv/ddm-tv.conf: DDM_TV_URL, the board's
 #     address. --server sets it; the default is DevPi as this script sees it,
-#     http://<DevPi's hostname>.local:5001/display (the name, not the IP: the IP comes
+#     http://<DevPi's hostname>.local:5001/board (the name, not the IP: the IP comes
 #     from DHCP and can change; mDNS follows it. With a DHCP reservation for DevPi,
-#     --server http://<its IP>:5001/display drops the dependence on mDNS);
+#     --server http://<its IP>:5001/board drops the dependence on mDNS);
 #   - runs setup_box.sh on the box over `ssh -t`, so sudo can ask for the password there;
 #   - restarts the box's launcher when its desktop is up; --reboot reboots the box
 #     instead (needed after the first install: autologin and the HDMI mode apply at boot).
@@ -33,7 +35,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOX_DIR="$HERE/tv_box"
 FILES=("$BOX_DIR/holding.html" "$BOX_DIR/ddm-tv-launch.sh" "$BOX_DIR/setup_box.sh" "$BOX_DIR/ddm-tv-box.desktop"
-       "$HERE/kiosk_autostart.py")
+       "$BOX_DIR/ddm_tv_outputs.py" "$HERE/kiosk_autostart.py")
 REMOTE_DIR='.local/share/ddm-tv'
 REMOTE_CONF_DIR='.config/ddm-tv'
 SPLASH_PORT="${DDM_SPLASH_PORT:-5001}"
@@ -78,7 +80,7 @@ default_server() {
     local name
     name="$(hostname 2>/dev/null || echo devpi)"
     name="$(printf %s "${name%%.*}" | tr "[:upper:]" "[:lower:]")"
-    printf 'http://%s.local:%s/display' "$name" "$SPLASH_PORT"
+    printf 'http://%s.local:%s/board' "$name" "$SPLASH_PORT"
 }
 
 devpi_rev() {                      # what DevPi's splash serves now
@@ -91,7 +93,7 @@ if [ "$ACTION" = status ]; then
     on_box "bash \$HOME/$REMOTE_DIR/ddm-tv-launch.sh --status" \
         || echo "  could not ask the box (is it on? ssh $HOST works?)"
     echo "DevPi serves:    $(devpi_rev || true)"
-    echo "(the TV shows 'board <revision>': it should match DevPi's within a minute of a pull and restart)"
+    echo "(the TV shows 'DDM TV - board <revision>': the same as DevPi's within a minute of a pull and restart)"
     exit 0
 fi
 

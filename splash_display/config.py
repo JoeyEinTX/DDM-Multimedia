@@ -260,3 +260,14 @@ PI5_URL = _env("PI5_URL", "http://localhost:5000")
 #   http://joeydevpi.local:5001/?look=impact
 # DDM_QUINIELA_LOOK in splash_display/.env changes it for that box.
 QUINIELA_LOOK = _env("QUINIELA_LOOK", "dots")
+
+# The living room's TV (/living-room, ddm-tv2) shows the slideshow and switches
+# to the La Quiniela board in these race states (Joey, 2026-10-19: from the
+# post until the results are in, so both rooms see the finish): 3 AT THE POST
+# (AT THE GATE: betting closed, the race next), 4 RUNNING (THEY'RE OFF, CHAOS,
+# FINISH), 5 WINNER (SET WINNERS, HEARTBEAT). It goes back to the slideshow
+# with the next state after the results (6 AFTER PARTY with RESET, or 0 with
+# WELCOME/STANDBY). DDM_LIVING_ROOM_BOARD_STATES in splash_display/.env, a
+# comma list such as "3,4,5", changes it. /board (the TV by the cups) shows
+# the board in every state; /display keeps pi5's QUINIELA_BOARD_STATES.
+LIVING_ROOM_BOARD_STATES = [int(s) for s in _env("LIVING_ROOM_BOARD_STATES", "3,4,5").split(",") if s.strip().isdigit()]

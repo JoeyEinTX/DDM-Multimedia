@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{# /board - the La Quiniela page: the board full screen in every race state, and
+   nothing else (Joey's three screens, 2026-10-19: the TV by the cups, ddm-tv).
+   The same board as /display (templates/splash/quiniela_live.html,
+   static/js/quiniela_board.js: all three looks, ?look=, the re-bet note), its
+   data-board-states "all"; the self-reload and the "I'm up" to the TV box are
+   static/js/kiosk_page.js, as on the slideshow. No slides: a new revision
+   reloads it three answering checks after it is seen. #}
+
+{% block title %}DDM La Quiniela{% endblock %}
+
+{% block head %}
+<meta name="ddm-page-rev" content="{{ page_rev }}" />
+<link rel="stylesheet" href="{{ static_url('css/quiniela_board.css') }}" />
+<style>
+    body { background: #0f2a24; }
+</style>
+<script src="{{ static_url('js/kiosk_page.js') }}"></script>
+{% endblock %}
+
+{% block body %}
+<div id="slideshow-stage" class="slideshow-stage">
+    {% include 'splash/quiniela_live.html' %}
+</div>
+<script src="{{ static_url('js/quiniela_board.js') }}"></script>
+{% endblock %}

@@ -413,8 +413,7 @@ def root():
     return redirect(url_for("display", **request.args.to_dict()))
 
 
-@app.route("/display")
-def display():
+def _slideshow(board_states: str = ""):
     # Build the transition pool the slideshow JS will pick from. We strip out
     # any zero-weight or unknown-named entries here so the frontend doesn't
     # have to defend against bad config.
@@ -428,7 +427,44 @@ def display():
         transition_fade_ms=config.TRANSITION_FADE_MS,
         transitions_json=json.dumps(transitions),
         quiniela_look=board_look(request.args.get("look")),
+        board_states=board_states,
     )
+
+
+def living_room_states() -> str:
+    """config.LIVING_ROOM_BOARD_STATES as the board element's data-board-states
+    ("3,4,5"); the default when the setting is not a list of race states."""
+    try:
+        states = [int(s) for s in config.LIVING_ROOM_BOARD_STATES]
+        if states and all(0 <= s <= 6 for s in states):
+            return ",".join(str(s) for s in states)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    log.warning("config.LIVING_ROOM_BOARD_STATES is not a list of race states 0-6: using 3,4,5")
+    return "3,4,5"
+
+
+# The TV pages (Joey's three screens, 2026-10-19). Each says in which race
+# states the La Quiniela board owns its screen (the board's data-board-states):
+#   /display      the slideshow, the board in pi5's QUINIELA_BOARD_STATES (1-5):
+#                 the one-screen layout, and DevPi's own kiosk (the fallback)
+#   /board        the La Quiniela page: the board in every state, nothing else
+#                 (the TV by the cups, ddm-tv)
+#   /living-room  the slideshow, the board from AT THE POST through WINNER
+#                 (config.LIVING_ROOM_BOARD_STATES: the living room's TV, ddm-tv2)
+@app.route("/display")
+def display():
+    return _slideshow()
+
+
+@app.route("/living-room")
+def living_room():
+    return _slideshow(living_room_states())
+
+
+@app.route("/board")
+def board_page():
+    return render_template("board.html", quiniela_look=board_look(request.args.get("look")), board_states="all")
 
 
 @app.route("/api/page_rev")

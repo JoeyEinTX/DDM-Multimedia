@@ -3358,14 +3358,14 @@ class TvBoxHoldingPageTests(RouteCase):
             chrome.wait_for("document.readyState === 'complete'", timeout=20)
             time.sleep(2)
             up, title, src, where = json.loads(chrome.eval(state_js))
-            self.assertEqual((up, title, where), (False, "DDM TV \u00b7 waiting", "file:///"), "no server: the holding screen")
+            self.assertEqual((up, title, where), (False, "DDM TV - waiting", "file:///"), "no server: the holding screen")
             self.assertIn(src, ("about:blank", None))
             servers.append(_serve(server.app, port))     # DevPi's splash comes up
-            chrome.wait_for("document.body.classList.contains('up') && document.title === 'DDM TV \u00b7 board %s'"
+            chrome.wait_for("document.body.classList.contains('up') && document.title === 'DDM TV - board %s'"
                             % page_rev.PAGE_REV, timeout=15)
             servers[-1].shutdown()
             servers[-1].server_close()                 # it goes away
-            chrome.wait_for("!document.body.classList.contains('up') && document.title === 'DDM TV \u00b7 waiting' "
+            chrome.wait_for("!document.body.classList.contains('up') && document.title === 'DDM TV - waiting' "
                             "&& document.getElementById('board').getAttribute('src') === 'about:blank'", timeout=8)
             self.assertEqual(chrome.eval("location.href.slice(0, 8)"), "file:///", "never an error page")
             servers.append(_serve(server.app, port))     # and comes back
@@ -3405,6 +3405,92 @@ class TvBoxHoldingPageTests(RouteCase):
             self.assertIn("no board address", chrome.wait_for("document.getElementById('why').textContent", timeout=5))
         finally:
             chrome.close()
+
+
+class TvPagesTests(RouteCase):
+    """Joey's three screens (2026-10-19), in headless Chrome over the DevTools protocol, the race state fed as pi5
+    sends it: /board, the La Quiniela page of the TV by the cups, shows the board in every state and nothing else;
+    /living-room cycles the slides and shows the board from AT THE POST through WINNER, back to the slides after;
+    a reload in the middle of the race, or the splash restarting, comes back on the board, not the slides."""
+
+    BOARD_UP = "document.getElementById('quiniela-board').classList.contains('is-visible')"
+    SLIDE_UP = "!!document.querySelector('#slideshow-stage .slide.is-active')"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.pc = _cdp_harness()
+        if self.pc is None:
+            self.skipTest("no Chrome or Chromium, or no simple_websocket")
+        self.httpd = _serve(server.app)
+        self.chrome = self.pc.Chrome(touch=False, size=(1920, 1080))
+
+    def tearDown(self) -> None:
+        try:
+            self.chrome.close()
+            self.httpd.shutdown()
+            self.httpd.server_close()
+        finally:
+            super().tearDown()
+
+    def feed(self, state: int) -> None:
+        self.board.apply_model(pi5_model(race_state=state, tokens={3: 4, 9: 2}))
+
+    def open(self, path: str) -> None:
+        self.chrome.call("Page.navigate", url="http://127.0.0.1:%d%s" % (self.httpd.server_port, path))
+        self.chrome.wait_for("document.readyState === 'complete' && !!document.getElementById('quiniela-board')", timeout=20)
+
+    def settle(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self.chrome.eval("1")
+            time.sleep(0.1)
+
+    def test_the_la_quiniela_page_shows_only_the_board_in_every_state(self) -> None:
+        self.feed(0)
+        self.open("/board")
+        self.chrome.wait_for(self.BOARD_UP, timeout=10)
+        self.assertEqual(self.chrome.eval("document.querySelectorAll('.slide, #slide-layer-a, #splash-template-cache').length"), 0,
+                         "no slides on the page at all")
+        seen = {}
+        for state in (0, 1, 2, 3, 4, 5, 6, 0):
+            self.feed(state)
+            self.settle(1.2)
+            seen[state] = (self.chrome.eval(self.BOARD_UP), self.chrome.eval("document.getElementById('quiniela-board').dataset.state"))
+        self.assertEqual(seen, {s: (True, str(s)) for s in range(7)}, "the board up, following the state, WELCOME to the results and back")
+
+    def test_the_living_room_switches_to_the_board_from_the_post_to_the_results(self) -> None:
+        self.feed(0)
+        self.open("/living-room?page_rev_s=60")
+        self.chrome.wait_for(self.SLIDE_UP, timeout=10)
+        seen = {}
+        for state in (0, 1, 2, 3, 4, 5, 6, 0, 3, 0):
+            self.feed(state)
+            self.settle(1.5)
+            seen.setdefault(state, []).append(self.chrome.eval(self.BOARD_UP))
+        self.assertEqual(seen, {0: [False, False, False], 1: [False], 2: [False], 3: [True, True], 4: [True], 5: [True], 6: [False]},
+                         "the slides in 0, 1, 2 and 6; the board in 3 (AT THE POST), 4 (RUNNING) and 5 (WINNER)")
+        self.feed(1)
+        self.open("/display")
+        self.chrome.wait_for(self.BOARD_UP, timeout=10)   # /display as before: pi5's states (1-5)
+
+    def test_a_reload_mid_race_comes_back_on_the_board(self) -> None:
+        self.feed(4)
+        self.open("/living-room")
+        self.chrome.wait_for(self.BOARD_UP, timeout=10)
+        self.open("/living-room")                       # reloaded in the middle of the race
+        self.chrome.wait_for(self.BOARD_UP, timeout=10)
+        self.settle(3)
+        self.assertTrue(self.chrome.eval(self.BOARD_UP), "still the board")
+        # The splash restarts in the middle of the race: it serves its empty model until pi5 is heard.
+        fresh = BoardRelay(clock=self.clock, wall=self.wall)
+        quiniela.board = self.board = fresh
+        self.open("/living-room")
+        self.settle(1.5)
+        self.assertFalse(self.chrome.eval(self.SLIDE_UP), "no slide before pi5's state is known")
+        self.feed(4)                                    # pi5 is heard: the race is on
+        self.chrome.wait_for(self.BOARD_UP, timeout=10)
+        self.settle(2)
+        self.assertTrue(self.chrome.eval(self.BOARD_UP))
 
 
 if __name__ == "__main__":

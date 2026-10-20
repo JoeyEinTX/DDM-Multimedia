@@ -13,7 +13,8 @@
       always loads the board afresh;
     - the server answers but the board has not spoken for QUIET_S (20 s: an error page or a
       crashed frame inside it): the frame is loaded again.
-  The title says what is on the screen ("DDM TV · board <revision>" or "DDM TV · waiting"):
+  The title says what is on the screen ("DDM TV - board <revision>" or "DDM TV - waiting",
+  plain ASCII for any terminal):
   deploy/tv_box.sh status reads it.
 
   Query: board=<the board's URL> (the launcher, from ~/.config/ddm-tv/ddm-tv.conf);
@@ -22,7 +23,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>DDM TV · waiting</title>
+<title>DDM TV - waiting</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0b0b; cursor: none; }
   #board { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; background: #000; visibility: hidden; }
@@ -50,7 +51,7 @@
   try { probeUrl = new URL("api/page_rev", BOARD).href; } catch (e) { probeUrl = null; }
 
   function title() {
-    document.title = state === "up" ? "DDM TV · board " + (rev || "?") : "DDM TV · waiting";
+    document.title = state === "up" ? "DDM TV - board " + (rev || "?") : "DDM TV - waiting";
   }
   function hold(text) {
     state = "waiting";

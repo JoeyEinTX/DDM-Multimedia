@@ -27,7 +27,7 @@
    the tote look draws in its dot-matrix face ("num": a figure, "name": a
    horse's name; the crawl's text is marked by the JS). Cloths, the banner,
    the toast and every label stay as they are. #}
-<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('dots') }}">
+<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('dots') }}" data-board-states="{{ board_states|default('') }}">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
     <header class="qb-header">

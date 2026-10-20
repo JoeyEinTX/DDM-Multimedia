@@ -11,8 +11,11 @@
 #
 #   - Desktop with autologin (raspi-config, B4).
 #   - Screen blanking off (raspi-config).
-#   - HDMI0 (HDMI-A-1, the port next to the USB-C power) at 1920x1080, 60 Hz:
-#     video= in /boot/firmware/cmdline.txt, which the next boot applies.
+#   - No screen mode forced at boot: the launcher puts the board on whichever HDMI
+#     port has a screen, at 1920x1080 when the screen offers it, else its own mode
+#     (ddm_tv_outputs.py). The video=HDMI-A-1:1920x1080@60D an earlier install put
+#     in /boot/firmware/cmdline.txt is taken out (its D made a phantom HDMI0, and a
+#     panel that can't show 1080p stayed black: Joey's bench, 2026-10-19).
 #   - chromium and wtype from apt when missing.
 #   - ~/.config/autostart/ddm-tv-box.desktop: the launcher with the session.
 #   - labwc's HideCursor keybind (Alt+Super+H) in ~/.config/labwc/rc.xml, added the
@@ -74,18 +77,14 @@ fi
 
 CMDLINE=/boot/firmware/cmdline.txt
 [ -f "$CMDLINE" ] || CMDLINE=/boot/cmdline.txt
-WANT="video=HDMI-A-1:1920x1080@60D"
-if [ -f "$CMDLINE" ]; then
-    if grep -qw -- "$WANT" "$CMDLINE"; then
-        ok "HDMI0 at 1920x1080 ($CMDLINE)"
-    else
-        sudo cp "$CMDLINE" "$CMDLINE.ddm-tv.bak" 2>/dev/null || true
-        sudo sed -i -E '1 s/ ?video=HDMI-A-1:[^ ]*//g; 1 s/$/ '"$WANT"'/' "$CMDLINE" \
-            && { act "HDMI0 at 1920x1080 ($CMDLINE, from the next boot)"; REBOOT=yes; } \
-            || warn "could not write $CMDLINE"
-    fi
+OLD_FORCE="video=HDMI-A-1:1920x1080@60D"      # what an earlier install added; only that is taken out
+if [ -f "$CMDLINE" ] && grep -qw -- "$OLD_FORCE" "$CMDLINE"; then
+    sudo cp "$CMDLINE" "$CMDLINE.ddm-tv.bak" 2>/dev/null || true
+    sudo sed -i -E '1 s/ ?video=HDMI-A-1:1920x1080@60D//g' "$CMDLINE" \
+        && { act "no screen mode forced at boot (the old video= taken out of $CMDLINE, from the next boot)"; REBOOT=yes; } \
+        || warn "could not write $CMDLINE"
 else
-    warn "no cmdline.txt: the TV gets its own preferred mode"
+    ok "no screen mode forced at boot: the launcher picks the screen that is there"
 fi
 
 for pkg in chromium wtype; do
