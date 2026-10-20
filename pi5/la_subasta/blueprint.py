@@ -9,7 +9,7 @@ import time
 
 from flask import Blueprint, jsonify, render_template, request
 
-from la_subasta import bidding, field, notifications, payouts, reset, scratches, settings
+from la_subasta import bidding, field, notifications, payouts, scratches, settings
 from la_subasta.bidding import BidError, UnknownBidder
 from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR
 from la_subasta.models import init_db
@@ -344,33 +344,6 @@ def api_admin_final_hour():
     return jsonify({"success": True, "state": get_state().value})
 
 
-@la_subasta_bp.route("/api/admin/transition", methods=["POST"])
-def api_admin_transition():
-    """Dev/admin: force the auction state machine to an arbitrary state.
-
-    Body JSON: {"state": "OPEN" | "FINAL_HOUR" | "LOCKED" | "NOT_STARTED" | ...}
-
-    Uses force=True so it can jump in any direction — this is the dev panel's
-    "Force FINAL_HOUR" convenience, not the normal lifecycle path. Lock-only
-    side effects (ownership freeze, payout computation) still run only through
-    their dedicated /api/admin/lock and /api/admin/results endpoints; this
-    endpoint changes the state row and broadcasts, nothing more.
-    """
-    data = request.get_json(silent=True) or {}
-    target = data.get("state")
-    try:
-        new_state = AuctionState(target)
-    except ValueError:
-        valid = ", ".join(s.value for s in AuctionState)
-        return _err(f"Invalid state {target!r}. Must be one of: {valid}")
-
-    old_state = get_state().value
-    transition(new_state, force=True)
-    notifications.auction_state_changed(new_state.value, old_state)
-    return jsonify({"success": True, "state": get_state().value,
-                    "previous_state": old_state})
-
-
 @la_subasta_bp.route("/api/admin/lock", methods=["POST"])
 def api_admin_lock():
     """Lock bidding and freeze ownership.
@@ -610,51 +583,4 @@ def api_admin_settings_audit():
     return jsonify({
         "success": True,
         "audit": settings.get_audit_log(limit=limit),
-    })
-
-
-# -----------------------------------------------------------------------------
-# Admin reset (testing only — Phase 1.6)
-# -----------------------------------------------------------------------------
-#
-# Three-scope wipe for clearing La Subasta state between test runs without
-# touching SQL directly. Guarded by ?confirm=TESTING so a stray POST can't
-# nuke real data. settings_audit_log and auction_overrides are preserved by
-# design (test should not lose audit trail or admin tunables).
-#
-# TODO Phase 3: once the admin login/role system lands, wrap this endpoint
-# with an `is_admin` check. For now the testing guard alone keeps the surface
-# narrow; there is no production deployment to worry about yet.
-
-_RESET_SCOPES = {"bids", "full", "state"}
-
-
-@la_subasta_bp.route("/api/admin/reset", methods=["POST"])
-def api_admin_reset():
-    confirm = request.args.get("confirm", "")
-    if confirm != "TESTING":
-        return _err(
-            "Missing or invalid confirm parameter (must be exactly 'TESTING')"
-        )
-
-    scope = request.args.get("scope", "")
-    if scope not in _RESET_SCOPES:
-        return _err(
-            f"Invalid scope: {scope!r}. Must be one of: bids, full, state"
-        )
-
-    if scope == "bids":
-        deleted = reset.reset_bids()
-    elif scope == "full":
-        deleted = reset.reset_full()
-    else:  # scope == "state"
-        deleted = reset.reset_state()
-
-    notifications.auction_reset(scope=scope, timestamp=time.time())
-
-    return jsonify({
-        "success": True,
-        "scope": scope,
-        "deleted": deleted,
-        "auction_state": AuctionState.NOT_STARTED.value,
     })

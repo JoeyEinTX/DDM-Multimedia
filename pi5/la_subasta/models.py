@@ -178,7 +178,7 @@ def _connect(path: str) -> sqlite3.Connection:
 
 # One sqlite3 connection PER THREAD (thread-local). A single shared connection
 # is NOT safe under the concurrent access the SocketIO server produces
-# (multiple guests + the 2s dev-panel /api/state poll): concurrent use of one
+# (multiple guests + the admin page's polls): concurrent use of one
 # connection raises sqlite3 SQLITE_MISUSE ("bad parameter or other API misuse")
 # and can return torn rows. WAL mode lets each thread hold its own connection
 # to the same file and still see the others' committed writes.

@@ -627,7 +627,7 @@ def _package_sources():
 def test_no_house():
     """There is no House: no sentinel bidder row, no House payout, no
     is_house flag, nothing to include."""
-    from la_subasta import config as _cfg, reset as _reset_mod
+    from la_subasta import config as _cfg
     from la_subasta.models import get_conn
     _reset()
     app = _make_app()
@@ -638,7 +638,6 @@ def test_no_house():
            not any(n.startswith("HOUSE_BIDDER") for n in dir(_cfg)))
     _check("models has no House helpers",
            not any(hasattr(models, n) for n in ("house_bidder_id", "_ensure_house_bidder")))
-    _check("reset has no House helper", not hasattr(_reset_mod, "_ensure_house_bidder"))
     hits = [path for path, text in _package_sources()
             if any(word in text for word in ("is_house", "house_bidder_id", "include_house"))]
     _check("no is_house, house_bidder_id or include_house anywhere in La Subasta's source",
@@ -2744,20 +2743,40 @@ def _picker_check():
 
 
 def _serve(app, fail):
-    """The app on a loopback port, in threads, as a phone reaches pi5; a path in `fail` answers 503."""
+    """The app on a loopback port, in threads, as a phone reaches pi5; a path in `fail` answers 503.
+    Each request closes its thread's database connection when done: a keep-alive thread would hold
+    the file open, and on Windows the next test's _reset() could not delete it. stop() waits for the
+    requests in flight first."""
     import logging
     import threading
     from werkzeug.serving import make_server
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    lock, busy = threading.Lock(), [0]
 
     def wsgi(environ, start_response):
-        if environ.get("PATH_INFO") in fail:
-            start_response("503 Service Unavailable", [("Content-Length", "0")])
-            return [b""]
-        return app(environ, start_response)
+        with lock:
+            busy[0] += 1
+        try:
+            if environ.get("PATH_INFO") in fail:
+                start_response("503 Service Unavailable", [("Content-Length", "0")])
+                return [b""]
+            return app(environ, start_response)
+        finally:
+            models.close_conn()
+            with lock:
+                busy[0] -= 1
 
     httpd = make_server("127.0.0.1", 0, wsgi, threaded=True)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    def stop():
+        end = time.monotonic() + 10
+        while busy[0] and time.monotonic() < end:
+            time.sleep(0.05)
+        httpd.shutdown()
+        httpd.server_close()
+
+    httpd.stop = stop
     return httpd
 
 
@@ -2776,8 +2795,8 @@ def test_guest_page_rejoins_in_chrome():
     from last year boots to the join screen with the welcome-back line, forgotten, and joining again with the
     same name works; a wipe while that page is open sends the next bid to the join screen, never a dead
     "Unknown bidder", and one tap joins again; a kept identity this year's auction knows goes straight in;
-    and when the check gets no answer the phone goes in with what it kept. Skipped where there is no
-    Chrome."""
+    when the check gets no answer the phone goes in with what it kept; and ?dev=1 shows no test tools
+    (M4 c), not even with the old panel's flag left in storage. Skipped where there is no Chrome."""
     picker_check = _picker_check()
     if not picker_check.available():
         _check("guest page browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
@@ -2801,13 +2820,15 @@ def test_guest_page_rejoins_in_chrome():
             return {"bidder_id": bidder["id"], "name": bidder["name"], "emoji": bidder["emoji"],
                     "identity": bidder["identity"]}
 
-        def load(identity):
-            """The page as a phone opens it, onboarded, keeping `identity`; returns once it has decided."""
+        def load(identity, query="", left=None):
+            """The page as a phone opens it, onboarded, keeping `identity` (and `left`, other keys an old
+            page left in its storage); returns once it has decided."""
             chrome.call("Page.navigate", url=base + "api/state")
             chrome.wait_for("document.readyState === 'complete'", timeout=20)
-            chrome.eval("localStorage.clear(); localStorage.setItem('la_subasta_onboarded', 'true');"
-                        f" localStorage.setItem('la_subasta_identity', {json.dumps(json.dumps(identity))}); true")
-            chrome.call("Page.navigate", url=base)
+            keys = dict(left or {}, la_subasta_onboarded="true", la_subasta_identity=json.dumps(identity))
+            chrome.eval("localStorage.clear();" + "".join(f" localStorage.setItem({json.dumps(k)}, {json.dumps(v)});"
+                                                           for k, v in keys.items()) + " true")
+            chrome.call("Page.navigate", url=base + query)
             chrome.wait_for("document.readyState === 'complete'", timeout=20)
             return chrome.wait_for("(() => { const v = %s; return v.join || v.app ? v : null; })()" % _GUEST_VIEW_JS)
 
@@ -2864,11 +2885,19 @@ def test_guest_page_rejoins_in_chrome():
         _check("the check gets no answer (503): in with what the phone kept, nothing forgotten",
                view["app"] and not view["join"] and view["badge"] == "Carol 🍹" and stored() == kept(carol), str(view))
         fail.clear()
+
+        dev = ("({panel: document.querySelectorAll('[id^=ls-dev], [data-dev-action], .ls-dev').length,"
+               " keys: Object.keys(localStorage).sort()})")
+        load(kept(carol), "?dev=1")
+        _check("?dev=1: no dev panel, and nothing new in the phone's storage",
+               chrome.eval(dev) == {"panel": 0, "keys": ["la_subasta_identity", "la_subasta_onboarded"]},
+               str(chrome.eval(dev)))
+        load(kept(carol), "?dev=1", left={"la_subasta_dev_mode": "1"})
+        _check("...nor with the old panel's flag left in storage", chrome.eval(dev)["panel"] == 0, str(chrome.eval(dev)))
         _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
     finally:
         chrome.close()
-        httpd.shutdown()
-        httpd.server_close()
+        httpd.stop()
 
 
 def test_guest_js_follows_the_field():
@@ -3080,74 +3109,55 @@ def test_guest_2027_pesos_button_format():
 
 
 # -----------------------------------------------------------------------------
-# Dev panel (dev/testing-only floating panel, gated by ?dev=1)
+# No test tools on guest pages (gap review M4 c)
 # -----------------------------------------------------------------------------
 
-def test_dev_panel_markup_and_gating():
-    """The dev panel markup is ALWAYS rendered (so the localStorage dev flag
-    can keep it visible across navigation), but ships hidden by default and is
-    revealed only by guest.js when dev mode is active. We assert the markup is
-    present + hidden-by-default and that guest.js carries the ?dev=1 / ?dev=0
-    detection wiring — JS-driven visibility itself isn't exercised here (no JS
-    engine in this harness)."""
+def test_no_test_tools_on_guest_pages():
+    """M4 (c): the guest page's ?dev=1 panel is gone, with its code and its
+    styles; and so are the routes only a test needed, which it drove with no
+    auth: the reset (all three scopes; pi5/tools/wipe.py starts fresh, with a
+    backup) and the forced state change. They answer 404 with
+    DDM_LQ_DEV_ENDPOINTS off or on (it gates nothing since 59e3b14), and
+    wipe or move nothing."""
     _reset()
     app = _make_app()
     client = app.test_client()
-
-    html_plain = client.get("/la-subasta/").get_data(as_text=True)
-    html_dev = client.get("/la-subasta/?dev=1").get_data(as_text=True)
-
-    # Markup present regardless of the query param (JS-gated, not server-gated)
-    for label, html in (("no query", html_plain), ("?dev=1", html_dev)):
-        _check(f"dev panel container present ({label})",
-               'id="ls-dev"' in html, "missing #ls-dev")
-        _check(f"dev panel hidden by default ({label})",
-               '<div id="ls-dev" class="ls-dev" hidden>' in html,
-               "#ls-dev not hidden by default")
-
-    # Required panel chrome + controls
-    markers = [
-        ('id="ls-dev-fab"',                 "collapsed bug fab"),
-        ('id="ls-dev-panel"',               "expanded panel"),
-        ('🐛 DEV PANEL',                    "panel title"),
-        ('id="ls-dev-state"',               "status: state"),
-        ('id="ls-dev-pot"',                 "status: pot"),
-        ('id="ls-dev-bidders"',             "status: bidders"),
-        ('id="ls-dev-bids"',                "status: bids placed"),
-        ('data-dev-action="open"',          "open auction button"),
-        ('data-dev-action="final-hour"',    "force final-hour button"),
-        ('data-dev-action="lock"',          "lock button"),
-        ('data-dev-action="results"',       "set results button"),
-        ('data-dev-action="reset-bids"',    "reset bids button"),
-        ('data-dev-action="reset-full"',    "reset full button"),
-        ('data-dev-action="clear-identity"', "clear identity button"),
-        ('id="ls-dev-results-modal"',       "results modal"),
-        ('id="ls-dev-toast"',               "toast element"),
-    ]
-    for marker, lbl in markers:
-        _check(f"dev panel markup has {lbl}", marker in html_dev,
-               f"missing marker: {marker!r}")
-
-    # guest.js dev-mode detection + wiring
-    js = client.get("/la-subasta/static/js/guest.js").get_data(as_text=True)
-    js_markers = [
-        ("la_subasta_dev_mode", "localStorage dev flag"),
-        ("URLSearchParams",     "URL param parse"),
-        ("get('dev')",          "reads ?dev param"),
-        ("function setupDevPanel(", "dev panel setup"),
-        ("/la-subasta/api/admin/", "admin endpoint base"),
-        ("'transition'",           "transition action wired"),
-    ]
-    for marker, lbl in js_markers:
-        _check(f"guest.js dev wiring: {lbl}", marker in js,
-               f"missing in guest.js: {marker!r}")
-
-    # A scratch is entered once, on the LQ admin page: the dev panel has no
-    # scratch or unscratch of its own any more.
-    _check("dev panel has no scratch button", 'data-dev-action="scratch"' not in html_dev)
-    _check("dev panel has no unscratch button", 'data-dev-action="unscratch"' not in html_dev)
-    _check("dev panel has no horse input", 'id="ls-dev-horse"' not in html_dev)
-    _check("guest.js has no scratch action", "'unscratch'" not in js and "'scratch'" not in js)
+    alice = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
+    for path in ("/la-subasta/", "/la-subasta/?dev=1"):
+        html = client.get(path).get_data(as_text=True)
+        _check(f"{path}: no dev panel, no dev controls, no dev toast",
+               "ls-dev" not in html and "data-dev-action" not in html and "DEV PANEL" not in html)
+    js = _static(client, "/la-subasta/static/js/guest.js")
+    css = _static(client, "/la-subasta/static/css/la-subasta-mobile.css")
+    _check("guest.js reads no ?dev and keeps no dev flag",
+           "get('dev')" not in js and "la_subasta_dev_mode" not in js and "setupDevPanel" not in js)
+    _check("guest.js calls no admin route but the settings it reads",
+           js.count("/api/admin/") == 1 and "settings: '/la-subasta/api/admin/settings'," in js
+           and all(f"'{a}'" not in js for a in ("start", "lock", "results", "transition")))
+    _check("the stylesheet has no dev panel styles", ".ls-dev" not in css)
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    _check("no reset or forced-state route under /la-subasta",
+           "/la-subasta/api/admin/reset" not in rules and "/la-subasta/api/admin/transition" not in rules)
+    for flag in (None, "1"):
+        if flag:
+            os.environ["DDM_LQ_DEV_ENDPOINTS"] = flag
+        try:
+            said = "on" if flag else "off"
+            codes = [client.post(f"/la-subasta/api/admin/reset?confirm=TESTING&scope={scope}").status_code
+                     for scope in ("full", "bids", "state")]
+            _check(f"POST /api/admin/reset (full, bids, state) is a 404, DDM_LQ_DEV_ENDPOINTS {said}",
+                   codes == [404, 404, 404], str(codes))
+            r = client.post("/la-subasta/api/admin/transition", json={"state": "OPEN"})
+            _check(f"POST /api/admin/transition is a 404, DDM_LQ_DEV_ENDPOINTS {said}", r.status_code == 404,
+                   f"{r.status_code}")
+        finally:
+            os.environ.pop("DDM_LQ_DEV_ENDPOINTS", None)
+    _check("...and nothing was wiped or moved: Alice is there, the auction not started",
+           [b["id"] for b in bidding.list_bidders()] == [alice["id"]] and get_state() == AuctionState.NOT_STARTED)
+    import importlib.util
+    from la_subasta import notifications
+    _check("la_subasta.reset and its auction_reset event are gone",
+           importlib.util.find_spec("la_subasta.reset") is None and not hasattr(notifications, "auction_reset"))
 
 
 def _static(client, path):
@@ -3213,7 +3223,7 @@ def test_admin_page():
 
 def test_guest_toast_has_its_own_element():
     """A horse scratched out from under an open bid dialog is told to the
-    guest in a toast of its own (#ls-toast), not in the dev panel's."""
+    guest in a toast of its own (#ls-toast)."""
     _reset()
     app = _make_app()
     client = app.test_client()
@@ -3222,29 +3232,11 @@ def test_guest_toast_has_its_own_element():
     css = _static(client, "/la-subasta/static/css/la-subasta-mobile.css")
     _check("guest.html has #ls-toast, hidden until used",
            '<div id="ls-toast" class="ls-toast" role="status" aria-live="polite" hidden></div>' in html)
-    _check("...and the dev panel keeps its own toast", 'id="ls-dev-toast"' in html)
     _check("the stylesheet styles .ls-toast, and hides it while hidden",
            ".ls-toast {" in css and ".ls-toast[hidden] { display: none; }" in css)
     body = js[js.index("function showNotice(msg) {"):]
     body = body[:body.index("\n    }\n")]
-    _check("showNotice writes to #ls-toast and not to the dev panel's toast",
-           "getElementById('ls-toast')" in body and "ls-dev-toast" not in body, f"got {body}")
-
-
-def test_dev_panel_lock_asks_before_locking_unsold_horses():
-    """The dev panel's Lock button follows the lock's 409: it names the horses
-    nobody bid on, asks, and only a yes sends the confirm."""
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    js = _static(client, "/la-subasta/static/js/guest.js")
-    lock = js[js.index("action === 'lock'"):]
-    lock = lock[:lock.index("action === 'results'")]
-    _check("the dev panel's lock reads the 409's unsold list",
-           "Array.isArray(r.data.unsold)" in lock)
-    _check("...asks with the numbers, and cancelling stops there",
-           "window.confirm(" in lock and "Lock cancelled" in lock)
-    _check("...and a yes locks again with confirm: true", "{ confirm: true }" in lock)
+    _check("showNotice writes to #ls-toast", "getElementById('ls-toast')" in body, f"got {body}")
 
 
 def test_own_scratch_route_gone():
@@ -3267,38 +3259,6 @@ def test_own_scratch_route_gone():
            f"tables: {sorted(tables)}")
     _check("bidding has no scratch functions",
            not any(hasattr(bidding, n) for n in ("scratch_horse", "unscratch_horse", "is_horse_scratched")))
-
-
-def test_admin_transition_endpoint():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-
-    # Force OPEN from NOT_STARTED
-    r = client.post("/la-subasta/api/admin/transition", json={"state": "OPEN"})
-    _check("transition->OPEN returns 200", r.status_code == 200,
-           f"body={r.get_json()}")
-    _check("transition->OPEN sets state OPEN",
-           r.get_json().get("state") == "OPEN")
-
-    # Force FINAL_HOUR (the dev panel's "Force FINAL_HOUR")
-    r = client.post("/la-subasta/api/admin/transition",
-                    json={"state": "FINAL_HOUR"})
-    _check("transition->FINAL_HOUR returns 200", r.status_code == 200)
-    _check("state is FINAL_HOUR", get_state().value == "FINAL_HOUR")
-
-    # force=True allows non-linear jumps (e.g. back to NOT_STARTED)
-    r = client.post("/la-subasta/api/admin/transition",
-                    json={"state": "NOT_STARTED"})
-    _check("transition->NOT_STARTED (forced backward) returns 200",
-           r.status_code == 200)
-    _check("state is NOT_STARTED", get_state().value == "NOT_STARTED")
-
-    # Invalid target rejected
-    r = client.post("/la-subasta/api/admin/transition", json={"state": "BOGUS"})
-    _check("invalid transition target rejected", r.status_code == 400)
-    r = client.post("/la-subasta/api/admin/transition", json={})
-    _check("missing transition target rejected", r.status_code == 400)
 
 
 def test_state_includes_bidder_and_bid_counts():
@@ -3667,298 +3627,6 @@ def test_onboarding_js_state_machine():
            "ls-help-btn" in js)
 
 
-# -----------------------------------------------------------------------------
-# Phase 1.6: admin reset endpoint (testing only)
-# -----------------------------------------------------------------------------
-
-def _populate_for_reset_test(client):
-    """Helper: register two bidders, place bids on 3 horses, scratch 1, lock+settle."""
-    transition(AuctionState.OPEN)
-    alice = client.post("/la-subasta/api/register",
-                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
-    bob = client.post("/la-subasta/api/register",
-                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
-
-    # Walk the bid ladder so multiple bid rows exist per horse
-    for horse_id, amount in [(1, 5), (2, 3), (3, 2)]:
-        for i in range(1, amount + 1):
-            actor = alice if i % 2 == 1 else bob
-            r = client.post("/la-subasta/api/bid",
-                            json={"bidder_id": actor["id"],
-                                  "horse_id": horse_id, "amount": i})
-            assert r.status_code == 200, f"setup bid failed: {r.get_json()}"
-
-    r = _lq_scratch(client, 7)  # on the LQ admin page; La Subasta's reset never touches it
-    assert r.status_code == 200, r.get_json()
-    # Lock + enter results so ownership + payouts rows exist
-    r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
-    assert r.status_code == 200, r.get_json()
-    r = client.post("/la-subasta/api/admin/results",
-                    json={"win": 1, "place": 2, "show": 3})
-    assert r.status_code == 200, r.get_json()
-    return alice, bob
-
-
-def _row_count(table):
-    from la_subasta.models import get_conn
-    return get_conn().execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
-
-
-def test_reset_missing_confirm():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    _populate_for_reset_test(client)
-
-    r = client.post("/la-subasta/api/admin/reset?scope=bids")
-    _check("POST without confirm returns 400", r.status_code == 400,
-           f"status={r.status_code} body={r.get_json()}")
-    body = r.get_json()
-    _check("missing-confirm error mentions TESTING",
-           "TESTING" in (body.get("error") or ""),
-           f"got {body}")
-
-    # And data should be untouched
-    _check("bids untouched when confirm missing", _row_count("bids") > 0)
-
-
-def test_reset_wrong_confirm():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    _populate_for_reset_test(client)
-
-    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=WRONG")
-    _check("POST with confirm=WRONG returns 400", r.status_code == 400)
-    # Case sensitivity — lowercase "testing" must also fail
-    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=testing")
-    _check("POST with confirm=testing (lowercase) returns 400",
-           r.status_code == 400)
-    _check("bids untouched when confirm wrong", _row_count("bids") > 0)
-
-
-def test_reset_invalid_scope():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    _populate_for_reset_test(client)
-
-    r = client.post("/la-subasta/api/admin/reset?scope=bogus&confirm=TESTING")
-    _check("invalid scope returns 400", r.status_code == 400)
-    body = r.get_json()
-    _check("invalid scope error names the allowed values",
-           all(s in (body.get("error") or "") for s in ("bids", "full", "state")),
-           f"got {body}")
-
-    # Missing scope param entirely
-    r = client.post("/la-subasta/api/admin/reset?confirm=TESTING")
-    _check("missing scope returns 400", r.status_code == 400)
-    _check("data still intact after invalid scope", _row_count("bids") > 0)
-
-
-def test_reset_bids_wipes_state_data_keeps_bidders():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    alice, bob = _populate_for_reset_test(client)
-
-    bids_before = _row_count("bids")
-    own_before = _row_count("ownership")
-    pay_before = _row_count("payouts")
-    bidders_before = _row_count("bidders")
-    _check("setup placed >0 bids", bids_before > 0, f"got {bids_before}")
-    _check("setup created ownership rows", own_before > 0)
-    _check("setup created payout rows", pay_before > 0)
-    _check("setup created 2 bidders",
-           bidders_before >= 2, f"got {bidders_before}")
-
-    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=TESTING")
-    _check("scope=bids returns 200", r.status_code == 200, f"body={r.get_json()}")
-    body = r.get_json()
-    _check("response.success = True", body.get("success") is True)
-    _check("response.scope = 'bids'", body.get("scope") == "bids")
-    _check("response.auction_state = NOT_STARTED",
-           body.get("auction_state") == "NOT_STARTED")
-    _check("response.deleted.bids matches table count",
-           body["deleted"]["bids"] == bids_before,
-           f"got {body['deleted']['bids']} expected {bids_before}")
-    _check("response.deleted.ownership matches",
-           body["deleted"]["ownership"] == own_before)
-    _check("response.deleted.payouts matches",
-           body["deleted"]["payouts"] == pay_before)
-    _check("response.deleted.bidders = 0 for scope=bids",
-           body["deleted"]["bidders"] == 0)
-
-    # Verify SQL state
-    _check("bids table empty after scope=bids", _row_count("bids") == 0)
-    _check("ownership empty after scope=bids", _row_count("ownership") == 0)
-    _check("payouts empty after scope=bids", _row_count("payouts") == 0)
-    _check("bidders preserved after scope=bids",
-           _row_count("bidders") == bidders_before)
-
-    # State should be NOT_STARTED with total_pot=0
-    state_row = get_state_row()
-    _check("auction_state.state = NOT_STARTED after scope=bids",
-           state_row["state"] == "NOT_STARTED")
-    _check("auction_state.total_pot = 0 after scope=bids",
-           state_row["total_pot"] == 0)
-
-    # The scratch is La Quiniela's: a La Subasta reset leaves it alone
-    _check("La Quiniela's scratch of 7 survives scope=bids",
-           7 not in ls_field.current())
-
-
-def test_reset_full_removes_everything():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    alice, bob = _populate_for_reset_test(client)
-
-    bidders_before = len(bidding.list_bidders())
-    _check("bidders >= 2 before reset", bidders_before >= 2,
-           f"got {bidders_before}")
-
-    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
-    _check("scope=full returns 200", r.status_code == 200, f"body={r.get_json()}")
-    body = r.get_json()
-    _check("scope=full response.scope = 'full'", body.get("scope") == "full")
-    _check("scope=full response.deleted.bidders == the bidder count",
-           body["deleted"]["bidders"] == bidders_before,
-           f"got {body['deleted']['bidders']} expected {bidders_before}")
-
-    # No House row to keep: the table is simply empty
-    _check("no bidders left after scope=full",
-           len(bidding.list_bidders()) == 0 and _row_count("bidders") == 0)
-
-    # Bids/ownership/payouts also gone (reset_full calls reset_bids first)
-    _check("bids empty after scope=full", _row_count("bids") == 0)
-    _check("ownership empty after scope=full", _row_count("ownership") == 0)
-    _check("payouts empty after scope=full", _row_count("payouts") == 0)
-
-
-def test_reset_state_only_changes_auction_state():
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-    alice, bob = _populate_for_reset_test(client)
-
-    bids_before = _row_count("bids")
-    own_before = _row_count("ownership")
-    pay_before = _row_count("payouts")
-    bidders_before = _row_count("bidders")
-    state_before = get_state().value
-    _check("auction not in NOT_STARTED before reset_state",
-           state_before != "NOT_STARTED", f"got {state_before}")
-
-    r = client.post("/la-subasta/api/admin/reset?scope=state&confirm=TESTING")
-    _check("scope=state returns 200", r.status_code == 200, f"body={r.get_json()}")
-    body = r.get_json()
-    _check("scope=state response.scope = 'state'", body.get("scope") == "state")
-    _check("scope=state response.auction_state = NOT_STARTED",
-           body.get("auction_state") == "NOT_STARTED")
-    _check("scope=state reports 0 deletions in every category",
-           all(body["deleted"][k] == 0
-               for k in ("bids", "ownership", "payouts", "bidders")),
-           f"got {body['deleted']}")
-
-    # Nothing else changed
-    _check("bids unchanged after scope=state",
-           _row_count("bids") == bids_before)
-    _check("ownership unchanged after scope=state",
-           _row_count("ownership") == own_before)
-    _check("payouts unchanged after scope=state",
-           _row_count("payouts") == pay_before)
-    _check("bidders unchanged after scope=state",
-           _row_count("bidders") == bidders_before)
-    _check("auction state IS NOT_STARTED after scope=state",
-           get_state().value == "NOT_STARTED")
-
-
-def test_reset_preserves_settings_and_audit():
-    """Reset should leave admin tunables + audit log alone."""
-    _reset()
-    app = _make_app()
-    client = app.test_client()
-
-    # Set an override and trigger an audit entry
-    from la_subasta import settings as _settings
-    _settings.set_setting("HOUSE_FUND_LABEL", "ResetTest Fund")
-    audit_before = len(_settings.get_audit_log(limit=500))
-    _check("override + audit entry present pre-reset",
-           _settings.get_setting("HOUSE_FUND_LABEL") == "ResetTest Fund"
-           and audit_before >= 1, f"audit_before={audit_before}")
-
-    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
-    _check("scope=full returns 200", r.status_code == 200)
-
-    _check("HOUSE_FUND_LABEL override preserved after scope=full reset",
-           _settings.get_setting("HOUSE_FUND_LABEL") == "ResetTest Fund")
-    audit_after = len(_settings.get_audit_log(limit=500))
-    _check("audit log preserved (>= entries before reset)",
-           audit_after >= audit_before, f"before={audit_before} after={audit_after}")
-
-
-def test_reset_broadcasts_auction_reset_event():
-    """SocketIO 'auction_reset' fires with {scope, timestamp} payload."""
-    _reset()
-
-    events = []
-
-    class _StubSocketIO:
-        def emit(self, event, payload, room=None):
-            events.append((event, payload, room))
-
-    from la_subasta import notifications as nots
-    app = _make_app()
-    nots.init_notifications(_StubSocketIO())
-    client = app.test_client()
-    _populate_for_reset_test(client)
-    events.clear()
-
-    r = client.post("/la-subasta/api/admin/reset?scope=bids&confirm=TESTING")
-    _check("scope=bids POST returns 200", r.status_code == 200)
-
-    reset_events = [e for e in events if e[0] == "auction_reset"]
-    _check("auction_reset event emitted exactly once for scope=bids",
-           len(reset_events) == 1, f"got {len(reset_events)}")
-    payload = reset_events[0][1]
-    _check("auction_reset payload includes scope='bids'",
-           payload.get("scope") == "bids", f"got {payload}")
-    _check("auction_reset payload includes numeric timestamp",
-           isinstance(payload.get("timestamp"), (int, float))
-           and payload["timestamp"] > 0,
-           f"got {payload}")
-
-    # Verify scope=full and scope=state also fire with matching scope strings
-    events.clear()
-    r = client.post("/la-subasta/api/admin/reset?scope=full&confirm=TESTING")
-    assert r.status_code == 200, r.get_json()
-    reset_events = [e for e in events if e[0] == "auction_reset"]
-    _check("auction_reset fires for scope=full with matching scope",
-           len(reset_events) == 1 and reset_events[0][1]["scope"] == "full",
-           f"got {reset_events}")
-
-    events.clear()
-    r = client.post("/la-subasta/api/admin/reset?scope=state&confirm=TESTING")
-    assert r.status_code == 200, r.get_json()
-    reset_events = [e for e in events if e[0] == "auction_reset"]
-    _check("auction_reset fires for scope=state with matching scope",
-           len(reset_events) == 1 and reset_events[0][1]["scope"] == "state",
-           f"got {reset_events}")
-
-    nots.init_notifications(None)
-
-
-def test_reset_route_registered():
-    """The endpoint must be addressable under the la-subasta prefix."""
-    _reset()
-    app = _make_app()
-    rules = {rule.rule for rule in app.url_map.iter_rules()}
-    _check("/la-subasta/api/admin/reset route registered",
-           "/la-subasta/api/admin/reset" in rules,
-           f"sample rules: {sorted(r for r in rules if 'admin' in r)}")
-
-
 def test_existing_dashboard_still_loads():
     """Smoke-check the full pi5 app: main.py must import without error and
     the existing / route (dashboard) must still register."""
@@ -4071,17 +3739,13 @@ def main():
          test_guest_js_no_dollar_currency)
     _run("guest UI — 2027 pesos button format + footer year",
          test_guest_2027_pesos_button_format)
-    _run("dev panel — markup present + hidden-by-default + JS gating",
-         test_dev_panel_markup_and_gating)
+    _run("no test tools — no dev panel on the guest page; no reset or forced-state route",
+         test_no_test_tools_on_guest_pages)
     _run("admin page — controls, the lock's warning, bidders, the payout ledger", test_admin_page)
     _run("guest UI — the toast for a scratched horse is its own element", test_guest_toast_has_its_own_element)
-    _run("dev panel — Lock asks before locking unsold horses",
-         test_dev_panel_lock_asks_before_locking_unsold_horses)
-    _run("dev panel — La Subasta's own scratch route is gone",
+    _run("scratch — La Subasta's own scratch route is gone",
          test_own_scratch_route_gone)
-    _run("dev panel — /api/admin/transition endpoint",
-         test_admin_transition_endpoint)
-    _run("dev panel — /api/state includes num_bidders + num_bids",
+    _run("state — /api/state includes num_bidders + num_bids",
          test_state_includes_bidder_and_bid_counts)
     _run("guest UI — auction_state_changed broadcast", test_auction_state_changed_broadcast)
     _run("guest UI — JS listens for auction_state_changed", test_guest_js_listens_for_state_changed)
@@ -4092,22 +3756,6 @@ def main():
     _run("onboarding — splash + how-it-works + help markup", test_onboarding_markup_present)
     _run("onboarding — 2027 pesos copy", test_onboarding_2027_pesos_copy)
     _run("onboarding — JS state machine wiring", test_onboarding_js_state_machine)
-
-    # Phase 1.6 — admin reset (testing only)
-    _run("reset — missing confirm rejected", test_reset_missing_confirm)
-    _run("reset — wrong confirm rejected", test_reset_wrong_confirm)
-    _run("reset — invalid scope rejected", test_reset_invalid_scope)
-    _run("reset — scope=bids wipes state data, keeps bidders",
-         test_reset_bids_wipes_state_data_keeps_bidders)
-    _run("reset — scope=full removes everything (there is no House row to keep)",
-         test_reset_full_removes_everything)
-    _run("reset — scope=state only flips auction_state",
-         test_reset_state_only_changes_auction_state)
-    _run("reset — preserves settings overrides + audit log",
-         test_reset_preserves_settings_and_audit)
-    _run("reset — auction_reset SocketIO event payload",
-         test_reset_broadcasts_auction_reset_event)
-    _run("reset — endpoint route registered", test_reset_route_registered)
 
     _run("existing dashboard still loads", test_existing_dashboard_still_loads)
 

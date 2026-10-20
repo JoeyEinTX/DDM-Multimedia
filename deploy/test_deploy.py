@@ -707,6 +707,14 @@ def test_env_check():
         _check(f"a full pi5/.env: ok {what}", what in out.get("ok", []), raw)
     _check("a full pi5/.env: the port from DDM_FLASK_PORT", out.get("port") == ["5050"], raw)
     _check("the secrets are never shown", key not in raw and odds not in raw)
+    _check("no DDM_LQ_DEV_ENDPOINTS line: nothing said about it", "DDM_LQ_DEV_ENDPOINTS" not in raw, raw)
+    for value in ("1", "0"):
+        (root / "pi5/.env").write_text("".join(f"{k}={v}\n" for k, v in full.items())
+                                       + f"DDM_LQ_DEV_ENDPOINTS={value}\n", encoding="utf-8")
+        out, raw = env_checks(root)
+        _check(f"DDM_LQ_DEV_ENDPOINTS={value} left in pi5/.env: one WARN, it does nothing, delete the line",
+               out.get("warn") == ["DDM_LQ_DEV_ENDPOINTS is set: it does nothing, pi5 has no dev or test routes; "
+                                   "delete its line from pi5/.env"], raw)
 
     for name, warning in (("DDM_LQ_SERIAL_PORT", "DDM_LQ_SERIAL_PORT is empty"), ("DDM_ESP32_IP", "DDM_ESP32_IP is empty"),
                           ("DDM_WEATHER_API_KEY", "DDM_WEATHER_API_KEY is empty"),

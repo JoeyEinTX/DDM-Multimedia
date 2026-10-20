@@ -610,6 +610,8 @@ Admin toggles "Testing Mode" — system spawns **12 fake bidders** with random n
 
 Admin button **"Reset Sandbox"** wipes all fake bidders/bids without touching real data. Real auction data lives in separate tables and is untouched.
 
+**No test tools on guest pages.** [BUILT 2026-10-20, gap review M4] Nothing like the sandbox exists today, and no test tool is left within a guest's reach: the guest page's `?dev=1` panel is gone (nothing in a phone's storage brings it back), and so are the routes only a test needed, which it drove with no auth: `/api/admin/reset` (all three scopes) and `/api/admin/transition` (any state, forced). Between tests and before the party, start fresh with `pi5/tools/wipe.py` (backup first; `RACE_NIGHT.md`, "Before the party: start fresh"). There is no dev flag: `DDM_LQ_DEV_ENDPOINTS` does nothing since `59e3b14`, and the installer WARNs about a line left for it in `pi5/.env`.
+
 ### Pre-Event Dry Run
 
 Recommend running a full sandbox simulation 1-2 days before the party to confirm everything works end-to-end.

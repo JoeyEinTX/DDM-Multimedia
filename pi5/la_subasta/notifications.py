@@ -114,7 +114,3 @@ def settings_changed(key: str, old_value: Any, new_value: Any,
         "changed_at": changed_at,
     })
 
-
-def auction_reset(scope: str, timestamp: float) -> None:
-    """Fired after an admin testing-mode reset. Clients refresh state on receipt."""
-    emit("auction_reset", {"scope": scope, "timestamp": timestamp})

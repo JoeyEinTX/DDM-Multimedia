@@ -88,7 +88,8 @@ A variable set in the environment wins over `pi5/.env`.
 | `LQ_REOPEN_MIN_GAP_S` | `30` | Never reopen more often than this |
 
 `LQ_DEV_ENDPOINTS` is gone with the dev routes it gated (below); a value left
-in `pi5/config.py` or `pi5/.env` is ignored.
+in `pi5/config.py` or `pi5/.env` is ignored, and the installer WARNs about a
+`DDM_LQ_DEV_ENDPOINTS` line in `pi5/.env` (delete it).
 
 ## Database
 

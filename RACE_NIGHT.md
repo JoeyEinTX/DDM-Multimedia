@@ -128,7 +128,9 @@ cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
       No cup on a USB port. Boot all twenty at once and watch for any that blink or
       reboot — that's a sag, not a bug.
 - [ ] Gateway on DevPi's USB; `pi5/.env` has `DDM_LQ_SERIAL_PORT` set to it. No other
-      flag: the night needs none and there are no dev routes.
+      flag: the night needs none and there are no dev or test routes, La Subasta's included.
+      No `DDM_LQ_DEV_ENDPOINTS` line in `pi5/.env` on the night (the installer WARNs about one:
+      it does nothing, delete it).
 - [ ] On the bench with every cup powered: `ADMIN` → Race → Horses shows every horse 1–20
       `● online` and the line above the list says `20 cups online · 0 with no horse`. A
       `○ no cup` row: no cup says that number (walk the mantle for the `NO HORSE` screen

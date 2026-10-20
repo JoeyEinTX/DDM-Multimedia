@@ -413,7 +413,8 @@ There is no roster line. A v1 `roster` line is ignored.
   `pi5/la_subasta/config.py` (2027); the guest page checks the identity a phone kept
   (`/la-subasta/api/check-identity`) at boot, and on a bid answered 404, and sends a phone
   the auction doesn't know back to the join screen to join again. A phone that keeps landing
-  there: look for its name in `/la-subasta/api/bidders`, this year's guests.
+  there: look for its name in `/la-subasta/api/bidders`, this year's guests. No test tools on
+  guest pages: no `?dev=1` panel, no reset or forced-state route; `pi5/tools/wipe.py` starts fresh.
 - Guest pages are on pi5 at `/la-subasta`, port 5000.
 
 ---

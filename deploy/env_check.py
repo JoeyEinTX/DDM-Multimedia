@@ -76,6 +76,12 @@ def check(repo):
     else:
         say("warn", "DDM_ANTHROPIC_API_KEY is empty: the track's odds poller can't run (optional; set it in pi5/.env)")
 
+    # The dev routes it switched on went in 59e3b14, La Subasta's test tools with gap review M4: a line
+    # left for it reads as if they were on. (pi5/config.py put pi5/.env into the environment.)
+    if os.environ.get("DDM_LQ_DEV_ENDPOINTS") is not None:
+        say("warn", "DDM_LQ_DEV_ENDPOINTS is set: it does nothing, pi5 has no dev or test routes; "
+                    "delete its line from pi5/.env")
+
     # pi5/config.py is tracked: a local edit to it is what made every pull a stash dance.
     try:
         diff = subprocess.run(["git", "-C", str(repo), "diff", "--quiet", "--", "pi5/config.py"],
