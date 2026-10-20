@@ -432,7 +432,7 @@ def test_dry_run_changes_nothing():
         "Backup: 9 files",
         "The cups keep their own count",
         "unplug it from DevPi",
-        "delete the website data",
+        "Phones that joined La Subasta before rejoin on their own",
     ]
     for line in wanted:
         _check(f"the list says: {line}", line in out)

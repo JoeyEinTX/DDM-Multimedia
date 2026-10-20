@@ -409,6 +409,11 @@ There is no roster line. A v1 `roster` line is ignored.
 - **A paying horse with no owner is skipped.** [DECIDED 2026-10-01, BUILT] The next
   finisher pays, the same rule La Quiniela uses for an empty cup. The admin payout ledger
   flags the slot and the admin enters the horse that pays it. No automatic House award.
+- **A guest belongs to one event year.** [BUILT 2026-10-20] The year is `EVENT_YEAR` in
+  `pi5/la_subasta/config.py` (2027); the guest page checks the identity a phone kept
+  (`/la-subasta/api/check-identity`) at boot, and on a bid answered 404, and sends a phone
+  the auction doesn't know back to the join screen to join again. A phone that keeps landing
+  there: look for its name in `/la-subasta/api/bidders`, this year's guests.
 - Guest pages are on pi5 at `/la-subasta`, port 5000.
 
 ---

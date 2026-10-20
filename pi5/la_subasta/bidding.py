@@ -28,6 +28,14 @@ class BidError(Exception):
         self.reason = reason
 
 
+class UnknownBidder(BidError):
+    """No bidder with that id this event year: a phone from another year, or
+    one whose guest was wiped. The route answers 404, and the guest page sends
+    the phone back to the join screen."""
+    def __init__(self):
+        super().__init__("Unknown bidder")
+
+
 # -----------------------------------------------------------------------------
 # Bidders
 # -----------------------------------------------------------------------------
@@ -36,7 +44,8 @@ def register_bidder(name: str, emoji: str,
                     event_year: int = EVENT_YEAR) -> dict:
     """
     Create a new bidder. Enforces:
-      - name+emoji identity is globally unique (per event_year)
+      - name+emoji identity is unique within the event year (free again the
+        next: UNIQUE(identity, event_year), models.py)
       - emoji is from the approved palette
       - name is non-empty
 
@@ -63,12 +72,15 @@ def register_bidder(name: str, emoji: str,
     except sqlite3.IntegrityError:
         raise BidError("That name + emoji combo is taken — pick another emoji")
 
-    return get_bidder(bidder_id)
+    return get_bidder(bidder_id, event_year)
 
 
-def get_bidder(bidder_id: int) -> Optional[dict]:
+def get_bidder(bidder_id: int, event_year: int = EVENT_YEAR) -> Optional[dict]:
+    """The bidder with that id, if it is this event year's. A bidder from
+    another year is unknown: it can't bid, be marked paid or exempt, or show
+    in the admin list, and so can never own a horse nobody charged it for."""
     row = get_conn().execute(
-        "SELECT * FROM bidders WHERE id = ?", (bidder_id,),
+        "SELECT * FROM bidders WHERE id = ? AND event_year = ?", (bidder_id, event_year),
     ).fetchone()
     return dict(row) if row else None
 
@@ -91,6 +103,21 @@ def identity_available(name: str, emoji: str,
     return get_bidder_by_identity(f"{name} {emoji}", event_year) is None
 
 
+def identity_known(bidder_id, name: str, emoji: str,
+                   event_year: int = EVENT_YEAR) -> bool:
+    """Is the identity a phone keeps (its bidder id, name and emoji) one of this
+    event year's bidders? The guest page asks at boot: a phone from another
+    year, or whose guest was wiped, is not, and joins again. The name and
+    emoji must match too, so an id that came to mean someone else (a database
+    started anew, its counter with it) is not taken for them."""
+    try:
+        bidder = get_bidder(int(bidder_id), event_year)
+    except (TypeError, ValueError):
+        return False
+    return (bidder is not None
+            and bidder["identity"] == f"{(name or '').strip()} {(emoji or '').strip()}")
+
+
 def list_bidders(event_year: int = EVENT_YEAR) -> List[dict]:
     """All bidders registered for the event year, oldest first. Each row
     carries cap_exempt (the admin's exemption from the max-horses cap)."""
@@ -106,21 +133,22 @@ def count_bidders(event_year: int = EVENT_YEAR) -> int:
     return len(list_bidders(event_year))
 
 
-def set_cap_exempt(bidder_id: int, exempt: bool) -> dict:
+def set_cap_exempt(bidder_id: int, exempt: bool,
+                   event_year: int = EVENT_YEAR) -> dict:
     """The admin marks a bidder free of the max-horses cap, or takes the mark
     off: the host, say, who buys the horses nobody else bid on so that none
     reaches the lock unsold. The cap still applies to everyone else, and a
     bidder whose mark comes off keeps what they lead but takes no new horse
-    beyond the cap. Returns the bidder row; BidError if there is no such
-    bidder."""
+    beyond the cap. Returns the bidder row; UnknownBidder if there is no such
+    bidder this event year."""
     with write_txn() as conn:
         cur = conn.execute(
-            "UPDATE bidders SET cap_exempt = ? WHERE id = ?",
-            (1 if exempt else 0, bidder_id),
+            "UPDATE bidders SET cap_exempt = ? WHERE id = ? AND event_year = ?",
+            (1 if exempt else 0, bidder_id, event_year),
         )
         if not cur.rowcount:
-            raise BidError("Unknown bidder")
-    return get_bidder(bidder_id)
+            raise UnknownBidder()
+    return get_bidder(bidder_id, event_year)
 
 
 def count_bids(event_year: int = EVENT_YEAR,
@@ -214,8 +242,15 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
     Validate and insert a bid. All validation happens inside the write txn
     so a concurrent bid can't slip past the max-raise / max-horses checks.
 
-    Raises BidError with a user-facing reason on any rejection.
+    Raises BidError with a user-facing reason on any rejection, UnknownBidder
+    (checked first) when the bidder is not this event year's.
     """
+    # Who is bidding comes first: a phone this year's auction doesn't know is
+    # told so whatever else is wrong (after a wipe the auction is not open
+    # yet either), and the guest page sends it back to the join screen.
+    if get_bidder(bidder_id, event_year) is None:
+        raise UnknownBidder()
+
     # ---- Cheap pre-checks (outside txn is fine) ----------------------------
     # Read mutable rules at bid time so runtime override changes take effect
     # immediately on the next bid (no server restart required).
@@ -246,9 +281,6 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
 
     if not is_biddable(event_year):
         raise BidError("Auction is not accepting bids right now")
-
-    if get_bidder(bidder_id) is None:
-        raise BidError("Unknown bidder")
 
     # ---- Serialized validation + insert ------------------------------------
     # The field is read again under the write lock, in write_txn's prepare

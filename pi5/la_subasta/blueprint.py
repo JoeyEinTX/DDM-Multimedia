@@ -10,7 +10,7 @@ import time
 from flask import Blueprint, jsonify, render_template, request
 
 from la_subasta import bidding, field, notifications, payouts, reset, scratches, settings
-from la_subasta.bidding import BidError
+from la_subasta.bidding import BidError, UnknownBidder
 from la_subasta.config import EMOJI_PALETTE, EVENT_YEAR
 from la_subasta.models import init_db
 from la_subasta.payouts import PayoutError
@@ -105,12 +105,14 @@ def _bid_err(exc: BidError, status: int = 400):
 @la_subasta_bp.route("/", methods=["GET"])
 def guest_view():
     """Render the mobile-first guest page. Identity lives in localStorage —
-    the first-visit modal collects it; return visits skip straight to the
-    horse list."""
+    the first-visit modal collects it; a return visit asks /api/check-identity
+    first and goes straight to the horse list when this year's auction knows
+    it, else back to the join screen."""
     return render_template(
         "guest.html",
         emoji_palette=EMOJI_PALETTE,
         num_horses=len(field.current()),
+        event_year=EVENT_YEAR,
     )
 
 
@@ -204,11 +206,17 @@ def api_register():
 
 @la_subasta_bp.route("/api/check-identity", methods=["POST"])
 def api_check_identity():
+    """Body JSON: {"name", "emoji"}, and the phone's "bidder_id" when it has
+    one. available: no bidder this event year has that name and emoji (what
+    register would accept). known, when a bidder_id is sent: it is this
+    year's bidder with that name and emoji. The guest page asks at boot; a
+    phone that is not known joins again."""
     data = request.get_json(silent=True) or {}
-    available = bidding.identity_available(
-        data.get("name", ""), data.get("emoji", ""),
-    )
-    return jsonify({"success": True, "available": available})
+    name, emoji = data.get("name", ""), data.get("emoji", "")
+    out = {"success": True, "available": bidding.identity_available(name, emoji)}
+    if "bidder_id" in data:
+        out["known"] = bidding.identity_known(data["bidder_id"], name, emoji)
+    return jsonify(out)
 
 
 @la_subasta_bp.route("/api/bidders", methods=["GET"])
@@ -224,6 +232,8 @@ def api_bidders():
 
 @la_subasta_bp.route("/api/bidders/<int:bidder_id>/portfolio", methods=["GET"])
 def api_bidder_portfolio(bidder_id: int):
+    if bidding.get_bidder(bidder_id) is None:
+        return _bid_err(UnknownBidder(), status=404)
     portfolio = bidding.bidder_portfolio(bidder_id)
     return jsonify({"success": True, "portfolio": portfolio})
 
@@ -243,6 +253,10 @@ def api_bid():
 
     try:
         placed = bidding.place_bid(bidder_id, horse_id, data.get("amount"))
+    except UnknownBidder as exc:
+        # Not this year's bidder: 404, which sends the guest page back to
+        # the join screen (guest.js).
+        return _bid_err(exc, status=404)
     except BidError as exc:
         return _bid_err(exc)
 

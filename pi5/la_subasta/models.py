@@ -45,22 +45,29 @@ CREATE TABLE IF NOT EXISTS payouts (
 );
 """
 
-SCHEMA_SQL = f"""
--- cap_exempt: the admin marked this bidder (the host, who picks up the horses
--- nobody bid on) as free of the max-horses cap (bidding.set_cap_exempt).
-CREATE TABLE IF NOT EXISTS bidders (
+# bidders: identity (name + emoji) is unique within an event year, so "Dave K
+# 🌮" can join again the next year. cap_exempt: the admin marked this bidder
+# (the host, who picks up the horses nobody bid on) as free of the max-horses
+# cap (bidding.set_cap_exempt). The column list, shared by SCHEMA_SQL and the
+# rebuild of an older table whose identity was unique across every year
+# (_migrate).
+_BIDDERS_COLUMNS_SQL = """(
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL,
     emoji        TEXT    NOT NULL,
-    identity     TEXT    UNIQUE NOT NULL,
+    identity     TEXT    NOT NULL,
     push_endpoint TEXT,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     paid         INTEGER NOT NULL DEFAULT 0,
     paid_at      TEXT,
     paid_amount  REAL,
     event_year   INTEGER NOT NULL,
-    cap_exempt   INTEGER NOT NULL DEFAULT 0
-);
+    cap_exempt   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(identity, event_year)
+)"""
+
+SCHEMA_SQL = f"""
+CREATE TABLE IF NOT EXISTS bidders {_BIDDERS_COLUMNS_SQL};
 
 CREATE INDEX IF NOT EXISTS idx_bidders_event_year ON bidders(event_year);
 
@@ -224,6 +231,11 @@ _PAYOUT_COLUMNS = (
     "id", "bidder_id", "horse_id", "finish", "amount", "paid_out", "created_at", "event_year",
 )
 
+_BIDDER_ALL_COLUMNS = (
+    "id", "name", "emoji", "identity", "push_endpoint", "created_at", "paid", "paid_at",
+    "paid_amount", "event_year", "cap_exempt",
+)
+
 
 def _add_missing_columns(conn: sqlite3.Connection, table: str, columns) -> None:
     """ALTER TABLE ADD COLUMN for each column a table from an older version
@@ -237,6 +249,48 @@ def _add_missing_columns(conn: sqlite3.Connection, table: str, columns) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def _identity_unique_across_years(conn: sqlite3.Connection) -> bool:
+    """bidders as it was before names were unique per year: a unique index on
+    identity alone (the column's own UNIQUE)."""
+    for index in conn.execute("PRAGMA index_list(bidders)").fetchall():
+        columns = [r["name"] for r in conn.execute(f'PRAGMA index_info("{index["name"]}")').fetchall()]
+        if index["unique"] and columns == ["identity"]:
+            return True
+    return False
+
+
+def _rebuild_bidders(conn: sqlite3.Connection) -> None:
+    """bidders again with UNIQUE(identity, event_year), every row kept with its
+    id. SQLite can't drop a column's UNIQUE, so the table is made anew and put
+    in the old one's place, its own way (sqlite.org, ALTER TABLE: other schema
+    changes): bids, ownership and payouts refer to bidders by name, so with
+    foreign keys off the new table is created, filled, the old one dropped and
+    the new one renamed, in one transaction. Foreign keys are switched outside
+    it (inside, the pragma does nothing) and back on whatever happens. The id
+    counter is carried over: after a wipe it is above every id left, and no
+    new guest may be given a number a phone from before still holds. The
+    index on event_year goes with the old table; SCHEMA_SQL makes it again."""
+    cols = ", ".join(_BIDDER_ALL_COLUMNS)
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    try:
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            counter = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'bidders'").fetchone()
+            conn.execute(f"CREATE TABLE bidders_new {_BIDDERS_COLUMNS_SQL}")
+            conn.execute(f"INSERT INTO bidders_new ({cols}) SELECT {cols} FROM bidders")
+            conn.execute("DROP TABLE bidders")
+            conn.execute("ALTER TABLE bidders_new RENAME TO bidders")
+            if counter is not None:
+                conn.execute("DELETE FROM sqlite_sequence WHERE name = 'bidders'")
+                conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('bidders', ?)", (counter["seq"],))
+            conn.execute("COMMIT;")
+        except Exception:
+            conn.execute("ROLLBACK;")
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a database from an older version up to this schema, before the
     schema itself is applied. Idempotent; nothing is dropped that held data.
@@ -245,10 +299,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     - bidders gains cap_exempt (the admin's exemption from the max-horses cap);
     - payouts is rebuilt when its bidder_id is still NOT NULL (the House was
       its fallback payee) or it has no pays_horse_id: the rows are copied, and
-      the table can then hold a slot nobody owns.
+      the table can then hold a slot nobody owns;
+    - bidders is rebuilt when its identity is unique across every year: the
+      rows are copied with their ids (the bids, owners and payouts pointing
+      at them stay right), and a name is then unique within its year.
     """
     _add_missing_columns(conn, "ownership", _OWNERSHIP_VOID_COLUMNS)
     _add_missing_columns(conn, "bidders", _BIDDER_COLUMNS)
+    if _identity_unique_across_years(conn):
+        _rebuild_bidders(conn)
 
     info = {r["name"]: r for r in conn.execute("PRAGMA table_info(payouts)").fetchall()}
     if not info or (not info["bidder_id"]["notnull"] and "pays_horse_id" in info):

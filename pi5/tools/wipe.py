@@ -118,9 +118,8 @@ What this can't reach (do it before betting opens):
     every cup shows its post, 1 to 20.
   - The gateway keeps the last race state and the cups it heard until it loses power:
     unplug it from DevPi and plug it back in before you start pi5 again.
-  - A phone that joined La Subasta before still remembers its old guest, and its bids
-    are refused: on that phone delete the website data for joeydevpi.local, then join
-    again.
+  - Phones that joined La Subasta before rejoin on their own: the page sends them back
+    to its join screen ("Welcome back. Join again ..."). Nothing to do on them.
   - The TV shows the last board until pi5 is back (about 10 s); restart the splash to
     clear it at once."""
 

@@ -180,8 +180,8 @@ python3 pi5/tools/wipe.py
     says 22. Walk the mantle and set any cup that isn't its post (hold → `HORSE` → `SET`).
   - The gateway keeps the old race state and its list of cups until it loses power: unplug
     it from DevPi and plug it back in before you start pi5 again.
-  - A phone that joined La Subasta before still remembers its old guest, and its bids are
-    refused: delete that phone's website data for joeydevpi.local, then join again.
+  - Phones that joined La Subasta before rejoin on their own: the page sends them back to
+    its join screen ("Welcome back. Join again for this year's auction."). Nothing to do on them.
 
 ## 1. Derby week — the field
 

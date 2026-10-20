@@ -51,9 +51,9 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 
 1. Guest scans QR code on their phone, lands on guest view
 2. **First-visit identity:** enters first name + last initial ("Dave K"), picks a festive emoji from a themed grid (🌮🐴🌶️🎺💃🎲🍹🌵🎸⭐)
-3. Name+emoji combo must be globally unique (duplicate = "pick another emoji")
+3. Name+emoji combo must be unique within the event year (duplicate = "pick another emoji"); free again the next year
 4. Optional: tap "Enable alerts" for browser push notifications on outbid events
-5. Stored in browser `localStorage` — return visits auto-load
+5. Stored in browser `localStorage` — return visits go straight in when this year's auction knows the identity, else back to the join screen (see **Identity System**)
 6. Guest browses the field, bids on horses they want (min $1, max $5 raise, max 3 horses owned)
 7. When outbid, gets push notification (if opted in) + in-app banner if app open
 8. Spectator TV shows rotating leaderboard, hot horses, biggest spenders, recent bid activity
@@ -144,7 +144,7 @@ bidders (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,           -- "Dave K"
   emoji TEXT NOT NULL,          -- "🌮"
-  identity TEXT UNIQUE NOT NULL,-- "Dave K 🌮" (name + emoji)
+  identity TEXT NOT NULL,       -- "Dave K 🌮" (name + emoji), UNIQUE(identity, event_year)
   push_endpoint TEXT,            -- browser push subscription JSON (optional)
   created_at TIMESTAMP,
   paid BOOLEAN DEFAULT FALSE,    -- admin-marked
@@ -206,8 +206,9 @@ auction_state (
 - **Name format:** First name + last initial ("Dave K", "Sarah M")
 - **Emoji palette (themed, 16 options):**
   🌮 🐴 🌶️ 🎺 💃 🎲 🍹 🌵 🎸 ⭐ 🎩 🍀 🏇 🌶️ 🥭 🪅
-- **Uniqueness enforcement:** "Dave K 🌮" is a unique ID. If taken, user prompted to pick different emoji.
-- **Persistence:** Stored in browser `localStorage`. Return visits auto-load without re-entry.
+- **Uniqueness enforcement:** "Dave K 🌮" is a unique ID within an event year (`UNIQUE(identity, event_year)`). If taken, user prompted to pick different emoji. The next year the same name and emoji are free again.
+- **Identity belongs to one event year.** The year is `EVENT_YEAR` in `pi5/la_subasta/config.py` (2027), changed by a commit once a year, never at runtime. Every lookup reads only that year's rows: a bidder id from another year is unknown everywhere (it can't bid, isn't listed, paid, exempted or given a portfolio, so it never owns a horse nobody charged it for).
+- **Persistence:** Stored in browser `localStorage`. On a return visit the page asks `/api/check-identity` with the kept id, name and emoji first: known this year, straight in without re-entry; not known (a phone from another year, or whose guest was wiped), the kept identity is forgotten and the join screen shows with one line, "Welcome back. Join again for this year's auction." A bid answered 404 (`Unknown bidder`, a wipe while the page was open) does the same, so there is always a way back to the join screen. No answer to the check (Wi-Fi, pi5 restarting): in with what the phone kept, and a bid's answer settles it.
 - **No password / login.** If someone else picks up their phone, they're that person. Accept this tradeoff for zero-friction UX.
 
 ### Bid Rules
@@ -565,10 +566,10 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/api/state` | GET | Current auction state, pot, countdown |
 | `/la_subasta/api/horses` | GET | La Quiniela's field by program number, with current high bids |
 | `/la_subasta/api/bidders` | GET | All bidders with totals (admin-only) |
-| `/la_subasta/api/bid` | POST | Place a bid `{horse_id, amount, bidder_id}` |
+| `/la_subasta/api/bid` | POST | Place a bid `{horse_id, amount, bidder_id}`; `404 Unknown bidder` for an id this year's auction doesn't know (checked first) |
 | `/la_subasta/api/bid/undo` | POST | Undo most recent bid (10-sec window) |
 | `/la_subasta/api/register` | POST | Create bidder `{name, emoji}` |
-| `/la_subasta/api/check-identity` | POST | Check if name+emoji available |
+| `/la_subasta/api/check-identity` | POST | `{name, emoji}`: `available`, no bidder this year has them; with the phone's `bidder_id`, also `known`, it is this year's bidder with that name and emoji (the guest page asks at boot) |
 | `/la_subasta/api/push/subscribe` | POST | Register browser push endpoint |
 | `/la_subasta/api/admin/start` | POST | Start auction (admin) |
 | `/la_subasta/api/admin/lock` | POST | Lock the auction (admin); `409 {unsold: [...]}` while a horse in the field has no bid, unless the body is `{confirm: true}` |
@@ -640,7 +641,7 @@ event_years (
 );
 ```
 
-Auction data tagged with `event_year` on every row for clean year-filtering.
+Auction data tagged with `event_year` on every row for clean year-filtering. The year is `EVENT_YEAR` in `pi5/la_subasta/config.py`, the one source (the guest page's footer shows it); a guest is that year's only (see **Identity System**).
 
 ---
 

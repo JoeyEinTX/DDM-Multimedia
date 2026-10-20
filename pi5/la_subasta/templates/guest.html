@@ -97,8 +97,10 @@
 </div>
 
 <!-- =====================================================================
-     Identity setup modal — shown on first visit, hidden after.
-     Blocks the app until the guest registers; no skip, no dismiss.
+     Identity setup modal: the join screen. Shown on a first visit, and
+     again with the welcome-back line when this year's auction doesn't know
+     the identity the phone kept (a phone from another year, or whose guest
+     was wiped). Blocks the app until the guest registers; no skip, no dismiss.
      ===================================================================== -->
 <div id="identity-modal" class="ls-modal" role="dialog" aria-modal="true" aria-labelledby="ls-modal-title" hidden>
     <div class="ls-modal-inner">
@@ -107,6 +109,7 @@
             <div class="ls-brand-line-large">La Subasta</div>
         </div>
 
+        <p id="ls-join-again" class="ls-modal-lead ls-join-again" hidden>Welcome back. Join again for this year's auction.</p>
         <p class="ls-modal-lead">Pick a name and emoji to start bidding.</p>
 
         <label class="ls-field-label" for="ls-name-input">Your name</label>
@@ -181,7 +184,7 @@
     </section>
 
     <footer class="ls-footer">
-        <span>{{ num_horses }} horses • La Subasta 2027</span>
+        <span>{{ num_horses }} horses • La Subasta {{ event_year }}</span>
     </footer>
 
 </main>

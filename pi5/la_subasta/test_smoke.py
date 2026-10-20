@@ -294,6 +294,77 @@ def test_register_endpoint():
            resp4.status_code == 409)
 
 
+def test_another_years_bidder_is_unknown():
+    """Gap review B7 and M4 (b): a bidder id from another event year is
+    unknown everywhere. It can't bid (404, checked before anything else),
+    check-identity doesn't know it, it is not listed, paid, exempted or
+    given a portfolio, so it never owns a horse nobody charged it for; and
+    its name and emoji are free this year (unique per year)."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    year = la_config.EVENT_YEAR
+    old = bidding.register_bidder("Alice", "🌮", event_year=year - 1)["id"]
+
+    def bid(bidder_id, horse, amount):
+        return client.post("/la-subasta/api/bid",
+                           json={"bidder_id": bidder_id, "horse_id": horse, "amount": amount})
+
+    def check(**body):
+        return client.post("/la-subasta/api/check-identity", json=body).get_json()
+
+    r = bid(old, 1, 1)
+    _check("auction not open yet: last year's id is told it is unknown (404), not that bidding is closed",
+           r.status_code == 404 and r.get_json()["error"] == "Unknown bidder", f"{r.status_code} {r.get_json()}")
+    transition(AuctionState.OPEN)
+    r = bid(old, 1, 1)
+    _check("auction open: last year's id bids, 404 Unknown bidder, and no bid is stored in either year",
+           r.status_code == 404 and r.get_json()["error"] == "Unknown bidder"
+           and bidding.count_bids() == 0 and bidding.count_bids(year - 1) == 0, f"{r.status_code} {r.get_json()}")
+    _check("check-identity: last year's Alice is not known; the name is free this year",
+           check(bidder_id=old, name="Alice", emoji="🌮") == {"success": True, "known": False, "available": True})
+    _check("check-identity without a bidder_id answers availability only",
+           check(name="Alice", emoji="🌮") == {"success": True, "available": True})
+
+    r = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "🌮"})
+    new = (r.get_json() or {}).get("bidder") or {}
+    _check("the same name and emoji register this year (unique per year), as a new bidder",
+           r.status_code == 200 and new.get("id") not in (None, old) and new.get("event_year") == year,
+           f"{r.status_code} {r.get_json()}")
+    _check("check-identity: this year's Alice is known, and the name is taken",
+           check(bidder_id=new["id"], name="Alice", emoji="🌮") == {"success": True, "known": True, "available": False})
+    _check("...not with another emoji, nor last year's id with this year's name",
+           check(bidder_id=new["id"], name="Alice", emoji="🐴")["known"] is False
+           and check(bidder_id=old, name="Alice", emoji="🌮")["known"] is False)
+    _check("...nor an id that is not a number", check(bidder_id="x", name="Alice", emoji="🌮")["known"] is False)
+    r = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "🌮"})
+    _check("within a year the name and emoji are still unique (409)", r.status_code == 409, f"{r.status_code}")
+
+    listed = [b["id"] for b in client.get("/la-subasta/api/bidders").get_json()["bidders"]]
+    _check("the admin list has this year's Alice only", listed == [new["id"]], f"got {listed}")
+    r_port = client.get(f"/la-subasta/api/bidders/{old}/portfolio")
+    r_paid = client.post("/la-subasta/api/admin/paid", json={"bidder_id": old})
+    r_cap = client.post("/la-subasta/api/admin/cap-exempt", json={"bidder_id": old, "exempt": True})
+    _check("last year's id: no portfolio, not marked paid, not exempted (404 each)",
+           (r_port.status_code, r_paid.status_code, r_cap.status_code) == (404, 404, 404),
+           f"{r_port.status_code} {r_paid.status_code} {r_cap.status_code}")
+    row = bidding.get_bidder(old, year - 1)
+    _check("...and its own row, in its own year, is untouched",
+           row is not None and row["paid"] == 0 and row["cap_exempt"] == 0
+           and [b["id"] for b in bidding.list_bidders(year - 1)] == [old], f"got {row}")
+    _check("this year's Alice has a portfolio", client.get(f"/la-subasta/api/bidders/{new['id']}/portfolio").status_code == 200)
+
+    r = bid(new["id"], 1, 1)
+    _check("this year's Alice bids", r.status_code == 200, f"{r.status_code} {r.get_json()}")
+    client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+    r = client.post("/la-subasta/api/admin/results", json={"win": 1, "place": 2, "show": 3})
+    owners = [o["bidder_id"] for o in models.get_conn().execute("SELECT bidder_id FROM ownership").fetchall()]
+    win = next(p for p in r.get_json()["payouts"] if p["finish"] == "win")
+    _check("the owner and the WIN payout are this year's Alice", owners == [new["id"]] and win["bidder_id"] == new["id"],
+           f"owners {owners}, win {win}")
+
+
 def test_bid_validation():
     _reset()
     app = _make_app()
@@ -1256,6 +1327,7 @@ def test_guest_page_served():
         ('id="ls-countdown"',                    "countdown strip"),
         ('id="ls-locked-banner"',                "locked banner"),
         ('id="ls-custom-bid-modal"',             "custom bid modal"),
+        ("Welcome back. Join again for this year's auction.", "the join screen's welcome-back line"),
         ('la-subasta-mobile.css',                "mobile stylesheet link"),
         ('guest.js',                             "guest script tag"),
         ('socket.io',                            "socket.io client"),
@@ -2552,6 +2624,253 @@ def test_house_and_payouts_migration():
                 pass
 
 
+def test_bidders_unique_per_year_migration():
+    """A bidders table from before (identity unique across every year) is
+    rebuilt with UNIQUE(identity, event_year): every row kept with its id, so
+    the bids, owners and payouts pointing at them stay right and foreign keys
+    still hold; the id counter is kept (after a wipe it is above every id
+    left: no new guest gets a number an old phone holds); last year's name
+    registers this year; a second start changes nothing."""
+    import sqlite3
+    old_schema = """
+        CREATE TABLE bidders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, emoji TEXT NOT NULL,
+            identity TEXT UNIQUE NOT NULL, push_endpoint TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), paid INTEGER NOT NULL DEFAULT 0,
+            paid_at TEXT, paid_amount REAL, event_year INTEGER NOT NULL,
+            cap_exempt INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX idx_bidders_event_year ON bidders(event_year);
+        CREATE TABLE bids (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, bidder_id INTEGER NOT NULL REFERENCES bidders(id),
+            horse_id INTEGER NOT NULL, amount REAL NOT NULL,
+            bid_time TEXT NOT NULL DEFAULT (datetime('now')), voided INTEGER NOT NULL DEFAULT 0,
+            voided_reason TEXT, event_year INTEGER NOT NULL);
+    """
+    paths = []
+
+    def old_db(script):
+        path = tempfile.mktemp(prefix="la_subasta_old_bidders_", suffix=".db")
+        paths.append(path)
+        conn = sqlite3.connect(path)
+        conn.executescript(old_schema + script)
+        conn.commit()
+        conn.close()
+        return path
+
+    def unique_indexes(c):
+        return sorted(tuple(r["name"] for r in c.execute(f'PRAGMA index_info("{i["name"]}")').fetchall())
+                      for i in c.execute("PRAGMA index_list(bidders)").fetchall() if i["unique"])
+
+    def counter(c):
+        row = c.execute("SELECT seq FROM sqlite_sequence WHERE name = 'bidders'").fetchone()
+        return row["seq"] if row else None
+
+    try:
+        path = old_db("""
+            INSERT INTO bidders (id, name, emoji, identity, paid, paid_amount, event_year, cap_exempt)
+                VALUES (1, 'Alice', '\U0001F32E', 'Alice \U0001F32E', 1, 7, 2026, 0),
+                       (5, 'Bob', '\U0001F434', 'Bob \U0001F434', 0, NULL, 2026, 1);
+            UPDATE sqlite_sequence SET seq = 12 WHERE name = 'bidders';
+            INSERT INTO bids (bidder_id, horse_id, amount, event_year) VALUES (1, 3, 7, 2026), (5, 4, 2, 2026);
+        """)
+        raw = sqlite3.connect(path)
+        before = [tuple(r) for r in raw.execute("SELECT * FROM bidders ORDER BY id").fetchall()]
+        raw.close()
+        la_config.DB_PATH = path                 # register_bidder writes through get_conn(), to DB_PATH
+        c = init_db(path)
+        _check("bidders is rebuilt: unique on (identity, event_year), no longer on identity alone",
+               unique_indexes(c) == [("identity", "event_year")], f"got {unique_indexes(c)}")
+        after = [tuple(r) for r in c.execute("SELECT * FROM bidders ORDER BY id").fetchall()]
+        _check("every row kept as it was, with its id (paid, paid_amount, cap_exempt too)",
+               after == before, f"got {after}")
+        _check("the column list is the same, in the same order",
+               [r["name"] for r in c.execute("PRAGMA table_info(bidders)").fetchall()] == list(models._BIDDER_ALL_COLUMNS))
+        _check("the id counter is kept (12, above every id left)", counter(c) == 12, f"got {counter(c)}")
+        _check("foreign keys are on again, nothing points at a missing bidder, and the bids still point at bidders",
+               c.execute("PRAGMA foreign_keys").fetchone()[0] == 1 and c.execute("PRAGMA foreign_key_check").fetchall() == []
+               and "REFERENCES bidders(id)" in c.execute("SELECT sql FROM sqlite_master WHERE name = 'bids'").fetchone()["sql"])
+        try:
+            c.execute("INSERT INTO bids (bidder_id, horse_id, amount, event_year) VALUES (99, 1, 1, 2026)")
+            _check("a bid by a bidder that does not exist is still refused", False, "it went in")
+        except sqlite3.IntegrityError:
+            _check("a bid by a bidder that does not exist is still refused", True)
+        _check("the event_year index is back, and no bidders_new is left",
+               c.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_bidders_event_year'").fetchone()[0] == 1
+               and c.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'bidders_new'").fetchone()[0] == 0)
+        alice = bidding.register_bidder("Alice", "\U0001F32E", event_year=2027)
+        _check("last year's Alice registers in 2027, numbered after the kept counter (13)", alice["id"] == 13, f"got {alice}")
+        try:
+            bidding.register_bidder("Alice", "\U0001F32E", event_year=2027)
+            _check("...and only once in 2027", False, "a second 2027 Alice went in")
+        except bidding.BidError:
+            _check("...and only once in 2027", True)
+        rows = [tuple(r) for r in c.execute("SELECT * FROM bidders ORDER BY id").fetchall()]
+        c = init_db(path)
+        _check("a second start changes nothing",
+               [tuple(r) for r in c.execute("SELECT * FROM bidders ORDER BY id").fetchall()] == rows
+               and unique_indexes(c) == [("identity", "event_year")] and counter(c) == 13)
+
+        # Wiped (pi5/tools/wipe.py empties the rows and keeps the counter): the counter survives the rebuild
+        path = old_db("""
+            INSERT INTO bidders (id, name, emoji, identity, event_year) VALUES (7, 'Al', '\U0001F32E', 'Al \U0001F32E', 2026);
+            DELETE FROM bidders;
+        """)
+        la_config.DB_PATH = path
+        c = init_db(path)
+        _check("a wiped table: rebuilt, still empty, its counter kept (7)",
+               unique_indexes(c) == [("identity", "event_year")]
+               and c.execute("SELECT COUNT(*) FROM bidders").fetchone()[0] == 0 and counter(c) == 7, f"counter {counter(c)}")
+        _check("...so the next guest is 8, never a number a phone from before holds",
+               bidding.register_bidder("Cy", "\U0001F32E", event_year=2027)["id"] == 8)
+    finally:
+        la_config.DB_PATH = _TMP_DB
+        init_db(_TMP_DB)
+        for path in paths:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(path + suffix)
+                except OSError:
+                    pass
+
+
+def _picker_check():
+    """pi5/tools/picker_check.py: its Chrome drives any page over the DevTools protocol."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "picker_check", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "picker_check.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _serve(app, fail):
+    """The app on a loopback port, in threads, as a phone reaches pi5; a path in `fail` answers 503."""
+    import logging
+    import threading
+    from werkzeug.serving import make_server
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+    def wsgi(environ, start_response):
+        if environ.get("PATH_INFO") in fail:
+            start_response("503 Service Unavailable", [("Content-Length", "0")])
+            return [b""]
+        return app(environ, start_response)
+
+    httpd = make_server("127.0.0.1", 0, wsgi, threaded=True)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd
+
+
+# What the guest page shows: the join screen, its welcome-back line, the app, any card's error, the badge.
+_GUEST_VIEW_JS = """(() => {
+    const shown = (id) => { const e = document.getElementById(id); return !!e && e.getClientRects().length > 0; };
+    return {join: shown('identity-modal'), again: shown('ls-join-again'), app: shown('ls-app'),
+            line: (document.getElementById('ls-join-again') || {}).textContent,
+            errors: [...document.querySelectorAll('[data-role="error"]')].filter((e) => !e.hidden).map((e) => e.textContent),
+            badge: document.getElementById('ls-identity-display').textContent};
+})()"""
+
+
+def test_guest_page_rejoins_in_chrome():
+    """M4 (a), on a phone: the guest page in headless Chrome at a phone's size, with touch. A kept identity
+    from last year boots to the join screen with the welcome-back line, forgotten, and joining again with the
+    same name works; a wipe while that page is open sends the next bid to the join screen, never a dead
+    "Unknown bidder", and one tap joins again; a kept identity this year's auction knows goes straight in;
+    and when the check gets no answer the phone goes in with what it kept. Skipped where there is no
+    Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("guest page browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    transition(AuctionState.OPEN)
+    year = la_config.EVENT_YEAR
+    old = bidding.register_bidder("Old Timer", "🎺", event_year=year - 1)
+    fail = set()
+    httpd = _serve(app, fail)
+    base = f"http://127.0.0.1:{httpd.server_port}/la-subasta/"
+    chrome = picker_check.Chrome(touch=True, size=(390, 844))
+    try:
+        chrome.call("Network.enable")
+        chrome.call("Network.setBlockedURLs", urls=["*socket.io*"])     # no live updates: nothing here needs them
+
+        def kept(bidder):
+            return {"bidder_id": bidder["id"], "name": bidder["name"], "emoji": bidder["emoji"],
+                    "identity": bidder["identity"]}
+
+        def load(identity):
+            """The page as a phone opens it, onboarded, keeping `identity`; returns once it has decided."""
+            chrome.call("Page.navigate", url=base + "api/state")
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            chrome.eval("localStorage.clear(); localStorage.setItem('la_subasta_onboarded', 'true');"
+                        f" localStorage.setItem('la_subasta_identity', {json.dumps(json.dumps(identity))}); true")
+            chrome.call("Page.navigate", url=base)
+            chrome.wait_for("document.readyState === 'complete'", timeout=20)
+            return chrome.wait_for("(() => { const v = %s; return v.join || v.app ? v : null; })()" % _GUEST_VIEW_JS)
+
+        def stored():
+            raw = chrome.eval("localStorage.getItem('la_subasta_identity')")
+            return json.loads(raw) if raw else None
+
+        line = "Welcome back. Join again for this year's auction."
+        view = load(kept(old))
+        _check("last year's identity: the join screen with the welcome-back line, the app hidden",
+               view["join"] and view["again"] and not view["app"] and view["line"] == line, str(view))
+        _check("...and the phone has forgotten it", stored() is None, str(stored()))
+        chrome.eval("const n = document.getElementById('ls-name-input'); n.value = 'Old Timer';"
+                    " n.dispatchEvent(new Event('input')); true")
+        chrome.tap('.ls-emoji-btn[data-emoji="🎺"]')
+        chrome.tap("#ls-submit-btn")
+        in_app = "(() => { const v = %s; return v.app ? v : null; })()" % _GUEST_VIEW_JS
+        view = chrome.wait_for(in_app)
+        again = stored() or {}
+        _check("joining again with last year's name and emoji: in, a new guest this year",
+               not view["join"] and view["badge"] == "Old Timer 🎺" and again.get("bidder_id") not in (None, old["id"])
+               and bidding.get_bidder(again.get("bidder_id")) is not None, f"{view} {again}")
+
+        bid_button = '.ls-horse-card[data-horse-id="1"] .ls-bid-btn[data-delta="1"]'
+        chrome.wait_for("(() => { const b = document.querySelector(%s); return !!b && !b.disabled; })()"
+                        % json.dumps(bid_button))
+        with models.write_txn() as conn:              # the wipe: every guest, bid and state row gone, the counters kept
+            for table in ("bids", "ownership", "payouts", "bidders", "auction_state"):
+                conn.execute(f"DELETE FROM {table}")
+        chrome.tap(bid_button)
+        view = chrome.wait_for("(() => { const v = %s; return v.join ? v : null; })()" % _GUEST_VIEW_JS)
+        _check("wiped while the page was open: the next bid lands on the join screen with the line",
+               view["again"] and not view["app"] and view["line"] == line, str(view))
+        _check("...never a dead \"Unknown bidder\" on a card, and the phone has forgotten the guest",
+               view["errors"] == [] and stored() is None, f"{view['errors']} {stored()}")
+        _check("...the form still holds the name and emoji joined with, Enter ready",
+               chrome.eval("document.getElementById('ls-name-input').value === 'Old Timer'"
+                           " && !document.getElementById('ls-submit-btn').disabled"))
+        chrome.tap("#ls-submit-btn")
+        view = chrome.wait_for(in_app)
+        _check("one tap and the guest is in again",
+               view["badge"] == "Old Timer 🎺" and bidding.get_bidder((stored() or {}).get("bidder_id")) is not None,
+               f"{view} {stored()}")
+
+        alice = bidding.register_bidder("Alice", "🌮")
+        view = load(kept(alice))
+        _check("this year's identity: straight in, no join screen, the badge is Alice",
+               view["app"] and not view["join"] and view["badge"] == "Alice 🌮", str(view))
+        _check("...and the phone keeps it", stored() == kept(alice), str(stored()))
+
+        carol = bidding.register_bidder("Carol", "🍹")
+        fail.add("/la-subasta/api/check-identity")
+        view = load(kept(carol))
+        _check("the check gets no answer (503): in with what the phone kept, nothing forgotten",
+               view["app"] and not view["join"] and view["badge"] == "Carol 🍹" and stored() == kept(carol), str(view))
+        fail.clear()
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_guest_js_follows_the_field():
     """Guest phones drop a scratched horse and pick up a replacement
     without a reload: guest.js drops the horse on horse_scratched (closing a
@@ -3681,6 +4000,8 @@ def main():
     _run("state endpoint — concurrent reads, no sqlite MISUSE (regression)",
          test_state_endpoint_concurrent_no_sqlite_misuse)
     _run("registration + uniqueness", test_register_endpoint)
+    _run("identity — another year's bidder is unknown everywhere (B7); names unique per year",
+         test_another_years_bidder_is_unknown)
     _run("bid validation", test_bid_validation)
     _run("bid undo (10s window)", test_bid_undo)
     _run("payout computation", test_payouts)
@@ -3736,6 +4057,10 @@ def main():
     _run("paid — a second tap keeps the refund owed", test_paid_twice_keeps_the_refund)
     _run("scratch — old ownership table migrated", test_ownership_migration)
     _run("migration — the House's row and an old payouts table", test_house_and_payouts_migration)
+    _run("migration — bidders unique per year; ids, foreign keys and the counter kept",
+         test_bidders_unique_per_year_migration)
+    _run("identity — a phone rejoins: last year's, this year's, a wipe, no answer (Chrome)",
+         test_guest_page_rejoins_in_chrome)
     _run("scratch — guest page follows the field live", test_guest_js_follows_the_field)
     _run("guest UI — /api/horses scratched flag round-trip (regression)",
          test_horses_scratched_flag_roundtrip)

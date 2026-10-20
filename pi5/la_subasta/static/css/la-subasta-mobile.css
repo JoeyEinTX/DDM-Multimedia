@@ -442,6 +442,13 @@ input {
     font-size: 15px;
 }
 
+/* A phone this year's auction doesn't know: the line over the join form. */
+.ls-join-again {
+    color: var(--ls-gold);
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
 .ls-field-label {
     display: block;
     margin-bottom: 6px;

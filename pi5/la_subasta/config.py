@@ -108,8 +108,13 @@ EMOJI_PALETTE = [
 _PI5_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(_PI5_DIR, "data", "la_subasta.db")
 
-# Current event year (used for tagging rows for year-over-year history)
-EVENT_YEAR = 2026
+# The event year: the one source of it. Every row is tagged with it, and every
+# lookup reads only this year's rows, so a guest from another year is unknown
+# (a phone that joined then is sent back to the join screen) and a name is
+# unique within a year, free again the next. It changes only here, once a year,
+# in a commit before that year's party; never at runtime, so it can't move
+# under a running auction. The guest page's footer shows it.
+EVENT_YEAR = 2027
 
 # Horses are program numbers 1..24, La Quiniela's: 1..20 the field, 21..24 the
 # also-eligibles, sold only while standing in for a scratched horse. Which of
