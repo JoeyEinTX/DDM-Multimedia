@@ -1,8 +1,8 @@
 /* =====================================================================
    A TV page's self-reload and its "I'm up" to the TV box.
 
-   Loaded by every page a TV shows (templates/slideshow.html: /display and
-   /living-room; templates/board.html: /board, the La Quiniela page).
+   Loaded by both pages a TV shows (templates/slideshow.html: /slides;
+   templates/board.html: /board).
 
    Self-reload (47c7d88, d4aa4ba): GET /api/page_rev every PAGE_REV_CHECK_S
    (15 s; ?page_rev_s= for a test). When the splash serves another revision

@@ -17,14 +17,14 @@
 #     pressed once with wtype when the browser is up; on X11, unclutter if there.
 #   - Once: with the kiosk's browser already running it does nothing.
 #
-# SPLASH_URL     the page (default http://localhost:5001/display; ...?look=impact)
+# SPLASH_URL     the page (default http://localhost:5001/board; ...?look=impact)
 # CHROMIUM_BIN   the browser (default chromium, then chromium-browser)
 # -----------------------------------------------------------------------------
 
 # No -e: a helper that is missing or fails must never keep the browser off the TV.
 set -uo pipefail
 
-URL="${SPLASH_URL:-http://localhost:5001/display}"
+URL="${SPLASH_URL:-http://localhost:5001/board}"
 WAIT_URL="${SPLASH_WAIT_URL:-http://localhost:5001/}"
 WAIT_S="${SPLASH_WAIT_S:-120}"
 PROFILE_DIR="${HOME}/.config/chromium-kiosk"

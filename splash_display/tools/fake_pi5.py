@@ -26,7 +26,7 @@ Nothing leaves loopback: no serial port, no dashboard poller.
                                                    # screen keeps 4 / 11 / 7 bets: the model's closing, as on pi5; a page
                                                    # loaded now shows them too) -> AFTER_PARTY (the playlist); repeats
     python tools/fake_pi5.py --phase results-static    # WINNER with those results, nothing moving (screenshots)
-    python tools/fake_pi5.py --phase strip         # the tote look's rows (open /display?look=dots): twenty names, three of
+    python tools/fake_pi5.py --phase strip         # the tote look's rows (open /board?look=dots): twenty names, three of
                                                    # them too long for their row at 1920 px and scrolling (eleven at 1680 px),
                                                    # counts of 0 (a dim 0), 7, 23 and 104; a bet on GRAND MO THE FIRST every
                                                    # 4 s takes it 7 -> 12, crossing 9 -> 10 (its name area gives up a tile and
@@ -66,7 +66,7 @@ Flags:
     --no-splash            serve only the fake pi5; point a splash at it with
                            config.PI5_URL = "http://127.0.0.1:5078"
 
-Both URLs are printed; open http://127.0.0.1:5077/display. The fake's
+Both URLs are printed; open http://127.0.0.1:5077/board (or /slides). The fake's
 ``POST /api/quiniela/cmd`` answers ``{"ok": true, "echo": "<cmd>"}``;
 ``state N`` switches the scenario's phase and ``reset`` plays pi5's reset
 (counts 0, events cleared, state 0), so through the real relay
@@ -1165,7 +1165,7 @@ def main() -> None:
     httpd = make_server(args.host, args.port, server.app, threaded=True)
     splash_url = f"http://{_client_host(args.host)}:{args.port}"
     print(f"splash: {splash_url}/api/quiniela (Pi5Link -> {pi5_url})", flush=True)
-    print(f"open {splash_url}/display", flush=True)
+    print(f"open {splash_url}/board (or {splash_url}/slides)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

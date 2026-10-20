@@ -199,7 +199,7 @@ CMD_MAX_LEN = 200
 DEFAULTS: Dict[str, Any] = {
     "TOKEN_VALUE": 1.0,                       # dollars per token, for the POT
     "QUINIELA_LOG": True,                     # write pi5/data/quiniela_YYYY-MM-DD.jsonl
-    "QUINIELA_BOARD_STATES": [1, 2, 3, 4, 5], # race states in which the board owns the TV (5: the results)
+    "QUINIELA_BOARD_STATES": [1, 2, 3, 4, 5], # the model's board_states: the splash reads only that it is not empty (pi5 heard)
     "LQ_SPLIT_WIN": 0.60,                     # the WIN prize's share of the pot (it takes the remainder)
     "LQ_SPLIT_PLACE": 0.25,                   # the PLACE prize's share, rounded half up to whole dollars
     "LQ_SPLIT_SHOW": 0.15,                    # the SHOW prize's share, likewise

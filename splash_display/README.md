@@ -2,7 +2,7 @@
 
 A Flask-driven TV splash slideshow for the **Derby de Mayo** annual party.
 Runs on a dedicated Raspberry Pi 4B (Pi OS Bookworm), boots straight into a
-Chromium kiosk pointed at `http://localhost:5001/display`, and rotates through
+Chromium kiosk pointed at `http://localhost:5001/board`, and rotates through
 splash pages and trivia cards on a weighted, freshly-shuffled cycle.
 
 This is **Phase 1**: file-based content, no remote upload. Phase 2 will add a
@@ -51,8 +51,9 @@ The systemd service is `ddm-splash`, installed with pi5's `ddm-pi5` by
 
 | Route | Behavior |
 | --- | --- |
-| `GET /` | 302 to `/display` |
-| `GET /display` | Renders the master slideshow page (kiosk URL) |
+| `GET /` | 302 to `/board` |
+| `GET /board` | The La Quiniela board, full screen, in every race state |
+| `GET /slides` | The slideshow, with the board in `SLIDES_BOARD_STATES` (3,4,5) |
 | `GET /api/slides` | Returns a freshly shuffled JSON playlist (~35 slides) |
 | `GET /api/slide/<id>` | Returns a single slide as an HTML fragment (debugging / Phase 2 hook) |
 | `GET /api/quiniela` | La Quiniela betting model as JSON, relayed from pi5 (see [La Quiniela live board](#la-quiniela-live-board)) |
@@ -120,7 +121,7 @@ the environment brings it back.
 
 The same command starts the TV's kiosk with the desktop session
 (`~/.config/autostart/ddm-tv.desktop` runs `deploy/kiosk.sh`): Chromium full
-screen on `http://localhost:5001/display` once the splash answers (it waits up
+screen on `http://localhost:5001/board` once the splash answers (it waits up
 to 2 minutes, then starts anyway), screen blanking off for the session, and on
 labwc the pointer hidden (an Alt+Super+H keybind in `~/.config/labwc/rc.xml`,
 pressed by `wtype`). `deploy/autostart_setup.md` has the other desktops.
@@ -133,7 +134,7 @@ From the Pi:
 curl -fsS http://localhost:5001/api/slides | python3 -m json.tool | head -40
 ```
 
-Or hit `http://<pi-ip>:5001/display` from any browser on the LAN.
+Or hit `http://<pi-ip>:5001/board` or `/slides` from any browser on the LAN.
 
 ---
 
@@ -181,7 +182,7 @@ journalctl -u ddm-splash -f
 
 ## Debug overlay
 
-Press `d` on the kiosk keyboard (or any client viewing `/display`) to toggle
+Press `d` on the kiosk keyboard (or any client viewing `/slides`) to toggle
 a small green FPS / playlist diagnostic overlay in the corner. Press `d`
 again to hide it.
 
@@ -201,7 +202,7 @@ gateway ──USB──> pi5 dashboard (:5000)              ──HTTP──> sp
                  -> betting model                               pi5's stream (polls while
                  GET  /api/quiniela                             it is down) and re-serves
                  GET  /api/quiniela/stream   (SSE)              the same three routes to
-                 POST /api/quiniela/cmd                         the TV board (/display)
+                 POST /api/quiniela/cmd                         the TV pages (/board, /slides)
 ```
 
 Nothing here is required for the slideshow: with pi5 unreachable the link
@@ -390,9 +391,8 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   `null` when there is none: the crawl leaves it out. `horses[n].odds` is
   the track's line for that program number, a short string (`"5-2"`), or
   `null`; only the roster slide reads it.
-- `board_states` are the race states in which the board owns the TV; pi5
-  decides them (`[1, 2, 3, 4, 5]`: betting, the race and the results; the
-  TV goes back to the playlist in 0 and 6). Until pi5 has been heard the
+- `board_states` is pi5's `QUINIELA_BOARD_STATES`; the pages have their
+  own sets and read only that it is not empty (pi5 heard). Until pi5 has been heard the
   splash serves an empty model: `link_ok` false, race state 0,
   `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
   board stays hidden), and none of the additive keys (`now`, `closes_at`,
@@ -476,9 +476,9 @@ stays hidden and the slideshow is indistinguishable from before.
 **Takeover rule.** On load the page fetches `/api/quiniela` once and
 subscribes to `/api/quiniela/stream` (reconnecting on error with a 1 s
 backoff doubling to 30 s, reset by the next message). Whenever
-`board_states` (the model's copy of pi5's `config.QUINIELA_BOARD_STATES`,
-in `pi5/config.py`, `[1, 2, 3, 4, 5]`; the page never hard-codes it)
-contains `race_state`:
+the page's board states (the board's `data-board-states`, which the server
+writes: `all` on `/board`, `config.SLIDES_BOARD_STATES`, 3,4,5, on `/slides`)
+contain `race_state`:
 
 - the playlist pauses in place (`window.ddmSlideshow.hold()` clears the
   slide timers, the current slide stays where it is) and the board
@@ -487,7 +487,7 @@ contains `race_state`:
   `release()` restarts the same slide's timers from zero — same slide,
   fresh dwell. The spacebar pause still wins: a paused show stays paused.
 - a dead stream never hides the board. It stays up with its last data;
-  only a model saying the state is outside `board_states` takes it down.
+  only a model saying the state is outside the page's states takes it down.
 
 **Banner** (top right), by `race_state`:
 
@@ -499,10 +499,9 @@ contains `race_state`:
 | 5 `WINNER`, `results` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board with the figures at the post |
 | 5 `WINNER`, `results` in | OFFICIAL RESULTS (gold) | the **results screen** (below), from the same figures |
 
-In 0 `PRE_RACE` and 6 `AFTER_PARTY` the board is down and the playlist
-runs. (Should pi5's config ever add one of them to `board_states`, the
-banner reads the state's name; in 6 with the results still in, the results
-screen stays up.)
+On `/slides` the board is down outside 3, 4 and 5 and the playlist runs.
+On `/board` it is up in every state: in 0 the banner reads the state's name,
+and in 6 with the results still in the results screen stays up.
 
 The figures on a frozen board are pi5's, not the page's: the model's
 `closing`, taken when betting closed and kept by pi5 through the draw and
@@ -791,7 +790,7 @@ http://joeydevpi.local:5001/?crawl_tps=8    the tote look with its crawl at 8 ti
 
 `config.QUINIELA_LOOK` is the default (`"dots"` as shipped, and `dots`
 when the key is missing); `?look=` on the URL wins, for that page, on `/`
-and on `/display` alike (the redirect keeps the query). A value that names
+and on `/board` and `/slides` alike (the redirect keeps the query). A value that names
 no look is the default, and a `QUINIELA_LOOK` that names none is `dots`,
 logged once. The page carries the look in the board's `data-look`.
 
@@ -1069,7 +1068,7 @@ that was on 9 is on 22), so the field reads 1-4, 6-8, 10-12 down the left
 and 14-19, 21-23 down the right with the last slot blank; the chyron
 carries the three replacements and `[20] FULLEFFORT · RE-BET YOUR TOKENS`.
 
-Open the printed URL (`http://127.0.0.1:5077/display`) in a browser; add
+Open the printed URL (`http://127.0.0.1:5077/board`) in a browser; add
 `?look=dots` (or `impact`, `numbers`) to see a look. The
 fake's `POST /api/quiniela/cmd` answers `{"ok": true, "echo": "<cmd>"}`;
 `state N` switches its phase, `reset` plays pi5's reset (counts 0, events

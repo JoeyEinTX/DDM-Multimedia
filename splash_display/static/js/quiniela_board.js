@@ -27,14 +27,11 @@
    when the state leaves that set it fades out and calls release(), which
    restarts the same slide's timer from zero. The page's board states are
    the board element's data-board-states, which the server writes per page
-   (Joey's three screens, 2026-10-19): "all" on /board, the La Quiniela
-   page of the TV by the cups (every state, nothing else ever); "3,4,5" on
-   /living-room (config.LIVING_ROOM_BOARD_STATES: from AT THE POST through
-   WINNER, so both rooms see the finish); empty on /display, where pi5's
-   QUINIELA_BOARD_STATES (the model's "board_states", 1-5) decide as before.
+   (2026-10-19): "all" on /board (every state, nothing else ever); "3,4,5"
+   on /slides (config.SLIDES_BOARD_STATES: from AT THE POST through WINNER).
    Nothing is hard-coded here. A model from before pi5 is heard (the
-   splash's empty model, board_states empty) moves nothing on a page with
-   its own set: a page loaded during a restart waits for pi5's state.
+   splash's empty model, whose board_states is empty; pi5's never is) moves
+   nothing: a page loaded during a restart waits for pi5's state.
 
    A lost link never hides the board: it stays up with its last data and
    a small NO LINK mark appears after 10 s without any SSE message (data
@@ -250,10 +247,9 @@
     // ---- DOM ---------------------------------------------------------
     const board = document.getElementById('quiniela-board');
     if (!board) return;                       // not the slideshow page
-    // The page's own board states (the takeover rule, above): null, pi5's.
+    // The page's board states (the takeover rule, above).
     const PAGE_STATES = (() => {
         const raw = String(board.dataset.boardStates || '').trim().toLowerCase();
-        if (!raw) return null;
         if (raw === 'all') return 'all';
         return raw.split(',').map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n));
     })();
@@ -415,8 +411,7 @@
         known = known || fromPi5;
         let inBoard;
         if (PAGE_STATES === 'all') inBoard = true;
-        else if (PAGE_STATES) inBoard = fromPi5 ? PAGE_STATES.includes(state) : visible;   // before pi5: as it is
-        else inBoard = fromPi5 && m.board_states.includes(state);
+        else inBoard = fromPi5 ? PAGE_STATES.includes(state) : visible;   // before pi5: as it is
 
         // Banner always follows the state.
         renderBanner(spec);

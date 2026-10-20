@@ -5,10 +5,10 @@
 # The TV board has its own box behind the TV (ddm-tv, a Raspberry Pi 5 on Pi OS with
 # desktop) that does nothing but show DevPi's board full screen. The box runs no DDM
 # code and needs no git or repo: this script, run on DevPi, copies the few files it
-# needs over SSH and sets it up. Two boxes (Joey's three screens, 2026-10-19): the
-# TV by the cups, ddm-tv, shows the La Quiniela page (/board, the default); the
-# living room's TV, ddm-tv2, the slideshow that switches to the board for the race
-# (--server http://joeydevpi.local:5001/living-room). DevPi's own kiosk (install_services.sh
+# needs over SSH and sets it up. The boxes are numbered, interchangeable screens;
+# which page one shows is its DDM_TV_URL (RACE_NIGHT.md says which): /board, the
+# La Quiniela board (the default), or /slides, the slideshow that switches to the
+# board for the race (--server http://joeydevpi.local:5001/slides). DevPi's own kiosk (install_services.sh
 # --kiosk) stays off; it is the fallback.
 #
 #   deploy/tv_box.sh install joey@ddm-tv.local [--server URL] [--overlay on|off] [--reboot] [--dry-run]

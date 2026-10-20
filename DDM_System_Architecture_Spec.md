@@ -70,8 +70,8 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
             Gateway ESP32      LED controller ESP32       splash display, port 5001
        ESP-NOW ch 6 │          (the mantle's cup LEDs)    slideshow + LQ board
          up to 24 cups                                          │ HTTP, the LAN
-                         TV box ddm-tv (Pi 5) → the board TV by the cups (/board)
-                         TV box ddm-tv2 → the living room TV (/living-room)
+                         TV box ddm-tv (Pi 5) → /board, by the cups
+                         TV box ddm-tv2 → /slides
                                           JoeyAI box (optional source of odds and names)
 ```
 
@@ -82,8 +82,8 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
 | Betting cups (CYD + HX711), 20 plus spares | Weigh tokens, show their horse number | ESP-NOW via the gateway | Horse number and scale settings in NVS |
 | LED controller (ESP32, TCP 5005 at the address in DevPi's `pi5/.env`) | Mantle LED animations | TCP | Nothing |
 | Splash display (Flask app, port 5001) | TV slideshow and the LQ board | HTTP and the `/api/quiniela/stream` event stream from pi5 | Nothing about the race |
-| TV box `ddm-tv` (a Raspberry Pi 5 behind the board TV by the cups, Pi OS with desktop) | Shows the splash's `/board` full screen: the La Quiniela board in every race state and nothing else. Chromium in kiosk mode on the box's own holding page, which holds the page in a frame and shows `Waiting for DDM…` while it can't be reached. Runs no DDM code, needs no repo; set up and updated from DevPi over SSH (`deploy/tv_box.sh install`); the page's own self-reload brings a pull to the TV. Either HDMI port; 1920x1080 when the screen offers it, else its own mode, chosen at runtime (`deploy/tv_box/ddm_tv_outputs.py`), the TV on before or after the box. | HTTP to the splash (port 5001) over the LAN | One setting: the page's address (`~/.config/ddm-tv/ddm-tv.conf`) |
-| TV box `ddm-tv2` (the living room, OD8; hardware not chosen) | The same box and installer, `--server .../living-room`: the slideshow, and the La Quiniela board from AT THE POST through WINNER (splash `LIVING_ROOM_BOARD_STATES`, 3,4,5), the slideshow again after | Same | Same |
+| TV box `ddm-tv` (a Raspberry Pi 5 behind the TV by the cups, Pi OS with desktop) | Shows the splash's `/board` full screen: the La Quiniela board in every race state and nothing else. The pages are named for what they show and the boxes are numbered, interchangeable screens; which page a box shows is its `DDM_TV_URL`, and `RACE_NIGHT.md` says which. Chromium in kiosk mode on the box's own holding page, which holds the page in a frame and shows `Waiting for DDM…` while it can't be reached. Runs no DDM code, needs no repo; set up and updated from DevPi over SSH (`deploy/tv_box.sh install`); the page's own self-reload brings a pull to the TV. Either HDMI port; 1920x1080 when the screen offers it, else its own mode, chosen at runtime (`deploy/tv_box/ddm_tv_outputs.py`), the TV on before or after the box. | HTTP to the splash (port 5001) over the LAN | One setting: the page's address (`~/.config/ddm-tv/ddm-tv.conf`) |
+| TV box `ddm-tv2` (OD8; hardware not chosen) | The same box and installer, `--server .../slides`: the slideshow, and the La Quiniela board from AT THE POST through WINNER (splash `SLIDES_BOARD_STATES`, 3,4,5), the slideshow again after | Same | Same |
 | DevPi's kiosk (fallback) | Chromium on DevPi's own screen (`install_services.sh --kiosk on`), off unless the TV box dies | Same box | Nothing |
 | DDM Control Center | The touchscreen dashboard at `/` | Same server | Nothing |
 | LQ admin page | `/quiniela/admin`, on a phone | Same server | Nothing |

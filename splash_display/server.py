@@ -2,8 +2,9 @@
 DDM Splash Display — Phase 1 Flask app.
 
 Routes:
-    GET /                    → 302 redirect to /display
-    GET /display             → renders the master slideshow page (kiosk URL)
+    GET /                    → 302 redirect to /board
+    GET /board               → the La Quiniela board, full screen, in every race state
+    GET /slides              → the slideshow, with the board in config.SLIDES_BOARD_STATES (3,4,5)
     GET /api/slides          → returns a freshly shuffled JSON playlist
     GET /api/slide/<id>      → returns the rendered HTML fragment for one slide
     GET /api/quiniela        → La Quiniela betting model, relayed from pi5 (tokens per horse, pot, link state)
@@ -409,11 +410,32 @@ def board_look(requested: Any = None) -> str:
 
 @app.route("/")
 def root():
-    # The query goes along: /?look=dots is /display?look=dots
-    return redirect(url_for("display", **request.args.to_dict()))
+    # The query goes along: /?look=dots is /board?look=dots
+    return redirect(url_for("board_page", **request.args.to_dict()))
 
 
-def _slideshow(board_states: str = ""):
+def slides_board_states() -> str:
+    """config.SLIDES_BOARD_STATES as the board element's data-board-states
+    ("3,4,5"); the default when the setting is not a list of race states."""
+    try:
+        states = [int(s) for s in config.SLIDES_BOARD_STATES]
+        if states and all(0 <= s <= 6 for s in states):
+            return ",".join(str(s) for s in states)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    log.warning("config.SLIDES_BOARD_STATES is not a list of race states 0-6: using 3,4,5")
+    return "3,4,5"
+
+
+# The TV pages are named for what they show, not where the screen is (Joey,
+# 2026-10-19); each says in which race states the La Quiniela board owns its
+# screen (the board's data-board-states). Which box shows which page is one
+# line in the box's config (DDM_TV_URL), and RACE_NIGHT.md says which.
+#   /board   the La Quiniela board, in every state, nothing else
+#   /slides  the slideshow; the board in config.SLIDES_BOARD_STATES (3,4,5:
+#            from AT THE POST through WINNER)
+@app.route("/slides")
+def slides():
     # Build the transition pool the slideshow JS will pick from. We strip out
     # any zero-weight or unknown-named entries here so the frontend doesn't
     # have to defend against bad config.
@@ -427,39 +449,8 @@ def _slideshow(board_states: str = ""):
         transition_fade_ms=config.TRANSITION_FADE_MS,
         transitions_json=json.dumps(transitions),
         quiniela_look=board_look(request.args.get("look")),
-        board_states=board_states,
+        board_states=slides_board_states(),
     )
-
-
-def living_room_states() -> str:
-    """config.LIVING_ROOM_BOARD_STATES as the board element's data-board-states
-    ("3,4,5"); the default when the setting is not a list of race states."""
-    try:
-        states = [int(s) for s in config.LIVING_ROOM_BOARD_STATES]
-        if states and all(0 <= s <= 6 for s in states):
-            return ",".join(str(s) for s in states)
-    except (TypeError, ValueError, AttributeError):
-        pass
-    log.warning("config.LIVING_ROOM_BOARD_STATES is not a list of race states 0-6: using 3,4,5")
-    return "3,4,5"
-
-
-# The TV pages (Joey's three screens, 2026-10-19). Each says in which race
-# states the La Quiniela board owns its screen (the board's data-board-states):
-#   /display      the slideshow, the board in pi5's QUINIELA_BOARD_STATES (1-5):
-#                 the one-screen layout, and DevPi's own kiosk (the fallback)
-#   /board        the La Quiniela page: the board in every state, nothing else
-#                 (the TV by the cups, ddm-tv)
-#   /living-room  the slideshow, the board from AT THE POST through WINNER
-#                 (config.LIVING_ROOM_BOARD_STATES: the living room's TV, ddm-tv2)
-@app.route("/display")
-def display():
-    return _slideshow()
-
-
-@app.route("/living-room")
-def living_room():
-    return _slideshow(living_room_states())
 
 
 @app.route("/board")

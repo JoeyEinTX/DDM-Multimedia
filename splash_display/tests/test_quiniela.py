@@ -832,12 +832,15 @@ class ApiTests(RouteCase):
         self.assertIs(body["ok"], False)
         self.assertTrue(body["error"].startswith("pi5 not reachable: "), body)
 
-    def test_existing_routes_still_there(self) -> None:
+    def test_the_tv_pages_are_named_for_what_they_show(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 302)
-        self.assertEqual(self.client.get("/display").status_code, 200)
+        self.assertEqual(self.client.get("/board").status_code, 200)
+        self.assertEqual(self.client.get("/slides").status_code, 200)
+        for gone in ("/display", "/living-room"):
+            self.assertEqual(self.client.get(gone).status_code, 404, gone)
 
     def test_the_page_carries_the_board_and_its_results_screen(self) -> None:
-        html = self.client.get("/display").get_data(as_text=True)
+        html = self.client.get("/board").get_data(as_text=True)
         for needle in ('id="quiniela-board"', 'class="qb-stage"', 'id="qb-col-left"', 'id="qb-col-right"',
                        'id="qb-results"', 'id="qb-result-win"', 'id="qb-result-place"', 'id="qb-result-show"',
                        "One token drawn from each cup", "Drawn token takes the prize",
@@ -853,7 +856,7 @@ class ApiTests(RouteCase):
         # A pull and a restart serve the new code without a hard reload: every
         # stylesheet and script URL carries the splash's page revision (page_rev.py).
         import page_rev
-        html = self.client.get("/display").get_data(as_text=True)
+        html = self.client.get("/board").get_data(as_text=True)
         for path in ("css/ddm_style.css", "css/quiniela_board.css", "js/quiniela_board.js"):
             self.assertIn(f'/static/{path}?v={page_rev.PAGE_REV}"', html, path)
             r = self.client.get(f"/static/{path}?v={page_rev.PAGE_REV}")
@@ -1023,43 +1026,45 @@ class LookTests(RouteCase):
         self.assertIn("LOOKS.includes(board.dataset.look) ? board.dataset.look : 'dots'", js, "and the script's")
 
     def test_the_url_names_the_look(self) -> None:
-        self.assertEqual(self.look_of("/display"), "impact")
-        self.assertEqual(self.look_of("/display?look=dots"), "dots")
-        self.assertEqual(self.look_of("/display?look=impact"), "impact")
-        self.assertEqual(self.look_of("/display?look=numbers"), "numbers")
-        self.assertEqual(self.look_of("/display?look=DOTS"), "dots", "case does not matter")
-        self.assertEqual(self.look_of("/display?look=neon"), "impact", "a look nobody knows is the default")
-        self.assertEqual(self.look_of("/display?look="), "impact")
+        self.assertEqual(self.look_of("/board"), "impact")
+        self.assertEqual(self.look_of("/board?look=dots"), "dots")
+        self.assertEqual(self.look_of("/slides?look=dots"), "dots")
+        self.assertEqual(self.look_of("/board?look=impact"), "impact")
+        self.assertEqual(self.look_of("/board?look=numbers"), "numbers")
+        self.assertEqual(self.look_of("/board?look=DOTS"), "dots", "case does not matter")
+        self.assertEqual(self.look_of("/board?look=neon"), "impact", "a look nobody knows is the default")
+        self.assertEqual(self.look_of("/board?look="), "impact")
 
     def test_config_is_the_default_and_the_url_wins(self) -> None:
         config.QUINIELA_LOOK = "dots"
-        self.assertEqual(self.look_of("/display"), "dots")
-        self.assertEqual(self.look_of("/display?look=impact"), "impact")
-        self.assertEqual(self.look_of("/display?look=neon"), "dots")
+        self.assertEqual(self.look_of("/board"), "dots")
+        self.assertEqual(self.look_of("/board?look=impact"), "impact")
+        self.assertEqual(self.look_of("/board?look=neon"), "dots")
         config.QUINIELA_LOOK = " Numbers "
-        self.assertEqual(self.look_of("/display"), "numbers")
+        self.assertEqual(self.look_of("/board"), "numbers")
+        self.assertEqual(self.look_of("/slides"), "numbers")
 
     def test_a_config_value_that_names_no_look_is_the_default_and_logged_once(self) -> None:
         config.QUINIELA_LOOK = "dot"
         with self.assertLogs("splash_display", level="WARNING") as cm:
-            self.assertEqual(self.look_of("/display"), "dots")
-            self.assertEqual(self.look_of("/display"), "dots")
-            self.assertEqual(self.look_of("/display?look=impact"), "impact")
+            self.assertEqual(self.look_of("/board"), "dots")
+            self.assertEqual(self.look_of("/board"), "dots")
+            self.assertEqual(self.look_of("/board?look=impact"), "impact")
         self.assertEqual(len(cm.output), 1, cm.output)
         self.assertIn("QUINIELA_LOOK", cm.output[0])
         del config.QUINIELA_LOOK
-        self.assertEqual(self.look_of("/display"), "dots", "a config without the key is the tote look")
+        self.assertEqual(self.look_of("/board"), "dots", "a config without the key is the tote look")
         self.assertEqual(server.board_look(None), "dots")
         self.assertEqual(server.board_look(7), "dots")
 
     def test_the_root_redirect_keeps_the_look(self) -> None:
         resp = self.client.get("/?look=dots")
         self.assertEqual(resp.status_code, 302)
-        self.assertTrue(resp.headers["Location"].endswith("/display?look=dots"), resp.headers["Location"])
-        self.assertTrue(self.client.get("/").headers["Location"].endswith("/display"))
+        self.assertTrue(resp.headers["Location"].endswith("/board?look=dots"), resp.headers["Location"])
+        self.assertTrue(self.client.get("/").headers["Location"].endswith("/board"))
 
     def test_the_page_marks_the_totes_fields(self) -> None:
-        html = self.client.get("/display?look=dots").get_data(as_text=True)
+        html = self.client.get("/slides?look=dots").get_data(as_text=True)
         # figures: the pot, three prizes, a row's bets (the template), the results' three counts and three prizes
         self.assertEqual(html.count('data-tote="num"'), 1 + 3 + 1 + 3 + 3)
         # names: a row's (the template), the results' three, and the countdown's AND THEY'RE OFF
@@ -1399,9 +1404,11 @@ def run_board(models: List[dict], look: str = "impact", styled: bool = False,
     its own. slow_face: seconds the tote face takes to arrive (styled), a
     kiosk loading cold, so a model comes before it. slow: the same for any
     static file, {"Anton-Regular.ttf": 1.5}. query: the URL's query string
-    ("crawl_tps=60"), which the page's script reads."""
+    ("crawl_tps=60"), which the page's script reads. The page's board states
+    are 1-5, so the board is up from BETTING OPEN through WINNER and down in
+    0 and 6: the tests see it both ways (the real pages' sets: TvPagesTests)."""
     with server.app.test_request_context("/"):
-        board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look)
+        board_html = server.render_template("splash/quiniela_live.html", quiniela_look=look, board_states="1,2,3,4,5")
         roster_html = server.render_template("splash/horse_roster.html") if roster else ""
     probe = BOARD_PROBE_JS.replace("__MODELS__", json.dumps(models))
     tmp = Path(tempfile.mkdtemp(prefix="qb_page_"))
@@ -3186,7 +3193,7 @@ class FreshPageTests(RouteCase):
         rev = page_rev.PAGE_REV
         self.assertRegex(rev, r"^[0-9a-f]{12}$")
         self.assertEqual(page_rev.compute(), rev, "the revision is the content of the pages as they are")
-        r = self.client.get("/display")
+        r = self.client.get("/board")
         self.assertEqual((r.status_code, r.mimetype, r.headers.get("Cache-Control")), (200, "text/html", "no-store"))
         self.assertEqual(r.headers.get("X-Page-Rev"), rev)
         page = r.get_data(as_text=True)
@@ -3231,7 +3238,7 @@ class FreshPageTests(RouteCase):
         chrome = pc.Chrome(touch=False, size=(1920, 1080))
         meta = "(document.querySelector('meta[name=\"ddm-page-rev\"]') || {}).content"
         try:
-            chrome.call("Page.navigate", url="http://127.0.0.1:%d/display?page_rev_s=0.5" % httpd.server_port)
+            chrome.call("Page.navigate", url="http://127.0.0.1:%d/board?page_rev_s=0.5" % httpd.server_port)
             chrome.wait_for("document.readyState === 'complete'", timeout=20)
             self.assertEqual(chrome.eval(meta), saved)
             chrome.eval("window.__before = 1; 1")
@@ -3280,8 +3287,8 @@ class KioskReloadTests(RouteCase):
             text = re.sub(r'xmlns="http://www\.w3\.org/2000/svg"', "", path.read_text(encoding="utf-8"))
             for needle in ("http://", "https://", "localhost", "127.0.0.1", ":5000", ":5001", "ws://"):
                 self.assertNotIn(needle, text, f"{path.name}: {needle}")
-        r = self.client.get("/display")
-        self.assertEqual(r.status_code, 200)
+        for page in ("/board", "/slides"):
+            self.assertEqual(self.client.get(page).status_code, 200, page)
         self.assertEqual(config.FLASK_HOST, "0.0.0.0", "the splash listens on the LAN, not only on DevPi")
 
     def test_the_kiosk_never_reloads_into_a_server_that_is_not_answering(self) -> None:
@@ -3305,7 +3312,7 @@ class KioskReloadTests(RouteCase):
         meta = "(document.querySelector('meta[name=\"ddm-page-rev\"]') || {}).content"
         second = None
         try:
-            chrome.call("Page.navigate", url="http://127.0.0.1:%d/display?page_rev_s=0.5" % port)
+            chrome.call("Page.navigate", url="http://127.0.0.1:%d/slides?page_rev_s=0.5" % port)
             chrome.wait_for("document.readyState === 'complete'", timeout=20)
             chrome.eval("window.__before = 1; 1")
             page_rev.PAGE_REV = "updated-tv02"
@@ -3314,7 +3321,7 @@ class KioskReloadTests(RouteCase):
             httpd.server_close()                          # the port is closed: nothing answers
             time.sleep(22)                                # every slide is 18 s or less: a slide change happens
             where = chrome.eval("location.href")
-            self.assertTrue(where.startswith("http://127.0.0.1:%d/display" % port), where)
+            self.assertTrue(where.startswith("http://127.0.0.1:%d/slides" % port), where)
             self.assertEqual(chrome.eval("window.__before"), 1, "no reload while the server does not answer")
             second = _serve(server.app, port)            # the splash is back, with the new revision
             reloaded = chrome.wait_for("window.__before === undefined && document.readyState === 'complete' && (%s) === 'updated-tv02'"
@@ -3347,7 +3354,7 @@ class TvBoxHoldingPageTests(RouteCase):
         probe.shutdown()
         probe.server_close()
         page = (HERE.parent / "deploy" / "tv_box" / "holding.html").resolve().as_uri()
-        board = "http://127.0.0.1:%d/display" % port
+        board = "http://127.0.0.1:%d/board" % port
         url = page + "?" + "&".join(["board=" + board, "probe_s=0.5", "quiet_s=3", "fails=2"])
         chrome = pc.Chrome(touch=False, size=(1920, 1080))
         state_js = ("JSON.stringify([document.body.classList.contains('up'), document.title, "
@@ -3376,7 +3383,7 @@ class TvBoxHoldingPageTests(RouteCase):
             loads = []
 
             def mute(environ, start_response):         # answers, but its board never says it is up
-                if environ.get("PATH_INFO") == "/display":
+                if environ.get("PATH_INFO") == "/board":
                     loads.append(time.monotonic())
                 start_response("200 OK", [("Content-Type", "text/html")])
                 return [b"<!DOCTYPE html><title>not the board</title><p>nothing here</p>"]
@@ -3408,10 +3415,10 @@ class TvBoxHoldingPageTests(RouteCase):
 
 
 class TvPagesTests(RouteCase):
-    """Joey's three screens (2026-10-19), in headless Chrome over the DevTools protocol, the race state fed as pi5
-    sends it: /board, the La Quiniela page of the TV by the cups, shows the board in every state and nothing else;
-    /living-room cycles the slides and shows the board from AT THE POST through WINNER, back to the slides after;
-    a reload in the middle of the race, or the splash restarting, comes back on the board, not the slides."""
+    """The TV pages (2026-10-19), in headless Chrome over the DevTools protocol, the race state fed as pi5 sends it:
+    /board shows the board in every state and nothing else; /slides cycles the slides and shows the board from AT THE
+    POST through WINNER, back to the slides after; a reload in the middle of the race, or the splash restarting,
+    comes back on the board, not the slides."""
 
     BOARD_UP = "document.getElementById('quiniela-board').classList.contains('is-visible')"
     SLIDE_UP = "!!document.querySelector('#slideshow-stage .slide.is-active')"
@@ -3458,9 +3465,9 @@ class TvPagesTests(RouteCase):
             seen[state] = (self.chrome.eval(self.BOARD_UP), self.chrome.eval("document.getElementById('quiniela-board').dataset.state"))
         self.assertEqual(seen, {s: (True, str(s)) for s in range(7)}, "the board up, following the state, WELCOME to the results and back")
 
-    def test_the_living_room_switches_to_the_board_from_the_post_to_the_results(self) -> None:
+    def test_slides_switches_to_the_board_from_the_post_to_the_results(self) -> None:
         self.feed(0)
-        self.open("/living-room?page_rev_s=60")
+        self.open("/slides?page_rev_s=60")
         self.chrome.wait_for(self.SLIDE_UP, timeout=10)
         seen = {}
         for state in (0, 1, 2, 3, 4, 5, 6, 0, 3, 0):
@@ -3469,22 +3476,19 @@ class TvPagesTests(RouteCase):
             seen.setdefault(state, []).append(self.chrome.eval(self.BOARD_UP))
         self.assertEqual(seen, {0: [False, False, False], 1: [False], 2: [False], 3: [True, True], 4: [True], 5: [True], 6: [False]},
                          "the slides in 0, 1, 2 and 6; the board in 3 (AT THE POST), 4 (RUNNING) and 5 (WINNER)")
-        self.feed(1)
-        self.open("/display")
-        self.chrome.wait_for(self.BOARD_UP, timeout=10)   # /display as before: pi5's states (1-5)
 
     def test_a_reload_mid_race_comes_back_on_the_board(self) -> None:
         self.feed(4)
-        self.open("/living-room")
+        self.open("/slides")
         self.chrome.wait_for(self.BOARD_UP, timeout=10)
-        self.open("/living-room")                       # reloaded in the middle of the race
+        self.open("/slides")                            # reloaded in the middle of the race
         self.chrome.wait_for(self.BOARD_UP, timeout=10)
         self.settle(3)
         self.assertTrue(self.chrome.eval(self.BOARD_UP), "still the board")
         # The splash restarts in the middle of the race: it serves its empty model until pi5 is heard.
         fresh = BoardRelay(clock=self.clock, wall=self.wall)
         quiniela.board = self.board = fresh
-        self.open("/living-room")
+        self.open("/slides")
         self.settle(1.5)
         self.assertFalse(self.chrome.eval(self.SLIDE_UP), "no slide before pi5's state is known")
         self.feed(4)                                    # pi5 is heard: the race is on

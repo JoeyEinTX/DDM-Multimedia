@@ -768,9 +768,8 @@ stand either way. `success` is false only when the file could not be written
 
 #### The results board
 
-`QUINIELA_BOARD_STATES` is `[1, 2, 3, 4, 5]`: the TV board keeps the screen
-through WINNER, the moment the prizes are needed, and hands it back to the
-slideshow in 0 (PRE_RACE) and 6 (AFTER_PARTY). What it shows in WINNER
+The splash's pages say themselves when the board has the screen (`/board`
+always, `/slides` from AT THE POST through WINNER). What it shows in WINNER
 depends on `results` alone:
 
 - `null` (HEARTBEAT, or a `state 5` curl, before SET WINNERS):
@@ -1230,7 +1229,9 @@ the store and the results file as follows:
   those counts once as drops on the ticker.
 - `updated`: wall time of the last change. A snapshot that changes nothing
   publishes nothing and leaves it alone.
-- `board_states`: the race states in which the page takes over the TV.
+- `board_states`: `QUINIELA_BOARD_STATES`. The splash's pages have their own
+  sets; the board reads only that this list is not empty, as the sign that
+  the model is pi5's and not the splash's empty one after a restart.
 - `now`: the server's clock, stamped when the model is serialised (`GET
   /api/quiniela`, every SSE chunk), never stored and never part of the
   changed-comparison, so the stream stays quiet between real changes. The
@@ -1414,7 +1415,7 @@ display used), each overridable by `DDM_<KEY>` in the environment or
 | --- | --- | --- |
 | `TOKEN_VALUE` | `1.00` | Dollars per token, for the board's POT (`DDM_TOKEN_VALUE`, a float) |
 | `QUINIELA_LOG` | `True` | Write the JSONL log below (`DDM_QUINIELA_LOG`: 1/true/yes/on or 0/false/no/off) |
-| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4, 5]` | Race states in which the splash board owns the TV: betting, the race and the results; it is released in 0 and 6 (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4,5`) |
+| `QUINIELA_BOARD_STATES` | `[1, 2, 3, 4, 5]` | The model's `board_states`. The splash's pages decide for themselves when the board has the screen; the board reads only that the list is not empty (pi5 heard), so it must not be emptied (`DDM_QUINIELA_BOARD_STATES`, a comma list such as `1,2,3,4,5`) |
 | `LQ_SPLIT_WIN` | `0.60` | The WIN prize's share of the pot; it takes the remainder after PLACE and SHOW (`DDM_LQ_SPLIT_WIN`) |
 | `LQ_SPLIT_PLACE` | `0.25` | The PLACE prize's share, rounded half up to whole dollars (`DDM_LQ_SPLIT_PLACE`) |
 | `LQ_SPLIT_SHOW` | `0.15` | The SHOW prize's share, likewise (`DDM_LQ_SPLIT_SHOW`) |

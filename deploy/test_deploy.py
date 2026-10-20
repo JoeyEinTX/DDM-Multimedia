@@ -539,10 +539,10 @@ def test_tv_box_scripts():
            "ssh -t joey@ddm-tv.local bash $HOME/.local/share/ddm-tv/setup_box.sh" in out
            and "ddm-tv-launch.sh >/dev/null 2>&1 &" in out, out[-800:])
     run = subprocess.run([sh, str(DEPLOY / "tv_box.sh"), "install", "joey@ddm-tv.local", "--server",
-                          "http://10.0.0.37:5001/display?look=dots", "--overlay", "on", "--reboot", "--dry-run"],
+                          "http://10.0.0.37:5001/slides?look=dots", "--overlay", "on", "--reboot", "--dry-run"],
                          capture_output=True, text=True, timeout=60)
     _check("--server, --overlay on and --reboot: the address as given, setup with --overlay on, a reboot",
-           run.returncode == 0 and "DDM_TV_URL=http://10.0.0.37:5001/display?look=dots" in run.stdout
+           run.returncode == 0 and "DDM_TV_URL=http://10.0.0.37:5001/slides?look=dots" in run.stdout
            and "setup_box.sh --overlay on" in run.stdout and "sudo reboot" in run.stdout, run.stdout[-800:])
     for args, needle in ((["install"], "needs the box"), (["install", "joey@ddm-tv.local", "--server", "ddm-tv"], "must be a URL"),
                          (["install", "joey@ddm-tv.local", "--overlay", "maybe"], "on or off"), (["bogus", "x"], "unknown command")):
@@ -553,7 +553,7 @@ def test_tv_box_scripts():
     _check("status --dry-run: asks the box's launcher (--status) and says DevPi's revision",
            run.returncode == 0 and "ddm-tv-launch.sh --status" in run.stdout and "DevPi serves:" in run.stdout, run.stdout)
     conf = scratch_dir("ddm_tv_conf_")
-    (conf / "ddm-tv.conf").write_text("# a comment\nDDM_TV_URL=http://joeydevpi.local:5001/display\n", encoding="utf-8")
+    (conf / "ddm-tv.conf").write_text("# a comment\nDDM_TV_URL=http://joeydevpi.local:5001/board\n", encoding="utf-8")
     env = dict(ENV, DDM_TV_DIR="/home/joey/.local/share/ddm-tv", DDM_TV_CONF_DIR=str(conf), CHROMIUM_BIN="chromium")
     run = subprocess.run([sh, str(TV_BOX / "ddm-tv-launch.sh"), "--command"], env=env, capture_output=True, text=True, timeout=30)
     args = run.stdout.split()
@@ -562,7 +562,7 @@ def test_tv_box_scripts():
                                                          "--disable-session-crashed-bubble", "--incognito"))
            and any(a.startswith("--disable-features=Translate") for a in args), str(args))
     _check("...on the box's own holding page, the board's address from the config file in its query",
-           args[-1] == "file:///home/joey/.local/share/ddm-tv/holding.html?board=http%3A%2F%2Fjoeydevpi.local%3A5001%2Fdisplay",
+           args[-1] == "file:///home/joey/.local/share/ddm-tv/holding.html?board=http%3A%2F%2Fjoeydevpi.local%3A5001%2Fboard",
            args[-1] if args else "")
     _check("...its debugging port on the box's localhost only (the status reads the title)",
            "--remote-debugging-port=9222" in args and not any(a.startswith("--remote-debugging-address") for a in args))
@@ -648,7 +648,7 @@ def test_tv_launcher_restarts_the_browser():
     base = scratch_dir("ddm_tv_launch_")
     conf, log = base / "conf", base / "log"
     conf.mkdir()
-    (conf / "ddm-tv.conf").write_text("DDM_TV_URL=http://joeydevpi.local:5001/display\n", encoding="utf-8")
+    (conf / "ddm-tv.conf").write_text("DDM_TV_URL=http://joeydevpi.local:5001/board\n", encoding="utf-8")
     fake = base / "fake-chromium"
     fake.write_text("#!/usr/bin/env bash\necho run >> \"$FAKE_LOG\"\nexit 1\n", encoding="utf-8")
     fake.chmod(0o755)
@@ -771,8 +771,8 @@ def test_kiosk_files():
         run = subprocess.run(["shellcheck", str(KIOSK)], capture_output=True, text=True)
         _check("kiosk.sh: shellcheck", run.returncode == 0, run.stdout[-1500:])
     _check("kiosk.sh: LF, no home path", b"\r\n" not in KIOSK.read_bytes() and "/home/" not in text)
-    _check("kiosk.sh: the board's page by default, http://localhost:5001/display",
-           'URL="${SPLASH_URL:-http://localhost:5001/display}"' in text)
+    _check("kiosk.sh: the board's page by default, http://localhost:5001/board",
+           'URL="${SPLASH_URL:-http://localhost:5001/board}"' in text)
     _check("kiosk.sh: waits for http://localhost:5001/ up to 2 minutes, then starts the browser anyway",
            'WAIT_URL="${SPLASH_WAIT_URL:-http://localhost:5001/}"' in text and 'WAIT_S="${SPLASH_WAIT_S:-120}"' in text
            and "starting the browser anyway" in text)
@@ -820,9 +820,9 @@ def test_kiosk_script_runs():
     _check("it waited for the splash (curl until it answered, the third time)",
            (logs / "curl.n").read_text().strip() == "3")
     args = (logs / "chromium.args").read_text().split()
-    _check("one browser, kiosk mode, on http://localhost:5001/display",
+    _check("one browser, kiosk mode, on http://localhost:5001/board",
            len((logs / "chromium.args").read_text().splitlines()) == 1 and "--kiosk" in args
-           and args[-1] == "http://localhost:5001/display", str(args[-3:]))
+           and args[-1] == "http://localhost:5001/board", str(args[-3:]))
     _check("then Alt+Super+H, once (the pointer off)",
            (logs / "wtype.args").read_text().splitlines() == ["-M alt -M logo -k h -m logo -m alt"])
     for f in ("curl.n", "chromium.args"):

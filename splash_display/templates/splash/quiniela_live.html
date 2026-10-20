@@ -1,10 +1,11 @@
 {# La Quiniela live board — NOT a playlist slide.
 
-   Included once, as live DOM, inside #slideshow-stage (slideshow.html),
-   after the two slide layers and before the overlays. Hidden by default;
-   static/js/quiniela_board.js subscribes to /api/quiniela/stream and
-   crossfades this layer in while the model's race_state is one of its
-   board_states, holding the playlist in place through window.ddmSlideshow.
+   Included once, as live DOM, inside #slideshow-stage (slideshow.html for
+   /slides, board.html for /board), after the two slide layers and before
+   the overlays. Hidden by default; static/js/quiniela_board.js subscribes
+   to /api/quiniela/stream and crossfades this layer in while the model's
+   race_state is one of the page's board states (data-board-states, which
+   the server writes), holding the playlist in place through window.ddmSlideshow.
    Styles: static/css/quiniela_board.css. Design: tools/board_reference.html.
 
    Everything the JS touches is addressed by id or data-horse. The rows
@@ -27,7 +28,7 @@
    the tote look draws in its dot-matrix face ("num": a figure, "name": a
    horse's name; the crawl's text is marked by the JS). Cloths, the banner,
    the toast and every label stay as they are. #}
-<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('dots') }}" data-board-states="{{ board_states|default('') }}">
+<div id="quiniela-board" class="qb" aria-hidden="true" data-state="" data-look="{{ quiniela_look|default('dots') }}" data-board-states="{{ board_states }}">
     <div class="splash-serape-band qb-band qb-band--top"></div>
 
     <header class="qb-header">

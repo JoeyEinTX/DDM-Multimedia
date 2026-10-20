@@ -90,13 +90,13 @@ cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
       `journalctl -u ddm-pi5 -f` and `journalctl -u ddm-splash -f` (Ctrl+C stops the reading,
       not the app). Restart: `sudo systemctl restart ddm-pi5` (or `ddm-splash`, or both).
       Updating DevPi and running an app in a terminal: the end of this runbook.
-- [ ] The board TV by the cups is on its own box, `ddm-tv` ("The TV boxes", below), set up from
-      DevPi with `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local --reboot`. Check the
-      TV: the La Quiniela board, no pointer, and it never blanks. The living room's box, once it
-      exists, the same with `--server http://joeydevpi.local:5001/living-room`.
+- [ ] `ddm-tv`, by the cups, shows `/board` ("The TV boxes", below), set up from DevPi with
+      `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local --reboot`. Check the TV: the
+      La Quiniela board, no pointer, and it never blanks. `ddm-tv2`, once it exists, the same with
+      `--server http://joeydevpi.local:5001/slides`.
 - [ ] DevPi's own kiosk stays off: `~/DDM-Multimedia/deploy/install_services.sh --kiosk status`
       says off (`--kiosk off` if not). It is the fallback if the TV box dies: `--kiosk on`, from
-      the next login, Chromium full screen on `http://localhost:5001/display` on DevPi's screen.
+      the next login, Chromium full screen on `http://localhost:5001/board` on DevPi's screen.
       (Files: `splash_display/deploy/kiosk.sh`, `deploy/kiosk_autostart.py`.)
 - [ ] `impact.ttf` is in `~/.fonts/` on DevPi and `fc-cache -f` has been run, so the
       board on the TV uses Impact, not the fallback.
@@ -396,21 +396,20 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
 
 ---
 
-## The TV boxes (ddm-tv, and the living room's)
+## The TV boxes (ddm-tv, ddm-tv2)
 
-Three screens at the party:
+The pages are named for what they show; the boxes are numbered, interchangeable screens, and which
+page a box shows is one line in its config (`DDM_TV_URL`, set by `--server`). This table says which:
 
-| Screen | Shows | Box, page |
+| Box | Page | Shows |
 |---|---|---|
-| By the cups, A | the broadcast of the race | not DDM |
-| By the cups, B | the La Quiniela board, always, in every race state | `ddm-tv` (Pi 5): `http://joeydevpi.local:5001/board` |
-| The living room | the slideshow (trivia, La Subasta, the rest); the La Quiniela board from AT THE GATE until the results are in (AT THE POST, RUNNING, WINNER), so both rooms see the finish; the slideshow again with the next state after the results (RESET or WELCOME) | `ddm-tv2` (hardware not chosen yet): `http://joeydevpi.local:5001/living-room` |
+| `ddm-tv` (Pi 5), by the cups beside the race broadcast | `http://joeydevpi.local:5001/board` | the La Quiniela board, in every race state, nothing else |
+| `ddm-tv2` (hardware not chosen yet) | `http://joeydevpi.local:5001/slides` | the slideshow (trivia, La Subasta, the rest), and the La Quiniela board from AT THE GATE until the results are in (AT THE POST, RUNNING, WINNER; `DDM_SLIDES_BOARD_STATES` in `splash_display/.env`, default 3,4,5); the slideshow again with the next state after the results (RESET or WELCOME) |
 
 Each box does nothing but show its page full screen. DevPi runs the servers and the gateway; its own
-kiosk stays off. A box runs no DDM code and has no repo: DevPi sets it up over SSH, and a pull on
-DevPi updates the pages as before (each TV reloads itself within a minute of the restart).
-`/display`, the one-screen page (the slideshow with the board from BETTING OPEN to WINNER), stays
-for DevPi's own kiosk, the fallback.
+kiosk stays off (the fallback, on `/board`). A box runs no DDM code and has no repo: DevPi sets it up
+over SSH, and a pull on DevPi updates the pages as before (each TV reloads itself within a minute of
+the restart).
 
 - **Any screen, either port:** plug the TV into either micro-HDMI port (HDMI0, next to the USB-C
   power, wins if both have a screen). The box uses 1920x1080, the board's size, when the screen
@@ -432,10 +431,9 @@ for DevPi's own kiosk, the fallback.
   `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv.local` (sudo asks for the box's password;
   the first time add `--reboot`). By default the box shows the La Quiniela page on DevPi's name,
   `http://joeydevpi.local:5001/board`. **To point a box at another page:** install again with
-  `--server`, e.g. the living room's box, once it exists:
-  `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv2.local --server http://joeydevpi.local:5001/living-room --reboot`
-  (`?look=impact` on either page for the old look). The pages: `/board` (the board, always),
-  `/living-room` (the slideshow, the board for the race), `/display` (one screen).
+  `--server`, e.g. `ddm-tv2`, once it exists:
+  `~/DDM-Multimedia/deploy/tv_box.sh install joey@ddm-tv2.local --server http://joeydevpi.local:5001/slides --reboot`
+  (`?look=impact` on either page for the old look), and change the table above.
 - **Read-only SD card (optional):** `--overlay on` makes the box's root read-only, so a yanked power
   cord can't corrupt the card. Turn it off before installing again (`--overlay off`, reboot, install).
 - **Fallback, if the box dies on the day:** plug the TV into DevPi (HDMI0) and
