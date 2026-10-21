@@ -71,16 +71,16 @@ The lock itself (`POST /api/admin/lock`) first lists any horse in the field nobo
 
 ### Race & Payouts (Automatic)
 
-1. Derby runs. Joey enters W/P/S results into existing dashboard (single source of truth for race results)
-2. La Subasta system detects results via shared database, auto-computes payouts
-3. **60/25/15 split** applied to total pot:
-   - Win: 60% of total pot → Winner's owner
-   - Place: 25% of total pot → 2nd place owner
-   - Show: 15% of total pot → 3rd place owner
-4. Winners get push notification: "🎉 YOU WON! $340 on Magnolia"
-5. Spectator TV does victory recap: winner portrait, owner name, payout amounts, biggest winner of the night
-6. Non-winners get "Better luck next year" recap with their portfolio summary
-7. Admin view shows payout ledger for Joey to settle with winners
+1. Derby runs. Joey enters the real finish, the horses that crossed 1st, 2nd and 3rd, once, in the Control Center's **SET WINNERS** (the single source of truth for the result: `pi5/data/results.json`, gap review M5 / OD4, 2026-10-20)
+2. La Subasta reads that record in the same process (`BettingBoard.results()`, through `la_subasta/payouts.py`) and works the payouts out from it and the ownership whenever the ledger is read; nothing is entered in La Subasta and nothing is stored but what the admin does (see **Payouts**)
+3. **60/25/15 split** applied to total pot, whole pesos (La Quiniela's rounding: PLACE and SHOW half up, WIN takes the rest):
+   - Win: 60% of total pot → the owner of the horse that crossed 1st
+   - Place: 25% of total pot → the owner of the horse that crossed 2nd
+   - Show: 15% of total pot → the owner of the horse that crossed 3rd
+4. Winners get push notification: "🎉 YOU WON! $340 on Magnolia" *(not built)*
+5. Spectator TV does victory recap: winner portrait, owner name, payout amounts, biggest winner of the night *(not built)*
+6. Non-winners get "Better luck next year" recap with their portfolio summary *(not built)*
+7. Admin view shows payout ledger for Joey to settle with winners, with a paid-out mark per slot
 
 ---
 
@@ -178,19 +178,23 @@ ownership (
 );
 -- Populated when auction closes
 
-payouts (
+-- No payouts table: the ledger is derived from SET WINNERS' result and the
+-- ownership whenever it is read (see Payouts). What is stored is what the
+-- admin did on a slot, per finish and the horse that finished in it:
+payout_slots (
   id INTEGER PRIMARY KEY,
-  bidder_id INTEGER REFERENCES bidders,  -- NULL while nobody owns the slot's horse (see Payouts)
-  horse_id INTEGER NOT NULL,     -- the horse that finished there: program number 1-24, La Quiniela's field
-  pays_horse_id INTEGER,         -- the horse the admin named to pay the slot in its place, if any
   finish TEXT NOT NULL,          -- 'win', 'place', 'show'
-  amount REAL NOT NULL,
-  paid_out BOOLEAN DEFAULT FALSE
+  horse_id INTEGER NOT NULL,     -- the horse that finished there when the admin acted: program number 1-24
+  pays_horse_id INTEGER,         -- the horse the admin named to pay the slot in its place, if any
+  paid_bidder_id INTEGER REFERENCES bidders,  -- the paid-out mark: who was paid...
+  paid_amount INTEGER,           -- ...how much (whole pesos)...
+  paid_at TEXT,                  -- ...and when; NULL while unpaid
+  UNIQUE(finish, horse_id, event_year)
 );
 
 auction_state (
   id INTEGER PRIMARY KEY,
-  state TEXT NOT NULL,           -- 'NOT_STARTED','OPEN','FINAL_HOUR','LOCKED','RACE_COMPLETE','SETTLED'
+  state TEXT NOT NULL,           -- 'NOT_STARTED','OPEN','FINAL_HOUR','LOCKED'; "settled" is LOCKED with a result
   opens_at TIMESTAMP,
   closes_at TIMESTAMP,
   total_pot REAL DEFAULT 0
@@ -273,7 +277,7 @@ A scratch is entered **once, on La Quiniela's admin page** (`/quiniela/admin`, S
 - **Undo** on the LQ admin page restores everything. The horse is back in the field and what its scratch voided comes back with it: its bids and, after the lock, its `ownership` row (`voided = 0` again), so the owner owes the winning bid again and a paid owner's `refund_owed` goes. No horse is ever left without an owner by an undo. Only what the scratch voided returns (`voided_reason = 'scratched'`): a bid an admin voided stays voided. Undoing a replacement takes the stand-in out of the field again and voids its bids the same way; they come back if the replacement is made again. A horse scratched **before** the lock and undone **after** it has its bids back but was never frozen into ownership, so it is frozen from those bids (unless the lock froze nothing at all, in which case settlement freezes everything itself). Like the scratch it is idempotent: a restart, or an undo made while pi5 was down, changes nothing twice (`scratches.restore()`, run after `apply()`), and `field_changed` goes out so phones read the list again. The cap is not re-checked: a restored bid can leave a bidder leading more than three horses.
 - **When:** on change, never on a timer. The store's change listener applies a scratch the moment it is recorded; pi5 applies what is already recorded when it starts; a La Subasta request catches up if `names_rev` moved and a listener failed. It is idempotent: only what is still active on a horse not in the field is voided, so a restart never voids anything twice.
 - **Live:** `horse_scratched` (per horse that left) and `field_changed` (the new field) go out over SocketIO; guest phones drop the horse and re-read the list without a reload.
-- If results were already entered when a horse is scratched (it ran, so this is an operator error), its payouts are left as they are and the log says so.
+- **While a result stands the field is frozen** (2026-10-20): the LQ admin page refuses a scratch or an undo until the result is cleared in SET WINNERS (RESET in the dialog), so the payouts, derived from the result and the ownership as they stand, never move under a scratch. (The earlier rule, payouts left as they were after a late scratch, went with La Subasta's own results store.)
 
 ## Payment Tracking (Honor System)
 
@@ -308,38 +312,54 @@ If an unpaid bidder wins a payout, admin sees flag: "Mike T 🎺 owes $145 but w
 
 ## Payouts
 
+### The result: SET WINNERS' record, read, never copied
+
+The race has one result, entered once, in the Control Center's SET WINNERS (gap review M5, OD4; Joey, 2026-10-20). It is `pi5/data/results.json`: the real finish, the horses that crossed 1st, 2nd and 3rd (never a substitute), and `next`, the finishers after SHOW that La Quiniela needs to skip a horse nobody bet (its business, M6). La Subasta has no results entry, no results route and no payout rows. `la_subasta/payouts.py` reads the record through La Quiniela's board (`BettingBoard.results()`, the same code the cups and the TV are fed from, in the same process, never over HTTP) and works the ledger out from it and the ownership as they stand every time it is read (`ledger()`, `GET /api/admin/payouts`):
+
+- a correction in SET WINNERS changes the payouts at the next read;
+- Reset betting and the Control Center's RESET, which clear the result, clear them;
+- while a result stands the field is frozen (the LQ admin page refuses a scratch or an undo), so the ownership under the payouts moves only by the admin's own void.
+
+`GET /api/state` carries `results` (the three horses, or null) and `settled` (the auction is LOCKED and a result is in). The auction's own states end at LOCKED: RACE_COMPLETE and SETTLED went with the entry (a database left in either reads as LOCKED).
+
 ### Formula
 
 ```
 Total Pot = sum of the winning bids over the field as it stands (ownership rows not voided)
 
-Win payout  = Total Pot × 0.60 → horse finishing 1st
-Place payout = Total Pot × 0.25 → horse finishing 2nd
-Show payout  = Total Pot × 0.15 → horse finishing 3rd
+Win payout  = Total Pot × 0.60 → the owner of the horse that crossed 1st
+Place payout = Total Pot × 0.25 → the owner of the horse that crossed 2nd
+Show payout  = Total Pot × 0.15 → the owner of the horse that crossed 3rd
 ```
+
+Whole pesos, La Quiniela's own rounding (`prizes_for`, OD5): PLACE and SHOW rounded half up, WIN takes the rest, so the three always sum to the pot. A horse nobody bet in La Quiniela is skipped there (M6), not here: its owner is paid all the same.
 
 ### Example
 
-Total pot = $500
-- Winner owner: $300
-- Place owner: $125
-- Show owner: $75
+Total pot = 11 pesos
+- Place owner: 11 × 0.25 = 2.75 → 3
+- Show owner: 11 × 0.15 = 1.65 → 2
+- Winner owner: the rest, 6
 
 ### Unsold horses: no House
 
 There is **no House**. No payout ever goes to a House or to the DDM build fund, and no horse is held by anyone "at $0". A horse nobody bids on is simply **unsold**:
 
 - **Before the lock the admin is warned.** Joey encourages a bid on every horse, but one nobody bid on would reach the lock unsold. `POST /api/admin/lock` answers `409 {"unsold": [3, 12]}` (the horses in the field with no bid) and does nothing until the body says `{"confirm": true}`; the admin page lists them and has a confirm button. In practice the host buys them first, at the minimum bid. He is the one bidder the admin marks exempt from the max-three cap (**No cap** on his row, `POST /api/admin/cap-exempt`), so he can pick up the stragglers.
-- **A paying horse with no owner at settlement** (WIN, PLACE or SHOW; the warning should make it impossible, but a void after the lock, or a replacement that entered after it, can still cause it) is **skipped, and the next finisher pays**: La Quiniela's rule for an empty cup in the money. Settlement does not wait for it. The slot is stored with no bidder and flagged `unowned` (the results reply, `GET /api/admin/payouts`, the ledger's NO OWNER flag), and nobody is paid it until the admin names the horse that pays it: `POST /api/admin/payout-slot {finish, horse_id}`, a picker of in-field horses in the ledger. Any slot can be set, because skipping one finisher moves the next up into it; the horse must be in the field and have an owner. There is no automatic award.
+- **A paying horse with no owner at settlement** (WIN, PLACE or SHOW; the warning should make it impossible, but a void after the lock, or a replacement that entered after it, can still cause it) is **skipped, and the next finisher pays**: La Quiniela's rule for an empty cup in the money. Settlement does not wait for it. The slot comes back with no bidder and flagged `unowned` (`GET /api/admin/payouts`, the ledger's NO OWNER flag), and nobody is paid it until the admin names the horse that pays it: `POST /api/admin/payout-slot {finish, horse_id}`, a picker of in-field horses in the ledger. Any slot can be set, because skipping one finisher moves the next up into it; the horse must be in the field and have an owner. There is no automatic award. The pick is kept against the finisher it was made for (`payout_slots`): a correction in SET WINNERS that changes the slot's horse sets it aside, one that changes it back brings it back.
+
+### The paid-out mark
+
+Each slot has **Mark paid out** (`POST /api/admin/payout-paid {finish, paid: true}`): the ledger's bidder and amount are recorded against the slot's finisher, with the time (`payout_slots.paid_*`). The row reads as paid while the ledger still says that bidder and that amount for that horse. When it no longer does, because the result moved (a correction in SET WINNERS, RESET, Reset betting) or the owner or the amount changed under it (a void after the lock), the ledger lists the mark under `paid_on_old_result`, one plain line each, on top of the admin page's ledger in red: `Alice 🌮 was paid 7 pesos for WIN (#1); WIN now pays Carol 💃 7 pesos for #4` (or `; there is no result now`, or `; WIN is now #1, which has no owner to pay`), until the host unmarks it (`{finish, horse_id, paid: false}`) or the result comes back. Reset betting leaves the marks: they are money facts. Marking a slot paid again for the same bidder and amount keeps the first mark; marking an unowned slot is refused (name the horse that pays it first).
 
 ### Settlement
 
-1. Race results entered by Joey into existing dashboard
-2. La Subasta system reads results, computes payouts
-3. Push notifications fire to winners
-4. Spectator TV runs victory sequence (see below)
-5. Admin view shows payout ledger: "Pay Dave K 🌮 $300 for Magnolia (Win)"; a slot with no owner shows a NO OWNER flag and a picker (see above)
-6. Joey Venmos out winnings, taps **"Mark Paid Out"** per row
+1. The real finish entered once by Joey in the Control Center's SET WINNERS
+2. La Subasta's ledger reads it and shows the payouts, whole pesos, at once
+3. Push notifications fire to winners *(not built)*
+4. Spectator TV runs victory sequence *(not built)*
+5. Admin view shows payout ledger: "WIN · 6 pesos, #1 MAGNOLIA finished, pay Dave K 🌮"; a slot with no owner shows a NO OWNER flag and a picker (see above)
+6. Joey pays out, taps **Mark paid out** per row; a correction after that is said on the page until he settles up and unmarks it
 
 ---
 
@@ -356,8 +376,6 @@ Reuses existing SocketIO infrastructure. New event types:
 | `auction_locked` | `{timestamp}` | All views |
 | `horse_scratched` | `{horse_id, refund_count, ownership_voided}` | All views |
 | `field_changed` | `{names_rev, horses}` | All views |
-| `results_entered` | `{win, place, show}` | All views |
-| `payout_computed` | `{bidder, amount, horse, finish}` | Winner push |
 | `paid_marked` | `{bidder}` | Admin view |
 
 ### Browser Push Notifications
@@ -440,7 +458,7 @@ Payouts and ownership are stored in DB — **never dependent on notifications la
 
 **Landscape iPad layout, denser info, admin controls.**
 
-*Built so far: a small page at `/la-subasta/admin` (the state controls with the lock's warning, race results, the bidders with Mark Paid and No cap, the payout ledger with the NO OWNER picker). The layout below is the target.*
+*Built so far: a small page at `/la-subasta/admin` (the state controls with the lock's warning, the bidders with Mark Paid and No cap, the payout ledger derived from SET WINNERS' result, with the NO OWNER picker, Mark paid out per slot and the paid-on-an-earlier-result lines). The layout below is the target; its ENTER RESULTS button is not: results are SET WINNERS'.*
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -471,9 +489,8 @@ Payouts and ownership are stored in DB — **never dependent on notifications la
 - Manually edit a bid (fix fat-finger)
 - Scratches: none here, they are entered on the LQ admin page (see **Scratches**)
 - Lock the auction (the lock lists any horse nobody bid on and goes ahead only on confirm)
-- Enter race results
 - Name the horse that pays a payout slot with no owner
-- Mark payouts as settled
+- Mark a payout paid out (and unmark it); see what was paid on an earlier result
 - Toggle Testing/Sandbox Mode
 - Export full data as CSV/JSON
 
@@ -546,7 +563,7 @@ The existing dashboard drives race state (PRE-RACE → BETTING_OPEN → FINAL_CA
 | FINAL_CALL | FINAL_HOUR (last 15 min) | Urgency UI, red flashes |
 | AT_THE_POST | LOCKED | "Time to Pay Up" messaging |
 | RUNNING | LOCKED | Race in progress |
-| WINNER | RACE_COMPLETE → SETTLED | Payouts computed, celebration |
+| WINNER | LOCKED, settled (the result is in) | The ledger pays from SET WINNERS' record |
 
 ### Optional LED Cup Feedback
 
@@ -576,8 +593,9 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/api/admin/void` | POST | Void a bid `{bid_id, reason}` (admin) |
 | `/la_subasta/api/admin/paid` | POST | Mark bidder paid `{bidder_id}` (admin) |
 | `/la_subasta/api/admin/cap-exempt` | POST | Exempt a bidder from the max-horses cap, or take it off `{bidder_id, exempt}` (admin) |
-| `/la_subasta/api/admin/payouts` | GET | Payout ledger, with `unowned` slots (admin) |
+| `/la_subasta/api/admin/payouts` | GET | The payout ledger, derived from SET WINNERS' result: `results`, `total_pot`, `amounts`, the rows (`unowned`, `paid`), `paid_on_old_result` (admin) |
 | `/la_subasta/api/admin/payout-slot` | POST | Name the horse that pays a slot with no owner `{finish, horse_id}` (admin) |
+| `/la_subasta/api/admin/payout-paid` | POST | The paid-out mark `{finish, paid}`; `horse_id` to unmark one paid on an earlier result (admin) |
 | `/la_subasta/api/admin/testing` | POST | Toggle sandbox mode (admin) |
 | `/la_subasta/api/admin/export` | GET | Export all data as JSON/CSV |
 | `/la_subasta/api/history` | GET | Past years' winners (year-over-year) |
@@ -690,7 +708,7 @@ Subtle horizontal serape band across the top of guest view. Scaled-down version 
 - [ ] Bidder registration + identity uniqueness
 - [ ] Bid placement API with full validation
 - [ ] SocketIO events for bid updates
-- [ ] Auction state machine (NOT_STARTED → OPEN → FINAL_HOUR → LOCKED → RACE_COMPLETE → SETTLED)
+- [ ] Auction state machine (NOT_STARTED → OPEN → FINAL_HOUR → LOCKED; settled is LOCKED with a result)
 - [ ] Payout computation logic
 
 ### Phase 2: Guest Phone UI (Week 2)
@@ -707,7 +725,7 @@ Subtle horizontal serape band across the top of guest view. Scaled-down version 
 - [ ] Horse list with void actions (scratches come from the LQ admin page)
 - [ ] Live bid feed
 - [ ] Start auction / lock now controls
-- [ ] Race results entry (shared with dashboard)
+- [ ] Race results read from the dashboard's SET WINNERS record (never entered here)
 - [ ] Payout ledger
 
 ### Phase 4: Spectator TV UI (Week 4)
@@ -967,6 +985,7 @@ These remain code-only (rare to change, edit the file directly if needed):
 | 1.2 | April 2026 | Added **Admin Tunables & Overrides** section: 7 live-adjustable settings, lock-when-open guardrail, override storage pattern, audit log table, settings panel UI |
 | 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta. **Scratches** entered on the LQ admin page and applied by the auction's own rule; La Subasta's own scratch endpoint and `horse_state` are gone |
 | 1.4 | October 2026 | **No House**: no payout ever goes to the House or a build fund. An unsold horse is bought before the lock (the lock warns, and the admin can exempt the host from the max-three cap); a paying horse with no owner is skipped and the admin names the next finisher in the payout ledger. **Undo restores everything**: a scratch's bids and, after the lock, its ownership come back with the horse. A void after the lock moves the ownership with the bids |
+| 1.5 | October 2026 | **Results from SET WINNERS** (gap review M5, OD4): La Subasta's own results entry, route and `payouts` table are gone; the ledger is derived from the Control Center's record (the real 1st, 2nd and 3rd) and the ownership whenever it is read, in whole pesos with La Quiniela's rounding (OD5). A correction follows, Reset betting clears. The auction's states end at LOCKED. **The paid-out mark** per slot, tied to the finisher; a mark the result moved away from is listed as paid on an earlier result until unmarked. The field is frozen while a result stands |
 
 ---
 

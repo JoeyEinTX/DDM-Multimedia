@@ -29,7 +29,7 @@ DEFAULTS = {
 PAYOUT_PRESET_OPTIONS = ("60/25/15", "70/20/10", "50/30/20")
 
 # Settings that can't be changed once the auction is running (OPEN, FINAL_HOUR,
-# LOCKED, RACE_COMPLETE, SETTLED). HOUSE_FUND_LABEL + LOCKDOWN_MINUTES_BEFORE_POST
+# LOCKED). HOUSE_FUND_LABEL + LOCKDOWN_MINUTES_BEFORE_POST
 # are always editable — the first is display-only and the second affects a
 # future auto-lock timer, not in-flight bid validation.
 LOCKED_WHEN_OPEN = frozenset({

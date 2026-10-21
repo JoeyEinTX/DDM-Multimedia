@@ -425,6 +425,20 @@ There is no roster line. A v1 `roster` line is ignored.
 - **A paying horse with no owner is skipped.** [DECIDED 2026-10-01, BUILT] The next
   finisher pays, the same rule La Quiniela uses for an empty cup. The admin payout ledger
   flags the slot and the admin enters the horse that pays it. No automatic House award.
+- **The result is SET WINNERS'.** [DECIDED 2026-10-20 (OD4), BUILT; filed once seen on DevPi]
+  The race has one result, entered once in the Control Center's SET WINNERS
+  (`pi5/data/results.json`, section 4). La Subasta's own results entry, route and payout rows
+  are gone: `la_subasta/payouts.py` reads the record through `BettingBoard.results()` in the
+  same process and derives the ledger from it and the ownership whenever it is read, so a
+  correction in SET WINNERS changes the payouts and Reset betting (or RESET) clears them. The
+  owners of the real 1st, 2nd and 3rd are paid, whole pesos with La Quiniela's rounding (OD5);
+  La Quiniela's skip of a horse nobody bet (section 6) is not the auction's. The auction's
+  states end at LOCKED. What is stored is what the admin did (`payout_slots`): the horse named
+  to pay a slot with no owner, and the paid-out mark, both tied to the finisher they were
+  made for; a mark the result moved away from is listed on the admin page as paid on an earlier
+  result until unmarked. First thing to check when it misbehaves: `GET /api/results` on pi5
+  (the record) against `GET /la-subasta/api/admin/payouts` (`results` in the ledger must be
+  the same three).
 - **A guest belongs to one event year.** [BUILT 2026-10-20] The year is `EVENT_YEAR` in
   `pi5/la_subasta/config.py` (2027); the guest page checks the identity a phone kept
   (`/la-subasta/api/check-identity`) at boot, and on a bid answered 404, and sends a phone
@@ -620,6 +634,9 @@ gateway says hello.
 - The admin page shows the race state read-only; its race-state buttons are gone
 - Re-bet wording for a same-day scratch: the crawl says `· RE-BET YOUR TOKENS`
 - pi5 and the splash as systemd services (`ddm-pi5`, `ddm-splash`); a hand-run copy refuses while its service runs
+- La Subasta's results from SET WINNERS (gap review M5): one record, the real finish with the
+  next finishers for La Quiniela's skip; the field frozen while a result stands; the dialog follows
+  a scratch; La Subasta's ledger derived from the record, whole pesos, the paid-out marks
 
 ### Next
 

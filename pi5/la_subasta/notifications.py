@@ -85,14 +85,6 @@ def field_changed(names_rev: Optional[int], horses: list) -> None:
     emit("field_changed", {"names_rev": names_rev, "horses": horses})
 
 
-def results_entered(win: int, place: int, show: int) -> None:
-    emit("results_entered", {"win": win, "place": place, "show": show})
-
-
-def payout_computed(payload: Any) -> None:
-    emit("payout_computed", payload)
-
-
 def paid_marked(bidder_id: int) -> None:
     emit("paid_marked", {"bidder_id": bidder_id})
 

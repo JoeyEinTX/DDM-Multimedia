@@ -6,12 +6,16 @@
 //   - Auction: Open, Final hour, Lock. A lock with horses nobody bid on is a
 //     409 {"unsold": [...]} (there is no House to take them): the warning
 //     lists them and the confirm button locks anyway ({"confirm": true}).
-//     Race results once the auction is locked.
 //   - Bidders: what each owes, Mark paid, and the cap exemption ("No cap":
 //     the host, who buys the horses nobody else bid on, may lead more than
 //     the max-horses cap; it still applies to everyone else).
-//   - Payouts: the ledger. A slot whose horse has no owner is flagged and has
-//     a picker for the horse that pays it instead (the next finisher).
+//   - Payouts: the ledger, derived on pi5 from the result SET WINNERS
+//     recorded on the Control Center and the ownership as they stand (GET
+//     /api/admin/payouts): nothing is entered here. A slot whose horse has no
+//     owner is flagged and has a picker for the horse that pays it instead
+//     (the next finisher). Each slot has a paid-out mark (Mark paid out /
+//     Unmark); a mark the result moved away from is listed on top, in red,
+//     as paid on an earlier result, until it is unmarked.
 //
 // Names are what guests typed: every piece of text goes in with textContent.
 
@@ -21,9 +25,8 @@
     const API = '/la-subasta/api/';
     const ADMIN = API + 'admin/';
     const POLL_MS = 4000;
-    const FINISHES = ['win', 'place', 'show'];
 
-    const model = { state: null, horses: [], bidders: [], payouts: [] };
+    const model = { state: null, horses: [], bidders: [], ledger: null };
     const picks = {};          // a payout slot's picker choice, kept across refreshes
     const pickerOpen = {};     // slots whose picker was opened with "Change"
 
@@ -91,7 +94,7 @@
         if (got[0].ok) model.state = got[0].data;
         if (got[1].ok) model.horses = got[1].data.horses || [];
         if (got[2].ok) model.bidders = got[2].data.bidders || [];
-        if (got[3].ok) model.payouts = got[3].data.payouts || [];
+        if (got[3].ok) model.ledger = got[3].data;
         // Draw only when something changed: a page rebuilt every few seconds
         // swallows a tap that lands while it is being rebuilt.
         const seen = JSON.stringify(model);
@@ -141,7 +144,7 @@
 
     function renderHead() {
         const s = model.state || {};
-        $('ls-admin-state').textContent = s.state || '—';
+        $('ls-admin-state').textContent = (s.state || '—') + (s.settled ? ' · results in' : '');
         $('ls-admin-pot').textContent = s.total_pot === undefined ? '—' : pesos(s.total_pot);
         $('ls-admin-bidders').textContent = s.num_bidders === undefined ? '—' : s.num_bidders;
         $('ls-admin-bids').textContent = s.num_bids === undefined ? '—' : s.num_bids;
@@ -156,31 +159,6 @@
         $('ls-admin-final').disabled = s !== 'OPEN';
         $('ls-admin-lock').disabled = !biddable;
         if (!biddable) hideUnsold();                 // nothing left to lock
-        const results = s === 'LOCKED' || s === 'RACE_COMPLETE';
-        $('ls-admin-results').hidden = !results;
-        if (results) fillResultSelects();
-    }
-
-    function fillResultSelects() {
-        const signature = model.horses.map(function (h) { return h.horse_id; }).join(',');
-        FINISHES.forEach(function (finish) {
-            const sel = $('ls-admin-' + finish);
-            if (sel.dataset.signature === signature) return;
-            const keep = sel.value;
-            sel.textContent = '';
-            const blank = document.createElement('option');
-            blank.value = '';
-            blank.textContent = '—';
-            sel.appendChild(blank);
-            model.horses.forEach(function (h) {
-                const o = document.createElement('option');
-                o.value = String(h.horse_id);
-                o.textContent = horseLabel(h.horse_id);
-                sel.appendChild(o);
-            });
-            sel.dataset.signature = signature;
-            sel.value = keep;
-        });
     }
 
     function renderBidders() {
@@ -231,11 +209,41 @@
     function renderPayouts() {
         const box = $('ls-admin-payouts');
         box.textContent = '';
-        if (!model.payouts.length) {
-            box.appendChild(text('div', 'adm-empty', 'No results yet. Lock the auction, then enter the race results.'));
+        const led = model.ledger;
+        if (!led) {
+            box.appendChild(text('div', 'adm-empty', 'Waiting for pi5…'));
             return;
         }
-        model.payouts.forEach(function (p) {
+
+        // Paid on an earlier result: the result moved away from these marks (a correction in SET WINNERS, RESET,
+        // Reset betting, an owner voided). Each line says who was paid what and what the slot pays now; the host
+        // settles up and unmarks it. Shown first: it is money handed over.
+        const stale = led.paid_on_old_result || [];
+        if (stale.length) {
+            const warn = document.createElement('div');
+            warn.className = 'adm-warn adm-stale';
+            warn.setAttribute('role', 'alert');
+            warn.appendChild(text('strong', '', 'Paid on an earlier result'));
+            warn.appendChild(text('p', '', 'The result changed under these payouts. Settle up, then unmark each one.'));
+            stale.forEach(function (s) {
+                const line = document.createElement('div');
+                line.className = 'adm-stale-line';
+                line.appendChild(text('span', '', s.line));
+                line.appendChild(button('Unmark', '', function () { markPayout(s.finish, false, s.horse_id); }));
+                warn.appendChild(line);
+            });
+            box.appendChild(warn);
+        }
+
+        if (!led.results) {
+            box.appendChild(text('div', 'adm-empty', (auctionState() === 'LOCKED' ? '' : 'Lock the auction. ')
+                + 'The result is entered once, in SET WINNERS on the Control Center; the payouts follow it here.'));
+            return;
+        }
+        box.appendChild(text('div', 'adm-ledger-figures',
+            'Pot ' + pesos(led.total_pot) + ' · WIN ' + pesos(led.amounts.win) + ' · PLACE ' + pesos(led.amounts.place)
+            + ' · SHOW ' + pesos(led.amounts.show) + ' (whole pesos, WIN takes the rounding)'));
+        led.payouts.forEach(function (p) {
             const row = document.createElement('div');
             row.className = 'adm-row';
 
@@ -249,6 +257,8 @@
             if (p.unowned) {
                 owner.appendChild(text('span', 'adm-flag', 'NO OWNER'));
                 owner.appendChild(document.createTextNode(' nobody is paid this until you name the horse that pays it'));
+            } else if (p.paid) {
+                owner.appendChild(text('span', 'adm-good', 'paid out to ' + p.paid.bidder_identity + ', ' + pesos(p.paid.amount)));
             } else {
                 owner.appendChild(document.createTextNode('pay ' + p.bidder_identity));
             }
@@ -259,6 +269,9 @@
             const acts = document.createElement('div');
             acts.className = 'adm-acts';
             if (!p.unowned) {
+                acts.appendChild(p.paid
+                    ? button('Unmark', '', function () { markPayout(p.finish, false, null); })
+                    : button('Mark paid out', '', function () { markPayout(p.finish, true, null); }));
                 acts.appendChild(button(open ? 'Hide' : 'Change', '', function () {
                     pickerOpen[p.finish] = !pickerOpen[p.finish];
                     renderPayouts();
@@ -358,17 +371,14 @@
         refresh();
     }
 
-    async function submitResults() {
-        const picked = FINISHES.map(function (f) { return parseInt($('ls-admin-' + f).value, 10); });
-        if (picked.some(function (n) { return !n; })) { say('Pick the win, place and show horses', false); return; }
-        if (new Set(picked).size !== 3) { say('Win, place and show must all differ', false); return; }
-        const r = await postJSON(ADMIN + 'results', { win: picked[0], place: picked[1], show: picked[2] });
+    // The paid-out mark on a slot: paid true marks the slot's finisher as the result names it now; false clears
+    // the mark, on the horse given (a mark paid on an earlier result) or on the current finisher.
+    async function markPayout(finish, paid, horseId) {
+        const body = { finish: finish, paid: paid };
+        if (horseId) body.horse_id = horseId;
+        const r = await postJSON(ADMIN + 'payout-paid', body);
         const done = r.ok && r.data.success;
-        let msg = done ? 'Results entered, payouts computed' : errorOf(r, 'Results rejected');
-        if (done && r.data.unowned && r.data.unowned.length) {
-            msg += '. No owner for the ' + r.data.unowned.join(' and ') + ' slot: name the horse that pays it under Payouts';
-        }
-        say(msg, done);
+        say(done ? finish.toUpperCase() + (paid ? ' marked paid out' : ' unmarked') : errorOf(r, 'Could not change the mark'), done);
         refresh();
     }
 
@@ -382,7 +392,6 @@
         $('ls-admin-lock').addEventListener('click', function () { lock(false); });
         $('ls-admin-unsold-confirm').addEventListener('click', function () { lock(true); });
         $('ls-admin-unsold-cancel').addEventListener('click', function () { hideUnsold(); say('Lock cancelled', true); });
-        $('ls-admin-results-submit').addEventListener('click', submitResults);
 
         refresh();
         setInterval(function () {

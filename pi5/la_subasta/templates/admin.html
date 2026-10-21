@@ -11,7 +11,9 @@
 
 <!-- La Subasta admin: the auction's state and its controls (with the lock's
      warning about horses nobody bid on), the bidders (paid; the cap
-     exemption) and the payout ledger (a picker for a slot nobody owns).
+     exemption) and the payout ledger, derived on pi5 from the result SET
+     WINNERS recorded on the Control Center (a picker for a slot nobody owns,
+     the paid-out marks). Nothing is entered here but what the admin does.
      Everything is read from and sent to the /la-subasta/api routes by
      admin.js; the page itself holds no state. -->
 
@@ -46,18 +48,6 @@
             <div class="adm-buttons">
                 <button type="button" id="ls-admin-unsold-confirm" class="adm-danger">Lock anyway</button>
                 <button type="button" id="ls-admin-unsold-cancel">Cancel</button>
-            </div>
-        </div>
-
-        <div id="ls-admin-results" class="adm-results" hidden>
-            <h3>Race results</h3>
-            <div class="adm-pick3">
-                <label>Win <select id="ls-admin-win"></select></label>
-                <label>Place <select id="ls-admin-place"></select></label>
-                <label>Show <select id="ls-admin-show"></select></label>
-            </div>
-            <div class="adm-buttons">
-                <button type="button" id="ls-admin-results-submit">Enter results</button>
             </div>
         </div>
 

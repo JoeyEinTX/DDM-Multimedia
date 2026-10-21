@@ -120,9 +120,9 @@ def guest_view():
 def admin_view():
     """The admin page: the auction's state and its controls (with the lock's
     unsold-horse warning), the bidders (paid, and the cap exemption) and the
-    payout ledger (with the picker for an unowned slot). A small page over
-    the /api/admin routes; the fuller iPad view of the spec (Phase 3) is
-    still to come."""
+    payout ledger, derived from SET WINNERS' result (the picker for an
+    unowned slot, the paid-out marks). A small page over the /api/admin
+    routes; the fuller iPad view of the spec (Phase 3) is still to come."""
     return render_template("admin.html")
 
 
@@ -137,10 +137,16 @@ def spectator_view():
 
 @la_subasta_bp.route("/api/state", methods=["GET"])
 def api_state():
+    """The auction's state, and the race's result as SET WINNERS recorded it
+    (`results`: the three horses, or null) with `settled`: the auction is
+    locked and a result is in, so the ledger pays."""
     row = get_state_row()
+    result = payouts.results_now()
     return jsonify({
         "success": True,
         "state": row["state"],
+        "results": {k: result[k] for k in payouts.FINISHES} if result is not None else None,
+        "settled": row["state"] == AuctionState.LOCKED.value and result is not None,
         "opens_at": row["opens_at"],
         "closes_at": row["closes_at"],
         "total_pot": bidding.total_pot(),
@@ -376,49 +382,6 @@ def api_admin_lock():
     return jsonify({"success": True, "state": get_state().value})
 
 
-@la_subasta_bp.route("/api/admin/results", methods=["POST"])
-def api_admin_results():
-    """
-    Enter race results, compute payouts.
-
-    Body JSON: {"win": 7, "place": 3, "show": 22}  (program numbers, each
-    a horse in La Quiniela's field)
-    """
-    data = request.get_json(silent=True) or {}
-    try:
-        win = int(data.get("win"))
-        place = int(data.get("place"))
-        show = int(data.get("show"))
-    except (TypeError, ValueError):
-        return _err("win, place, show must be integers")
-
-    if len({win, place, show}) != 3:
-        return _err("win, place, show must all differ")
-    the_field = field.current()
-    for pos in (win, place, show):
-        if not field.valid_number(pos):
-            return _err(f"Invalid horse id: {pos}")
-        if pos not in the_field:
-            return _err(the_field.refusal(pos))
-
-    current = get_state()
-    if current == AuctionState.LOCKED:
-        _transition_with_broadcast(AuctionState.RACE_COMPLETE)
-    elif current != AuctionState.RACE_COMPLETE:
-        return _err(f"Cannot enter results from state {current.value}",
-                    status=409)
-
-    # A finisher nobody owns is not paid to anyone (there is no House): the
-    # result names it in "unowned", and the admin ledger has the picker.
-    result = payouts.compute_and_persist_payouts(win, place, show)
-    _transition_with_broadcast(AuctionState.SETTLED)
-
-    notifications.results_entered(win, place, show)
-    notifications.payout_computed(result)
-
-    return jsonify({"success": True, **result, "state": get_state().value})
-
-
 @la_subasta_bp.route("/api/admin/void", methods=["POST"])
 def api_admin_void():
     data = request.get_json(silent=True) or {}
@@ -470,9 +433,12 @@ def api_admin_paid():
 
 @la_subasta_bp.route("/api/admin/payouts", methods=["GET"])
 def api_admin_payouts():
-    """The payout ledger: one row per paying slot (win, place, show), each
-    with `unowned` true while nobody is to be paid it."""
-    return jsonify({"success": True, "payouts": payouts.list_payouts()})
+    """The payout ledger, derived from SET WINNERS' result and the ownership
+    as they stand (payouts.ledger()): `results`, `total_pot`, `amounts`, a
+    row per paying slot once there is a result (each with `unowned` while
+    nobody is to be paid it and `paid`, the paid-out mark, while it matches),
+    `unowned`, and `paid_on_old_result`, the marks that no longer match."""
+    return jsonify({"success": True, **payouts.ledger()})
 
 
 @la_subasta_bp.route("/api/admin/payout-slot", methods=["POST"])
@@ -480,8 +446,9 @@ def api_admin_payout_slot():
     """Name the horse that pays a slot: the safety net for a paying horse with
     no owner (La Quiniela's rule for an empty cup: the next finisher takes the
     place). Body JSON: {"finish": "win" | "place" | "show", "horse_id": 4},
-    a horse in the field that has an owner. 409 before results are in, or if
-    that horse has no owner either."""
+    a horse in the field that has an owner. 409 before a result is in, or if
+    that horse has no owner either. Replies with the slot's row and the
+    ledger."""
     data = request.get_json(silent=True) or {}
     try:
         horse_id = int(data.get("horse_id"))
@@ -491,9 +458,26 @@ def api_admin_payout_slot():
         slot = payouts.set_slot_horse(data.get("finish"), horse_id)
     except PayoutError as exc:
         return _err(exc.reason, status=exc.status)
-    ledger = payouts.ledger()
-    notifications.payout_computed(ledger)
-    return jsonify({"success": True, "slot": slot, **ledger})
+    return jsonify({"success": True, "slot": slot, **payouts.ledger()})
+
+
+@la_subasta_bp.route("/api/admin/payout-paid", methods=["POST"])
+def api_admin_payout_paid():
+    """The paid-out mark. Body JSON: {"finish": "win" | "place" | "show",
+    "paid": true} marks the slot's finisher (as the result names it now) paid
+    out to the ledger's bidder for the ledger's amount; {"paid": false}
+    clears the mark on that finisher, or on the horse given ("horse_id": a
+    mark paid on an earlier result names its horse). 409 with no result, or
+    while nobody is to be paid the slot. Replies with the ledger."""
+    data = request.get_json(silent=True) or {}
+    horse_id = data.get("horse_id")
+    if horse_id is not None and (isinstance(horse_id, bool) or not isinstance(horse_id, int)):
+        return _err("horse_id must be an integer")
+    try:
+        ledger = payouts.mark_paid(data.get("finish"), data.get("paid"), horse_id)
+    except PayoutError as exc:
+        return _err(exc.reason, status=exc.status)
+    return jsonify({"success": True, **ledger})
 
 
 @la_subasta_bp.route("/api/admin/cap-exempt", methods=["POST"])

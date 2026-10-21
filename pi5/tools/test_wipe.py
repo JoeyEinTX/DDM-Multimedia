@@ -154,9 +154,9 @@ for bidder, horse, amount, voided in ((1, 7, 5, 0), (2, 7, 6, 0), (1, 3, 4, 1), 
               (bidder, horse, amount, voided))
 c.execute("INSERT INTO ownership (horse_id, bidder_id, winning_bid, event_year) VALUES (7, 2, 6, 2026)")
 c.execute("INSERT INTO ownership (horse_id, bidder_id, winning_bid, event_year) VALUES (12, 2, 3, 2026)")
-for finish, horse in (("win", 7), ("place", 3), ("show", 12)):
-    c.execute("INSERT INTO payouts (bidder_id, horse_id, finish, amount, event_year) VALUES (2, ?, ?, 10, 2026)",
-              (horse, finish))
+c.execute("INSERT INTO payout_slots (finish, horse_id, pays_horse_id, event_year) VALUES ('win', 7, 3, 2026)")
+c.execute("INSERT INTO payout_slots (finish, horse_id, paid_bidder_id, paid_amount, paid_at, event_year) "
+          "VALUES ('place', 3, 2, 10, ?, 2026)", (ts,))
 c.execute("INSERT INTO auction_state (state, total_pot, event_year) VALUES ('LOCKED', 57, 2026)")
 c.execute("INSERT INTO auction_overrides (setting_key, value, changed_by) VALUES ('MAX_RAISE', '10', 'test')")
 c.execute("INSERT INTO settings_audit_log (setting_key, old_value, new_value, changed_by) "
@@ -419,7 +419,7 @@ def test_dry_run_changes_nothing():
         "Guests ............... 3 (1 paid)",
         "Bids ................. 5 (1 voided)",
         "Owners ............... 2 horses",
-        "Payouts .............. 3 (win, place, show)",
+        "Payout slots ......... 2 (win #7 pays #3, place #3 paid out)",
         "Settings changed ..... 1: MAX_RAISE (back to the defaults)",
         "Settings history ..... 1 change",
         "Other tables ......... event_years 1 row, horse_state 2 rows",

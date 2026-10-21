@@ -1037,7 +1037,10 @@ its own rule (bids voided while it is open, the ownership too after the
 lock). A scratch is entered once, here; undo puts the horse back in the
 field and gives it back what the scratch voided, its bids and, after the
 lock, its owner (`DDM_La_Subasta_Spec.md`, "Horses: from La Quiniela's
-store" and "Scratches").
+store" and "Scratches"). La Subasta reads the race's result the same way:
+`BettingBoard.results()` (the record SET WINNERS wrote, "Results" above),
+from which `la_subasta/payouts.py` derives the payout ledger whenever it is
+read; it keeps no result and no payout rows of its own.
 
 ### The race and the track's odds
 

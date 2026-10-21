@@ -68,6 +68,16 @@ def lq_store() -> Any:
         return None
 
 
+def lq_board() -> Any:
+    """La Quiniela's board, or None when there is none: where the result SET
+    WINNERS recorded is read (payouts.results_now, BettingBoard.results())."""
+    try:
+        from la_quiniela.board import get_board
+        return get_board()
+    except RuntimeError:
+        return None
+
+
 def display_name(number: int, name: str) -> str:
     """The name as the board shows it, or HORSE n when none is stored."""
     return name or f"HORSE {number}"

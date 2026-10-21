@@ -25,23 +25,24 @@ _write_lock = threading.Lock()
 # Schema (Phase 1)
 # -----------------------------------------------------------------------------
 
-# payouts: bidder_id is NULL for a slot nobody owns yet, because the horse that
-# finished there was never sold (payouts.py): there is no House to pay it to.
-# pays_horse_id is the horse the admin named to pay the slot in its place (the
-# next finisher), when there is one. Shared by SCHEMA_SQL and the rebuild of an
-# older table (_migrate).
-_PAYOUTS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS payouts (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    bidder_id     INTEGER REFERENCES bidders(id),
-    horse_id      INTEGER NOT NULL,
-    pays_horse_id INTEGER,
-    finish        TEXT    NOT NULL CHECK (finish IN ('win','place','show')),
-    amount        REAL    NOT NULL,
-    paid_out      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-    event_year    INTEGER NOT NULL,
-    UNIQUE(finish, event_year)
+# payout_slots: what the admin did on a paying slot, per finish and the horse
+# that finished in it. The ledger itself is not stored: it is derived from SET
+# WINNERS' result and the ownership whenever it is read (payouts.py). A row
+# holds the horse the admin named to pay the slot in the finisher's place
+# (pays_horse_id, when the finisher has no owner: there is no House) and the
+# paid-out mark: who was paid, how much (whole pesos), when. Both are tied to
+# the finisher, so a correction that changes the slot's horse sets them aside.
+_PAYOUT_SLOTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS payout_slots (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    finish         TEXT    NOT NULL CHECK (finish IN ('win','place','show')),
+    horse_id       INTEGER NOT NULL,
+    pays_horse_id  INTEGER,
+    paid_bidder_id INTEGER REFERENCES bidders(id),
+    paid_amount    INTEGER,
+    paid_at        TEXT,
+    event_year     INTEGER NOT NULL,
+    UNIQUE(finish, horse_id, event_year)
 );
 """
 
@@ -105,7 +106,7 @@ CREATE TABLE IF NOT EXISTS ownership (
     UNIQUE(horse_id, event_year)
 );
 
-{_PAYOUTS_TABLE_SQL}
+{_PAYOUT_SLOTS_TABLE_SQL}
 
 CREATE TABLE IF NOT EXISTS auction_state (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,10 +228,6 @@ _BIDDER_COLUMNS = (
     ("cap_exempt", "INTEGER NOT NULL DEFAULT 0"),
 )
 
-_PAYOUT_COLUMNS = (
-    "id", "bidder_id", "horse_id", "finish", "amount", "paid_out", "created_at", "event_year",
-)
-
 _BIDDER_ALL_COLUMNS = (
     "id", "name", "emoji", "identity", "push_endpoint", "created_at", "paid", "paid_at",
     "paid_amount", "event_year", "cap_exempt",
@@ -263,7 +260,7 @@ def _rebuild_bidders(conn: sqlite3.Connection) -> None:
     """bidders again with UNIQUE(identity, event_year), every row kept with its
     id. SQLite can't drop a column's UNIQUE, so the table is made anew and put
     in the old one's place, its own way (sqlite.org, ALTER TABLE: other schema
-    changes): bids, ownership and payouts refer to bidders by name, so with
+    changes): bids, ownership and payout_slots refer to bidders by name, so with
     foreign keys off the new table is created, filled, the old one dropped and
     the new one renamed, in one transaction. Foreign keys are switched outside
     it (inside, the pragma does nothing) and back on whatever happens. The id
@@ -293,37 +290,28 @@ def _rebuild_bidders(conn: sqlite3.Connection) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a database from an older version up to this schema, before the
-    schema itself is applied. Idempotent; nothing is dropped that held data.
+    schema itself is applied. Idempotent. The one table dropped, payouts,
+    held only a copy of a result entered twice.
 
     - ownership gains the void columns (a scratch after the lock);
     - bidders gains cap_exempt (the admin's exemption from the max-horses cap);
-    - payouts is rebuilt when its bidder_id is still NOT NULL (the House was
-      its fallback payee) or it has no pays_horse_id: the rows are copied, and
-      the table can then hold a slot nobody owns;
+    - payouts, La Subasta's own results store until 2026-10-20 (gap review
+      M5), is dropped: the ledger is derived from SET WINNERS' result now
+      (payouts.py), and payout_slots, which the schema makes, holds what the
+      admin did;
+    - an auction left in RACE_COMPLETE or SETTLED, states that went with that
+      store, reads as LOCKED (settled is LOCKED with a result);
     - bidders is rebuilt when its identity is unique across every year: the
-      rows are copied with their ids (the bids, owners and payouts pointing
-      at them stay right), and a name is then unique within its year.
+      rows are copied with their ids (the bids, owners and payout slots
+      pointing at them stay right), and a name is then unique within its year.
     """
     _add_missing_columns(conn, "ownership", _OWNERSHIP_VOID_COLUMNS)
     _add_missing_columns(conn, "bidders", _BIDDER_COLUMNS)
     if _identity_unique_across_years(conn):
         _rebuild_bidders(conn)
-
-    info = {r["name"]: r for r in conn.execute("PRAGMA table_info(payouts)").fetchall()}
-    if not info or (not info["bidder_id"]["notnull"] and "pays_horse_id" in info):
-        return
-    # DDL is transactional in SQLite: either the whole rebuild happens or none.
-    cols = ", ".join(_PAYOUT_COLUMNS)
-    conn.execute("BEGIN IMMEDIATE;")
-    try:
-        conn.execute("ALTER TABLE payouts RENAME TO payouts_old")
-        conn.execute(_PAYOUTS_TABLE_SQL)
-        conn.execute(f"INSERT INTO payouts ({cols}) SELECT {cols} FROM payouts_old")
-        conn.execute("DROP TABLE payouts_old")
-        conn.execute("COMMIT;")
-    except Exception:
-        conn.execute("ROLLBACK;")
-        raise
+    conn.execute("DROP TABLE IF EXISTS payouts")
+    if conn.execute("PRAGMA table_info(auction_state)").fetchall():
+        conn.execute("UPDATE auction_state SET state = 'LOCKED' WHERE state IN ('RACE_COMPLETE', 'SETTLED')")
 
 
 # The House is gone (payouts.py: no payout ever goes to it). A database from
@@ -333,9 +321,7 @@ _LEGACY_HOUSE_IDENTITY = "The House \U0001F3A9"
 
 def _drop_legacy_house(conn: sqlite3.Connection) -> None:
     """Remove the House's sentinel bidder row from a database that has one. A
-    payout that named it becomes a slot nobody owns (bidder_id NULL), which is
-    what a horse nobody bought is now. A row that somehow has bids or an
-    ownership is left alone."""
+    row that somehow has bids or an ownership is left alone."""
     row = conn.execute(
         "SELECT id FROM bidders WHERE identity = ?", (_LEGACY_HOUSE_IDENTITY,),
     ).fetchone()
@@ -349,14 +335,7 @@ def _drop_legacy_house(conn: sqlite3.Connection) -> None:
     ).fetchone()["n"]
     if busy:
         return
-    conn.execute("BEGIN IMMEDIATE;")
-    try:
-        conn.execute("UPDATE payouts SET bidder_id = NULL WHERE bidder_id = ?", (house,))
-        conn.execute("DELETE FROM bidders WHERE id = ?", (house,))
-        conn.execute("COMMIT;")
-    except Exception:
-        conn.execute("ROLLBACK;")
-        raise
+    conn.execute("DELETE FROM bidders WHERE id = ?", (house,))
 
 
 def get_conn() -> sqlite3.Connection:

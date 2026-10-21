@@ -792,6 +792,86 @@ def test_field_frozen_while_a_result_stands():
            str(r.get_json()))
 
 
+def test_la_subasta_pays_on_set_winners():
+    """End to end on the real app (gap review M5): guests join and bid, the auction locks, SET WINNERS records the
+    result through POST /api/results, and La Subasta's ledger (GET /la-subasta/api/admin/payouts) pays the owners
+    of the real 1st, 2nd and 3rd from that record, whole pesos; a correction through SET WINNERS moves the payouts;
+    a paid-out mark the result moved away from is said; RESET (/api/results/clear) clears the payouts, the mark
+    staying as paid on an earlier result; Reset betting clears them the same."""
+    from la_subasta import config as ls_config, models as ls_models, scratches as ls_scratches
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    ls_models.reset_db_for_tests(ls_config.DB_PATH)       # La Subasta's own temp database, fresh
+    ls_scratches.forget()
+    ls_scratches.follow_la_quiniela()                       # this rig's board
+    c = rig.client
+    r = c.post("/la-subasta/api/admin/start")
+    assert r.status_code == 200, r.get_json()
+    guests = {name: c.post("/la-subasta/api/register", json={"name": name, "emoji": emoji}).get_json()["bidder"]
+              for name, emoji in (("Alice", "🌮"), ("Bob", "🐴"))}
+
+    def bid(who, horse, amount):
+        r = c.post("/la-subasta/api/bid", json={"bidder_id": guests[who]["id"], "horse_id": horse, "amount": amount})
+        assert r.status_code == 200, r.get_json()
+
+    bid("Alice", 19, 4)
+    bid("Alice", 1, 2)
+    bid("Bob", 3, 3)
+    bid("Bob", 7, 1)                                        # the pot: 10
+    r = c.post("/la-subasta/api/admin/lock", json={"confirm": True})
+    assert r.status_code == 200, r.get_json()
+    _cups_at_post(rig, {n: 2 for n in range(1, 21)})        # every cup with bets: no next finisher needed
+    alice, bob = guests["Alice"]["id"], guests["Bob"]["id"]
+
+    def ledger():
+        return c.get("/la-subasta/api/admin/payouts").get_json()
+
+    led = ledger()
+    _check("locked, no result: La Subasta's ledger has the pot (10) and no rows",
+           led["results"] is None and led["payouts"] == [] and led["total_pot"] == 10, str(led))
+    r = rig.post("/api/results", {"win": 19, "place": 3, "show": 7})
+    assert r.status_code == 200, r.get_json()
+    led = ledger()
+    by = {p["finish"]: p for p in led["payouts"]}
+    _check("SET WINNERS confirmed: the ledger pays Alice (19) 5, Bob (3) 3, Bob (7) 2 pesos, from the same record",
+           led["results"] == {"win": 19, "place": 3, "show": 7}
+           and (by["win"]["bidder_id"], by["win"]["amount"]) == (alice, 5)
+           and (by["place"]["bidder_id"], by["place"]["amount"]) == (bob, 3)
+           and (by["show"]["bidder_id"], by["show"]["amount"]) == (bob, 2), str(led))
+    state = c.get("/la-subasta/api/state").get_json()
+    _check("/la-subasta/api/state: LOCKED, the result, settled", state["state"] == "LOCKED"
+           and state["results"] == {"win": 19, "place": 3, "show": 7} and state["settled"] is True, str(state))
+    r = c.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "paid": True})
+    _check("WIN marked paid out to Alice, 5", r.status_code == 200 and r.get_json()["payouts"][0]["paid"]["amount"] == 5
+           and r.get_json()["payouts"][0]["paid"]["bidder_id"] == alice, str(r.get_json()))
+    r = rig.post("/api/results", {"win": 1, "place": 3, "show": 7})      # a correction in SET WINNERS
+    assert r.status_code == 200, r.get_json()
+    led = ledger()
+    _check("a correction in SET WINNERS: WIN is #1 now (Alice's too, 5 pesos) and reads unpaid; the mark is paid on an earlier result",
+           led["payouts"][0]["horse_id"] == 1 and led["payouts"][0]["bidder_id"] == alice and led["payouts"][0]["paid"] is None
+           and [s["line"] for s in led["paid_on_old_result"]]
+           == ["Alice 🌮 was paid 5 pesos for WIN (#19); WIN now pays Alice 🌮 5 pesos for #1"], str(led))
+    r = rig.post("/api/results/clear")                                   # RESET on the Control Center
+    assert r.status_code == 200, r.get_json()
+    led = ledger()
+    _check("RESET clears the result: no payouts; the mark stays, paid on a result that is gone",
+           led["results"] is None and led["payouts"] == [] and c.get("/la-subasta/api/state").get_json()["settled"] is False
+           and [s["line"] for s in led["paid_on_old_result"]] == ["Alice 🌮 was paid 5 pesos for WIN (#19); there is no result now"],
+           str(led))
+    r = c.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "horse_id": 19, "paid": False})
+    _check("unmarked: nothing stale", r.status_code == 200 and r.get_json()["paid_on_old_result"] == [], str(r.get_json()))
+    r = rig.post("/api/results", {"win": 19, "place": 3, "show": 7})
+    assert r.status_code == 200, r.get_json()
+    _check("the result again: the payouts are back", ledger()["payouts"][0]["bidder_id"] == alice)
+    r = rig.post("/api/quiniela/reset")
+    _check("Reset betting is refused in WINNER (OD13): the result stands", r.status_code == 409 and ledger()["results"] is not None)
+    rig.post("/api/quiniela/cmd", {"cmd": "state 6"})
+    r = rig.post("/api/quiniela/reset")
+    led = ledger()
+    _check("Reset betting (in AFTER PARTY) clears the result and with it the payouts",
+           r.status_code == 200 and led["results"] is None and led["payouts"] == [] and led["paid_on_old_result"] == [], str(led))
+
+
 def test_picker_records_the_real_finish():
     """The page's side, read from the source (the picker itself is driven in test_picker_in_a_browser and
     test_picker_follows_the_field_in_a_browser): the confirm sends the next finishers; the rule is the server's,
@@ -2721,6 +2801,8 @@ def main_():
     _run("results — refused while the field cannot be read (a degraded store, no La Quiniela)",
          test_results_refused_while_the_field_cannot_be_read)
     _run("results — the field is frozen while a result stands: a scratch or an undo is refused", test_field_frozen_while_a_result_stands)
+    _run("La Subasta — pays the owners of the real 1st, 2nd and 3rd from SET WINNERS' record; a correction, RESET, Reset betting",
+         test_la_subasta_pays_on_set_winners)
     _run("SET WINNERS — the page records the real finish; the field followed; RESET asks (the source)", test_picker_records_the_real_finish)
     _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
     _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)

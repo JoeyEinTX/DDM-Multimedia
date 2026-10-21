@@ -81,11 +81,16 @@ select { padding: 0 8px; max-width: 100%; }
     border: 2px solid var(--adm-gold);
     background: rgba(254, 198, 0, 0.1);
 }
-.adm-warn[hidden], .adm-results[hidden] { display: none; }
+.adm-warn[hidden] { display: none; }
 .adm-warn p { margin: 6px 0 0; color: var(--adm-dim); }
 
-.adm-pick3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
-.adm-pick3 label { display: grid; gap: 4px; color: var(--adm-dim); }
+/* A payout paid on an earlier result (the result moved under the mark): red,
+   one line each with its Unmark, on top of the ledger. */
+.adm-warn.adm-stale { border-color: var(--adm-urgent); background: rgba(222, 67, 67, 0.12); }
+.adm-stale-line { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 8px; }
+.adm-stale-line > span { flex: 1 1 240px; }
+
+.adm-ledger-figures { color: var(--adm-dim); margin-bottom: 6px; }
 
 .adm-status { min-height: 1.4em; margin-top: 10px; color: var(--adm-dim); }
 .adm-status.ok { color: #7bd88f; }

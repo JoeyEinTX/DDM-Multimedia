@@ -18,8 +18,9 @@ What it clears:
                              info, the scratches, the race state line, the figures at the post
                              and the counted pot, the closing time, the cup cache, the cups'
                              readings and the bridge's log. La Subasta's: the guests, bids,
-                             owners, payouts, the auction's state, the settings changed from
-                             the defaults and their history. Then VACUUM, so nothing deleted
+                             owners, payout slots (the horse named to pay a slot, the paid-out
+                             marks), the auction's state, the settings changed from the
+                             defaults and their history. Then VACUUM, so nothing deleted
                              stays in the file.
   pi5/data/results.json      the results (and a results.json.tmp a crash left behind)
   pi5/data/quiniela_*.jsonl  the betting log
@@ -103,7 +104,7 @@ STATE_NAMES = {0: "PRE-RACE", 1: "BETTING OPEN", 2: "FINAL CALL", 3: "AT THE POS
 # The tables the list names, line by line; any other table's rows are listed as other rows.
 LQ_TABLES = ("lq_horses", "lq_race", "lq_scratches", "lq_scratch_entered", "lq_scratch_names", "lq_renum_undo", "lq_board",
              "lq_link_state", "lq_closing", "lq_cups", "telemetry", "events")
-LS_TABLES = ("auction_state", "bidders", "bids", "ownership", "payouts", "auction_overrides",
+LS_TABLES = ("auction_state", "bidders", "bids", "ownership", "payout_slots", "auction_overrides",
              "settings_audit_log")
 # La Quiniela's one-row tables: emptied, each gets its row back at the next start
 # (INSERT OR IGNORE), so a row holding only what that gives is no data.
@@ -373,7 +374,8 @@ def _survey(conn) -> Dict[str, object]:
     d["paid"] = _one(conn, "SELECT COUNT(*) FROM bidders WHERE paid <> 0", 0)
     d["bids_voided"] = _one(conn, "SELECT COUNT(*) FROM bids WHERE voided <> 0", 0)
     d["owners_voided"] = _one(conn, "SELECT COUNT(*) FROM ownership WHERE voided <> 0", 0)
-    d["payouts"] = [r[0] for r in _rows(conn, "SELECT finish FROM payouts ORDER BY id") or []]
+    d["payout_slots"] = [f"{r[0]} #{r[1]}" + (f" pays #{r[2]}" if r[2] else "") + (" paid out" if r[3] else "")
+                         for r in _rows(conn, "SELECT finish, horse_id, pays_horse_id, paid_at FROM payout_slots ORDER BY id") or []]
     d["overrides"] = [r[0] for r in _rows(conn, "SELECT setting_key FROM auction_overrides ORDER BY setting_key") or []]
     return d
 
@@ -495,7 +497,7 @@ def _read_json(path: Path):
 def report_lines(s: Survey) -> List[Tuple[str, List[Tuple[str, str]]]]:
     d = s.db or {"tables": {}, "names": [], "race": None, "scratches": [], "names_rev": 0, "closes_at": None,
                  "state_rev": 0, "state": None, "closing": None, "cups_sim": 0, "auction": [], "paid": 0,
-                 "bids_voided": 0, "owners_voided": 0, "payouts": [], "overrides": []}
+                 "bids_voided": 0, "owners_voided": 0, "payout_slots": [], "overrides": []}
     rows = d["tables"]
     none = "none"
 
@@ -577,7 +579,7 @@ def report_lines(s: Survey) -> List[Tuple[str, List[Tuple[str, str]]]]:
     ls.append(("Owners", (plural(rows["ownership"], "horse") + (f" ({d['owners_voided']} voided)"
                                                                   if d["owners_voided"] else ""))
                if rows.get("ownership") else none))
-    ls.append(("Payouts", f"{len(d['payouts'])} ({', '.join(d['payouts'])})" if d["payouts"] else none))
+    ls.append(("Payout slots", f"{len(d['payout_slots'])} ({', '.join(d['payout_slots'])})" if d["payout_slots"] else none))
     ls.append(("Settings changed", f"{len(d['overrides'])}: {', '.join(d['overrides'])} (back to the defaults)"
                if d["overrides"] else "none (the defaults)"))
     ls.append(("Settings history", plural(rows["settings_audit_log"], "change")

@@ -54,7 +54,7 @@
 
 import logging
 import threading
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from la_subasta import field, notifications
 from la_subasta.config import EVENT_YEAR
@@ -107,15 +107,10 @@ def apply(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int, D
             )
             out.setdefault(row["horse_id"], {"bids": 0, "owner": None})["owner"] = {
                 "bidder_id": row["bidder_id"], "winning_bid": row["winning_bid"]}
-    if out:
-        late = _results_name(set(out), event_year)
-        if late:
-            log.warning("La Subasta: horse(s) %s scratched after the results were entered; "
-                        "their payouts were left as they are", sorted(late))
     return out
 
 
-_LOCKED_ON = (AuctionState.LOCKED, AuctionState.RACE_COMPLETE, AuctionState.SETTLED)
+_LOCKED_ON = (AuctionState.LOCKED,)
 
 
 def restore(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int, Dict[str, Any]]:
@@ -158,12 +153,9 @@ def restore(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int,
             )
             out.setdefault(row["horse_id"], {"bids": 0, "owner": None})["owner"] = {
                 "bidder_id": row["bidder_id"], "winning_bid": row["winning_bid"]}
-        # Locked, and the lock did freeze ownership (a row exists, voided or
-        # not: with none at all payouts freezes everything itself): a returned
-        # horse that has bids but no owner is frozen from them.
-        if out and get_state(event_year) in _LOCKED_ON and conn.execute(
-                "SELECT COUNT(*) AS c FROM ownership WHERE event_year = ?",
-                (event_year,)).fetchone()["c"]:
+        # Locked: a returned horse that has bids but no owner is frozen from
+        # them (the ledger only reads, so nothing freezes it later).
+        if out and get_state(event_year) in _LOCKED_ON:
             for horse, done in sorted(out.items()):
                 if done["owner"] is not None:
                     continue
@@ -182,13 +174,6 @@ def restore(the_field: "field.Field", event_year: int = EVENT_YEAR) -> Dict[int,
                 )
                 done["owner"] = {"bidder_id": top["bidder_id"], "winning_bid": top["amount"]}
     return out
-
-
-def _results_name(horses: Set[int], event_year: int) -> Set[int]:
-    from la_subasta.models import get_conn
-    rows = get_conn().execute(
-        "SELECT horse_id FROM payouts WHERE event_year = ?", (event_year,)).fetchall()
-    return {r["horse_id"] for r in rows} & horses
 
 
 def _listener() -> None:

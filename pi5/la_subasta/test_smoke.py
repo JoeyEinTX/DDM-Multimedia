@@ -135,10 +135,43 @@ def _lq_scratch(client, horse, number=None, name=None):
     return client.post("/api/quiniela/scratch", json=body)
 
 
+# The result the Control Center's SET WINNERS records (main.py save_results
+# writes pi5/data/results.json; here the board's results_path): the real 1st,
+# 2nd and 3rd, and in next the finishers after them (La Quiniela's business).
+# La Subasta reads it through the board (BettingBoard.results()).
+_LQ_RESULTS = os.path.join(_LQ_TMP, "results.json")
+
+
+def _set_winners(win, place, show, after=()):
+    tmp = _LQ_RESULTS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"win": win, "place": place, "show": show, "next": list(after), "timestamp": "2027-05-01T19:02:00"}, fh)
+    os.replace(tmp, _LQ_RESULTS)
+
+
+def _clear_winners():
+    """RESET on the Control Center, or Reset betting: the result goes."""
+    try:
+        os.remove(_LQ_RESULTS)
+    except OSError:
+        pass
+
+
+def _ledger(client):
+    r = client.get("/la-subasta/api/admin/payouts")
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def _by_finish(ledger):
+    return {p["finish"]: p for p in ledger["payouts"]}
+
+
 def _reset():
     reset_db_for_tests(_TMP_DB)
     # After reset, re-init blueprint wiring (DB connection changed)
     init_db(_TMP_DB)
+    _clear_winners()                             # no result left over from the last test
 
 
 # -----------------------------------------------------------------------------
@@ -358,9 +391,9 @@ def test_another_years_bidder_is_unknown():
     r = bid(new["id"], 1, 1)
     _check("this year's Alice bids", r.status_code == 200, f"{r.status_code} {r.get_json()}")
     client.post("/la-subasta/api/admin/lock", json={"confirm": True})
-    r = client.post("/la-subasta/api/admin/results", json={"win": 1, "place": 2, "show": 3})
+    _set_winners(1, 2, 3)
     owners = [o["bidder_id"] for o in models.get_conn().execute("SELECT bidder_id FROM ownership").fetchall()]
-    win = next(p for p in r.get_json()["payouts"] if p["finish"] == "win")
+    win = _by_finish(_ledger(client))["win"]
     _check("the owner and the WIN payout are this year's Alice", owners == [new["id"]] and win["bidder_id"] == new["id"],
            f"owners {owners}, win {win}")
 
@@ -516,90 +549,84 @@ def test_bid_undo():
 
 
 def test_payouts():
+    """The payouts come from SET WINNERS (gap review M5, OD4): the result the
+    Control Center records is read through La Quiniela's board
+    (BettingBoard.results(), the same file the cups and the TV are fed from),
+    and the ledger is worked out from it and the ownership whenever it is
+    read: whole pesos, La Quiniela's rounding (PLACE and SHOW half up, WIN
+    takes the rest: OD5), the owner of each real finisher. A correction in
+    SET WINNERS changes it; Reset betting (which clears the result) clears it;
+    the next finishers in the record are La Quiniela's business."""
     _reset()
     app = _make_app()
     client = app.test_client()
     transition(AuctionState.OPEN)
-
-    # Build a deterministic pot: 3 bidders, 3 horses, known amounts.
-    # Alice leads horse 1 @ $5  (will finish 1st → win)
-    # Bob   leads horse 2 @ $3  (will finish 2nd → place)
-    # Carol leads horse 3 @ $2  (will finish 3rd → show)
-    # Total pot = $10. Win=$6, Place=$2.50, Show=$1.50.
-    alice = client.post("/la-subasta/api/register",
-                        json={"name": "Alice", "emoji": "🌮"}).get_json()["bidder"]
-    bob = client.post("/la-subasta/api/register",
-                      json={"name": "Bob", "emoji": "🐴"}).get_json()["bidder"]
-    carol = client.post("/la-subasta/api/register",
-                        json={"name": "Carol", "emoji": "💃"}).get_json()["bidder"]
+    alice, bob, carol = (client.post("/la-subasta/api/register", json={"name": n, "emoji": e}).get_json()["bidder"]
+                         for n, e in (("Alice", "🌮"), ("Bob", "🐴"), ("Carol", "💃")))
 
     def bid(bidder, horse, amount):
-        r = client.post("/la-subasta/api/bid",
-                        json={"bidder_id": bidder["id"], "horse_id": horse,
-                              "amount": amount})
+        r = client.post("/la-subasta/api/bid", json={"bidder_id": bidder["id"], "horse_id": horse, "amount": amount})
         assert r.status_code == 200, r.get_json()
 
-    # Alice: $1 → $5 on horse 1 (she's alone)
-    bid(alice, 1, 1); bid(bob, 1, 2); bid(alice, 1, 3); bid(bob, 1, 4); bid(alice, 1, 5)
-    # Bob on horse 2 at $3
-    bid(bob, 2, 1); bid(carol, 2, 2); bid(bob, 2, 3)
-    # Carol on horse 3 at $2
-    bid(carol, 3, 1); bid(alice, 3, 2); bid(carol, 3, 3)
-    # Wait - bidding higher than 3 is fine since max raise is 5
-    # Actually correcting: horse 3 final is Carol @ $3
-
+    bid(alice, 1, 1); bid(bob, 1, 2); bid(alice, 1, 3); bid(bob, 1, 4); bid(alice, 1, 5)     # Alice owns 1 at 5
+    bid(bob, 2, 1); bid(carol, 2, 2); bid(bob, 2, 3)                                          # Bob owns 2 at 3
+    bid(carol, 3, 1); bid(alice, 3, 2); bid(carol, 3, 3)                                     # Carol owns 3 at 3
     pot = bidding.total_pot()
-    _check("total pot = 5 + 3 + 3 = 11", abs(pot - 11.0) < 0.001,
-           f"pot={pot}")
-
-    # Pure math check with known pot
+    _check("total pot = 5 + 3 + 3 = 11", pot == 11.0, f"pot={pot}")
     amounts = payouts.compute_payout_amounts(pot)
-    _check("win payout = pot * 0.60",
-           abs(amounts["win"] - round(pot * 0.60, 2)) < 0.001)
-    _check("place payout = pot * 0.25",
-           abs(amounts["place"] - round(pot * 0.25, 2)) < 0.001)
-    _check("show payout = pot * 0.15",
-           abs(amounts["show"] - round(pot * 0.15, 2)) < 0.001)
-    _check("payouts sum = pot",
-           abs(amounts["win"] + amounts["place"] + amounts["show"] - pot) < 0.01)
+    _check("whole pesos, La Quiniela's rounding: PLACE 11 x 0.25 = 2.75 -> 3, SHOW 1.65 -> 2, WIN takes the rest, 6",
+           amounts == {"win": 6, "place": 3, "show": 2} and all(type(v) is int for v in amounts.values()), str(amounts))
+    _check("...prizes_for is the code: pot 154 -> 92 / 39 / 23, pot 1 -> 1 / 0 / 0, pot 0 -> 0 / 0 / 0",
+           payouts.compute_payout_amounts(154) == {"win": 92, "place": 39, "show": 23}
+           and payouts.compute_payout_amounts(1) == {"win": 1, "place": 0, "show": 0}
+           and payouts.compute_payout_amounts(0) == {"win": 0, "place": 0, "show": 0})
 
-    # End-to-end via admin endpoint: lock + enter results
-    resp = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
-    _check("lock endpoint succeeds",
-           resp.status_code == 200 and resp.get_json().get("success"),
-           f"body={resp.get_json()}")
+    led = _ledger(client)
+    _check("before the lock and the race: no result, no rows, nothing paid on an earlier result",
+           led["results"] is None and led["payouts"] == [] and led["unowned"] == [] and led["paid_on_old_result"] == [], str(led))
+    r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+    _check("lock endpoint succeeds", r.status_code == 200 and r.get_json().get("success"), f"body={r.get_json()}")
+    led = _ledger(client)
+    state = client.get("/la-subasta/api/state").get_json()
+    _check("locked, no result yet: the pot 11 and the amounts, no rows; /api/state says LOCKED, results null, not settled",
+           led["total_pot"] == 11 and led["amounts"] == {"win": 6, "place": 3, "show": 2} and led["payouts"] == []
+           and state["state"] == "LOCKED" and state["results"] is None and state["settled"] is False, str((led, state)))
 
-    resp = client.post("/la-subasta/api/admin/results",
-                       json={"win": 1, "place": 2, "show": 3})
-    data = resp.get_json()
-    _check("results endpoint succeeds",
-           resp.status_code == 200 and data.get("success"),
-           f"body={data}")
-    _check("settled state reached after results",
-           data.get("state") == "SETTLED")
-    _check("end-to-end total pot matches",
-           abs(data["total_pot"] - pot) < 0.001,
-           f"got {data.get('total_pot')}")
+    _set_winners(1, 2, 3)                      # SET WINNERS, confirmed on the Control Center
+    led = _ledger(client)
+    by = _by_finish(led)
+    _check("the result read through the board: WIN 1, PLACE 2, SHOW 3, three rows in that order",
+           led["results"] == {"win": 1, "place": 2, "show": 3} and [p["finish"] for p in led["payouts"]] == ["win", "place", "show"],
+           str(led))
+    _check("WIN pays Alice (horse 1) 6 pesos", by["win"]["bidder_id"] == alice["id"] and by["win"]["horse_id"] == 1
+           and by["win"]["amount"] == 6 and by["win"]["bidder_identity"] == "Alice 🌮" and by["win"]["unowned"] is False
+           and by["win"]["pays_horse_id"] is None and by["win"]["paid"] is None, str(by["win"]))
+    _check("PLACE pays Bob (horse 2) 3, SHOW pays Carol (horse 3) 2",
+           (by["place"]["bidder_id"], by["place"]["amount"], by["show"]["bidder_id"], by["show"]["amount"])
+           == (bob["id"], 3, carol["id"], 2), str(by))
+    _check("the three sum to the pot", by["win"]["amount"] + by["place"]["amount"] + by["show"]["amount"] == 11)
+    state = client.get("/la-subasta/api/state").get_json()
+    _check("/api/state: still LOCKED (no RACE_COMPLETE or SETTLED any more), the result carried, settled true",
+           state["state"] == "LOCKED" and state["results"] == {"win": 1, "place": 2, "show": 3} and state["settled"] is True, str(state))
+    _check("payouts.ledger() is the same thing, in the process", payouts.ledger()["payouts"] == led["payouts"])
 
-    # Verify recorded payouts
-    ls = payouts.list_payouts()
-    by_finish = {p["finish"]: p for p in ls}
-    _check("win payout recorded for Alice (horse 1)",
-           by_finish["win"]["bidder_id"] == alice["id"]
-           and by_finish["win"]["horse_id"] == 1)
-    _check("place payout recorded for Bob (horse 2)",
-           by_finish["place"]["bidder_id"] == bob["id"]
-           and by_finish["place"]["horse_id"] == 2)
-    _check("show payout recorded for Carol (horse 3)",
-           by_finish["show"]["bidder_id"] == carol["id"]
-           and by_finish["show"]["horse_id"] == 3)
+    _set_winners(3, 1, 2)                      # a correction in SET WINNERS
+    by = _by_finish(_ledger(client))
+    _check("a correction in SET WINNERS: the payouts follow at the next read, nothing stored to catch up",
+           (by["win"]["bidder_id"], by["place"]["bidder_id"], by["show"]["bidder_id"]) == (carol["id"], alice["id"], bob["id"])
+           and (by["win"]["horse_id"], by["place"]["horse_id"], by["show"]["horse_id"]) == (3, 1, 2), str(by))
+    _set_winners(3, 1, 2, after=[7, 9])
+    led = _ledger(client)
+    _check("the next finishers in the record (La Quiniela's skip, M6) change nothing here: the owners of the real 1st, 2nd and 3rd are paid",
+           [p["horse_id"] for p in led["payouts"]] == [3, 1, 2] and _by_finish(led)["win"]["bidder_id"] == carol["id"]
+           and led["results"] == {"win": 3, "place": 1, "show": 2}, str(led))
 
-    _check("win amount matches 60% of pot",
-           abs(by_finish["win"]["amount"] - round(pot * 0.60, 2)) < 0.01)
-    _check("place amount matches 25% of pot",
-           abs(by_finish["place"]["amount"] - round(pot * 0.25, 2)) < 0.01)
-    _check("show amount matches 15% of pot",
-           abs(by_finish["show"]["amount"] - round(pot * 0.15, 2)) < 0.01)
+    r = client.post("/api/quiniela/reset")      # Reset betting on the LQ admin page
+    led = _ledger(client)
+    state = client.get("/la-subasta/api/state").get_json()
+    _check("Reset betting clears the result, so the payouts go: no rows, results null, not settled; the ownership stays (LOCKED, pot 11)",
+           r.status_code == 200 and led["results"] is None and led["payouts"] == [] and led["total_pot"] == 11
+           and state["results"] is None and state["settled"] is False and state["state"] == "LOCKED", str((r.status_code, led, state)))
 
 
 # -----------------------------------------------------------------------------
@@ -649,10 +676,12 @@ def test_no_house():
 
 
 def test_unowned_win_is_a_flagged_slot():
-    """A paying horse nobody owns is paid to nobody: its slot is stored with
-    no bidder and flagged unowned, settlement does not wait for it, and the
-    admin names the horse that pays it (La Quiniela's rule for an empty cup in
-    the money: the next finisher takes the place)."""
+    """A real finisher nobody owns is paid to nobody: its slot is flagged
+    unowned in the ledger, nothing waits for it, and the admin names the
+    horse that pays it (the next finisher: La Quiniela's rule for an empty
+    cup in the money). The admin's pick is tied to the finisher it was made
+    for: a correction in SET WINNERS that changes the slot's horse sets it
+    aside, one that changes it back brings it back."""
     app, client, ev, (alice, bob, carol) = _scratch_rig()
     try:
         _bid(client, alice, 1, 5)
@@ -661,50 +690,48 @@ def test_unowned_win_is_a_flagged_slot():
         pot = bidding.total_pot()
         r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
         assert r.status_code == 200, r.get_json()
-        r = client.post("/la-subasta/api/admin/results", json={"win": 3, "place": 1, "show": 2})
-        data = r.get_json()
-        by = {p["finish"]: p for p in data["payouts"]}
-        _check("results naming a horse that was never sold are accepted and settle",
-               r.status_code == 200 and data["success"] and data["state"] == "SETTLED", f"body={data}")
-        _check("the win slot is flagged unowned, and only it",
-               data["unowned"] == ["win"] and by["win"]["unowned"] is True
-               and by["place"]["unowned"] is False and by["show"]["unowned"] is False)
+        _set_winners(3, 1, 2)                          # 3 crossed first, and nobody bought it
+        led = _ledger(client)
+        by = _by_finish(led)
+        _check("a result naming a horse that was never sold: the ledger settles, the win slot flagged unowned, and only it",
+               led["unowned"] == ["win"] and by["win"]["unowned"] is True and by["place"]["unowned"] is False
+               and by["show"]["unowned"] is False, str(led))
         _check("...with no bidder: nobody is paid it, and there is no House",
                by["win"]["bidder_id"] is None and by["win"]["bidder_identity"] is None
-               and all("is_house" not in p for p in data["payouts"]))
-        _check("...and it carries its amount, 60% of the pot",
-               by["win"]["amount"] == round(pot * 0.60, 2) and by["win"]["horse_id"] == 3,
-               f"got {by['win']}")
+               and all("is_house" not in p for p in led["payouts"]))
+        _check("...and it carries its amount, 60% of the pot (whole pesos: 10 -> 5 / 3 / 2)",
+               by["win"]["amount"] == 5 and by["win"]["horse_id"] == 3 and led["total_pot"] == pot == 10, f"got {by['win']}")
         _check("place is Alice's (horse 1) and show Bob's (horse 2)",
                by["place"]["bidder_id"] == alice["id"] and by["show"]["bidder_id"] == bob["id"])
-        persisted = {p["finish"]: p for p in payouts.list_payouts()}
-        _check("the persisted win row has no bidder either",
-               persisted["win"]["bidder_id"] is None and persisted["win"]["unowned"] is True)
-        led = client.get("/la-subasta/api/admin/payouts").get_json()["payouts"]
-        _check("GET /api/admin/payouts carries the same flags: win, place, show",
-               [p["unowned"] for p in led] == [True, False, False], f"got {led}")
 
         # The admin names the horse that pays it: the next finisher, Carol's 4
-        ev.events.clear()
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 4})
         body = r.get_json()
         slot = body.get("slot") or {}
         _check("naming #4 for the win slot is accepted", r.status_code == 200 and body.get("success"), f"body={body}")
         _check("the slot is Carol's at the same amount, with #3 still the finisher and #4 paying",
-               slot.get("bidder_id") == carol["id"] and slot.get("horse_id") == 3
-               and slot.get("pays_horse_id") == 4 and slot.get("unowned") is False
-               and slot.get("amount") == round(pot * 0.60, 2), f"got {slot}")
-        _check("nothing is unowned now", body["unowned"] == [])
-        pushed = ev.named("payout_computed")
-        _check("payout_computed is pushed again, with the ledger as it stands",
-               len(pushed) == 1 and pushed[0]["unowned"] == [], f"got {ev.events}")
+               slot.get("bidder_id") == carol["id"] and slot.get("horse_id") == 3 and slot.get("pays_horse_id") == 4
+               and slot.get("unowned") is False and slot.get("amount") == 5, f"got {slot}")
+        _check("nothing is unowned now, and the reply carries the ledger as it stands",
+               body["unowned"] == [] and body["payouts"][0]["pays_horse_id"] == 4, str(body))
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 4})
         _check("any slot can be set: skipping one finisher moves the next up",
                r.status_code == 200 and r.get_json()["slot"]["bidder_id"] == carol["id"])
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 1})
         slot = r.get_json()["slot"]
-        _check("naming the finisher's own horse puts the slot back as the results had it",
+        _check("naming the finisher's own horse puts the slot back as the result has it",
                slot["pays_horse_id"] is None and slot["bidder_id"] == alice["id"], f"got {slot}")
+
+        # The pick is tied to the finisher it was made for
+        _set_winners(1, 3, 2)                          # a correction: 1 won after all, 3 was second
+        by = _by_finish(_ledger(client))
+        _check("a correction that moves the finisher: WIN pays its owner (Alice) and the pick for #3 is set aside; PLACE, now #3, "
+               "is unowned", by["win"]["bidder_id"] == alice["id"] and by["win"]["pays_horse_id"] is None
+               and by["place"]["horse_id"] == 3 and by["place"]["unowned"] is True and by["place"]["pays_horse_id"] is None, str(by))
+        _set_winners(3, 1, 2)
+        by = _by_finish(_ledger(client))
+        _check("...and back: #3 wins again and the pick comes back with it (#4 pays WIN, Carol)",
+               by["win"]["pays_horse_id"] == 4 and by["win"]["bidder_id"] == carol["id"], str(by["win"]))
 
         # What it refuses
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 6})
@@ -713,29 +740,32 @@ def test_unowned_win_is_a_flagged_slot():
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 99})
         _check("a number that is no horse: 400", r.status_code == 400
                and r.get_json()["error"] == "Invalid horse id: 99")
-        _lq_scratch(client, 20)
-        r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 20})
-        _check("a scratched horse is not in the field: 400",
-               r.status_code == 400 and r.get_json()["error"] == "#20 is not in the field: scratched",
-               f"body={r.get_json()}")
+        r = _lq_scratch(client, 20)
+        _check("a scratch while the result stands is refused on the LQ admin page: the field is frozen under the payouts",
+               r.status_code == 409 and "the field is frozen" in r.get_json()["error"], f"body={r.get_json()}")
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "fourth", "horse_id": 4})
         _check("a finish that is not win, place or show: 400", r.status_code == 400)
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": "x"})
         _check("a horse_id that is not a number: 400", r.status_code == 400)
         _check("the refused requests changed nothing: win is still #4's, Carol's",
-               {p["finish"]: p for p in payouts.list_payouts()}["win"]["bidder_id"] == carol["id"])
+               _by_finish(_ledger(client))["win"]["bidder_id"] == carol["id"])
     finally:
         _done_with_events()
 
 
 def test_payout_slot_needs_results():
-    """The slot picker works on a ledger: before results there is none."""
+    """The slot picker and the paid-out mark work on a ledger: before a result
+    there is none, and the refusal says where results come from."""
     app, client, ev, (alice, bob, carol) = _scratch_rig()
     try:
         _bid(client, alice, 1, 2)
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "win", "horse_id": 1})
-        _check("a slot before any results: 409",
-               r.status_code == 409 and r.get_json()["error"] == "No results have been entered yet",
+        _check("a slot before any result: 409",
+               r.status_code == 409 and r.get_json()["error"] == "No results yet: they are entered in SET WINNERS on the Control Center",
+               f"body={r.get_json()}")
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "paid": True})
+        _check("a paid-out mark before any result: 409 too",
+               r.status_code == 409 and r.get_json()["error"] == "No results yet: they are entered in SET WINNERS on the Control Center",
                f"body={r.get_json()}")
     finally:
         _done_with_events()
@@ -788,13 +818,13 @@ def test_void_with_no_second_bidder_leaves_the_horse_unsold():
                body["unsold"] is False and own["bidder_id"] == alice["id"] and own["winning_bid"] == 1,
                f"got {own}")
 
-        r = client.post("/la-subasta/api/admin/results", json={"win": 8, "place": 4, "show": 10})
-        data = r.get_json()
-        by = {p["finish"]: p for p in data["payouts"]}
+        _set_winners(8, 4, 10)
+        led = _ledger(client)
+        by = _by_finish(led)
         _check("a result naming the unowned 8 settles, its slot unowned (the pot is 1 + 1 + 1)",
-               r.status_code == 200 and data["unowned"] == ["win"] and data["total_pot"] == 3
+               led["unowned"] == ["win"] and led["total_pot"] == 3
                and by["place"]["bidder_id"] == carol["id"] and by["show"]["bidder_id"] == alice["id"],
-               f"body={data}")
+               f"body={led}")
     finally:
         _done_with_events()
 
@@ -1113,6 +1143,134 @@ def test_bidding_picks_up_max_raise_change():
            r.status_code == 200, f"got {r.get_json()}")
 
 
+def test_paid_out_marks():
+    """The paid-out mark: who was paid what for a slot, tied to the finisher
+    it was paid for. It reads as paid while the ledger still says that
+    bidder and that amount for that horse; when the result moves (a
+    correction, Reset betting) or the owner or the amount changes under it,
+    the ledger lists it as paid on an earlier result, with what the slot
+    pays now, until the host unmarks it or the result comes back. Reset
+    betting leaves the marks: they are money facts (Joey, 2026-10-20)."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 1, 5)
+        _bid(client, bob, 2, 3)
+        _bid(client, carol, 3, 2)
+        _bid(client, carol, 4, 2)
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        assert r.status_code == 200, r.get_json()
+        _set_winners(1, 2, 3)                              # pot 12: 7 / 3 / 2
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "paid": True})
+        body = r.get_json()
+        by = _by_finish(body)
+        _check("WIN marked paid out: the row says so, Alice, 7 pesos, when; the reply is the ledger; nothing stale",
+               r.status_code == 200 and body["success"] is True and by["win"]["paid"]["bidder_id"] == alice["id"]
+               and by["win"]["paid"]["amount"] == 7 and by["win"]["paid"]["bidder_identity"] == "Alice 🌮"
+               and by["win"]["paid"]["paid_at"] and body["paid_on_old_result"] == [], str(body))
+        first_at = by["win"]["paid"]["paid_at"]
+        _check("the other slots are not paid", by["place"]["paid"] is None and by["show"]["paid"] is None)
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "paid": True})
+        _check("marked again: the same mark, the first paid_at stands",
+               r.status_code == 200 and _by_finish(r.get_json())["win"]["paid"]["paid_at"] == first_at)
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "place", "paid": True})
+        _check("PLACE marked too: Bob, 3", _by_finish(r.get_json())["place"]["paid"]["bidder_id"] == bob["id"]
+               and _by_finish(r.get_json())["place"]["paid"]["amount"] == 3)
+
+        _set_winners(4, 2, 3)                              # a correction in SET WINNERS: 4 won, not 1
+        led = _ledger(client)
+        by = _by_finish(led)
+        _check("the result corrected: WIN now pays Carol (#4) and reads unpaid; PLACE's mark still matches",
+               by["win"]["bidder_id"] == carol["id"] and by["win"]["paid"] is None
+               and by["place"]["paid"]["bidder_id"] == bob["id"], str(by))
+        stale = led["paid_on_old_result"]
+        _check("...and the ledger says Alice was paid on the earlier result and what WIN pays now, in one line",
+               len(stale) == 1 and stale[0]["finish"] == "win" and stale[0]["horse_id"] == 1
+               and stale[0]["bidder_id"] == alice["id"] and stale[0]["amount"] == 7 and stale[0]["paid_at"] == first_at
+               and stale[0]["line"] == "Alice 🌮 was paid 7 pesos for WIN (#1); WIN now pays Carol 💃 7 pesos for #4", str(stale))
+        _set_winners(1, 2, 3)                              # the result changes back
+        led = _ledger(client)
+        _check("the result back as it was: the mark reads as paid again and nothing is stale",
+               _by_finish(led)["win"]["paid"]["bidder_id"] == alice["id"] and led["paid_on_old_result"] == [], str(led))
+
+        # The owner goes under a mark (a void after the lock): the pot shrinks too, so PLACE's amount moves
+        r = client.post("/la-subasta/api/admin/void", json={"bid_id": bidding.current_high_bid(1)["id"], "reason": "test"})
+        assert r.status_code == 200, r.get_json()
+        led = _ledger(client)
+        by = _by_finish(led)
+        _check("Alice's bid on 1 voided after the lock: WIN is unowned, the pot is 7 (4 / 2 / 1)",
+               by["win"]["unowned"] is True and led["total_pot"] == 7 and led["amounts"] == {"win": 4, "place": 2, "show": 1}, str(led))
+        lines = [s["line"] for s in led["paid_on_old_result"]]
+        _check("...both marks are stale: Alice's (no owner to pay now), Bob's (PLACE pays 2 now, not 3)",
+               lines == ["Alice 🌮 was paid 7 pesos for WIN (#1); WIN is now #1, which has no owner to pay",
+                         "Bob 🐴 was paid 3 pesos for PLACE (#2); PLACE now pays Bob 🐴 2 pesos for #2"], str(lines))
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "horse_id": 1, "paid": False})
+        _check("unmarking Alice's by its finish and horse: gone, Bob's stays",
+               r.status_code == 200 and [s["finish"] for s in r.get_json()["paid_on_old_result"]] == ["place"], str(r.get_json()))
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "place", "paid": False})
+        _check("unmarking PLACE without a horse: the current finisher's mark (#2) goes; nothing stale",
+               r.status_code == 200 and r.get_json()["paid_on_old_result"] == [] and _by_finish(r.get_json())["place"]["paid"] is None)
+
+        # What it refuses
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "win", "paid": True})
+        _check("marking an unowned slot paid: 409, name the horse that pays it first",
+               r.status_code == 409 and r.get_json()["error"] == "WIN has no owner to pay yet: name the horse that pays it first",
+               f"body={r.get_json()}")
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "fourth", "paid": True})
+        _check("a finish that is not win, place or show: 400", r.status_code == 400)
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "show", "paid": "yes"})
+        _check("paid must be true or false: 400", r.status_code == 400)
+
+        # Reset betting leaves the marks: paid on a result that is now gone
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "show", "paid": True})
+        assert r.status_code == 200 and _by_finish(r.get_json())["show"]["paid"]["amount"] == 1, r.get_json()
+        r = client.post("/api/quiniela/reset")
+        led = _ledger(client)
+        _check("Reset betting: the result and the rows are gone; Carol's mark stays, paid on a result that is now gone",
+               r.status_code == 200 and led["results"] is None and led["payouts"] == []
+               and [s["line"] for s in led["paid_on_old_result"]]
+               == ["Carol 💃 was paid 1 peso for SHOW (#3); there is no result now"], str(led))
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "show", "horse_id": 3, "paid": False})
+        _check("...until the host unmarks it", r.status_code == 200 and r.get_json()["paid_on_old_result"] == [])
+        r = client.post("/la-subasta/api/admin/payout-paid", json={"finish": "show", "paid": False})
+        _check("unmarking with no result and no horse named: 409 (which mark?)", r.status_code == 409, f"body={r.get_json()}")
+        _set_winners(1, 2, 3)
+        led = _ledger(client)
+        _check("the result entered again: WIN unowned (the void stands), PLACE and SHOW paid to nobody yet, nothing stale",
+               [p["unowned"] for p in led["payouts"]] == [True, False, False] and all(p["paid"] is None for p in led["payouts"])
+               and led["paid_on_old_result"] == [], str(led))
+    finally:
+        _done_with_events()
+
+
+def test_results_entry_is_gone():
+    """La Subasta's own results entry and store are gone (M5): no results
+    route, no results form on the admin page, no payouts table, no
+    results_entered or payout_computed event, no RACE_COMPLETE or SETTLED
+    anywhere in its sources. The result is SET WINNERS'."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    _check("no /api/admin/results route", "/la-subasta/api/admin/results" not in rules
+           and client.post("/la-subasta/api/admin/results", json={"win": 1, "place": 2, "show": 3}).status_code == 404)
+    tables = {r["name"] for r in models.get_conn().execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    _check("no payouts table; payout_slots instead", "payouts" not in tables and "payout_slots" in tables, str(sorted(tables)))
+    html = client.get("/la-subasta/admin").get_data(as_text=True)
+    js = _static(client, "/la-subasta/static/js/admin.js")
+    _check("the admin page has no results form and its script no results route",
+           "ls-admin-results" not in html and "ls-admin-win" not in html and "'results'" not in js)
+    from la_subasta import notifications
+    _check("no results_entered or payout_computed event (nothing listened)",
+           not hasattr(notifications, "results_entered") and not hasattr(notifications, "payout_computed"))
+    _check("payouts.py keeps no store: no compute_and_persist_payouts, no list_payouts",
+           not hasattr(payouts, "compute_and_persist_payouts") and not hasattr(payouts, "list_payouts"))
+    sources = "\n".join(text for path, text in _package_sources() if path != "models.py")     # the migration names them to retire them
+    _check("nothing in La Subasta's own sources (the migration apart) speaks of RACE_COMPLETE, SETTLED, results_entered or payout_computed",
+           all(word not in sources for word in ("RACE_COMPLETE", "SETTLED", "results_entered", "payout_computed")))
+    r = client.get("/la-subasta/api/state").get_json()
+    _check("/api/state carries the result (null now) and settled (false)", r["results"] is None and r["settled"] is False, str(r))
+
+
 def test_payout_preset_parser():
     # Valid presets
     for preset, expected in [
@@ -1177,18 +1335,13 @@ def test_payout_uses_current_preset():
 
         pot = bidding.total_pot()
         app_client.post("/la-subasta/api/admin/lock", json={"confirm": True})
-        r = app_client.post("/la-subasta/api/admin/results",
-                            json={"win": 1, "place": 2, "show": 3})
-        data = r.get_json()
-        by_finish = {p["finish"]: p for p in data["payouts"]}
-
-        _check(f"[{preset}] win = {w_pct:.0%} of pot",
-               abs(by_finish["win"]["amount"] - round(pot * w_pct, 2)) < 0.01,
-               f"got {by_finish['win']['amount']} expected {round(pot * w_pct, 2)}")
-        _check(f"[{preset}] place = {p_pct:.0%} of pot",
-               abs(by_finish["place"]["amount"] - round(pot * p_pct, 2)) < 0.01)
-        _check(f"[{preset}] show = {s_pct:.0%} of pot",
-               abs(by_finish["show"]["amount"] - round(pot * s_pct, 2)) < 0.01)
+        _set_winners(1, 2, 3)
+        by_finish = _by_finish(_ledger(app_client))
+        want = {"60/25/15": (5, 3, 2), "70/20/10": (7, 2, 1), "50/30/20": (5, 3, 2)}[preset]
+        _check(f"[{preset}] whole pesos of the pot of {pot:.0f} ({w_pct:.0%} / {p_pct:.0%} / {s_pct:.0%}, PLACE and SHOW half up, "
+               f"WIN the rest): {want[0]} / {want[1]} / {want[2]}, summing to it",
+               (by_finish["win"]["amount"], by_finish["place"]["amount"], by_finish["show"]["amount"]) == want and sum(want) == pot,
+               f"got {[by_finish[f]['amount'] for f in ('win', 'place', 'show')]}")
 
 
 def test_settings_api_endpoints():
@@ -1510,11 +1663,9 @@ def test_field_21_to_24_accepted():
     assert r.status_code == 200, r.get_json()
     owned = sorted(o["horse_id"] for o in (payouts.get_owner(n) for n in (1, 22, 23)) if o)
     _check("22 and 23 frozen into ownership", owned == [1, 22, 23], f"got {owned}")
-    r = client.post("/la-subasta/api/admin/results", json={"win": 22, "place": 23, "show": 1})
-    data = r.get_json()
-    _check("results 22 / 23 / 1 accepted", r.status_code == 200 and data.get("success"), f"body={data}")
-    by_finish = {p["finish"]: p for p in payouts.list_payouts()}
-    _check("22's owner (Alice) is paid the win", by_finish["win"]["bidder_id"] == alice["id"]
+    _set_winners(22, 23, 1)
+    by_finish = _by_finish(_ledger(client))
+    _check("the result 22 / 23 / 1: 22's owner (Alice) is paid the win", by_finish["win"]["bidder_id"] == alice["id"]
            and by_finish["win"]["horse_id"] == 22)
     _check("23's owner (Bob) is paid the place", by_finish["place"]["bidder_id"] == bob["id"])
     _check("MAX_HORSE is La Quiniela's 24", la_config.MAX_HORSE == LQ_HORSE_COUNT == 24)
@@ -1554,13 +1705,11 @@ def test_field_bid_on_absent_horse_rejected():
     _check("nothing was recorded", bidding.count_bids() == 0)
     status, error = bid(22)
     _check("bid on 22 accepted", status == 200, f"got {status} {error!r}")
-    # Results can only name horses in the field
+    # The results are SET WINNERS' (it refuses a horse not in the field: la_quiniela/test_dashboard.py);
+    # La Subasta has no results entry of its own
     client.post("/la-subasta/api/admin/lock", json={"confirm": True})
     r = client.post("/la-subasta/api/admin/results", json={"win": 9, "place": 22, "show": 1})
-    _check("results naming 9 rejected", r.status_code == 400
-           and "#9 is not in the field" in r.get_json().get("error", ""), f"body={r.get_json()}")
-    r = client.post("/la-subasta/api/admin/results", json={"win": 21, "place": 22, "show": 1})
-    _check("results naming 21 rejected", r.status_code == 400, f"body={r.get_json()}")
+    _check("La Subasta has no results route", r.status_code == 404, f"{r.status_code}")
 
     # A replacement can be scratched in turn (9 -> 22, then 22 -> 23): the horse
     # that runs in 9's place, and in 22's, is 23, not 22.
@@ -1806,18 +1955,13 @@ def test_scratch_after_lock():
                ev.named("horse_scratched") == [{"horse_id": 2, "refund_count": 1, "ownership_voided": True}],
                f"got {ev.named('horse_scratched')}")
 
-        r = client.post("/la-subasta/api/admin/results", json={"win": 2, "place": 3, "show": 5})
-        _check("results naming the scratched 2 are refused (it cannot pay out)",
-               r.status_code == 400 and r.get_json()["error"] == "#2 is not in the field: scratched",
-               f"body={r.get_json()}")
-        r = client.post("/la-subasta/api/admin/results", json={"win": 3, "place": 5, "show": 8})
-        data = r.get_json()
-        _check("results 3 / 5 / 8 accepted", r.status_code == 200 and data.get("success"), f"body={data}")
-        _check("the pot leaves out the scratched 5: 2 + 4 + 3 = 9", data["total_pot"] == 9,
-               f"got {data.get('total_pot')}")
+        _set_winners(3, 5, 8)                    # SET WINNERS cannot name 2: it is not in the field
+        led = _ledger(client)
+        _check("the result 3 / 5 / 8: the pot leaves out the scratched 5: 2 + 4 + 3 = 9", led["total_pot"] == 9,
+               f"got {led.get('total_pot')}")
         _check("every paying slot has an owner: nothing is unowned",
-               data["unowned"] == [] and not any(p["unowned"] for p in data["payouts"]))
-        _check("no payout row names 2", all(p["horse_id"] != 2 for p in payouts.list_payouts()))
+               led["unowned"] == [] and not any(p["unowned"] for p in led["payouts"]))
+        _check("no payout row names 2", all(p["horse_id"] != 2 for p in led["payouts"]))
     finally:
         _done_with_events()
 
@@ -1956,12 +2100,11 @@ def test_scratch_undo_after_the_lock_restores_the_owner():
         _check("2 has its owner again", (payouts.get_owner(2) or {}).get("bidder_id") == alice["id"])
         _check("the undo pushed field_changed", len(ev.named("field_changed")) == 1, f"got {ev.events}")
 
-        r = client.post("/la-subasta/api/admin/results", json={"win": 2, "place": 5, "show": 8})
-        data = r.get_json()
-        by = {p["finish"]: p for p in data["payouts"]}
-        _check("2 can win: results naming it settle, paid to Alice, nothing unowned",
-               r.status_code == 200 and by["win"]["bidder_id"] == alice["id"] and data["unowned"] == []
-               and data["total_pot"] == 5 + 4 + 3 + 2, f"body={data}")
+        _set_winners(2, 5, 8)
+        led = _ledger(client)
+        by = _by_finish(led)
+        _check("2 can win: the result naming it pays Alice, nothing unowned, the pot 5 + 4 + 3 + 2",
+               by["win"]["bidder_id"] == alice["id"] and led["unowned"] == [] and led["total_pot"] == 5 + 4 + 3 + 2, f"body={led}")
     finally:
         _done_with_events()
 
@@ -1989,15 +2132,17 @@ def test_scratch_undo_after_the_lock_of_a_scratch_before_it():
         _check("...so Alice owes 4 for it and it has an owner",
                bidding.bidder_portfolio(alice["id"])["total"] == 4
                and (payouts.get_owner(12) or {}).get("bidder_id") == alice["id"])
-        _check("the pot counts it: 4 + 3", payouts.compute_and_persist_payouts(12, 13, 1)["total_pot"] == 7)
+        _set_winners(12, 13, 1)
+        _check("the pot counts it: 4 + 3", payouts.ledger()["total_pot"] == 7)
     finally:
         _done_with_events()
 
 
 def test_scratch_undo_after_a_lock_that_froze_nothing():
     """The lock with no ownership row at all (every horse unsold): an undo
-    must not freeze a lone horse, because payouts freezes everything itself
-    when it finds no row. Here it does, and the horse is paid."""
+    after it freezes the returned horse from its bids all the same, so the
+    ledger, which only reads, finds its owner. (It used to leave a lone horse
+    for settlement to freeze; the ledger stores nothing now.)"""
     app, client, ev, (alice, bob, carol) = _scratch_rig()
     try:
         _bid(client, alice, 12, 4)
@@ -2007,14 +2152,16 @@ def test_scratch_undo_after_a_lock_that_froze_nothing():
         _check("locked with no ownership row at all",
                _ownership(12) is None and _ownership(13) is None)
         client.post("/api/quiniela/unscratch", json={"horse": 12})
-        _check("undo brings the bids back and freezes no lone row",
-               [x["voided"] for x in _bids_on(12)] == [0] and _ownership(12) is None)
-        r = client.post("/la-subasta/api/admin/results", json={"win": 12, "place": 13, "show": 14})
-        data = r.get_json()
-        by = {p["finish"]: p for p in data["payouts"]}
-        _check("results then freeze everything from the bids: 12 pays Alice, 13 and 14 are unowned",
-               r.status_code == 200 and by["win"]["bidder_id"] == alice["id"]
-               and data["unowned"] == ["place", "show"] and data["total_pot"] == 4, f"body={data}")
+        own = _ownership(12)
+        _check("undo brings the bids back and freezes 12 from them: Alice's, at 4",
+               [x["voided"] for x in _bids_on(12)] == [0] and own is not None and own["voided"] == 0
+               and own["bidder_id"] == alice["id"] and own["winning_bid"] == 4, f"got {own}")
+        _set_winners(12, 13, 14)
+        led = _ledger(client)
+        by = _by_finish(led)
+        _check("the result: 12 pays Alice, 13 and 14 are unowned, the pot 4",
+               by["win"]["bidder_id"] == alice["id"] and led["unowned"] == ["place", "show"] and led["total_pot"] == 4,
+               f"body={led}")
     finally:
         _done_with_events()
 
@@ -2540,11 +2687,12 @@ def test_ownership_migration():
 
 
 def test_house_and_payouts_migration():
-    """A database from before the House went: its payouts table (bidder_id
-    NOT NULL, the House its fallback payee) is rebuilt so that a slot can have
-    no owner, every row kept; the House's payout becomes an unowned slot and
-    its sentinel bidder row goes; bidders gains cap_exempt. A House row that
-    somehow has a bid is left alone."""
+    """A database from before: the House's sentinel bidder row goes (a House
+    row that somehow has a bid is left alone); the old payouts table, La
+    Subasta's own results store, is dropped and payout_slots made (M5: the
+    ledger is derived from SET WINNERS' result); an auction left in
+    RACE_COMPLETE or SETTLED reads as LOCKED (the two states are gone:
+    settled is LOCKED with a result); bidders gains cap_exempt."""
     import sqlite3
     path = tempfile.mktemp(prefix="la_subasta_old_house_", suffix=".db")
     conn = sqlite3.connect(path)
@@ -2566,36 +2714,32 @@ def test_house_and_payouts_migration():
             UNIQUE(finish, event_year));
         INSERT INTO payouts (bidder_id, horse_id, finish, amount, paid_out, event_year)
             VALUES (1, 3, 'win', 6, 0, 2026), (2, 1, 'place', 2.5, 1, 2026);
+        CREATE TABLE auction_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, state TEXT NOT NULL, opens_at TEXT, closes_at TEXT,
+            total_pot REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            event_year INTEGER NOT NULL UNIQUE);
+        INSERT INTO auction_state (state, total_pot, event_year) VALUES ('SETTLED', 10, 2026), ('RACE_COMPLETE', 4, 2025);
     """)
     conn.commit()
     conn.close()
     try:
         c = init_db(path)
-        info = {r["name"]: r for r in c.execute("PRAGMA table_info(payouts)").fetchall()}
-        _check("payouts gains pays_horse_id, and its bidder_id can now be NULL",
-               "pays_horse_id" in info and info["bidder_id"]["notnull"] == 0, f"got {list(info)}")
-        rows = {r["finish"]: dict(r) for r in c.execute("SELECT * FROM payouts").fetchall()}
-        _check("the place row is kept as it was",
-               rows["place"]["bidder_id"] == 2 and rows["place"]["horse_id"] == 1
-               and rows["place"]["amount"] == 2.5 and rows["place"]["paid_out"] == 1
-               and rows["place"]["pays_horse_id"] is None, f"got {rows['place']}")
-        _check("the House's win payout is now a slot nobody owns",
-               rows["win"]["bidder_id"] is None and rows["win"]["horse_id"] == 3
-               and rows["win"]["amount"] == 6, f"got {rows['win']}")
+        tables = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        _check("the old payouts table is dropped and payout_slots is there",
+               "payouts" not in tables and "payout_slots" in tables, str(sorted(tables)))
         _check("the House's bidder row is gone and Alice stays",
                [r["identity"] for r in c.execute("SELECT identity FROM bidders").fetchall()] == ["Alice \U0001F32E"])
         _check("bidders gained cap_exempt, 0 for Alice",
                c.execute("SELECT cap_exempt FROM bidders").fetchone()["cap_exempt"] == 0)
-        try:
-            c.execute("INSERT INTO payouts (bidder_id, horse_id, finish, amount, event_year) "
-                      "VALUES (NULL, 9, 'win', 1, 2026)")
-            _check("the rebuilt table still has UNIQUE(finish, event_year)", False, "a second win row went in")
-        except sqlite3.IntegrityError:
-            _check("the rebuilt table still has UNIQUE(finish, event_year)", True)
-        before = [dict(r) for r in c.execute("SELECT * FROM payouts ORDER BY id").fetchall()]
+        states = {r["event_year"]: r["state"] for r in c.execute("SELECT event_year, state FROM auction_state").fetchall()}
+        _check("SETTLED and RACE_COMPLETE read as LOCKED, the pots kept",
+               states == {2026: "LOCKED", 2025: "LOCKED"}
+               and [r["total_pot"] for r in c.execute("SELECT total_pot FROM auction_state ORDER BY event_year").fetchall()] == [4, 10],
+               str(states))
         c = init_db(path)
         _check("the migration is idempotent",
-               [dict(r) for r in c.execute("SELECT * FROM payouts ORDER BY id").fetchall()] == before)
+               {r["event_year"]: r["state"] for r in c.execute("SELECT event_year, state FROM auction_state").fetchall()} == states
+               and "payouts" not in {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()})
 
         # A House row that has a bid is not removed
         path2 = tempfile.mktemp(prefix="la_subasta_old_house2_", suffix=".db")
@@ -2856,7 +3000,7 @@ def test_guest_page_rejoins_in_chrome():
         chrome.wait_for("(() => { const b = document.querySelector(%s); return !!b && !b.disabled; })()"
                         % json.dumps(bid_button))
         with models.write_txn() as conn:              # the wipe: every guest, bid and state row gone, the counters kept
-            for table in ("bids", "ownership", "payouts", "bidders", "auction_state"):
+            for table in ("bids", "ownership", "payout_slots", "bidders", "auction_state"):
                 conn.execute(f"DELETE FROM {table}")
         chrome.tap(bid_button)
         view = chrome.wait_for("(() => { const v = %s; return v.join ? v : null; })()" % _GUEST_VIEW_JS)
@@ -3192,12 +3336,13 @@ def test_admin_page():
             ('id="ls-admin-unsold-list"', "its list of horses"),
             ('id="ls-admin-unsold-confirm"', "its confirm button"),
             ('id="ls-admin-unsold-cancel"', "its cancel button"),
-            ('id="ls-admin-results"', "the results form"),
             ('id="ls-admin-bidders-list"', "the bidders list"),
             ('id="ls-admin-payouts"', "the payout ledger")):
         _check(f"the admin page has {label}", marker in html, f"missing {marker}")
     _check("the unsold-horse warning is hidden until the lock answers 409",
            '<div id="ls-admin-unsold" class="adm-warn" role="alert" hidden>' in html)
+    _check("no results form: the results are SET WINNERS' (M5)",
+           "ls-admin-results" not in html and "ls-admin-win" not in html and "Enter results" not in html)
     _check("the page links its own script and stylesheet",
            "/la-subasta/static/js/admin.js" in html and "/la-subasta/static/css/la-subasta-admin.css" in html)
 
@@ -3209,7 +3354,8 @@ def test_admin_page():
             ("ADMIN + 'cap-exempt'", "the cap exemption route"),
             ("ADMIN + 'payout-slot'", "the payout slot route"),
             ("ADMIN + 'paid'", "mark paid"),
-            ("ADMIN + 'results'", "the results route"),
+            ("ADMIN + 'payout-paid'", "the paid-out mark"),
+            ("paid_on_old_result", "the lines for a payout paid on an earlier result"),
             ("ADMIN + 'payouts'", "the payout ledger"),
             ("API + 'bidders'", "the bidders"),
             ("p.unowned", "the unowned flag"),
@@ -3345,20 +3491,14 @@ def test_auction_state_changed_broadcast():
     _check("lock still fires auction_locked event",
            any(e[0] == "auction_locked" for e in events))
 
-    # Results endpoint does LOCKED→RACE_COMPLETE→SETTLED — expect two events
+    # No results entry here any more: the result is SET WINNERS' (one record), so nothing fires
+    # RACE_COMPLETE or SETTLED, and LOCKED is the last state
     events.clear()
-    # Need at least one owned horse for payouts to work; but since the
-    # admin/results requires LOCKED state and we're already there, just
-    # drive it straight through with zero bids (every slot comes back unowned).
-    r = client.post("/la-subasta/api/admin/results",
-                    json={"win": 1, "place": 2, "show": 3})
-    _check("admin/results returns 200", r.status_code == 200,
-           f"body={r.get_json()}")
-    transitions_fired = [e[1]["new_state"] for e in events
-                         if e[0] == "auction_state_changed"]
-    _check("results fires RACE_COMPLETE + SETTLED transitions in order",
-           transitions_fired == ["RACE_COMPLETE", "SETTLED"],
-           f"got {transitions_fired}")
+    r = client.post("/la-subasta/api/admin/results", json={"win": 1, "place": 2, "show": 3})
+    _check("admin/results is gone (404), and no state event follows",
+           r.status_code == 404 and not [e for e in events if e[0] == "auction_state_changed"], f"{r.status_code} {events}")
+    _check("LOCKED is the last state: NOT_STARTED, OPEN, FINAL_HOUR, LOCKED and no other",
+           [s.value for s in AuctionState] == ["NOT_STARTED", "OPEN", "FINAL_HOUR", "LOCKED"], str(list(AuctionState)))
 
     nots.init_notifications(None)
 
@@ -3672,7 +3812,9 @@ def main():
          test_another_years_bidder_is_unknown)
     _run("bid validation", test_bid_validation)
     _run("bid undo (10s window)", test_bid_undo)
-    _run("payout computation", test_payouts)
+    _run("payouts — from SET WINNERS, through the board: whole pesos, a correction follows, Reset betting clears (M5)", test_payouts)
+    _run("paid out — the mark, tied to the finisher; paid on an earlier result until unmarked", test_paid_out_marks)
+    _run("results — La Subasta's own entry and store are gone (M5)", test_results_entry_is_gone)
     _run("no House - no sentinel row, no House payout, no is_house", test_no_house)
     _run("no House - a paying horse nobody owns is a flagged slot; the admin names the payer",
          test_unowned_win_is_a_flagged_slot)
@@ -3724,7 +3866,7 @@ def main():
     _run("scratch — a failed push is retried, nothing voided twice", test_failed_scratch_push_is_retried)
     _run("paid — a second tap keeps the refund owed", test_paid_twice_keeps_the_refund)
     _run("scratch — old ownership table migrated", test_ownership_migration)
-    _run("migration — the House's row and an old payouts table", test_house_and_payouts_migration)
+    _run("migration — the House's row, the old payouts table, RACE_COMPLETE / SETTLED", test_house_and_payouts_migration)
     _run("migration — bidders unique per year; ids, foreign keys and the counter kept",
          test_bidders_unique_per_year_migration)
     _run("identity — a phone rejoins: last year's, this year's, a wipe, no answer (Chrome)",

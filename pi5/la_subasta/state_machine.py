@@ -3,7 +3,10 @@
 # Parallel to (but separate from) the dashboard's race state machine.
 # The admin drives this one; the race state machine drives the race LEDs.
 #
-# NOT_STARTED → OPEN → FINAL_HOUR → LOCKED → RACE_COMPLETE → SETTLED
+# NOT_STARTED → OPEN → FINAL_HOUR → LOCKED. "Settled" is not a state: it is
+# LOCKED with a result in SET WINNERS (payouts.ledger(); /api/state says
+# `settled`). The two states that followed LOCKED went with La Subasta's own
+# results entry (gap review M5, 2026-10-20).
 
 from enum import Enum
 
@@ -16,8 +19,6 @@ class AuctionState(str, Enum):
     OPEN          = "OPEN"
     FINAL_HOUR    = "FINAL_HOUR"
     LOCKED        = "LOCKED"
-    RACE_COMPLETE = "RACE_COMPLETE"
-    SETTLED       = "SETTLED"
 
 
 # Legal forward transitions. Admin can also force a jump backwards for
@@ -26,9 +27,7 @@ _TRANSITIONS = {
     AuctionState.NOT_STARTED:   {AuctionState.OPEN},
     AuctionState.OPEN:          {AuctionState.FINAL_HOUR, AuctionState.LOCKED},
     AuctionState.FINAL_HOUR:    {AuctionState.LOCKED},
-    AuctionState.LOCKED:        {AuctionState.RACE_COMPLETE},
-    AuctionState.RACE_COMPLETE: {AuctionState.SETTLED},
-    AuctionState.SETTLED:       set(),
+    AuctionState.LOCKED:        set(),
 }
 
 

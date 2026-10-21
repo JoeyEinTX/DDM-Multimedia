@@ -803,7 +803,7 @@
         } else if (s === 'FINAL_HOUR') {
             text.textContent = 'FINAL HOUR — get your bids in';
             strip.classList.add('ls-countdown-urgent');
-        } else if (s === 'LOCKED' || s === 'RACE_COMPLETE' || s === 'SETTLED') {
+        } else if (s === 'LOCKED') {
             text.textContent = 'Bidding closed';
             strip.classList.remove('ls-countdown-urgent');
         } else {
@@ -933,9 +933,7 @@
     function updateLockedBanner() {
         const banner = document.getElementById('ls-locked-banner');
         if (!banner) return;
-        banner.hidden = state.auctionState !== 'LOCKED' &&
-                        state.auctionState !== 'RACE_COMPLETE' &&
-                        state.auctionState !== 'SETTLED';
+        banner.hidden = state.auctionState !== 'LOCKED';
     }
 
     // ---------------------------------------------------------------------

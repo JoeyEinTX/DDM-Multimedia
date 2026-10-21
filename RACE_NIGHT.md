@@ -220,10 +220,7 @@ python3 pi5/tools/wipe.py
   entered in La Subasta. A scratch made during the auction voids its bids on that horse
   (after the auction locks, the owner's purchase too) and guest phones drop the horse on
   their own. Undo puts the horse back in the field with its auction bids and, after the
-  lock, its owner.
-- Before the auction locks, buy the horses nobody bid on (mark yourself **No cap** on
-  `/la-subasta/admin` and take them at the minimum bid): the lock warns you and lists them,
-  and locks anyway only if you confirm.
+  lock, its owner. The auction's own night is its section below ("La Subasta on the night").
 
 ## 2. Party day — setup, before guests arrive
 
@@ -411,6 +408,72 @@ count stays and shows read-only on `ADMIN` until **Reset betting**.
       names, and undo / redo the scratches, before opening.
 
 ---
+
+## La Subasta on the night
+
+The auction runs from `/la-subasta/admin` on pi5 (`http://joeydevpi.local:5000/la-subasta/admin`,
+a third tab on the iPad); the guests are on `/la-subasta` on their phones. Nothing about the
+race is entered there: the horses, the scratches and the result are La Quiniela's and the
+Control Center's.
+
+**Before guests arrive**
+- [ ] `EVENT_YEAR` in `pi5/la_subasta/config.py` is this year (2027 since 2026-10-20). It is a
+      constant, bumped once a year by a commit before the party; a guest belongs to one year,
+      so a wrong year sends every phone back to the join screen. Check it on DevPi:
+      `grep EVENT_YEAR ~/DDM-Multimedia/pi5/la_subasta/config.py`.
+- [ ] The wipe has run ("Before the party: start fresh"), so there are no guests, bids or owners
+      from a rehearsal. `/la-subasta/admin` says `NOT_STARTED`, Bidders `0`, Pot `0 pesos`.
+- [ ] `/la-subasta/admin` → **Open auction**. The pill says `OPEN`; a phone on `/la-subasta`
+      joins (name and emoji) and sees the field with no bids.
+
+**During**
+- [ ] Guests join on their phones and bid; the page shows every bid as it lands. A horse nobody
+      has bid on near the close: buy it yourself (mark yourself **No cap** on your row first;
+      the three-horse cap stays for everyone else), at the minimum bid. There is no House.
+- [ ] A guest whose phone lost its storage (a new phone, a cleared browser) is sent to the join
+      screen and **cannot reclaim their bidder by retyping their name**: the name is taken, on
+      purpose (M4). Find them in the admin list (Bidders): their horses and what they owe are
+      there, and you settle with them face to face; they join again under a new name only if
+      they still want to bid.
+- [ ] Close to post time: **Final hour** (the phones go urgent), then **Lock auction**. The
+      lock lists any horse nobody bid on and locks only on **Lock anyway**; buy them first if
+      you can. Locked, every bidder's row says what they owe: **Mark paid** as they pay you.
+- [ ] A same-day scratch during the auction is entered on `ADMIN` (La Quiniela), never here:
+      the bids on that horse are voided (after the lock, the owner's purchase too, and a paid
+      owner's row says `refund owed`). Undo on `ADMIN` puts it all back.
+
+**Results**
+- [ ] The result is entered once, in `DASH` → **SET WINNERS** (section 8), the real 1st, 2nd
+      and 3rd. La Subasta reads that record: the moment it is confirmed, `/la-subasta/admin` →
+      Payouts shows the pot, the three amounts (whole pesos, WIN takes the rounding) and a row
+      per slot: `WIN · 7 pesos`, `#19 GOLDEN TEMPO finished`, `pay Alice 🌮`. The owner of the
+      horse that crossed the line is paid, whether or not anyone bet it in La Quiniela.
+- [ ] A slot flagged `NO OWNER` (nobody bought that horse: the lock warned you): nobody is paid
+      it until you name the horse that pays it instead, the next finisher, in the row's picker
+      → **Set**. The pick stays with that finisher.
+- [ ] Wrong pick? Correct it in **SET WINNERS** (section 8), never here: the payouts follow the
+      new record at the next refresh (the page reads every 4 s). While the result stands the
+      field is frozen (no scratch, no undo); the dialog's **RESET** clears the result first.
+- [ ] **Paid on an earlier result**, in red on top of Payouts: a slot was marked paid out and
+      the result then moved away from it (a correction, RESET, Reset betting, or the owner or
+      amount changed under it). Each line says who was paid what for which horse and what the
+      slot pays now (`Alice 🌮 was paid 7 pesos for WIN (#1); WIN now pays Carol 💃 7 pesos for
+      #4`). Settle up with those two, then **Unmark** the line. It stays until you do, or
+      until the result comes back to what they were paid on.
+
+**Payouts**
+- [ ] Read them under Payouts on `/la-subasta/admin` (`GET /la-subasta/api/admin/payouts` is
+      the same ledger). Pay each owner the amount on the row (an unpaid owner: net what they
+      owe you), then **Mark paid out** on the row; it then says `paid out to Alice 🌮, 7
+      pesos`. **Unmark** takes it back.
+- [ ] The ledger is derived, not stored: if pi5 restarts, it is the same. If the page and
+      `DASH` disagree, `GET /api/results` on pi5 is the record both read.
+
+**Start fresh**
+- [ ] After the party, or before the next rehearsal: `pi5/tools/wipe.py` on DevPi, pi5 stopped
+      ("Before the party: start fresh"). It clears the guests, bids, owners, payout slots (the
+      paid-out marks included), the auction's state and the result. Phones from before join
+      again by themselves.
 
 ## The TV boxes (ddm-tv, ddm-tv2)
 
