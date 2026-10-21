@@ -2810,6 +2810,13 @@ a.drawer-link {
     border-color: #CD7F32;
 }
 
+/* A next finisher (4TH, 5TH...): recorded for La Quiniela to skip to, its cup not lit */
+.winner-pick-btn.selected-next {
+    opacity: 1;
+    box-shadow: 0 0 20px #B0BEC5, inset 0 0 10px rgba(176,190,197,0.3) !important;
+    border-color: #B0BEC5;
+}
+
 /* A post whose horse was scratched with no replacement: nothing to pick,
    the place in the grid stays empty so the others keep theirs. */
 .winner-pick-gap {
@@ -2863,6 +2870,7 @@ a.drawer-link {
 .results-modal-named .result-slot[data-slot="win"]   { --slot-colour: #FFD700; }
 .results-modal-named .result-slot[data-slot="place"] { --slot-colour: #C0C0C0; }
 .results-modal-named .result-slot[data-slot="show"]  { --slot-colour: #CD7F32; }
+.results-modal-named .result-slot[data-slot^="next:"] { --slot-colour: #B0BEC5; }   /* 4TH, 5TH...: the next finishers */
 
 .results-modal-named .result-slot.is-active {
     border-color: var(--slot-colour);
@@ -2955,17 +2963,19 @@ a.drawer-link {
 .winner-pick-btn.selected-win .winner-pick-tag   { display: block; background: #FFD700; }
 .winner-pick-btn.selected-place .winner-pick-tag { display: block; background: #C0C0C0; }
 .winner-pick-btn.selected-show .winner-pick-tag  { display: block; background: #CD7F32; }
+.winner-pick-btn.selected-next .winner-pick-tag  { display: block; background: #B0BEC5; }
 
 .winner-pick-btn.is-picked {
     cursor: not-allowed;
 }
 
 /* NO BETS: a horse whose cup held no bets at the post (La Quiniela's figures
-   at the post) cannot pay, so the host enters the next finisher instead. Its
-   picker is dimmed and carries a red tag at the top left (a slot's tag sits at
-   the top right), big enough to read at arm's length on an iPad; the tag
-   itself is not dimmed. A pick of it is allowed: its slot card shows the tag
-   too and a warning over CONFIRM RESULTS says what it means. */
+   at the post) is one La Quiniela skips for the next finisher, so the picker
+   asks for that finisher too (a 4TH card). Its picker is dimmed and carries a
+   red tag at the top left (a slot's tag sits at the top right), big enough to
+   read at arm's length on an iPad; the tag itself is not dimmed. Picking it is
+   right (the real finish): its slot card shows the tag too and a line over
+   CONFIRM RESULTS says what it means. */
 .winner-pick-nobets {
     display: none;
     position: absolute;

@@ -412,27 +412,107 @@ def prizes_for(pot: Any, split: Dict[str, Any]) -> Dict[str, int]:
 # Results: the dashboard's file
 # -----------------------------------------------------------------------------
 
-def read_results(path: Any = None) -> List[int]:
-    """[win, place, show] from the dashboard's results file (main.py writes
-    {"win","place","show","timestamp"} on POST /api/results); [0, 0, 0] when
-    there is no file, it does not parse, a number is out of 1..24 or two
-    are the same. Never raises."""
+RESULT_KEYS = ("win", "place", "show")
+
+
+def _results_file(path: Any = None) -> Optional[Dict[str, Any]]:
+    """The dashboard's results file as it reads: "win", "place", "show" as
+    horse numbers (0 where a place is missing or is no horse's number) and
+    "next", the finishers after SHOW in order, each a horse 1..24 named
+    nowhere else in the file (anything else is dropped). None when there is
+    no file or it is not a JSON object. The one parser of the file:
+    read_results() and read_record() are two views of it. Never raises."""
     target = Path(path) if path is not None else RESULTS_FILE
     try:
         with open(target, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
-        return [0] * P.RESULT_SLOTS
+        return None
     if not isinstance(data, dict):
-        return [0] * P.RESULT_SLOTS
-    out: List[int] = []
-    for key in ("win", "place", "show"):
+        return None
+    out: Dict[str, Any] = {}
+    for key in RESULT_KEYS:
         h = _as_int(data.get(key), 0) or 0
-        out.append(h if 1 <= h <= HORSE_COUNT else 0)
+        out[key] = h if 1 <= h <= HORSE_COUNT else 0
+    seen = {h for h in out.values() if h}
+    after: List[int] = []
+    for value in (data.get("next") if isinstance(data.get("next"), list) else []):
+        h = 0 if isinstance(value, bool) else (_as_int(value, 0) or 0)
+        if 1 <= h <= HORSE_COUNT and h not in seen:
+            seen.add(h)
+            after.append(h)
+    out["next"] = after
+    return out
+
+
+def read_results(path: Any = None) -> List[int]:
+    """[win, place, show] for the state line (the cups' WIN / PLACE / SHOW
+    frames, the TV's results screen): a place missing or no horse's number
+    reads 0; [0, 0, 0] when there is no file, it does not parse, or a horse
+    is named twice. Never raises."""
+    data = _results_file(path)
+    if data is None:
+        return [0] * P.RESULT_SLOTS
+    out = [data[key] for key in RESULT_KEYS]
     named = [h for h in out if h]
     if len(set(named)) != len(named):
         return [0] * P.RESULT_SLOTS
     return out
+
+
+def read_record(path: Any = None) -> Optional[Dict[str, Any]]:
+    """The result as SET WINNERS recorded it, for whoever pays on it (La
+    Subasta, through BettingBoard.results()): {"win", "place", "show",
+    "next"}, the real 1st, 2nd and 3rd and the finishers after them, horse
+    numbers. None unless all three places are named, each a different horse
+    (a hand-made file naming two is no result)."""
+    data = _results_file(path)
+    if data is None:
+        return None
+    places = [data[key] for key in RESULT_KEYS]
+    if 0 in places or len(set(places)) != len(places):
+        return None
+    return {"win": places[0], "place": places[1], "show": places[2], "next": list(data["next"])}
+
+
+def bets_at_post(closing: Any) -> Optional[Dict[int, int]]:
+    """{horse: the tokens its cup held at the post} for every horse 1..24,
+    from the model's closing (0 for a horse with no cup, no count or a junk
+    one); None while there are no figures at the post (unknown is not zero).
+    What the SET WINNERS picker reads too (betsAtPost in ddm_control.js)."""
+    horses = closing.get("horses") if isinstance(closing, dict) else None
+    if not isinstance(horses, dict):
+        return None
+    out: Dict[int, int] = {}
+    for n in range(1, HORSE_COUNT + 1):
+        entry = horses.get(str(n))
+        tokens = _as_int(entry.get("tokens"), 0) if isinstance(entry, dict) else 0
+        out[n] = tokens if tokens and tokens > 0 else 0
+    return out
+
+
+def finishers_needed(named: Iterable[int], bets: Optional[Dict[int, int]], field: Iterable[int]) -> int:
+    """How many more finishers SET WINNERS must record after `named` (the
+    real finish so far: 1st, 2nd, 3rd, then the next ones) for La Quiniela
+    to pay: a finisher whose cup held no bets at the post is skipped for the
+    next finisher (OD3, Joey 2026-10-20; the payout computation is M6), so
+    the finish goes on until three horses with bets are among those named,
+    or every horse in the field that had bets when fewer than three did. 0
+    while there are no figures at the post. The picker shows a card per
+    finisher needed (finishersNeeded in ddm_control.js, the same rule) and
+    POST /api/results refuses a record that stops short."""
+    if bets is None:
+        return 0
+    with_bets = {n for n in field if bets.get(n, 0) > 0}
+    have = sum(1 for n in named if n in with_bets)
+    return max(0, min(3, len(with_bets)) - have)
+
+
+def ordinal(n: int) -> str:
+    """4 -> "4th", 21 -> "21st", 12 -> "12th"."""
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
 
 
 def clear_results(path: Any = None) -> bool:
@@ -1337,6 +1417,14 @@ class BettingBoard:
         oldest undo first (tests and the docs' examples)."""
         undone = self.store.undone_renums()
         return [(to, undone[to][0]) for to in sorted(undone, key=lambda n: (undone[n][1], n))]
+
+    def results(self) -> Optional[Dict[str, Any]]:
+        """The result as SET WINNERS recorded it (read_record of the
+        dashboard's file): the real 1st, 2nd and 3rd and the finishers after
+        them, or None while there is none. The one way to read it in this
+        process: La Subasta's payouts come from here, and the LQ admin page's
+        scratch and undo are refused while it holds one."""
+        return read_record(self._results_path)
 
     def desired_state(self, snap: Any = None) -> Tuple[List[int], List[Tuple[int, int]], List[int]]:
         """(scratched, renum, results) as the gateway's state line should

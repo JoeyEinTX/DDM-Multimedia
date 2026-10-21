@@ -1,7 +1,7 @@
 # DDM System Architecture Spec
 
-**Version:** 1.1
-**Date:** 2026-10-14
+**Version:** 1.2
+**Date:** 2026-10-20
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
 **Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
@@ -155,7 +155,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 | `lq_board` | Names revision, the betting close time |
 | `lq_closing` | The figures at the post (section 6) |
 | `lq_race` | Race name, year, post time |
-| `pi5/data/results.json` | WIN, PLACE, SHOW horse numbers. The single store: the dashboard writes it, La Quiniela reads it |
+| `pi5/data/results.json` | The race's result: WIN, PLACE, SHOW horse numbers, the real finish, and `next`, the finishers after SHOW when one of the three had no bets at the post. The single store: the dashboard writes it, La Quiniela reads the three (`read_results()`) and whoever pays reads the record (`BettingBoard.results()`) |
 | In memory only | Track odds, weather, the dashboard mode that set the state |
 | On each cup (NVS) | Horse number, counts per token, orientation, brightness; the saved empty reading and last count (section 5) [BUILT, cup sketch v0.7] |
 | `archive_*` tables, `pi5/data/archive/` | The DDM Archive. See section 16 and `DDM_Archive_Spec.md` [PROPOSED] |
@@ -301,13 +301,21 @@ There is no roster line. A v1 `roster` line is ignored.
   - Saved; cleared by Reset betting and by reopening betting, the same as the figures at
     the post.
   - This is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
-- **An empty cup in the money: its share goes to the next finisher.** [DECIDED]
-  - The host enters **the three horses that pay**, not strictly the race's first three. If
-    a finisher's cup had no bets at the post, it is skipped and the next finisher takes its
-    place. Example: nobody bet the show horse, so 4th place is entered as SHOW.
-  - The TV, the cups and the LEDs then show those three as WIN, PLACE and SHOW.
+- **An empty cup in the money: its share goes to the next finisher, and the record is the
+  real finish.** [DECIDED 2026-10-20, BUILT; revises the 2026-09-29 rule]
+  - SET WINNERS records **the horses that actually crossed 1st, 2nd and 3rd**, never a
+    substitute. When one of those had no bets at the post, the dialog also asks for the next
+    finisher(s), 4th, then 5th, as many as it takes for three horses with bets to be named
+    (`finishers_needed` in `pi5/la_quiniela/betting.py`; the route refuses a record that
+    stops short), and records them in `next`. The record is one for both games.
+  - La Quiniela's skip (a finisher whose cup had no bets is skipped for the next finisher,
+    OD3) is applied by its payout computation in M6, reading this record. Until M6 the TV, the
+    cups and the LEDs show the real finish as WIN, PLACE and SHOW.
+  - La Subasta pays the owners of the real 1st, 2nd and 3rd (section 8).
   - The SET WINNERS picker marks any horse whose cup had no bets at the post, from the
     figures at the post, so the host does not have to spot it. [DECIDED 2026-09-29, BUILT]
+  - (Before 2026-10-20 the host entered the next horse into the empty cup's finish position;
+    the horse that really finished there was not recorded.)
 
 ### Betting lock
 
@@ -344,6 +352,14 @@ There is no roster line. A v1 `roster` line is ignored.
 - Undo puts a replacement's name back as it was before the scratch: a name the scratch gave
   the also-eligible is cleared, one entered ahead in Horse names stays. [BUILT]
 - La Subasta must read the same scratch. [BUILT, section 8]
+- **While a result stands the field is frozen.** [DECIDED 2026-10-20, BUILT] A scratch or
+  an undo on the admin page is refused with `The results are in, so the field is frozen:
+  clear them in SET WINNERS first (RESET in the dialog), then scratch, then enter them
+  again.` Payouts are derived from the result and the field as they stand, so neither moves
+  under the other. The SET WINNERS dialog follows a scratch made while it is open (the field
+  read every 2 s: the horse leaves the grid and its slot), and pi5 refuses a result naming a
+  horse not in the field whatever the page shows; the field is never guessed (a store that
+  could not read its database refuses the results instead of checking posts 1-20).
 
 ---
 

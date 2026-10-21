@@ -743,20 +743,42 @@ warnings print): the events table has every acknowledgement.
 ### Results
 
 The dashboard's `POST /api/results` (main.py) writes
-`pi5/data/results.json` (`{"win","place","show","timestamp"}`). The board
-reads that file on every `refresh()` (`read_results()`: a missing or broken
-file, a number outside 1..24 or a horse named twice all read as no results)
-and puts the three numbers into the state line's `res`, so in WINNER and
-AFTER_PARTY the named cups show their WIN / PLACE / SHOW frame; the model
-carries them as `results`: `{"win": 19, "place": 1, "show": 22}`, or `null`
-while none is named. (The dashboard names all three at once. A hand-made
-file naming only some gives the dict with `null` for the rest, and the
-state line's `res` a 0 there.) **Reset betting** removes the file and clears
-them, and so does the dashboard's RESET; nothing else does. pi5 keeps the
-file when it starts (it used to delete it), so a restart in WINNER comes back
-with the results, the cups' frames and the TV's results screen. The file is
-the single store: the dashboard writes it (whole or not at all: a temporary
-file flushed to the card and renamed over it), La Quiniela reads it.
+`pi5/data/results.json` (`{"win","place","show","next","timestamp"}`): the
+real finish, the horses that crossed 1st, 2nd and 3rd, and in `next` the
+finishers after SHOW, 4th first, recorded when one of the three had no bets
+at the post so that La Quiniela can skip it for the next finisher (its payout
+computation, M6; `finishers_needed()` is the rule, and the route refuses a
+record that stops short). One parser reads the file (`_results_file()`) and
+two views of it are served. The board reads `read_results()` on every
+`refresh()` (a missing or broken file, a number outside 1..24 or a horse
+named twice all read as no results) and puts the three numbers into the
+state line's `res`, so in WINNER and AFTER_PARTY the named cups show their
+WIN / PLACE / SHOW frame; the model carries them as `results`: `{"win": 19,
+"place": 1, "show": 22}`, or `null` while none is named: until M6 the board
+shows the real finish. (The dashboard names all three at once. A hand-made
+file naming only some gives the dict with `null` for the rest, and the state
+line's `res` a 0 there.) `BettingBoard.results()` (`read_record()`) is the
+whole record, `{"win", "place", "show", "next"}`, or `None` unless all three
+places are named: the one way to read the result in this process, which is
+where La Subasta's payouts come from. **Reset betting** removes the file and
+clears them, and so does the dashboard's RESET (the panel's, and RESET in the
+SET WINNERS dialog with a result saved, after a question); nothing else does.
+pi5 keeps the file when it starts (it used to delete it), so a restart in
+WINNER comes back with the results, the cups' frames and the TV's results
+screen. The file is the single store: the dashboard writes it (whole or not
+at all: a temporary file flushed to the card and renamed over it), La
+Quiniela and La Subasta read it.
+
+**The field is frozen while a result stands** (Joey, 2026-10-20): payouts
+are derived from the result and the field as they stand, so neither may
+move under the other. `POST /api/quiniela/scratch` and `/unscratch` answer
+409 `The results are in, so the field is frozen: clear them in SET WINNERS
+first (RESET in the dialog), then scratch, then enter them again.` until the
+result is cleared; names stay editable. And the field is never guessed the
+other way round: `POST /api/results` refuses the results (400, nothing
+saved) while La Quiniela is not running or its store could not read its
+database at start (`HorseStore.load_failed`: its field would be the default,
+not the operator's), where it used to check them against posts 1-20.
 
 **The LED rule.** The results are facts about the race, not about the LEDs.
 `POST /api/results` saves them first, always, and sets WINNER with them;
@@ -1099,7 +1121,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/mode` | `{"mode": "BETTING_60"}`: a dashboard mode; the race state is the table's. `{"ok": true, "mode": "BETTING_60", "state": 1, "state_name": "BETTING_OPEN", "source": "dashboard", "rev": R, "gateway_online": bool}`. 400 `unknown mode ...; one of ...`, 503 `bridge not initialised`. Sets the race state only: the LEDs are the button's own request. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
-| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. Both work without a bridge (recorded, `cup` null, `rev` null). |
+| `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape); 409 `The results are in, so the field is frozen: ...` while a result stands (either kind, and `unscratch`). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. Both work without a bridge (recorded, `cup` null, `rev` null). |
 | `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the undo is kept (`lq_renum_undo`): the pair `[22, 9]` goes down whenever a cup reports 22, with no time limit, until the cups have settled on 9 ("Renumber pairs: derived and acknowledged", above): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order: the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |

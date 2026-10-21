@@ -285,7 +285,7 @@ class Chrome:
 # -----------------------------------------------------------------------------
 
 STATE_JS = """JSON.stringify({
-    win: resultsState.win, place: resultsState.place, show: resultsState.show,
+    win: resultsState.win, place: resultsState.place, show: resultsState.show, next: resultsState.next,
     posts: resultsPosts,
     slots: {win: document.getElementById('slot-win').innerText, place: document.getElementById('slot-place').innerText,
             show: document.getElementById('slot-show').innerText},
@@ -335,6 +335,7 @@ COLUMN_JS = r"""JSON.stringify((() => {
     return {vh: innerHeight, modal: box(q('#results-modal .results-modal-content')), sidebar: box(q('.results-sidebar')),
             win: box(q('.result-slot[data-slot="win"]')), place: box(q('.result-slot[data-slot="place"]')),
             show: box(q('.result-slot[data-slot="show"]')),
+            nexts: [...document.querySelectorAll('.result-slot[data-slot^="next:"]')].map(box),
             lines: [...document.querySelectorAll('#results-confirm-warnings .confirm-warning')].map(box),
             button: box(button), enabled: !button.disabled,
             section: q('#results-confirm-section').innerText.replace(/\s+/g, ' ').trim(),
@@ -654,10 +655,11 @@ def s_backdrop(c: Ctx) -> None:
     c.check("a tap on the dark backdrop with a pick made does not close the picker", still, True)
 
 
-# NO BETS: a horse whose cup held no bets at the post cannot pay (the empty-cup rule: the host enters the
-# next finisher instead), so the picker marks it, from La Quiniela's figures at the post. The scenarios set
-# those figures up on the server through the rig, as the night would: cups that report their horses and
-# counts, then AT THE GATE.
+# NO BETS: a horse whose cup held no bets at the post is one La Quiniela skips for the next finisher (the
+# real finish is recorded; the skip is La Quiniela's, M6), so the picker marks it, from La Quiniela's figures
+# at the post, and asks for the finisher after it (a 4TH card, a 5TH...) until three horses with bets are
+# named. The scenarios set those figures up on the server through the rig, as the night would: cups that
+# report their horses and counts, then AT THE GATE.
 
 def figures_at_post(server: Server) -> dict:
     """La Quiniela as the NO BETS scenarios want it: the 2024 field's names, 9 scratched with 22 Ocelli
@@ -687,7 +689,8 @@ def no_figures(server: Server) -> None:
 
 
 def warning_for(horse: int, name: str) -> str:
-    return f"#{horse} {name}: nobody bet this horse, so it can't pay. Enter the next finisher instead."
+    return (f"#{horse} {name}: no bets at the post, so La Quiniela skips it for the next finisher. "
+            "La Subasta pays its owner all the same.")
 
 
 def s_unknown(c: Ctx) -> None:
@@ -784,30 +787,66 @@ def s_marks_frozen(c: Ctx) -> None:
     c.server.led_latency = 0.0
 
 
+CARDS_JS = "[...document.querySelectorAll('.result-slot')].map((s) => [s.dataset.slot, s.querySelector('.slot-label').innerText])"
+CONFIRM_SHOWN_JS = "getComputedStyle(document.getElementById('results-confirm-btn')).display !== 'none'"
+
+
 def s_nobets_confirm(c: Ctx) -> None:
-    """Horses nobody bet, picked anyway (7 for WIN, 4 for PLACE): their slot cards and the warnings say so,
-    CONFIRM RESULTS stays on screen and enabled, and pressing it sets the results as picked."""
+    """The real finish with horses nobody bet: 7 (no cup) crossed 1st, 4 (an empty cup) 2nd, then SHOW. Their
+    slot cards show the tag, a 4TH and a 5TH card ask for the next finishers and CONFIRM RESULTS waits for
+    them; the warnings say La Quiniela skips the two; filled, pressing CONFIRM RESULTS records the finish with
+    next [5, 14]."""
     sh = HORSES["show"]
+    fourth, fifth = OTHERS[0], OTHERS[2]               # 5 and 14: cups with bets
     figures_at_post(c.server)
     c.fresh(0.0)
     try:
         for n in (NO_CUP, EMPTY_CUP, sh):
             c.p.tap_horse(n)
             time.sleep(0.25)
-        c.check("7 (no cup) picked for WIN, 4 (an empty cup) for PLACE, then SHOW", c.picks(), (NO_CUP, EMPTY_CUP, sh))
+        c.check("7 (no cup) 1st, 4 (an empty cup) 2nd, then SHOW: the real finish, picked as it was", c.picks(), (NO_CUP, EMPTY_CUP, sh))
+        c.check("  ... the WIN and PLACE slot cards show the tag", c.p.warnings()["slots"], ["win", "place"])
+        c.check("  ... two more cards, 4TH and 5TH, for the finishers La Quiniela moves on to", c.p.chrome.eval(CARDS_JS),
+                [["win", "WIN"], ["place", "PLACE"], ["show", "SHOW"], ["next:0", "4TH"], ["next:1", "5TH"]])
+        c.check("  ... CONFIRM RESULTS waits for them; the heading asks for the 4th; the lines for the two nobody bet are up already",
+                (c.p.chrome.eval(CONFIRM_SHOWN_JS), c.p.chrome.eval("document.getElementById('results-modal-header').innerText"),
+                 len(c.p.warnings()["lines"])),
+                (False, "CHOOSE 4TH", 2))
+        sub = c.p.chrome.eval("document.getElementById('results-modal-subtitle').innerText")
+        c.add("  ... and the subtitle says why, naming the two", sub == "Tap the horse that finished 4th: La Quiniela skips #7 and #4 "
+              "(no bets at the post).", repr(sub))
+        c.p.tap_horse(fourth)
+        time.sleep(0.25)
+        c.check("5 fills 4TH; 5TH is next", (c.p.state()["next"], c.p.chrome.eval("activeSlot()")), ([fourth], "next:1"))
+        c.p.tap_horse(fifth)
+        time.sleep(0.3)
+        c.check("14 fills 5TH: three horses with bets are named, no more cards", (c.p.state()["next"], len(c.p.chrome.eval(CARDS_JS))),
+                ([fourth, fifth], 5))
         seen = c.p.warnings()
-        c.check("  ... the WIN and PLACE slot cards show the tag", seen["slots"], ["win", "place"])
-        c.check("  ... the warnings over CONFIRM RESULTS name both, word for word, in slot order", seen["lines"],
+        c.check("  ... the warnings over CONFIRM RESULTS name the two nobody bet, word for word, in slot order", seen["lines"],
                 [warning_for(NO_CUP, "HONOR MARIE"), warning_for(EMPTY_CUP, "CATCHING FREEDOM")])
         button = c.p.chrome.eval("(() => { const b = document.getElementById('results-confirm-btn'); const r = b.getBoundingClientRect();"
                                  " return {disabled: b.disabled, on_screen: r.height > 0 && r.top >= 0 && r.bottom <= innerHeight}; })()")
-        c.check("  ... CONFIRM RESULTS is enabled and on screen without scrolling (the warnings make it taller)",
-                button, {"disabled": False, "on_screen": True})
+        c.check("  ... CONFIRM RESULTS is enabled and on screen", button, {"disabled": False, "on_screen": True})
+        c.check("  ... the next finishers' cups are not lit: three locks, for the three that crossed first",
+                [x for x in c.locks()], [f"CUP:LOCK:{NO_CUP}:255:215:0", f"CUP:LOCK:{EMPTY_CUP}:192:192:192", f"CUP:LOCK:{sh}:205:127:50"])
         c.p.chrome.tap("#results-confirm-btn")
         c.p.chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
-        saved = (c.server.rig.client.get("/api/results").get_json() or {}).get("results") or {}
-        c.check("  ... and pressing it sets the results as picked", [saved.get(k) for k in ("win", "place", "show")],
-                [NO_CUP, EMPTY_CUP, sh])
+        c.check("  ... and pressing it records the real finish with the next finishers", c.server.rig.board.results(),
+                {"win": NO_CUP, "place": EMPTY_CUP, "show": sh, "next": [fourth, fifth]})
+        # A 4TH card goes when it is no longer needed: a horse with bets put in WIN instead
+        c.fresh(0.0)
+        for n in (NO_CUP, HORSES["place"], sh):
+            c.p.tap_horse(n)
+            time.sleep(0.25)
+        c.check("7 (no cup) for WIN again: one card, 4TH, asked for", [k for k, _ in c.p.chrome.eval(CARDS_JS)],
+                ["win", "place", "show", "next:0"])
+        c.p.chrome.tap(".result-slot[data-slot='win']")
+        time.sleep(0.2)
+        c.p.tap_horse(OTHERS[0])
+        time.sleep(0.3)
+        c.check("  ... WIN changed to a horse with bets (5): the 4TH card goes, CONFIRM RESULTS shows",
+                ([k for k, _ in c.p.chrome.eval(CARDS_JS)], c.p.chrome.eval(CONFIRM_SHOWN_JS)), (["win", "place", "show"], True))
     finally:
         c.server.rig.post("/api/results/clear")   # as the other scenarios expect the server: no results...
         no_figures(c.server)                      # ...and no figures at the post
@@ -822,6 +861,7 @@ COLUMN_SIZES = ((1554, 1116), (1180, 820), (820, 1180), (1180, 740))
 COLUMN_NAMES = {4: "Grand Mo the First", 6: "Commandment", 7: "Danon Bourbon", 11: "Incredibolt",
                 12: "Chief Wallabee", 15: "Emerging Market"}
 COLUMN_FILLS = (((6, 15, 12), 0), ((7, 11, 6), 1), ((4, 7, 15), 2))      # the picks, and how many nobody bet
+COLUMN_WITH_BETS = (12, 11, 6, 15, 3, 5)      # horses with bets, for the next finishers' cards (one per pick nobody bet)
 WIDE_FONT_CSS = "body, body * { font-family: Verdana, 'DejaVu Sans', sans-serif !important; }"
 OVERSIZED_NAME = "Supercalifragilistic"                                   # one word, wider than a card at full size
 
@@ -842,20 +882,25 @@ def s_column(c: Ctx) -> None:
             if wide:
                 c.p.chrome.eval("(() => { const s = document.createElement('style'); s.id = 'wide-font'; s.textContent = %s;"
                                 " document.head.appendChild(s); return 1; })()" % json.dumps(WIDE_FONT_CSS))
-            for n in picks:
+            after = [n for n in COLUMN_WITH_BETS if n not in picks][:nobets]     # the next finishers, one per pick nobody bet
+            for n in picks + tuple(after):
                 c.p.tap_horse(n)
                 time.sleep(0.25)
             time.sleep(0.3)
             col = json.loads(c.p.chrome.eval(COLUMN_JS))
             lines = c.p.warnings()["lines"]
             at = f"{width}x{height}, {nobets} nobody bet" + (", a wide font" if wide else "")
-            c.check(f"[{at}] picks {picks} in WIN, PLACE, SHOW; over CONFIRM RESULTS only the warnings, no list of the picks",
-                    (c.picks(), col["rows"], len(lines), col["section"]), (picks, 0, nobets, " ".join(lines + ["CONFIRM RESULTS"])))
-            stack = [col["win"], col["place"], col["show"]] + col["lines"] + [col["button"]]
+            c.check(f"[{at}] picks {picks} in WIN, PLACE, SHOW, the next finishers {after} in cards of their own; over CONFIRM RESULTS "
+                    "only the warnings, no list of the picks",
+                    (c.picks(), c.p.state()["next"], len(col["nexts"]), col["rows"], len(lines), col["section"]),
+                    (picks, after, nobets, 0, nobets, " ".join(lines + ["CONFIRM RESULTS"])))
+            cards = [col["win"], col["place"], col["show"]] + col["nexts"]
+            stack = cards + col["lines"] + [col["button"]]
             gaps = [round(b["top"] - a["bottom"], 1) for a, b in zip(stack, stack[1:])]
+            n_cards = len(cards)
             c.add(f"  ... stacked in order, none over another, the gaps even (14 px between cards, CONFIRM and the warnings)",
-                  all(g >= -0.5 for g in gaps) and all(abs(g - 14) <= 1 for g in gaps[:2] + [gaps[2], gaps[-1]])
-                  and all(abs(g - 8) <= 1 for g in gaps[3:-1]), f"gaps {gaps}")
+                  all(g >= -0.5 for g in gaps) and all(abs(g - 14) <= 1 for g in gaps[:n_cards] + [gaps[-1]])
+                  and all(abs(g - 8) <= 1 for g in gaps[n_cards:-1]), f"gaps {gaps}")
             m = col["modal"]
             c.add("  ... nothing past the modal's edge", all(b["left"] >= m["left"] - 0.5 and b["right"] <= m["right"] + 0.5
                                                             and b["top"] >= m["top"] - 0.5 and b["bottom"] <= m["bottom"] + 0.5

@@ -78,6 +78,14 @@ USAGE_COUNTED_POT = ('usage: {"amount": <whole dollars, 0-%d>} sets the hand cou
 RESET_STATES = (int(P.Phase.PRE_RACE), int(P.Phase.AFTER_PARTY))
 RESET_REFUSED = ("Reset betting works only before the race (0) or after it (6). "
                  "Change the race state on the Control Center.")
+# While a result stands the field is frozen (Joey, 2026-10-20, gap review M5):
+# La Subasta's payouts (and, from M6, La Quiniela's) are derived from the
+# result and the field as they stand, so neither may move under the other. A
+# scratch or an undo is refused until the result is cleared (RESET in the SET
+# WINNERS dialog, or the panel's RESET), then entered again. Names are not
+# the field and stay editable.
+RESULTS_FROZEN = ("The results are in, so the field is frozen: clear them in SET WINNERS first (RESET in the dialog), "
+                  "then scratch, then enter them again.")
 
 # The Race Setup page kept a post time as a time of day, which it treated as
 # on this date and on Churchill's clock (it printed "6:57 PM ET"): what
@@ -510,6 +518,8 @@ def api_quiniela_scratch():
     if error:
         return _bad(error)
     board = get_board()
+    if board.results() is not None:
+        return _bad(RESULTS_FROZEN, 409)
     snap, on_cups, gateway = _field_view(board)
     records = board.store.scratches()
     if horse in records or horse in gateway:
@@ -565,6 +575,8 @@ def api_quiniela_unscratch():
     if error:
         return _bad(error)
     board = get_board()
+    if board.results() is not None:
+        return _bad(RESULTS_FROZEN, 409)
     now = board.store.replacement_of(horse)
     if now is not None:
         if board.store.replacement_of(now) is not None:

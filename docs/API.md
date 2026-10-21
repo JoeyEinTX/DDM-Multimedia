@@ -314,10 +314,13 @@ until Reset betting or `/api/results/clear`).
     "win": 5,
     "place": 12,
     "show": 8,
+    "next": [],
     "timestamp": "2024-12-15T20:30:00.123456"
   }
 }
 ```
+
+`next` is the finishers after SHOW, 4th first (below); `[]` when none was needed.
 
 **Response (no results):**
 ```json
@@ -330,16 +333,27 @@ until Reset betting or `/api/results/clear`).
 ---
 
 #### `POST /api/results`
-**Description:** Set race results.
+**Description:** Record the race's result: the real finish, the horses that
+crossed 1st, 2nd and 3rd, never a substitute (Joey, 2026-10-20, gap review
+M5). When one of those three had no bets at the post, La Quiniela will skip
+it for the next finisher (its payout computation, M6), so the record goes on:
+`next` names the finishers after SHOW, 4th first, as many as it takes for
+three horses with bets to be named (`finishers_needed` in
+`pi5/la_quiniela/betting.py`), and a record that stops short is refused. The
+SET WINNERS dialog asks for them with a `4TH` card (a `5TH`...). La Subasta
+pays the owners of the real 1st, 2nd and 3rd from this record.
 
 **Request Body:**
 ```json
 {
   "win": 5,
   "place": 12,
-  "show": 8
+  "show": 8,
+  "next": [3]
 }
 ```
+`next` may be left out or empty when every horse named had bets at the post
+(or there are no figures at the post: unknown is not zero).
 
 **Response:**
 ```json
@@ -348,7 +362,8 @@ until Reset betting or `/api/results/clear`).
   "results": {
     "win": 5,
     "place": 12,
-    "show": 8
+    "show": 8,
+    "next": [3]
   },
   "leds": "ok",
   "response": "OK:RESULTS:FINALIZE",
@@ -372,20 +387,49 @@ Quiniela is not running.
 {
   "success": false,
   "error": "results not saved: pi5 could not write results.json (its console says why)",
-  "results": {"win": 5, "place": 12, "show": 8},
+  "results": {"win": 5, "place": 12, "show": 8, "next": [3]},
   "race": null
 }
 ```
 Nothing else happens then: no state line, no LED command, no broadcast.
 
-`win`, `place` and `show` are **horse numbers** (program numbers, 1-24): a
-horse standing in for a scratched one is sent under its own number (22, not
-the 9 it replaced). The dashboard's pickers send them; La Quiniela reads them
-from the saved file for the cups and the TV board.
+`win`, `place`, `show` and `next` are **horse numbers** (program numbers,
+1-24): a horse standing in for a scratched one is sent under its own number
+(22, not the 9 it replaced). The dashboard's pickers send them; La Quiniela
+reads the three from the saved file for the cups and the TV board (the state
+line carries the three: until M6 the board shows the real finish), and
+whoever pays on the result reads the whole record through
+`BettingBoard.results()` (La Subasta).
 
-**Validation:**
-- Win, Place, and Show must be different numbers
-- Returns 400 error if validation fails
+**Validation** (a 400 that says which, and nothing saved, no state line, no
+LED command, no broadcast):
+- `win`, `place` and `show` all present, horse numbers, three different
+  horses (`place is missing: WIN, PLACE and SHOW are all required`,
+  `WIN, PLACE and SHOW must be three different horses`)
+- each in the field as La Quiniela has it: a scratched horse, an
+  also-eligible not standing in, 0 or 25 are refused
+  (`win: horse 9 is not in the field`)
+- `next`, when given: a list of horse numbers, each in the field and named
+  once (`next must be a list of horse numbers (the finishers after SHOW, 4th
+  first)`, `next: horse 9 is not in the field`, `next: horse 1 is named
+  twice`)
+- enough next finishers: with the figures at the post known, three horses
+  with bets among those named, or every horse that had bets when fewer than
+  three did (`#7 (WIN) had no bets at the post: La Quiniela skips it, so
+  enter the next finisher too (4th)`; `#7 (WIN) and #4 (PLACE) had no bets
+  at the post: La Quiniela skips them, so enter the next finishers too (4th
+  and 5th)`)
+- the field is never guessed: with no La Quiniela (`La Quiniela is not
+  running, so the field is unknown: results not saved`), or a store that
+  could not read its database at start (`La Quiniela's store could not read
+  its database, so the field is unknown: results not saved (restart pi5 once
+  the database is readable)`), the results are refused rather than checked
+  against posts 1-20
+- while a result stands the field is frozen the other way round: `POST
+  /api/quiniela/scratch` and `/unscratch` answer 409 `The results are in, so
+  the field is frozen: clear them in SET WINNERS first (RESET in the dialog),
+  then scratch, then enter them again.` until `/api/results/clear` or Reset
+  betting removes the result
 
 **Side Effects, in this order:**
 - Saves results to `pi5/data/results.json` (a temporary file flushed to the

@@ -338,21 +338,35 @@ three are RUNNING).
 
 ## 8. Results and the draw
 
-`DASH` → **SET WINNERS** → pick WIN, PLACE, SHOW (each picker says the number and the
-name, `19 · GOLDEN TEMPO`; a horse that drew in shows under its own number) → **CONFIRM
-RESULTS**. That is WINNER: the LEDs light the three cups, the three cups' screens say WIN,
-PLACE, SHOW, and the TV flips to the **results board**, `OFFICIAL RESULTS`: three rows,
-WIN / PLACE / SHOW, each with the horse's cloth and name, the bets its cup held and its
-prize, big, at the right; the pot above. Opening the pickers changes nothing; confirming
-does. (WINNER without results, from **HEARTBEAT**: the TV says
+`DASH` → **SET WINNERS** → tap the horses that crossed **1st, 2nd and 3rd**, the real finish
+(each picker says the number and the name, `19 · GOLDEN TEMPO`; a horse that drew in shows
+under its own number) → **CONFIRM RESULTS**. That is WINNER: the LEDs light the three cups,
+the three cups' screens say WIN, PLACE, SHOW, and the TV flips to the **results board**,
+`OFFICIAL RESULTS`: three rows, WIN / PLACE / SHOW, each with the horse's cloth and name, the
+bets its cup held and its prize, big, at the right; the pot above. Opening the pickers
+changes nothing; confirming does. (WINNER without results, from **HEARTBEAT**: the TV says
 `OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.)
 Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to change a
 pick, tap its slot on the right first, then the new horse (its × empties it). A horse
 already in another slot is refused, never moved. A horse dimmed and tagged red `NO BETS`
-had nothing in its cup at the post and can't pay: skip it and tap the next finisher in
-its place (nobody bet the show horse: 4th place is SHOW). The three slot cards on the
-right are the check: read them before you press **CONFIRM RESULTS**. If a horse you picked
-had no bets, a red warning above the button says so.
+had nothing in its cup at the post: La Quiniela skips it for the next finisher (La Subasta
+pays its owner all the same), so tap it where it finished and the dialog asks for the
+next finisher too: a `4TH` card appears under SHOW (a `5TH` if that one had no bets either,
+and so on until three horses with bets are named) and **CONFIRM RESULTS** waits until they
+are filled. The slot cards on the right are the check: read them before you press
+**CONFIRM RESULTS**. If a horse you picked had no bets, a red line above the button says so.
+The result is one record for both games: La Subasta's payouts follow it (its section,
+below), and from M6 so will La Quiniela's skip.
+**While the results stand the field is frozen:** `ADMIN` refuses a scratch or an undo with
+`The results are in, so the field is frozen: clear them in SET WINNERS first (RESET in the
+dialog), then scratch, then enter them again.` To correct a pick, open **SET WINNERS** again,
+tap the three (and any next finisher) again and confirm: the new record replaces the old on
+the TV, the cups and La Subasta. To scratch after the results: **SET WINNERS** → **RESET**, it
+asks `Clear the saved result?` → **Clear the result** (AFTER PARTY: the TV back to the
+slideshow, the LEDs off) → the scratch on `ADMIN` → back in the dialog, which has followed it
+(the horse is out of the grid, its slot empty, a line under the heading says so) → tap again
+→ **CONFIRM RESULTS**. A confirm that races a scratch is refused by pi5, `place: horse 12 is
+not in the field` under the heading, and the grid refreshed: pick again.
 The line that follows names the race state the results set: `Results set: Win=19, Place=1,
 Show=22 · WINNER`, green. The results are saved whether or not the LED controller answers:
 a red `Results set: … · WINNER · LEDs unreachable` means the TV and the cups have them and
@@ -488,6 +502,8 @@ the restart).
 | Wrong number on a cup after a scratch | old firmware (pre-`45510f8`, protocol v2) | Flash the gateway and the cup. |
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
 | `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: `sudo systemctl restart ddm-pi5`, and `journalctl -u ddm-pi5 -n 50` says why it was down. Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
+| `ADMIN` → Scratch or Undo answers `The results are in, so the field is frozen: …` | the results stand, and the field can't move under the payouts derived from them (La Subasta's) | Section 8: `DASH` → **SET WINNERS** → **RESET** → **Clear the result**, then the scratch, then the results again. |
+| **CONFIRM RESULTS** leaves the dialog open with `… horse 12 is not in the field` under the heading, or `#7 (WIN) had no bets at the post: … enter the next finisher too (4th)` | pi5 refused the record: a horse scratched since the dialog opened (the grid has just refreshed), or a `4TH` finisher is needed | Tap again what the dialog asks for and confirm. The results are never guessed: a refusal saves nothing. |
 
 ## The rules, for anyone who asks
 

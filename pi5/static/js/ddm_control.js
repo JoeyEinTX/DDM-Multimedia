@@ -1360,6 +1360,7 @@ function defaultField() {
 }
 
 async function loadQuinielaField() {
+    const before = quinielaField ? quinielaField.names_rev : undefined;
     try {
         const response = await fetch('/api/quiniela/field', { cache: 'no-store' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -1369,6 +1370,8 @@ async function loadQuinielaField() {
         console.error('Error loading La Quiniela field:', error);
     }
     if (!quinielaField) quinielaField = defaultField();
+    // The SET WINNERS picker, while it is open, follows the field it was built from (a scratch on the LQ admin page)
+    if (resultsModalOpen() && quinielaField.names_rev !== before) pickerFollowsField();
     return quinielaField;
 }
 
@@ -1410,27 +1413,44 @@ function horseDisplayName(n) {
     return name ? name.toUpperCase() : `HORSE ${n}`;
 }
 
-// Results modal state (win / place / show hold HORSE numbers)
+// Results modal state (win / place / show hold HORSE numbers; next the finishers after SHOW)
 // ---------------------------------------------------------------------
 // SET WINNERS is a small state machine that only the host's taps move. It
-// holds the horse in each of the three slots (null: empty) and `chosen`, the
-// slot the host tapped on purpose to change (null: none). The slot the next
-// horse tap fills is activeSlot(): the chosen one, else the first empty one in
-// the order WIN, PLACE, SHOW, else none (all three are set and none was
-// chosen: a horse tap is refused, it never overwrites). A tap works that out
-// from this state alone and writes the state in the same turn; the LED cups
-// follow it afterwards (ledCall), so nothing that runs in the background, no
-// answer from pi5 and no slow LED controller can change which slot a tap
-// fills. (The picker used to move on to the next slot only once the LED lock
-// for the pick had been answered, so a second tap inside that window filled
-// the first slot again: the PLACE horse landed in WIN.) A horse is in one slot
-// only: tapping one that is already placed is refused, with a message, and
-// moves nothing.
+// holds the horse in each of the three slots (null: empty), `next`, the
+// finishers after SHOW in order (4th first; a horse, or null while that card
+// is empty), and `chosen`, the slot the host tapped on purpose to change
+// (null: none). The slot the next horse tap fills is activeSlot(): the chosen
+// one, else the first empty one in the order WIN, PLACE, SHOW, 4TH, 5TH...,
+// else none (every place is set and none was chosen: a horse tap is refused,
+// it never overwrites). A tap works that out from this state alone and writes
+// the state in the same turn; the LED cups follow it afterwards (ledCall), so
+// nothing that runs in the background, no answer from pi5 and no slow LED
+// controller can change which slot a tap fills. (The picker used to move on
+// to the next slot only once the LED lock for the pick had been answered, so
+// a second tap inside that window filled the first slot again: the PLACE
+// horse landed in WIN.) A horse is in one slot only: tapping one that is
+// already placed is refused, with a message, and moves nothing.
+//
+// The real finish is recorded, never a substitute (Joey, 2026-10-20): the
+// horses that crossed 1st, 2nd and 3rd. A finisher whose cup held no bets at
+// the post is one La Quiniela will skip for the next finisher, so the record
+// goes on: a 4TH card (then a 5TH...) asks for the next finisher until three
+// horses with bets are named (finishersNeeded, pi5's own rule), and CONFIRM
+// RESULTS waits for them. The LEDs light the three; a next finisher's cup is
+// not lit. La Subasta pays the owners of the real 1st, 2nd and 3rd.
+//
+// While the picker is open it follows La Quiniela's field (a scratch on the
+// LQ admin page): the field is read every RESULTS_FIELD_POLL_MS, and a horse
+// that left it leaves its slot and the grid, with a note (pickerFollowsField).
+// pi5 refuses a result that names a horse not in the field whatever the page
+// shows; its line goes in the note.
 const RESULT_SLOTS = ['win', 'place', 'show'];
 const RESULT_SLOT_NAMES = { win: 'WIN', place: 'PLACE', show: 'SHOW' };
+const NEXT_SLOT = 'next:';                 // a next finisher's slot key: next:0 is 4TH, next:1 is 5TH...
+const RESULTS_FIELD_POLL_MS = 2000;
 
 function freshResultsState() {
-    return { chosen: null, win: null, place: null, show: null };
+    return { chosen: null, win: null, place: null, show: null, next: [] };
 }
 let resultsState = freshResultsState();
 
@@ -1442,12 +1462,78 @@ let resultsPosts = { win: null, place: null, show: null };
 // cannot move under the host. null: no figures at the post, no marks.
 let resultsBets = null;
 
-// A horse whose cup held no bets at the post. It cannot win a prize (an empty
-// cup has no token to draw), so the host skips it and enters the next finisher
-// in its place. Picking it is allowed; the picker marks it and says so. False
+// A horse whose cup held no bets at the post. La Quiniela skips it for the next
+// finisher (an empty cup has no token to draw), so the picker marks it and asks
+// for the finisher after it; picking it is right, it is the real finish. False
 // whenever the figures at the post are unknown.
 function hadNoBets(horse) {
     return resultsBets !== null && !(resultsBets[horse] > 0);
+}
+
+// The slots: WIN, PLACE and SHOW, and the next finishers' cards (next:0 is 4TH)
+function isNextSlot(key) {
+    return typeof key === 'string' && key.startsWith(NEXT_SLOT);
+}
+
+function nextIndex(key) {
+    return parseInt(key.slice(NEXT_SLOT.length), 10);
+}
+
+// 4 -> 4TH, 21 -> 21ST, 12 -> 12TH
+function ordinalLabel(n) {
+    const rest = n % 100;
+    const suffix = (rest >= 11 && rest <= 13) ? 'TH' : ({ 1: 'ST', 2: 'ND', 3: 'RD' }[n % 10] || 'TH');
+    return `${n}${suffix}`;
+}
+
+function slotName(key) {
+    return isNextSlot(key) ? ordinalLabel(nextIndex(key) + 4) : RESULT_SLOT_NAMES[key];
+}
+
+function getSlot(key) {
+    return isNextSlot(key) ? (resultsState.next[nextIndex(key)] || null) : resultsState[key];
+}
+
+function setSlot(key, horse) {
+    if (!isNextSlot(key)) {
+        resultsState[key] = horse;
+        return;
+    }
+    const i = nextIndex(key);
+    while (resultsState.next.length < i) resultsState.next.push(null);
+    resultsState.next[i] = horse;
+    while (resultsState.next.length && resultsState.next[resultsState.next.length - 1] === null) resultsState.next.pop();
+}
+
+// The finish as named so far, in order: WIN, PLACE, SHOW, then the next finishers
+function namedFinish() {
+    return RESULT_SLOTS.map((s) => resultsState[s]).concat(resultsState.next).filter((h) => h);
+}
+
+// How many more finishers the record needs: pi5's rule (la_quiniela/betting.py
+// finishersNeeded), from the frozen figures at the post and the field as the
+// grid has it. A horse with no bets is skipped by La Quiniela, so the finish
+// goes on until three horses with bets are named, or every horse in the field
+// that had bets when fewer did. 0 while the figures are unknown.
+function finishersNeeded(named) {
+    if (resultsBets === null) return 0;
+    const field = ((quinielaField && quinielaField.posts) || []).map((p) => p.horse);
+    const withBets = field.filter((h) => resultsBets[h] > 0);
+    const have = named.filter((h) => withBets.includes(h)).length;
+    return Math.max(0, Math.min(3, withBets.length) - have);
+}
+
+// The next finishers' slot keys: one card per finisher named after SHOW, and
+// one per finisher still needed
+function nextSlotKeys() {
+    const count = resultsState.next.length + finishersNeeded(namedFinish());
+    const keys = [];
+    for (let i = 0; i < count; i++) keys.push(NEXT_SLOT + i);
+    return keys;
+}
+
+function allSlotKeys() {
+    return RESULT_SLOTS.concat(nextSlotKeys());
 }
 
 // Winner colors for cup locking
@@ -1459,17 +1545,19 @@ const RESULT_COLOURS = { win: GOLD_RGB, place: SILVER_RGB, show: BRONZE_RGB };
 // The slot the next horse tap fills: the one the host chose, else the first
 // empty one in order, else none.
 function activeSlot() {
+    const keys = allSlotKeys();
+    if (resultsState.chosen && !keys.includes(resultsState.chosen)) resultsState.chosen = null;   // its card is gone
     if (resultsState.chosen) return resultsState.chosen;
-    return RESULT_SLOTS.find((slot) => !resultsState[slot]) || null;
+    return keys.find((key) => !getSlot(key)) || null;
 }
 
 // The slot a horse is in, or null
 function slotOfHorse(horse) {
-    return RESULT_SLOTS.find((slot) => resultsState[slot] === horse) || null;
+    return allSlotKeys().find((key) => getSlot(key) === horse) || null;
 }
 
 function resultsPicksMade() {
-    return RESULT_SLOTS.some((slot) => resultsState[slot]);
+    return namedFinish().length > 0;
 }
 
 function resultsModalOpen() {
@@ -1508,9 +1596,57 @@ function resultsNote(text) {
     if (el) el.textContent = text || '';
 }
 
-// "19 \u00b7 GOLDEN TEMPO"
+// "19 · GOLDEN TEMPO"
 function horseLabel(horse) {
-    return `${horse} \u00b7 ${horseDisplayName(horse)}`;
+    return `${horse} · ${horseDisplayName(horse)}`;
+}
+
+// The field, read again every 2 s while the picker is open and only then
+// (loadQuinielaField hands a change to pickerFollowsField)
+let resultsFieldTimer = null;
+function startResultsFieldPoll() {
+    stopResultsFieldPoll();
+    resultsFieldTimer = setInterval(() => {
+        if (resultsModalOpen()) loadQuinielaField();
+        else stopResultsFieldPoll();
+    }, RESULTS_FIELD_POLL_MS);
+}
+
+function stopResultsFieldPoll() {
+    if (resultsFieldTimer !== null) {
+        clearInterval(resultsFieldTimer);
+        resultsFieldTimer = null;
+    }
+}
+
+// The field changed under an open picker (a scratch, an undo, a name typed on
+// the LQ admin page): a horse that is no longer in it leaves its slot (its cup
+// unlocked) and the grid, the grid is rebuilt (a replacement shows under its
+// post), the slot cards show the names as they are now, and the note says who
+// left. The picks that still run, the marks and the chosen slot stay.
+function pickerFollowsField() {
+    const inField = new Set(((quinielaField && quinielaField.posts) || []).map((p) => p.horse));
+    const shown = [...document.querySelectorAll('.winner-pick-btn')].map((b) => parseInt(b.dataset.horse, 10));
+    const notes = [];
+    shown.filter((horse) => !inField.has(horse)).forEach((horse) => {
+        const key = slotOfHorse(horse);
+        if (key) {
+            const post = isNextSlot(key) ? null : resultsPosts[key];
+            setSlot(key, null);
+            if (!isNextSlot(key)) resultsPosts[key] = null;
+            updateSlot(key, null);
+            if (post !== null) ledCall('/api/cup/unlock', { cup: post });
+            notes.push(`#${horse} ${horseDisplayName(horse)} was scratched: ${slotName(key)} is empty, tap the horse that finished there.`);
+        } else {
+            notes.push(`#${horse} ${horseDisplayName(horse)} was scratched.`);
+        }
+    });
+    generateSaddleClothGrid();
+    allSlotKeys().forEach((key) => {
+        if (getSlot(key)) updateSlot(key, getSlot(key));
+    });
+    updateResultsModalUI();
+    if (notes.length) resultsNote(notes.join(' '));
 }
 
 // Show results modal with the pickers
@@ -1553,13 +1689,14 @@ async function showResultsModal() {
 
         const modal = document.getElementById('results-modal');
         modal.classList.add('active');
+        startResultsFieldPoll();
     } finally {
         resultsModalOpening = false;
     }
 }
 
 // Generate the pickers: one per post, in mantle order (4 columns x 5 rows).
-// Each shows the horse that runs from that post as "19 \u00b7 GOLDEN TEMPO": the
+// Each shows the horse that runs from that post as "19 · GOLDEN TEMPO": the
 // number on its saddle cloth, then La Quiniela's name (HORSE n without one).
 // A post whose horse was replaced shows the replacement's number and name;
 // a post whose horse was scratched with no replacement is left blank. A horse
@@ -1586,7 +1723,7 @@ function generateSaddleClothGrid() {
         btn.className = 'winner-pick-btn';
         btn.dataset.post = post;
         btn.dataset.horse = horse;
-        btn.title = `${horse} \u00b7 ${name}`;
+        btn.title = `${horse} · ${name}`;
 
         // Saddle cloth colors of the horse's own number
         const colors = SADDLE_CLOTHS[horse] || { bg: '#808080', text: '#FFFFFF' };
@@ -1598,7 +1735,7 @@ function generateSaddleClothGrid() {
 
         const sep = document.createElement('span');
         sep.className = 'winner-pick-sep';
-        sep.textContent = '\u00b7';
+        sep.textContent = '·';
 
         const label = document.createElement('span');
         label.className = 'winner-pick-name';
@@ -1641,6 +1778,7 @@ function fitSlotName(el) {
 // Update slot with saddle cloth and name (animated)
 function updateSlot(slot, horseNum) {
     const slotEl = document.getElementById(`slot-${slot}`);
+    if (!slotEl) return;                             // a next finisher's card not made yet (renderNextSlots fills it)
     if (horseNum) {
         const colors = SADDLE_CLOTHS[horseNum] || { bg: '#808080', text: '#FFFFFF' };
         slotEl.innerHTML = `<div class="slot-saddle" style="background:${colors.bg}; color:${colors.text}">${String(horseNum).padStart(2, '0')}</div>`;
@@ -1662,6 +1800,52 @@ function updateSlot(slot, horseNum) {
     }
 }
 
+// The next finishers' cards (4TH, 5TH...), under SHOW and over the confirm
+// step: as many as nextSlotKeys() says, made and removed as the picks and the
+// marks change. Built like the three fixed cards in the markup.
+function renderNextSlots() {
+    const sidebar = document.querySelector('.results-sidebar');
+    const confirmSection = document.getElementById('results-confirm-section');
+    if (!sidebar || !confirmSection) return;
+    const keys = nextSlotKeys();
+    const have = [...sidebar.querySelectorAll('.result-slot[data-slot^="next:"]')];
+    have.slice(keys.length).forEach((card) => card.remove());
+    for (let i = have.length; i < keys.length; i++) {
+        const key = keys[i];
+        const name = ordinalLabel(i + 4);
+        const card = document.createElement('div');
+        card.className = 'result-slot';
+        card.dataset.slot = key;
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        card.onclick = () => chooseSlot(key);
+        card.onkeydown = (event) => {
+            if (event.target === card && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                chooseSlot(key);
+            }
+        };
+        const label = document.createElement('span');
+        label.className = 'slot-label next';
+        label.textContent = name;
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'slot-clear';
+        clear.dataset.slot = key;
+        clear.setAttribute('aria-label', `Clear ${name}`);
+        clear.innerHTML = '&times;';
+        clear.onclick = (event) => { event.stopPropagation(); clearSlot(key); };
+        const value = document.createElement('div');
+        value.className = 'slot-value';
+        value.id = `slot-${key}`;
+        const hint = document.createElement('span');
+        hint.className = 'slot-hint';
+        card.append(label, clear, value, hint);
+        sidebar.insertBefore(card, confirmSection);
+        updateSlot(key, getSlot(key));
+    }
+}
+
 // A tap on a horse: the horse number is what the results say; the post is the
 // LED cup that lights. It fills the active slot, in this turn, from the state
 // and nothing else.
@@ -1676,27 +1860,29 @@ function selectCup(post, horse) {
             resultsState.chosen = null;
             resultsNote('');
         } else {
-            resultsNote(`${horseLabel(horse)} is already ${RESULT_SLOT_NAMES[where]}. `
-                + `To use it elsewhere, clear ${RESULT_SLOT_NAMES[where]} first.`);
+            resultsNote(`${horseLabel(horse)} is already ${slotName(where)}. `
+                + `To use it elsewhere, clear ${slotName(where)} first.`);
         }
         updateResultsModalUI();
         return;
     }
     if (!slot) {
-        resultsNote('WIN, PLACE and SHOW are all set. Tap one of them to change it.');
+        resultsNote('Every place is set. Tap one of them to change it.');
         updateResultsModalUI();
         return;
     }
 
-    const replaced = resultsPosts[slot];            // the post whose cup this pick replaces, on a change on purpose
-    resultsState[slot] = horse;
-    resultsPosts[slot] = post;
+    const replaced = isNextSlot(slot) ? null : resultsPosts[slot];   // the post whose cup this pick replaces, on a change on purpose
+    setSlot(slot, horse);
+    if (!isNextSlot(slot)) resultsPosts[slot] = post;
     resultsState.chosen = null;
     updateSlot(slot, horse);
     resultsNote('');
     updateResultsModalUI();
 
-    // The LEDs follow the pick: the replaced horse's cup back to the animation, the new one locked to the slot's color
+    // The LEDs follow the three picks: the replaced horse's cup back to the animation, the new one locked to the
+    // slot's color. A next finisher's cup is not lit: the mantle shows the three that crossed first.
+    if (isNextSlot(slot)) return;
     if (replaced !== null && replaced !== post) {
         ledCall('/api/cup/unlock', { cup: replaced });
     }
@@ -1719,11 +1905,11 @@ function chooseSlot(slot) {
 
 // The x on a filled slot: empty it, and the next horse tap fills it
 function clearSlot(slot) {
-    if (!resultsState[slot]) return;
-    const post = resultsPosts[slot];
-    resultsState[slot] = null;
-    resultsPosts[slot] = null;
-    resultsState.chosen = slot;
+    if (!getSlot(slot)) return;
+    const post = isNextSlot(slot) ? null : resultsPosts[slot];
+    setSlot(slot, null);
+    if (!isNextSlot(slot)) resultsPosts[slot] = null;
+    resultsState.chosen = allSlotKeys().includes(slot) ? slot : null;     // a next card no longer needed goes with its pick
     updateSlot(slot, null);
     resultsNote('');
     updateResultsModalUI();
@@ -1734,12 +1920,14 @@ function clearSlot(slot) {
 
 // Update modal UI from the state
 function updateResultsModalUI() {
+    renderNextSlots();
     const header = document.getElementById('results-modal-header');
     const subtext = document.getElementById('results-modal-subtitle');
     const confirmSection = document.getElementById('results-confirm-section');
     const slot = activeSlot();
-    const changing = !!resultsState.chosen && !!resultsState[resultsState.chosen];
-    const complete = RESULT_SLOTS.every((s) => resultsState[s]) && !resultsState.chosen;
+    const keys = allSlotKeys();
+    const changing = !!resultsState.chosen && !!getSlot(resultsState.chosen);
+    const complete = keys.every((key) => getSlot(key)) && !resultsState.chosen;
 
     // Heading and subtext: what the next horse tap does
     const heads = {
@@ -1747,10 +1935,17 @@ function updateResultsModalUI() {
         place: { text: 'CHOOSE PLACE',  change: 'CHANGE PLACE',  color: '#C0C0C0', sub: 'Tap the 2nd place horse' },
         show:  { text: 'CHOOSE SHOW',   change: 'CHANGE SHOW',   color: '#CD7F32', sub: 'Tap the 3rd place horse' }
     };
+    const headFor = (key) => {
+        if (!isNextSlot(key)) return heads[key];
+        const skipped = namedFinish().filter((h) => hadNoBets(h)).map((h) => `#${h}`);
+        const name = slotName(key);
+        return { text: `CHOOSE ${name}`, change: `CHANGE ${name}`, color: '#E0E0E0',
+                 sub: `Tap the horse that finished ${name.toLowerCase()}: La Quiniela skips ${skipped.join(' and ')} (no bets at the post).` };
+    };
     if (header) {
         if (slot) {
-            header.textContent = changing ? heads[slot].change : heads[slot].text;
-            header.style.color = heads[slot].color;
+            header.textContent = changing ? headFor(slot).change : headFor(slot).text;
+            header.style.color = headFor(slot).color;
         } else {
             header.textContent = 'CHECK THE RESULTS';
             header.style.color = '#FFFFFF';
@@ -1759,21 +1954,23 @@ function updateResultsModalUI() {
     if (subtext) {
         if (slot) {
             subtext.textContent = changing
-                ? `${RESULT_SLOT_NAMES[slot]} is ${horseLabel(resultsState[slot])}. Tap the horse that replaces it, or tap ${RESULT_SLOT_NAMES[slot]} again to leave it.`
-                : heads[slot].sub;
+                ? `${slotName(slot)} is ${horseLabel(getSlot(slot))}. Tap the horse that replaces it, or tap ${slotName(slot)} again to leave it.`
+                : headFor(slot).sub;
         } else {
-            subtext.textContent = 'Tap WIN, PLACE or SHOW to change one, or CONFIRM RESULTS.';
+            subtext.textContent = keys.length === RESULT_SLOTS.length
+                ? 'Tap WIN, PLACE or SHOW to change one, or CONFIRM RESULTS.'
+                : 'Tap a place to change it, or CONFIRM RESULTS.';
         }
     }
 
-    // The three slots: the one the next tap fills is lit
-    RESULT_SLOTS.forEach((s) => {
-        const card = document.querySelector(`.result-slot[data-slot="${s}"]`);
+    // The slot cards: the one the next tap fills is lit
+    keys.forEach((key) => {
+        const card = document.querySelector(`.result-slot[data-slot="${key}"]`);
         if (!card) return;
-        card.classList.toggle('is-active', s === slot);
-        card.classList.toggle('is-filled', !!resultsState[s]);
+        card.classList.toggle('is-active', key === slot);
+        card.classList.toggle('is-filled', !!getSlot(key));
         const hint = card.querySelector('.slot-hint');
-        if (hint) hint.textContent = (s === slot) ? (resultsState[s] ? 'TAP THE NEW HORSE' : 'TAP A HORSE') : '';
+        if (hint) hint.textContent = (key === slot) ? (getSlot(key) ? 'TAP THE NEW HORSE' : 'TAP A HORSE') : '';
     });
 
     // Update button states in grid: a placed horse says which slot it is in, a horse
@@ -1785,13 +1982,13 @@ function updateResultsModalUI() {
         const where = slotOfHorse(horse);
 
         // Remove all selection classes
-        btn.classList.remove('selected-win', 'selected-place', 'selected-show', 'is-picked');
+        btn.classList.remove('selected-win', 'selected-place', 'selected-show', 'selected-next', 'is-picked');
         const tag = btn.querySelector('.winner-pick-tag');
         if (tag) tag.textContent = '';
 
         if (where) {
-            btn.classList.add(`selected-${where}`, 'is-picked');
-            if (tag) tag.textContent = RESULT_SLOT_NAMES[where];
+            btn.classList.add(isNextSlot(where) ? 'selected-next' : `selected-${where}`, 'is-picked');
+            if (tag) tag.textContent = slotName(where);
         }
 
         const noBets = hadNoBets(horse);
@@ -1800,32 +1997,35 @@ function updateResultsModalUI() {
         if (none) none.textContent = noBets ? 'NO BETS' : '';
     });
 
-    // The confirm step: all three set (and none being changed). The three slot cards are the check (the
-    // picks are not listed a second time); over CONFIRM RESULTS only a warning for a pick nobody bet.
+    // The confirm step. The slot cards are the check (the picks are not listed a second time); over CONFIRM RESULTS only
+    // a line for each pick nobody bet, shown as soon as WIN, PLACE and SHOW are set (it says why a 4TH card is asked
+    // for); the button itself once every place is set, the next finishers' cards too, and none is being changed.
     if (confirmSection) {
-        const wasShown = confirmSection.style.display === 'block';
-        confirmSection.style.display = complete ? 'block' : 'none';
+        const threeSet = RESULT_SLOTS.every((key) => getSlot(key)) && !resultsState.chosen;
+        const confirmBtn = document.getElementById('results-confirm-btn');
+        const wasShown = confirmSection.style.display === 'block' && !!confirmBtn && confirmBtn.style.display !== 'none';
+        confirmSection.style.display = threeSet ? 'block' : 'none';
+        if (confirmBtn) confirmBtn.style.display = complete ? '' : 'none';
         const warnings = document.getElementById('results-confirm-warnings');
         if (warnings) {
             warnings.textContent = '';
-            if (complete) {
-                // A pick whose cup held no bets at the post cannot pay: said here, the last look before
-                // CONFIRM RESULTS, which stays enabled (the host may really mean it)
-                RESULT_SLOTS.forEach((s) => {
-                    const horse = resultsState[s];
-                    if (!hadNoBets(horse)) return;
+            if (threeSet) {
+                // A pick whose cup held no bets at the post is the real finish all the same: La Quiniela skips it for
+                // the finisher named after it, La Subasta pays its owner. Said here, the last look before CONFIRM RESULTS
+                keys.forEach((key) => {
+                    const horse = getSlot(key);
+                    if (!horse || !hadNoBets(horse)) return;
                     const warning = document.createElement('div');
                     warning.className = 'confirm-warning';
-                    warning.dataset.slot = s;
-                    warning.textContent = `#${horse} ${horseDisplayName(horse)}: nobody bet this horse, so it can't pay. `
-                        + 'Enter the next finisher instead.';
+                    warning.dataset.slot = key;
+                    warning.textContent = `#${horse} ${horseDisplayName(horse)}: no bets at the post, so La Quiniela skips it `
+                        + 'for the next finisher. La Subasta pays its owner all the same.';
                     warnings.appendChild(warning);
                 });
             }
         }
-        // The confirm step has just appeared: on a short screen it can be below the fold (the modal
-        // scrolls), so bring CONFIRM RESULTS and any warning over it into view
-        const confirmBtn = document.getElementById('results-confirm-btn');
+        // CONFIRM RESULTS has just appeared: on a short screen it can be below the fold (the modal
+        // scrolls), so bring it and any warning over it into view
         if (complete && !wasShown && confirmBtn && confirmBtn.scrollIntoView) {
             confirmBtn.scrollIntoView({ block: 'nearest' });
         }
@@ -1834,6 +2034,20 @@ function updateResultsModalUI() {
 
 // Reset selection
 async function resultsReset() {
+    // A result already saved (CONFIRM RESULTS pressed before): RESET clears it too, behind a question, so the host
+    // can scratch (the field is frozen while a result stands) and enter the results again, here, with the picker
+    // still open. pi5 is asked, not the page's memory: a result cleared elsewhere a moment ago asks nothing.
+    const saved = await savedResultsOnPi5();
+    if (saved) {
+        const named = RESULT_SLOTS.map((s) => `${RESULT_SLOT_NAMES[s]} ${horseLabel(saved[s])}`).join(', ');
+        const yes = await askFirst('Clear the saved result?',
+            `${named}. Clearing ends the race (AFTER PARTY: the TV back to the slideshow, the LEDs off) until you `
+            + 'confirm new results; scratch on the LQ admin page in between if you need to.',
+            'Clear the result');
+        if (!yes) return;
+        await clearResults();
+    }
+
     // The page's own state first, in this turn; the LEDs follow
     resultsState = freshResultsState();
     resultsPosts = { win: null, place: null, show: null };
@@ -1856,6 +2070,7 @@ let lastReset = null;      // RESET's unlock and when it was asked for
 
 // Close results modal
 async function closeResultsModal(keepAnimation = false) {
+    stopResultsFieldPoll();
     const modal = document.getElementById('results-modal');
     modal.classList.remove('active');
 
@@ -1870,14 +2085,18 @@ async function closeResultsModal(keepAnimation = false) {
 }
 
 // Confirm and apply results (horse numbers: what La Quiniela's cups and the
-// TV board are told; the LED cups were lit by post as they were picked).
-// pi5 saves them first, whatever the LED controller does, and then sends it
-// RESULTS:FINALIZE itself; data.leds says whether the controller answered.
+// TV board are told; the LED cups were lit by post as they were picked), the
+// next finishers with them. pi5 saves them first, whatever the LED controller
+// does, and then sends it RESULTS:FINALIZE itself; data.leds says whether the
+// controller answered. A refusal from pi5 (a horse scratched since the picker
+// opened, a finisher it needs) goes in the note and the field is read again.
 async function resultsConfirm() {
     const winHorse = resultsState.win;
     const placeHorse = resultsState.place;
     const showHorse = resultsState.show;
-    if (!winHorse || !placeHorse || !showHorse || new Set([winHorse, placeHorse, showHorse]).size !== 3) return;
+    const after = resultsState.next.slice();
+    const named = [winHorse, placeHorse, showHorse].concat(after);
+    if (named.some((h) => !h) || new Set(named).size !== named.length) return;
 
     // Set flag to skip reveal popup on this device
     justSubmittedResults = true;
@@ -1891,7 +2110,7 @@ async function resultsConfirm() {
         const response = await fetch('/api/results', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse })
+            body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse, next: after })
         });
 
         const data = await response.json();
@@ -1903,7 +2122,7 @@ async function resultsConfirm() {
                 : { ok: false, error: data.race_error || 'La Quiniela did not answer' };
             const set = withRaceState(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, race);
             if (data.leds === 'unreachable') {
-                showNotification(`${set} \u00b7 LEDs unreachable`, 'error');
+                showNotification(`${set} · LEDs unreachable`, 'error');
             } else {
                 showNotification(set, race.ok ? 'success' : 'error');
             }
@@ -1929,10 +2148,19 @@ async function resultsConfirm() {
             hideLoader();
         } else {
             hideLoader(true); // Hide immediately on error
-            showNotification(`Error: ${data.response || data.error}`, 'error');
+            justSubmittedResults = false;
+            // pi5 refused: its line goes under the heading, where the host is looking, and the field is read
+            // again at once; a horse scratched since the picker opened leaves its slot and the grid, and its own
+            // line follows pi5's
+            const refusal = data.error || data.response || 'pi5 refused the results';
+            resultsNote(refusal);
+            await loadQuinielaField();
+            const followed = (document.getElementById('results-pick-note') || {}).textContent || '';
+            if (followed && followed !== refusal) resultsNote(`${refusal}. ${followed}`);
         }
     } catch (error) {
         hideLoader(true); // Hide immediately on error
+        justSubmittedResults = false;
         console.error('[CONFIRM] Error setting results:', error);
         showNotification('Connection error', 'error');
     }
@@ -2184,6 +2412,18 @@ function connectResultsStream() {
         // Reconnect after 5 seconds
         setTimeout(connectResultsStream, 5000);
     };
+}
+
+// The result pi5 holds now ({win, place, show, next}), or null: what RESET in the picker asks about before it
+// clears it. pi5 not answering reads as nothing to clear.
+async function savedResultsOnPi5() {
+    try {
+        const response = await fetch('/api/results', { cache: 'no-store' });
+        const data = await response.json();
+        return (data && data.success && data.results) ? data.results : null;
+    } catch (error) {
+        return null;
+    }
 }
 
 // Load results from server

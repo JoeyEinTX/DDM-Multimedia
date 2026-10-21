@@ -283,37 +283,55 @@ const SADDLE_CLOTHS = {
   line under the heading (`7 · HORSE 7 is already WIN. To use it elsewhere, clear WIN
   first.`); picked horses stay in the grid, outlined in their slot's colour and tagged
   WIN / PLACE / SHOW
-- **Clear:** the × on a slot empties that slot (its cup unlocks); RESET empties all three
+- **Clear:** the × on a slot empties that slot (its cup unlocks); RESET empties every slot.
+  With a result already saved on pi5 (CONFIRM RESULTS pressed before), RESET first asks
+  `Clear the saved result?` in the page's own ask modal, naming the three, and on
+  **Clear the result** clears it through the panel's own route (`/api/results/clear`:
+  AFTER PARTY, the TV back to the slideshow, the LEDs off), the picker staying open; the
+  field is frozen while a result stands, so this is how the host scratches after the
+  results and enters them again. Cancel clears nothing
 - **Pickers with names:** one per post in mantle order, 4 across and 5 down,
   each showing the horse that runs from that post as `19 · GOLDEN TEMPO`: the
   number on its saddle cloth, then the name from La Quiniela's names store
   (`HORSE n` where it has none). The list comes from `GET /api/quiniela/field`
-  every time the modal opens
+  when the modal opens and every 2 s while it is open
 - **Scratches:** a horse scratched with a replacement shows the replacement's
   number and name in its place (post 9 offers `22 · OCELLI`); a horse scratched
-  with no replacement is not offered (its place in the grid stays empty)
+  with no replacement is not offered (its place in the grid stays empty). A scratch
+  made on the LQ admin page while the picker is open reaches it within 2 s: the horse
+  leaves the grid, its slot empties (its cup unlocks) and the note under the heading
+  says `#3 MYSTIK DAN was scratched: PLACE is empty, tap the horse that finished there.`
+  (`#9 ENCINO was scratched.` for a horse not picked); a replacement shows under its
+  post. A confirm that races the scratch is refused by pi5 (`place: horse 12 is not in
+  the field`), shown in the note, and the field read again at once
 - **Post and horse:** a pick lights the LED cup of the **post** (9) and records
   the **horse** (22); the results carry horse numbers
-- **NO BETS:** a horse whose cup held no bets at the post is dimmed and tagged `NO BETS`
-  (red, top left; a slot's tag is top right). It cannot pay (an empty cup has no token to
-  draw), so the host enters the next finisher in its place. The marks come from La
-  Quiniela's figures at the post (`closing` in `GET /api/quiniela`), by **horse** number
-  (22 running for 9 is horse 22); a horse no cup claimed counts as no bets. Picking one is
-  allowed: its slot card shows the tag, and a warning above CONFIRM RESULTS says
-  `#7 SO HAPPY: nobody bet this horse, so it can't pay. Enter the next finisher instead.`
-  CONFIRM RESULTS stays enabled. With no figures at the post (the race never reached the
-  post, betting reopened, pi5 not answering) nothing is marked and nothing says so
-- **Sidebar slots:** WIN, PLACE and SHOW, each with its horse's saddle cloth number and
-  name in large type (readable from arm's length on an iPad); the active slot is lit. They
-  are the check before CONFIRM RESULTS: the picks are not listed a second time. A name
-  wraps only between words; a word too wide for the card takes a smaller size until it fits
+- **The real finish:** the host picks the horses that crossed 1st, 2nd and 3rd, never a
+  substitute (Joey, 2026-10-20). A horse whose cup held no bets at the post is dimmed and
+  tagged `NO BETS` (red, top left; a slot's tag is top right): La Quiniela skips it for the
+  next finisher (its payout computation, M6; La Subasta pays its owner all the same), so
+  when one is picked a `4TH` card appears under SHOW asking for the next finisher, then a
+  `5TH` if that one had no bets either, until three horses with bets are named
+  (`finishersNeeded`, the same rule as pi5's `finishers_needed`), and CONFIRM RESULTS waits
+  for them. The marks come from La Quiniela's figures at the post (`closing` in
+  `GET /api/quiniela`), by **horse** number (22 running for 9 is horse 22); a horse no cup
+  claimed counts as no bets. Its slot card shows the tag, and a line above CONFIRM RESULTS
+  says `#7 SO HAPPY: no bets at the post, so La Quiniela skips it for the next finisher. La
+  Subasta pays its owner all the same.` A next finisher's cup is not lit: the LEDs show the
+  three that crossed first. With no figures at the post (the race never reached the post,
+  betting reopened, pi5 not answering) nothing is marked, nothing is asked and nothing says so
+- **Sidebar slots:** WIN, PLACE and SHOW, and a card per next finisher (`4TH`, `5TH`...)
+  while one is needed, each with its horse's saddle cloth number and name in large type
+  (readable from arm's length on an iPad); the active slot is lit. They are the check
+  before CONFIRM RESULTS: the picks are not listed a second time. A name wraps only between
+  words; a word too wide for the card takes a smaller size until it fits
 - **Live LED preview:** Selected cups light up immediately
   - Win: Gold (#FFD700)
   - Place: Silver (#C0C0C0)
   - Show: Bronze (#CD7F32)
 - **Heartbeat animation:** Non-selected cups pulse while selecting
 - **Navigation:**
-  - RESET - Clear all and start over
+  - RESET - Clear all and start over; with a result saved on pi5, asks and clears that too
   - CANCEL - Close without setting anything
   - CONFIRM - Apply results and close modal; it sits one card gap under the SHOW card, with
     a warning above it for any pick nobody bet (the slot cards are the last look)
@@ -323,9 +341,16 @@ const SADDLE_CLOTHS = {
   the LED commands (lock, unlock) follow it, one after another, and never decide it. A slow
   or unreachable LED controller cannot make a tap land in the wrong slot (it used to: a
   second tap inside the first pick's lock call was read as WIN again and overwrote it)
-- Nothing in the background touches the picks while the modal is open: the mode poll and
-  the field refresh leave them alone, and a `results` event from another device is held
-  (a "Results were set on another device" notice) until the modal is closed
+- Nothing in the background touches the picks while the modal is open except the field
+  itself: the mode poll leaves them alone, a `results` event from another device is held
+  (a "Results were set on another device" notice) until the modal is closed, and the field
+  poll (every 2 s) takes out only a horse that has left the field (`pickerFollowsField`),
+  the other picks, the chosen slot and the marks staying as they were
+- pi5 refuses a result that names a horse not in the field whatever the page shows, so a
+  stale dialog cannot save a scratched horse; its line goes in the note under the heading
+  and the field is read again. While a result stands the LQ admin page refuses a scratch
+  or an undo (409, "the field is frozen"), so the result and the field cannot move under
+  each other; RESET in the dialog is the way to clear the result first
 - The figures at the post are read once, with the field, as the modal opens, and the NO
   BETS marks stay as they were while it is open (they are frozen figures; nothing in the
   background re-reads them); opening the modal again reads them again
@@ -334,12 +359,12 @@ const SADDLE_CLOTHS = {
   CONFIRM RESULTS is scrolled into view
 - Header changes color by the active slot (Gold/Silver/Bronze): CHOOSE WINNER / PLACE /
   SHOW, CHANGE ... when replacing one, CHECK THE RESULTS when all three are set
-- The confirm section (any NO BETS warnings and CONFIRM RESULTS) appears when all 3 are set
-  and no slot is being changed
+- The confirm section (any NO BETS lines and CONFIRM RESULTS) appears when every slot is
+  set, the next finishers' cards included, and no slot is being changed
 - Closing without confirming unlocks cups and turns off LEDs; a tap on the dark backdrop
   does not close the modal once a pick is made (CANCEL does)
-- Confirming waits at most 3 s for LED commands still in flight, then sets the results,
-  saved and sent exactly as before
+- Confirming waits at most 3 s for LED commands still in flight, then sets the results:
+  `{win, place, show, next}` to `POST /api/results`, saved and sent exactly as before
 - Tests: `la_quiniela/test_dashboard.py`, which drives the real picker in headless Chrome
   through `pi5/tools/picker_check.py` (mouse and touch, a slow LED controller, a forced
   refresh, NO BETS marks from figures at the post set up on the server, the right column
