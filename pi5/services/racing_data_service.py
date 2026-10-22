@@ -467,10 +467,10 @@ class RacingDataService:
             self.socketio.emit("led_command", {"command": command})
             logger.debug("LED command emitted (socketio): %s", command)
 
-        # Send to ESP32
+        # The LED wall, through its worker: nothing here waits on it
         if self.esp32_client:
-            resp = self.esp32_client.send_command(command)
-            logger.info("LED command sent to ESP32: %s → %s", command, resp)
+            self.esp32_client.send(command)
+            logger.info("LED command handed to the wall's worker: %s", command)
 
     # -----------------------------------------------------------------
     # Horse data access

@@ -10,8 +10,6 @@
   `inactive`, or with INVOCATION_ID set (systemd started them), they start as before. The
   start is stubbed (socketio.run / Flask.run print and exit): no port is bound.
 - The access log: werkzeug's logger at WARNING, unless DDM_ACCESS_LOG=1.
-- The LED controller client: one line when it becomes unreachable, none for 5 minutes of
-  simulated time, then one; one when it answers again.
 - The installer: bash -n, shellcheck when there is one, and a --dry-run on a scratch copy
   (here, without systemd, it shows the units and the steps; on DevPi it runs the checks too).
 - Other starters (deploy/starters.py) from faked systemctl and crontab answers: an old
@@ -303,125 +301,6 @@ def test_hand_run_guard():
         mode.shutil.which = saved_which
         if saved_env is not None:
             os.environ["INVOCATION_ID"] = saved_env
-
-
-# -----------------------------------------------------------------------------
-# The LED controller client
-# -----------------------------------------------------------------------------
-
-class FakeClock:
-    def __init__(self, t=1000.0):
-        self.t = t
-
-    def __call__(self):
-        return self.t
-
-    def advance(self, s):
-        self.t += s
-
-
-class FakeSocket:
-    """socket.socket for esp32_client: `mode` decides what connect() does."""
-    mode = "down"
-    reply = b"STATUS:120:300:80\n"
-
-    def __init__(self, *args):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def settimeout(self, t):
-        pass
-
-    def connect(self, address):
-        if FakeSocket.mode == "down":
-            raise OSError(113, "No route to host")
-        if FakeSocket.mode == "timeout":
-            raise socket.timeout("timed out")
-        if FakeSocket.mode == "refused":
-            raise ConnectionRefusedError(111, "Connection refused")
-
-    def sendall(self, data):
-        pass
-
-    def recv(self, n):
-        return FakeSocket.reply
-
-
-def test_led_client_logs_on_change():
-    sys.path.insert(0, str(REPO / "pi5"))
-    try:
-        esp = importlib.import_module("communication.esp32_client")
-    finally:
-        sys.path.pop(0)
-    esp.socket = types.SimpleNamespace(socket=FakeSocket, timeout=socket.timeout,
-                                       AF_INET=socket.AF_INET, SOCK_STREAM=socket.SOCK_STREAM)
-    clock = FakeClock()
-    client = esp.ESP32Client("10.0.0.42", 5005, timeout=1.0, clock=clock)
-
-    def call(fn, *args):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            result = fn(*args)
-        return result, [ln for ln in out.getvalue().splitlines() if ln.strip()]
-
-    FakeSocket.mode = "down"
-    result, lines = call(client.get_power_status)
-    _check("down: one line, with the address it tried and why",
-           lines == ["[ESP32] LED controller unreachable at 10.0.0.42:5005 ([Errno 113] No route to host, sending STATUS)"],
-           str(lines))
-    _check("down: get_power_status still answers None, connected False", result is None and not client.is_connected())
-    quiet = []
-    for _ in range(59):                       # the dashboard's 5 s poll, for 295 s
-        clock.advance(5)
-        quiet += call(client.get_power_status)[1]
-    _check("down: nothing more for the next 295 s (59 polls)", quiet == [], str(quiet[:3]))
-    clock.advance(5)
-    _, lines = call(client.get_power_status)
-    _check("down 5 minutes after the first line: one line, with how many failed in between",
-           lines == ["[ESP32] LED controller still unreachable at 10.0.0.42:5005 ([Errno 113] No route to host); "
-                     "59 more command(s) failed since the last line"], str(lines))
-    clock.advance(5)
-    _check("... then quiet again", call(client.get_power_status)[1] == [])
-    for mode, error in (("timeout", "ERROR:TIMEOUT"), ("refused", "ERROR:CONNECTION_REFUSED")):
-        FakeSocket.mode = mode
-        result, lines = call(client.send_command, "PING")
-        _check(f"{mode}: the same answer as before ({error}), and no line inside the 5 minutes",
-               result == error and lines == [], f"{result} {lines}")
-    FakeSocket.mode = "up"
-    result, lines = call(client.get_power_status)
-    _check("back, on a STATUS poll: one line saying so, and no line for the poll itself",
-           lines == ["[ESP32] LED controller reachable again at 10.0.0.42:5005"], str(lines))
-    _check("back: the status parsed, connected True",
-           result == {"current_ma": 120, "peak_ma": 300, "min_ma": 80} and client.is_connected())
-    quiet = []
-    for _ in range(12):                       # a minute of the dashboard's 5 s power poll
-        quiet += call(client.get_power_status)[1]
-    _check("up: the STATUS poll prints nothing (it was a line every 5 s per open dashboard)", quiet == [], str(quiet[:2]))
-    FakeSocket.reply = b"PONG\n"
-    _, lines = call(client.send_command, "PING")
-    _check("up: every other command still prints its line", lines == ["[ESP32] Sent: PING | Received: PONG"], str(lines))
-    FakeSocket.reply = b"STATUS:120:300:80\n"
-    saved = os.environ.get("DDM_ACCESS_LOG")
-    os.environ["DDM_ACCESS_LOG"] = "1"
-    try:
-        _, lines = call(client.get_power_status)
-    finally:
-        if saved is None:
-            os.environ.pop("DDM_ACCESS_LOG", None)
-        else:
-            os.environ["DDM_ACCESS_LOG"] = saved
-    _check("DDM_ACCESS_LOG=1: the STATUS line is back", lines == ["[ESP32] Sent: STATUS | Received: STATUS:120:300:80"],
-           str(lines))
-    FakeSocket.mode = "down"
-    clock.advance(1)
-    _, lines = call(client.ping)
-    _check("down again: one line at once (a new outage)",
-           len(lines) == 1 and "LED controller unreachable at 10.0.0.42:5005" in lines[0], str(lines))
 
 
 # -----------------------------------------------------------------------------
@@ -1302,7 +1181,6 @@ def main():
     print(f"deploy/ tests, repo {REPO}")
     _run("the unit files", test_unit_files)
     _run("the hand-run guard and the access log", test_hand_run_guard)
-    _run("the LED controller client logs on change", test_led_client_logs_on_change)
     _run("the installer", test_installer)
     _run("the installer's pi5/.env check", test_env_check)
     _run("the TV box: scripts, installer dry run, launcher line, autostart, holding page", test_tv_box_scripts)

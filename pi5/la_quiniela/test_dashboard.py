@@ -4,9 +4,9 @@
 #
 # The real app (pi5/main.py: every route, the real templates and static
 # files) over a fresh bridge on test_smoke's fake serial port and temp
-# database. No hardware and no network: the LED controller's client is
-# stubbed (every command is recorded and answered OK), the tote board is
-# off, and the results file lives in a temp directory. Same tiny runner as
+# database. No hardware and no network: the LED wall's client has its
+# exchange stubbed (every command is recorded and answered OK, on its worker's
+# thread), the tote board is off, and the results file lives in a temp directory. Same tiny runner as
 # test_smoke.py.
 #
 # What is checked here is what the dashboard and La Quiniela share: the
@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -46,6 +47,8 @@ from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela  # noqa: E402
 from la_quiniela.board import get_board, init_board  # noqa: E402
 from la_quiniela.test_smoke import FakeClock, MAC_A, MAC_B, _fresh_bridge, telem  # noqa: E402
+from communication.esp32_client import ESP32Client  # noqa: E402
+from communication.sender import Unreachable  # noqa: E402
 
 _real_stdout = sys.stdout
 sys.stdout = io.StringIO()          # main.py prints its banner lines at import
@@ -89,6 +92,15 @@ def _run(name, fn):
         _check(f"{name} (uncaught exception)", False, str(exc))
 
 
+def wait_for(pred, timeout=3.0, every=0.02):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(every)
+    return bool(pred())
+
+
 def tmpdir():
     d = tempfile.mkdtemp(prefix="lq_dash_")
     _tmpdirs.append(d)
@@ -114,19 +126,31 @@ class Rig:
         self.wall = None if real_time else FakeClock(1_700_000_000.0)
         self.board = init_board(bridge=self.bridge, log_dir=self.dir / "logs", results_path=self.results_file,
                                 **({} if real_time else {"wall": self.wall}))
-        self.led = []                   # every command the LED controller was sent
+        # A LED client of its own (nothing of another rig's wall, what it missed or whether it was up, carries
+        # over), its exchange stubbed: the worker records every command but its own STATUS probes in self.led.
+        self.led = []
         self.led_ok = led_ok
+        main.esp32 = ESP32Client("10.0.0.42", 5005, timeout=0.3)
+        main.racing_service.esp32_client = main.esp32
 
-        def send_command(command):
-            self.led.append(command)
-            return ("OK:" + command) if self.led_ok else "ERROR:TIMEOUT"
-        main.esp32.send_command = send_command
+        def exchange(command):
+            if command != "STATUS":
+                self.led.append(command)
+            if not self.led_ok:
+                raise Unreachable("TIMEOUT", "timed out")
+            return "OK:" + command
+        main.esp32.exchange = exchange
         main.tote = None                # tote_send() does nothing
         main.app.config["TESTING"] = True
         self.client = main.app.test_client()
 
     def post(self, path, body=None, **kw):
         return self.client.post(path, json=body, **kw) if body is not None else self.client.post(path, **kw)
+
+    def real_wall(self, port, timeout):
+        """The real LED client against a socket on this port (a DeadWall's)."""
+        main.esp32 = ESP32Client("127.0.0.1", port, timeout=timeout)
+        main.racing_service.esp32_client = main.esp32
 
     def lines(self):
         return self.port.lines()
@@ -340,7 +364,7 @@ def test_dashboard_modes_move_la_quiniela():
         r_mode = rig.post("/api/quiniela/mode", {"mode": mode})
         r_led = rig.post(route)
         _check(f"{mode}: the LEDs get {command} as before, La Quiniela state {MODE_STATES[mode]}",
-               r_led.status_code == 200 and r_led.get_json()["success"] is True and rig.led == [command]
+               r_led.status_code == 200 and r_led.get_json()["success"] is True and wait_for(lambda: rig.led == [command], 2.0)
                and r_mode.get_json()["state"] == MODE_STATES[mode] and rig.bridge.phase == MODE_STATES[mode]
                and rig.model()["race_state"] == MODE_STATES[mode], f"{rig.led} {r_mode.get_json()}")
     _check("the LED routes alone never move the race state (a preview, the Animations list)",
@@ -350,8 +374,10 @@ def test_dashboard_modes_move_la_quiniela():
     dead = Rig(led_ok=False)
     r_mode = dead.post("/api/quiniela/mode", {"mode": "BETTING_60"})
     r_led = dead.post("/api/animation/BETTING_60")
-    _check("LED controller unreachable: the LED route says so, the race state is set",
-           r_led.get_json()["success"] is False and r_mode.get_json()["ok"] is True and dead.bridge.phase == 1)
+    _check("LED wall unreachable: the LED route still answers at once (the command queued), the race state is set",
+           r_led.get_json()["success"] is True and r_led.get_json()["queued"] == "ANIM:BETTING_60"
+           and r_mode.get_json()["ok"] is True and dead.bridge.phase == 1
+           and wait_for(lambda: main.esp32.health()["online"] is False, 2.0), str(r_led.get_json()))
 
 
 def test_results_and_reset_are_modes():
@@ -364,14 +390,15 @@ def test_results_and_reset_are_modes():
     rig.led.clear()
     # SET WINNERS opens its modal on RESULTS_ENTRY: the LEDs only, the state stays RUNNING
     rig.post("/api/animation/RESULTS_ENTRY")
-    _check("opening SET WINNERS moves nothing", rig.bridge.phase == 4 and rig.port.written == [] and rig.led == ["ANIM:RESULTS_ENTRY"])
+    _check("opening SET WINNERS moves nothing", rig.bridge.phase == 4 and rig.port.written == []
+           and wait_for(lambda: rig.led == ["ANIM:RESULTS_ENTRY"], 2.0))
     r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
     body = r.get_json()
     _check("POST /api/results: success, the results as sent (and no next finisher)", r.status_code == 200 and body["success"] is True
            and body["results"] == {"win": 19, "place": 1, "show": 22, "next": []}, str(body))
-    _check("...the LED controller told after them (RESULTS:FINALIZE, which the page used to send) and it answered",
-           rig.led == ["ANIM:RESULTS_ENTRY", "RESULTS:FINALIZE"] and body["leds"] == "ok"
-           and body["response"] == "OK:RESULTS:FINALIZE", f"{rig.led} {body.get('leds')}")
+    _check("...the LED wall told after them (RESULTS:FINALIZE, which the page used to send), its health online in the reply",
+           wait_for(lambda: rig.led == ["ANIM:RESULTS_ENTRY", "RESULTS:FINALIZE"], 2.0) and body["leds"] == "online",
+           f"{rig.led} {body.get('leds')}")
     _check("...and the race state it set: WINNER, mode RESULTS, no error",
            body["race"] == {"rev": rev + 1, "state": 5, "state_name": "WINNER", "mode": "RESULTS", "source": "dashboard",
                             "gateway_online": False} and body["race_error"] is None, str(body.get("race")))
@@ -397,7 +424,7 @@ def test_results_and_reset_are_modes():
            and rig.model()["results"] is None)
     _check("the board keeps the TV in WINNER and hands it back in AFTER_PARTY",
            rig.model()["board_states"] == [1, 2, 3, 4, 5] and rig.model()["race_state"] == 6)
-    _check("the LEDs went off as they always did on a reset", "LED:ALL_OFF" in rig.led)
+    _check("the LEDs went off as they always did on a reset", wait_for(lambda: "LED:ALL_OFF" in rig.led, 2.0))
     # The next race: WELCOME is PRE_RACE again
     rig.post("/api/quiniela/mode", {"mode": "WELCOME"})
     _check("WELCOME after the reset: PRE_RACE", rig.bridge.phase == 0)
@@ -411,19 +438,21 @@ def test_results_and_reset_are_modes():
 def test_results_stand_without_the_leds():
     """SET WINNERS with the LED controller down: the results are saved,
     La Quiniela goes to WINNER with them in one state line, and the reply
-    says the LEDs were unreachable."""
+    says the wall is unreachable (found down by the FINISH animation before)."""
     rig = Rig(led_ok=False)
     rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
     rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
     rig.post("/api/quiniela/mode", {"mode": "FINISH"})
+    rig.post("/api/animation/FINISH")
+    _check("the wall found down by the animation before", wait_for(lambda: main.esp32.health()["online"] is False, 2.0))
     rev = rig.bridge.state_rev
     rig.port.written.clear()
     rig.led.clear()
     r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
     body = r.get_json()
-    _check("LED controller down: 200, success, the results as sent, leds unreachable",
+    _check("LED wall down: 200, success, the results as sent, leds unreachable",
            r.status_code == 200 and body["success"] is True and body["results"] == {"win": 19, "place": 1, "show": 22, "next": []}
-           and body["leds"] == "unreachable" and body["response"].startswith("ERROR"), str(body))
+           and body["leds"] == "unreachable", str(body))
     _check("...saved all the same, horse numbers in the file",
            json.loads(rig.results_file.read_text()) | {"timestamp": None}
            == {"win": 19, "place": 1, "show": 22, "next": [], "timestamp": None})
@@ -431,7 +460,7 @@ def test_results_stand_without_the_leds():
            body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
     _check("...the TV's model has them", rig.model()["results"] == {"win": 19, "place": 1, "show": 22}
            and rig.model()["race_state"] == 5)
-    _check("...the LED controller was tried once, after the results were saved", rig.led == ["RESULTS:FINALIZE"], str(rig.led))
+    _check("...the LED wall was tried once, after the results were saved", wait_for(lambda: rig.led == ["RESULTS:FINALIZE"], 2.0), str(rig.led))
     r = rig.client.get("/api/results")
     _check("GET /api/results has them (the dashboard's banner after a reload)", r.get_json()["success"] is True
            and (r.get_json()["results"]["win"], r.get_json()["results"]["show"]) == (19, 22))
@@ -453,8 +482,8 @@ def test_results_stand_without_the_leds():
     finally:
         main.RESULTS_FILE = saved
     js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
-    _check("the page says when the LEDs missed them, and the results stand",
-           "data.leds === 'unreachable'" in js and "LEDs unreachable" in js)
+    _check("the page no longer says when the LEDs missed them (the pill does); the results line is the race state's",
+           "data.leds" not in js and "LEDs unreachable" not in js)
     _check("the page no longer sends RESULTS:FINALIZE itself (the route does, once)",
            "fetch('/api/results/finalize'" not in js)
     _check("the page follows the server's results: Reset betting takes the tote down within 5 s",
@@ -910,6 +939,235 @@ def test_picker_records_the_real_finish():
     _check("a pick nobody bet is warned about over CONFIRM RESULTS in the new words: the real finish, La Quiniela skips it",
            "no bets at the post, so La Quiniela skips it " in ui and "can't pay" not in js and "Enter the next finisher instead" not in js)
     _check("the next cards have a colour of their own", '.result-slot[data-slot^="next:"]' in css)
+
+
+# -----------------------------------------------------------------------------
+# The LED wall and the tote board never block the race (Joey, DevPi, 2026-10-20 and 21)
+# -----------------------------------------------------------------------------
+# With the wall off every LED-bound request waited 5 s on pi5, and the page issues them all
+# the time (the STATUS poll, a PING after each action, each tap's animation), so the browser's
+# few connections per host queued the race state behind them: a minute's lag, FINISH stuck.
+# Now a send is handed to the device's worker (communication/sender.py) and the request
+# returns; the state, the gateway's line and the pages' event never wait on a device.
+
+class DeadWall:
+    """A socket nothing answers on: accepts, reads, and never replies (the wall off)."""
+
+    def __init__(self):
+        import socket
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.port = self.sock.getsockname()[1]
+        self.received = []
+        self._stop = False
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        import socket
+        self.sock.settimeout(0.1)
+        while not self._stop:
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            threading.Thread(target=self._talk, args=(conn,), daemon=True).start()
+
+    def _talk(self, conn):
+        with conn:
+            conn.settimeout(2.0)
+            try:
+                self.received.append(conn.recv(1024).decode().strip())
+            except OSError:
+                return
+            time.sleep(1.0)
+
+    def close(self):
+        self._stop = True
+        self.sock.close()
+
+
+def test_state_change_never_waits_on_the_wall():
+    """The real LED client against a socket nothing answers on (0.3 s timeout instead of the night's
+    5 s): a mode's two requests, SET WINNERS and RESET all return at once, the race state, the gateway's
+    line and the results event happen as they would, and the wall's health is said, not waited for."""
+    wall = DeadWall()
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.real_wall(wall.port, timeout=0.3)
+    events = []
+    saved_broadcast = main.broadcast_sse
+    main.broadcast_sse = lambda event, data: events.append((event, data))
+    try:
+        rig.port.written.clear()
+        t0 = time.monotonic()
+        r_mode = rig.post("/api/quiniela/mode", {"mode": "GATES_BURST"})
+        r_led = rig.post("/api/animation/GATES_BURST")
+        took = time.monotonic() - t0
+        _check("THEY'RE OFF with the wall dead: both requests back within 0.15 s, the race state set, the line written",
+               r_mode.status_code == 200 and r_led.status_code == 200 and took < 0.15 and rig.bridge.phase == 4
+               and len(rig.lines()) == 1, f"{took:.3f} s, phase {rig.bridge.phase}, {r_led.get_json()}")
+        _check("the LED route's reply: queued, success, and the wall's health as known so far",
+               r_led.get_json()["success"] is True and r_led.get_json()["queued"] == "ANIM:GATES_BURST"
+               and r_led.get_json()["leds"] in ("unknown", "unreachable"), str(r_led.get_json()))
+        _check("the wall was tried once", wait_for(lambda: wall.received == ["ANIM:GATES_BURST"], 2.0), str(wall.received))
+        t0 = time.monotonic()
+        for mode in ("CHAOS", "FINISH"):
+            rig.post("/api/quiniela/mode", {"mode": mode})
+            rig.post("/api/animation/" + mode)
+        took = time.monotonic() - t0
+        _check("CHAOS and FINISH tapped straight after: at once, RUNNING still, and the wall holds at most the newest animation",
+               took < 0.2 and rig.bridge.phase == 4 and main.esp32.health()["queued"] <= 1, f"{took:.3f} s {main.esp32.health()}")
+        _check("the wall's health: unreachable, since when", wait_for(lambda: main.esp32.health()["online"] is False, 2.0)
+               and main.esp32.health()["unreachable_since"] is not None, str(main.esp32.health()))
+        status = rig.client.get("/api/status").get_json()
+        _check("GET /api/status says so for the wall, and that the tote is off here",
+               status["leds"]["online"] is False and status["leds"]["enabled"] is True and status["tote"]["enabled"] is False, str(status))
+        rig.port.written.clear()
+        t0 = time.monotonic()
+        r = rig.post("/api/results", {"win": 19, "place": 1, "show": 2})
+        took = time.monotonic() - t0
+        body = r.get_json()
+        _check("SET WINNERS with the wall dead: back at once, saved, WINNER in one line, the results event sent, leds unreachable",
+               r.status_code == 200 and took < 0.15 and body["success"] is True and body["leds"] == "unreachable"
+               and rig.results_file.exists() and rig.bridge.phase == 5 and rig.lines() == [state_line(rig.bridge.state_rev, 5, [], [], [19, 1, 2])]
+               and [e for e, _ in events] == ["results"], f"{took:.3f} s {body}")
+        _check("RESULTS:FINALIZE was handed to the worker", wait_for(lambda: "RESULTS:FINALIZE" in wall.received, 3.0), str(wall.received))
+        t0 = time.monotonic()
+        r = rig.post("/api/results/clear")
+        took = time.monotonic() - t0
+        _check("RESET: at once, AFTER PARTY, the file gone", r.status_code == 200 and took < 0.15 and rig.bridge.phase == 6
+               and not rig.results_file.exists(), f"{took:.3f} s")
+    finally:
+        main.broadcast_sse = saved_broadcast
+        wall.close()
+
+
+def test_race_goes_on_without_the_wall():
+    """The racing service's own progression (AUTO, the demo) is driven by its timers alone: with every LED
+    send timing out it walks its states on schedule. Durations shortened to the loop's own half-second step."""
+    from services import racing_data_service as rds
+    wall = DeadWall()
+    rig = Rig()
+    rig.real_wall(wall.port, timeout=0.3)
+    saved = dict(rds.STATE_DURATIONS)
+    svc = main.racing_service
+    try:
+        for state in rds.STATE_DURATIONS:
+            rds.STATE_DURATIONS[state] = 0.1
+        svc.reset()
+        t0 = time.monotonic()
+        svc.set_mode("auto")
+        reached = wait_for(lambda: svc.current_state == rds.RaceState.OFFICIAL, 8.0)
+        took = time.monotonic() - t0
+        _check("AUTO from DORMANT reaches OFFICIAL on its timers with the wall dead: 7 steps of half a second, not 7 x 5 s",
+               reached and took < 6.0, f"{svc.current_state} after {took:.1f} s")
+        _check("the LED sends went to the worker: at most one animation waits, the rest were dropped",
+               main.esp32.health()["queued"] <= 1, str(main.esp32.health()))
+    finally:
+        svc.set_mode("manual")
+        svc.reset()
+        rds.STATE_DURATIONS.clear()
+        rds.STATE_DURATIONS.update(saved)
+        wall.close()
+
+
+def test_device_health_on_the_page_source():
+    """The page's side, read from the source (the browser test drives it): one poll of /api/status every 5 s
+    feeds two pills and the device modal; a toast once per transition per device; no PING after an action,
+    no error toast per tap for a device that is down, no clearing of the active button."""
+    rig = Rig()
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True).replace("\r\n", "\n")
+    html = rig.client.get("/", base_url="http://joeydevpi.local:5000").get_data(as_text=True)
+    css = rig.client.get("/static/css/ddm_style.css").get_data(as_text=True)
+    _check("the two pills in the top bar, in place of the icon and the badge",
+           'id="device-leds"' in html and 'id="device-tote"' in html and 'id="device-count-badge"' not in html and ".device-pill" in css)
+    _check("one poll, /api/status, every 5 s; /api/power and /api/ping are not asked by the page",
+           "async function pollDevices()" in js and "setInterval(pollDevices, 5000)" in js and "fetch('/api/status'" in js
+           and "/api/power" not in js and "/api/ping" not in js)
+    _check("no PING after every action: checkESP32Status is gone", "checkESP32Status" not in js and "pollPowerStatus" not in js
+           and "handleEsp32Offline" not in js)
+    render = _js_function(js, "function renderDevices(status)")
+    _check("a toast once per transition, in plain words, and none while nothing changes",
+           "unreachable" in render and "back online" in render and "showNotification(" in render
+           and "the race goes on" in render)
+    _check("the wall going away no longer clears the active button or says the animation stopped",
+           "animation stopped" not in js and "DISCONNECTED" not in js)
+    _check("no per-tap error toast for the wall: the animation route's success is the tap's own",
+           "LEDs unreachable" not in js and "Error: ${data.response}" not in _js_function(js, "async function animate(animName, buttonElement)"))
+    rules = {rule.rule for rule in main.app.url_map.iter_rules()}
+    _check("/api/power is gone; /api/status carries both devices", "/api/power" not in rules and "/api/status" in rules)
+
+
+def _device_indicators(picker_check, requests, slow):
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True)
+    toasts = []
+
+    def pill(which):
+        return chrome.eval(f"(document.getElementById('device-{which}') || {{}}).innerText || ''")
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    try:
+        chrome.call("Page.navigate", url=server.url)
+        chrome.wait_for("document.readyState === 'complete' && typeof pollDevices === 'function'", timeout=30)
+        chrome.wait_for("(() => { const s = document.getElementById('splash-screen'); return !s || s.style.display === 'none'; })()", timeout=20)
+        chrome.eval("window.__toasts = []; const _sn = showNotification; showNotification = (m, t) => { window.__toasts.push([m, t || 'success']); return _sn(m, t); }; 1")
+        chrome.wait_for("document.getElementById('device-leds').innerText.includes('online')", timeout=12)
+        _check("the wall answering: the pill reads LED wall · online, the tote's reads off (none set here)",
+               pill("leds") == "LED wall \u00b7 online" and pill("tote") == "Tote board \u00b7 off", f"{pill('leds')!r} {pill('tote')!r}")
+        _check("...and no toast for a device that was never away", chrome.eval("window.__toasts.length") == 0, str(chrome.eval("window.__toasts")))
+        server.led_timeout = True                                   # the wall off from now on: every exchange times out
+        chrome.wait_for("document.getElementById('device-leds').innerText.includes('unreachable')", timeout=15)
+        since = pill("leds")
+        _check("the wall off: within the poll the pill reads unreachable since hh:mm",
+               re.fullmatch(r"LED wall \u00b7 unreachable since \d\d:\d\d", since) is not None, repr(since))
+        settle(6.0)
+        toasts = chrome.eval("window.__toasts")
+        _check("...one toast, red, saying the race goes on, and no more as the polls go by",
+               len(toasts) == 1 and toasts[0][1] == "error" and "LED wall unreachable" in toasts[0][0] and "race goes on" in toasts[0][0],
+               str(toasts))
+        chrome.eval("window.__toasts = []; 1")
+        t = time.monotonic()
+        chrome.tap("button[data-mode='BETTING_60']")
+        chrome.wait_for("raceStateSending === null && !document.querySelector(\"button[data-mode='BETTING_60'].is-sending\")", timeout=12)
+        settle(0.5)
+        toasts = chrome.eval("window.__toasts")
+        _check("a tap with the wall off: at once, the race state set, the tap's own green toast and no red one",
+               rig.model()["race_state"] == 1 and time.monotonic() - t < 4.0 and len(toasts) == 1 and toasts[0][1] == "success"
+               and toasts[0][0] == "Animation: BETTING_60 \u00b7 BETTING OPEN", str(toasts))
+        _check("...the button stays lit", chrome.eval("document.querySelector(\"button[data-mode='BETTING_60']\").classList.contains('active')"))
+        chrome.eval("window.__toasts = []; 1")
+        server.led_timeout = False
+        chrome.wait_for("document.getElementById('device-leds').innerText === 'LED wall \u00b7 online'", timeout=15)
+        settle(1.0)
+        toasts = chrome.eval("window.__toasts")
+        _check("the wall back: the pill reads online, one green toast", len(toasts) == 1 and toasts[0][1] == "success"
+               and "LED wall back online" in toasts[0][0], str(toasts))
+        _check("...and the wall was given the current animation again",
+               wait_for(lambda: server.led("ANIM:BETTING_60") != [], 3.0), str(server.led_log[-4:]))
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+def test_device_indicators_in_a_browser():
+    """The Control Center in headless Chrome: the LED wall pill follows the wall (online; unreachable since
+    hh:mm; online again), with one toast each way and none per tap; a tap with the wall off goes at once and
+    keeps its button; the wall is given the current animation when it returns. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("device indicator browser checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _device_indicators(picker_check, requests, slow))
 
 
 # -----------------------------------------------------------------------------
@@ -2803,6 +3061,11 @@ def main_():
     _run("results — the field is frozen while a result stands: a scratch or an undo is refused", test_field_frozen_while_a_result_stands)
     _run("La Subasta — pays the owners of the real 1st, 2nd and 3rd from SET WINNERS' record; a correction, RESET, Reset betting",
          test_la_subasta_pays_on_set_winners)
+    _run("the wall — a state change never waits on it: the real client against a socket nothing answers on",
+         test_state_change_never_waits_on_the_wall)
+    _run("the wall — the race goes on without it: AUTO on its timers", test_race_goes_on_without_the_wall)
+    _run("the wall — the page: two pills, one poll, a toast per transition (the source)", test_device_health_on_the_page_source)
+    _run("the wall — the pills and the once-only toasts, in a browser", test_device_indicators_in_a_browser)
     _run("SET WINNERS — the page records the real finish; the field followed; RESET asks (the source)", test_picker_records_the_real_finish)
     _run("crawl — the weather reaches La Quiniela's model", test_weather_reaches_the_board)
     _run("SET WINNERS — the picker is a state machine only taps move", test_picker_is_a_state_machine_only_taps_move)

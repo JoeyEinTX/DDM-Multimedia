@@ -1,205 +1,139 @@
-# esp32_client.py - Socket client to communicate with ESP32
+# esp32_client.py - The LED wall (the ESP32 LED controller), through one queued sender
+#
+# TCP to the controller, one connection per command: a line out, a line back,
+# SOCKET_TIMEOUT to answer. Nothing here waits for it on a request thread:
+# send() hands the command to the Sender (communication/sender.py) and
+# returns it; ask() waits for the reply, for the few callers that need one
+# (PING, PARAM). The wall's health is the sender's, kept fresh by its STATUS
+# probe: GET /api/status serves it and the Control Center shows it. With no
+# address (DDM_ESP32_IP empty) the LEDs are off: nothing is sent or probed, a
+# send is dropped, an ask answers ERROR:NO_LED_CONTROLLER at once, and main.py
+# says so once at start.
 
-import os
 import socket
-import threading
 import time
+from typing import Any, Dict, Optional
+
 from config import ESP32_IP, ESP32_PORT, SOCKET_TIMEOUT
-
-# While the LED controller stays unreachable, one line says so at most this often:
-# the dashboard asks it for STATUS every 5 s, and a line each time buried the journal.
-DOWN_LOG_EVERY_S = 300.0
+from communication.sender import Sender, Unreachable, logs_probes
 
 
-def _logs_every_status():
-    """The dashboard's power poll asks for STATUS every 5 s per open page: its answers print
-    no line (every other command still does) unless DDM_ACCESS_LOG is 1/true/yes/on, the
-    switch that brings werkzeug's request lines back too."""
-    return os.environ.get("DDM_ACCESS_LOG", "").strip().lower() in ("1", "true", "yes", "on")
+def key_of(command: str) -> str:
+    """What a command replaces while it waits: the newest animation, the newest
+    whole-wall state (off, on, a colour, a reset), each cup's newest, the
+    brightness, the results' finalize, STATUS and PING once each; anything
+    else (PARAM, a raw command) only an identical one."""
+    parts = command.split(":")
+    head = parts[0]
+    if head == "ANIM":
+        return "ANIM"
+    if head == "RESET" or (head == "LED" and len(parts) > 1 and parts[1] in ("ALL_OFF", "ALL_ON", "COLOR")):
+        return "LED"
+    if head == "LED" and len(parts) > 1 and parts[1] == "BRIGHTNESS":
+        return "LED:BRIGHTNESS"
+    if head == "LED" and len(parts) > 2 and parts[1] == "CUP":
+        return "CUP:" + parts[2]
+    if head == "CUP" and len(parts) > 2:
+        return "CUP:" + parts[2]
+    if head == "RESULTS":
+        return "RESULTS"
+    return command
+
+
+def is_state(command: str) -> bool:
+    """A command the wall should show again when it returns: everything but
+    a query (STATUS, PING) and the tuning modal's PARAM commands."""
+    return command not in ("STATUS", "PING") and not command.startswith("PARAM:")
 
 
 class ESP32Client:
-    """Client for sending commands to ESP32 LED controller via socket"""
-    
-    def __init__(self, ip=ESP32_IP, port=ESP32_PORT, timeout=SOCKET_TIMEOUT, clock=time.monotonic):
-        self.ip = ip
+    def __init__(self, ip=ESP32_IP, port=ESP32_PORT, timeout=SOCKET_TIMEOUT, clock=time.time, log=print):
+        self._ip = ip
         self.port = port
         self.timeout = timeout
-        self.connected = False
-        self.last_response = ""
-        # One line when the controller becomes unreachable (with the address tried), one
-        # when it answers again, and while it stays down one every DOWN_LOG_EVERY_S.
-        self._clock = clock
-        self._log_lock = threading.Lock()
-        self._down_logged_at = None      # when the last "unreachable" line went out; None while it answers
-        self._failed_since_log = 0
-    
-    def send_command(self, command):
-        """
-        Send a command to the ESP32 and return the response
-        
-        Args:
-            command: Command string to send (e.g., "PING", "LED:ALL_ON")
-        
-        Returns:
-            Response string from ESP32, or error message
-        """
-        if not self.ip:
-            # No LED controller set (DDM_ESP32_IP in pi5/.env): the LEDs are
-            # off. main.py says so once at start; nothing is tried or logged here.
-            self.connected = False
-            return "ERROR:NO_LED_CONTROLLER"
+        self.power: Optional[Dict[str, int]] = None        # the last STATUS answer: current_ma, peak_ma, min_ma
+        self.sender = Sender("LED wall", "[ESP32]", self.address, self, timeout, key_of, is_state,
+                             probe="STATUS" if ip else None, clock=clock, log=log)
+
+    @property
+    def ip(self) -> str:
+        return self._ip
+
+    @ip.setter
+    def ip(self, value: str) -> None:
+        self._ip = value
+        self.sender.address = self.address
+        self.sender.probe = "STATUS"
+
+    @property
+    def address(self) -> str:
+        return f"{self._ip}:{self.port}"
+
+    def exchange(self, command: str) -> str:
+        """One command to the controller, on the sender's thread: connect, the
+        line out, the reply back. Raises Unreachable when it did not answer."""
         try:
-            # Create socket connection
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(self.timeout)
-                sock.connect((self.ip, self.port))
-                
-                # Send command (add newline)
-                message = command + '\n'
-                sock.sendall(message.encode('utf-8'))
-                
-                # Receive response
+                sock.connect((self._ip, self.port))
+                sock.sendall((command + '\n').encode('utf-8'))
                 response = sock.recv(1024).decode('utf-8').strip()
-                
-                self.last_response = response
-                self.connected = True
-                
-                self._answered()
-                if command != "STATUS" or _logs_every_status():
-                    print(f"[ESP32] Sent: {command} | Received: {response}")
-                return response
-        
         except socket.timeout:
-            self.connected = False
-            error = "ERROR:TIMEOUT"
-            self._failed(command, "timed out")
-            return error
-        
+            raise Unreachable("TIMEOUT", "timed out")
         except ConnectionRefusedError:
-            self.connected = False
-            error = "ERROR:CONNECTION_REFUSED"
-            self._failed(command, "connection refused")
-            return error
-        
-        except Exception as e:
-            self.connected = False
-            error = f"ERROR:EXCEPTION:{str(e)}"
-            self._failed(command, str(e))
-            return error
-    
-    def _failed(self, command, reason):
-        """A command that got no answer: say so once, then at most every DOWN_LOG_EVERY_S."""
-        with self._log_lock:
-            now = self._clock()
-            if self._down_logged_at is None:
-                print(f"[ESP32] LED controller unreachable at {self.ip}:{self.port} ({reason}, sending {command})")
-            elif now - self._down_logged_at >= DOWN_LOG_EVERY_S:
-                print(f"[ESP32] LED controller still unreachable at {self.ip}:{self.port} ({reason}); "
-                      f"{self._failed_since_log} more command(s) failed since the last line")
-            else:
-                self._failed_since_log += 1
-                return
-            self._down_logged_at = now
-            self._failed_since_log = 0
-
-    def _answered(self):
-        """A command answered: one line if the controller had been reported unreachable."""
-        with self._log_lock:
-            if self._down_logged_at is not None:
-                print(f"[ESP32] LED controller reachable again at {self.ip}:{self.port}")
-                self._down_logged_at = None
-                self._failed_since_log = 0
-
-    def ping(self):
-        """Test connection to ESP32"""
-        response = self.send_command("PING")
-        return response == "PONG"
-    
-    def reset(self):
-        """Reset ESP32 to idle state"""
-        return self.send_command("RESET")
-    
-    def all_on(self):
-        """Turn all LEDs on (white)"""
-        return self.send_command("LED:ALL_ON")
-    
-    def all_off(self):
-        """Turn all LEDs off"""
-        return self.send_command("LED:ALL_OFF")
-    
-    def set_brightness(self, brightness):
-        """
-        Set LED brightness
-        
-        Args:
-            brightness: Brightness level 0-100
-        """
-        brightness = max(0, min(100, int(brightness)))
-        return self.send_command(f"LED:BRIGHTNESS:{brightness}")
-    
-    def set_color(self, hex_color):
-        """
-        Set all LEDs to a specific color
-        
-        Args:
-            hex_color: Hex color string (e.g., "FFD700" or "#FFD700")
-        """
-        hex_color = hex_color.lstrip('#')
-        return self.send_command(f"LED:COLOR:{hex_color}")
-    
-    def set_cup(self, cup_number, hex_color):
-        """
-        Set a specific horse to a color
-
-        Args:
-            cup_number: Horse number (1-20)
-            hex_color: Hex color string
-        """
-        hex_color = hex_color.lstrip('#')
-        return self.send_command(f"LED:CUP:{cup_number}:{hex_color}")
-    
-    def start_animation(self, anim_name):
-        """
-        Start an animation
-        
-        Args:
-            anim_name: Animation name (IDLE, WELCOME, BETTING_60, etc.)
-        """
-        return self.send_command(f"ANIM:{anim_name.upper()}")
-    
-    def is_connected(self):
-        """Check if ESP32 is reachable"""
-        return self.connected
-    
-    def get_last_response(self):
-        """Get the last response received from ESP32"""
-        return self.last_response
-
-    def get_power_status(self):
-        """Get software-estimated power draw from ESP32"""
-        response = self.send_command("STATUS")
+            raise Unreachable("CONNECTION_REFUSED", "connection refused")
+        except OSError as e:
+            raise Unreachable("EXCEPTION:" + str(e), str(e))
         if response.startswith("STATUS:"):
             parts = response.split(":")
             if len(parts) == 4:
-                return {
-                    'current_ma': int(parts[1]),
-                    'peak_ma': int(parts[2]),
-                    'min_ma': int(parts[3])
-                }
-        return None
+                self.power = {'current_ma': int(parts[1]), 'peak_ma': int(parts[2]), 'min_ma': int(parts[3])}
+        if command != "STATUS" or logs_probes():
+            print(f"[ESP32] Sent: {command} | Received: {response}")
+        return response
+
+    def send(self, command: str) -> str:
+        """Hand a command to the wall's worker (dropped with no address) and return it."""
+        if self._ip:
+            self.sender.send(command)
+        return command
+
+    def ask(self, command: str, wait: Optional[float] = None) -> str:
+        if not self._ip:
+            return "ERROR:NO_LED_CONTROLLER"
+        return self.sender.ask(command, wait)
+
+    def health(self) -> Dict[str, Any]:
+        h = self.sender.health()
+        h["enabled"] = bool(self._ip)
+        h["power"] = self.power
+        return h
+
+    def ping(self) -> bool:
+        return self.ask("PING") == "PONG"
+
+    def reset(self) -> str:
+        return self.send("RESET")
+
+    def all_on(self) -> str:
+        return self.send("LED:ALL_ON")
+
+    def all_off(self) -> str:
+        return self.send("LED:ALL_OFF")
+
+    def set_brightness(self, brightness) -> str:
+        brightness = max(0, min(100, int(brightness)))
+        return self.send(f"LED:BRIGHTNESS:{brightness}")
+
+    def set_color(self, hex_color: str) -> str:
+        return self.send(f"LED:COLOR:{hex_color.lstrip('#')}")
+
+    def set_cup(self, cup_number, hex_color: str) -> str:
+        return self.send(f"LED:CUP:{cup_number}:{hex_color.lstrip('#')}")
+
+    def start_animation(self, anim_name: str) -> str:
+        return self.send(f"ANIM:{anim_name.upper()}")
 
 
 # Global client instance
 esp32 = ESP32Client()
-
-
-# Convenience functions for Flask routes
-def send_to_esp32(command):
-    """Send command to ESP32 and return response"""
-    return esp32.send_command(command)
-
-
-def check_esp32_connection():
-    """Check if ESP32 is connected"""
-    return esp32.ping()

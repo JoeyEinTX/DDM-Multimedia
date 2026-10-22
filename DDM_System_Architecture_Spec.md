@@ -1,7 +1,7 @@
 # DDM System Architecture Spec
 
-**Version:** 1.2
-**Date:** 2026-10-20
+**Version:** 1.3
+**Date:** 2026-10-21
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
 **Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
@@ -80,7 +80,7 @@ reading all 20 scales and driving LED matrices, which is not how the system was 
 | pi5 (Flask app on DevPi, port 5000) | Race brain; serves the dashboard, the admin page, La Subasta | n/a | Everything (SQLite, one results file) |
 | Gateway (ESP32 WROOM-32) | Radio-to-USB bridge | USB serial, JSON lines | The last state line, RAM only |
 | Betting cups (CYD + HX711), 20 plus spares | Weigh tokens, show their horse number | ESP-NOW via the gateway | Horse number and scale settings in NVS |
-| LED controller (ESP32, TCP 5005 at the address in DevPi's `pi5/.env`) | Mantle LED animations | TCP | Nothing |
+| LED controller (ESP32, TCP 5005 at the address in DevPi's `pi5/.env`) | Mantle LED animations | TCP, through pi5's queued sender (`pi5/communication/sender.py`: one worker per device, so nothing in pi5 waits on it) | Nothing |
 | Splash display (Flask app, port 5001) | TV slideshow and the LQ board | HTTP and the `/api/quiniela/stream` event stream from pi5 | Nothing about the race |
 | TV box `ddm-tv` (a Raspberry Pi 5 behind the TV by the cups, Pi OS with desktop) | Shows the splash's `/board` full screen: the La Quiniela board in every race state and nothing else. The pages are named for what they show and the boxes are numbered, interchangeable screens; which page a box shows is its `DDM_TV_URL`, and `RACE_NIGHT.md` says which. Chromium in kiosk mode on the box's own holding page, which holds the page in a frame and shows `Waiting for DDM…` while it can't be reached. Runs no DDM code, needs no repo; set up and updated from DevPi over SSH (`deploy/tv_box.sh install`); the page's own self-reload brings a pull to the TV. Either HDMI port; 1920x1080 when the screen offers it, else its own mode, chosen at runtime (`deploy/tv_box/ddm_tv_outputs.py`), the TV on before or after the box. | HTTP to the splash (port 5001) over the LAN | One setting: the page's address (`~/.config/ddm-tv/ddm-tv.conf`) |
 | TV box `ddm-tv2` (OD8; hardware not chosen) | The same box and installer, `--server .../slides`: the slideshow, and the La Quiniela board from AT THE POST through WINNER (splash `SLIDES_BOARD_STATES`, 3,4,5), the slideshow again after | Same | Same |
@@ -563,7 +563,7 @@ Rules for either:
 | A cup reboots | Its horse number and its count come back from NVS. Through the warm-up it reports the saved count, then re-zeroes only if it reads empty; a cup with a pile keeps its saved empty reading (section 5). Bench-tested 2026-10-01. [BUILT] |
 | A cup dies | Spare cup: set its number, put it in the post, move the tokens. [BUILT] |
 | TV or splash reloads | Fetches the model; shows the figures at the post, not emptied cups. [BUILT] |
-| LED controller unreachable | The race state and results still apply; the dashboard says `LEDs unreachable`. [BUILT] |
+| LED controller or tote board unreachable | A race-state change never waits on either: sends go through one queued, coalescing worker per device (`pi5/communication/sender.py`), a frame that can't be sent is dropped, and the device catches up when it returns (the state it missed is sent again). The Control Center's pill says `unreachable since hh:mm`, one toast and one journal line each way, nothing per tap. [BUILT 2026-10-21] |
 | No internet | No odds and no weather; nothing else notices. [BUILT] |
 | SD card failure | SQLite and the archive copied off the box nightly (`DDM_Archive_Spec.md` section 8), and a cloned SD card on hand. [PROPOSED] |
 | Starting fresh before a party | `pi5/tools/wipe.py` on DevPi, pi5 stopped (it refuses otherwise). It copies every data file to `backups/wipe-<date-time>/` and checks each copy (size, SHA-256) before it clears anything. Then it empties every table (none recreated, so `check_shape()` passes; the id counters stay) and removes the results, the betting logs and the old Race Setup file. `--restore` puts a backup back byte for byte. The cups, the gateway and guests' phones keep their own; it says so (`RACE_NIGHT.md`, "Before the party: start fresh"). [BUILT] |
@@ -637,6 +637,8 @@ gateway says hello.
 - La Subasta's results from SET WINNERS (gap review M5): one record, the real finish with the
   next finishers for La Quiniela's skip; the field frozen while a result stands; the dialog follows
   a scratch; La Subasta's ledger derived from the record, whole pesos, the paid-out marks
+- The LED wall and the tote board never block the race: one queued, coalescing sender per device,
+  the device catching up on return, the Control Center's two health pills (2026-10-21)
 
 ### Next
 

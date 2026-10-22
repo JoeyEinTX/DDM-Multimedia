@@ -25,8 +25,8 @@ from config import (FLASK_HOST, FLASK_PORT, FLASK_DEBUG, SYSTEM_NAME, VERSION, N
                    TOTE_IP, TOTE_PORT, TOTE_TIMEOUT, TOTE_ENABLED,
                    PARAMS_FILE, ANTHROPIC_API_KEY,
                    ANIMATION_REGISTRY_FILE, ANIMATION_ASSIGNMENTS_FILE)
-from communication.esp32_client import esp32, check_esp32_connection
-from communication.tote_client import init_tote_client
+from communication.esp32_client import esp32
+from communication.tote_client import ToteClient
 from routes.racing_routes import racing_bp, init_racing_service
 from routes.guest import guest_ui
 from routes.guest import spectator as guest_spectator
@@ -48,10 +48,7 @@ app.config['SECRET_KEY'] = _config.FLASK_SECRET_KEY   # DDM_FLASK_SECRET_KEY in 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize tote board client
-tote = None
-if TOTE_ENABLED:
-    tote = init_tote_client(TOTE_IP, TOTE_PORT, TOTE_TIMEOUT)
-    print(f"Tote board client initialized: {TOTE_IP}:{TOTE_PORT}")
+tote = ToteClient(TOTE_IP, TOTE_PORT, TOTE_TIMEOUT) if TOTE_ENABLED else None
 
 # Data directory for persistence
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
@@ -89,31 +86,27 @@ sse_lock = Lock()
 
 
 def tote_send(action, *args, **kwargs):
-    """
-    Safely send command to tote board
-    
-    Args:
-        action: Method name to call on tote client (e.g., 'welcome', 'official')
-        *args: Positional arguments to pass to the method
-        **kwargs: Keyword arguments to pass to the method
-    
-    Returns:
-        Response string or None if tote is disabled/offline
-    """
-    if not TOTE_ENABLED or not tote:
-        return None
-    
-    try:
-        method = getattr(tote, action, None)
-        if method and callable(method):
-            response = method(*args, **kwargs)
-            return response
-        else:
-            print(f"[TOTE] Invalid action: {action}")
-            return None
-    except Exception as e:
-        print(f"[TOTE] Error calling {action}: {e}")
-        return None
+    """The tote board's `action` (welcome, official, ...), when there is a
+    board: it hands the figures to the board's worker and returns."""
+    if tote:
+        getattr(tote, action)(*args, **kwargs)
+
+
+def leds_word():
+    """The LED wall's health in a word, for a reply: online, unreachable,
+    unknown (nothing exchanged yet), off (no address set)."""
+    h = esp32.health()
+    if not h['enabled']:
+        return 'off'
+    if h['online'] is None:
+        return 'unknown'
+    return 'online' if h['online'] else 'unreachable'
+
+
+def led_reply(queued, **fields):
+    """A LED route's reply: the command handed to the wall's worker and the
+    wall's health as last known. The request never waits on the wall."""
+    return jsonify({'success': True, 'queued': queued, 'leds': leds_word(), **fields})
 
 
 # The splash display's board (the TV page), for the menu's "La Quiniela
@@ -162,59 +155,43 @@ def spectator():
 
 @app.route('/api/ping', methods=['GET'])
 def api_ping():
-    """Test connection to ESP32"""
-    is_connected = check_esp32_connection()
+    """Ask the LED wall for its PONG: an ask, which waits up to the wall's
+    timeout and answers at once while the wall is marked down."""
+    reply = esp32.ask('PING')
     return jsonify({
-        'success': is_connected,
-        'status': 'ONLINE' if is_connected else 'OFFLINE',
-        'response': esp32.get_last_response()
+        'success': reply == 'PONG',
+        'status': 'ONLINE' if reply == 'PONG' else 'OFFLINE',
+        'response': reply
     })
 
 
 @app.route('/api/command', methods=['POST'])
 def api_command():
-    """Send a command to ESP32"""
+    """A raw command to the LED wall (the Test modal, the Animations list)"""
     data = request.get_json()
     command = data.get('command', '')
-    
+
     if not command:
         return jsonify({
             'success': False,
             'error': 'No command provided'
         }), 400
-    
-    response = esp32.send_command(command)
-    success = not response.startswith('ERROR')
-    
-    return jsonify({
-        'success': success,
-        'command': command,
-        'response': response
-    })
+
+    return led_reply(esp32.send(command), command=command)
 
 
 @app.route('/api/led/all_on', methods=['POST'])
 def api_led_all_on():
     """Turn all LEDs on"""
-    response = esp32.all_on()
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'response': response
-    })
+    return led_reply(esp32.all_on())
 
 
 @app.route('/api/led/all_off', methods=['POST'])
 def api_led_all_off():
-    """Turn all LEDs off"""
-    response = esp32.all_off()
-    
-    # Stop tote board display
+    """Turn all LEDs off, and stop the tote board's display"""
+    queued = esp32.all_off()
     tote_send('stop')
-    
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'response': response
-    })
+    return led_reply(queued)
 
 
 @app.route('/api/led/brightness', methods=['POST'])
@@ -222,13 +199,7 @@ def api_led_brightness():
     """Set LED brightness"""
     data = request.get_json()
     brightness = data.get('brightness', 50)
-    
-    response = esp32.set_brightness(brightness)
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'brightness': brightness,
-        'response': response
-    })
+    return led_reply(esp32.set_brightness(brightness), brightness=brightness)
 
 
 @app.route('/api/led/color', methods=['POST'])
@@ -236,13 +207,7 @@ def api_led_color():
     """Set all LEDs to a color"""
     data = request.get_json()
     color = data.get('color', 'FFFFFF')
-    
-    response = esp32.set_color(color)
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'color': color,
-        'response': response
-    })
+    return led_reply(esp32.set_color(color), color=color)
 
 
 @app.route('/api/led/cup', methods=['POST'])
@@ -251,41 +216,24 @@ def api_led_cup():
     data = request.get_json()
     cup_number = data.get('cup', 1)
     color = data.get('color', 'FFFFFF')
-    
-    response = esp32.set_cup(cup_number, color)
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'horse': cup_number,
-        'color': color,
-        'response': response
-    })
+    return led_reply(esp32.set_cup(cup_number, color), horse=cup_number, color=color)
 
 
 @app.route('/api/animation/<anim_name>', methods=['POST'])
 def api_animation(anim_name):
-    """Start an animation"""
-    # Check if this is RESULTS_ACTIVE with parameters
+    """Start an animation: handed to the wall's worker, and the tote board
+    told where the animation has a display of its own"""
+    # RESULTS_ACTIVE with the three horses: the winners' cups on the wall, the official figures on the tote
     if anim_name == 'RESULTS_ACTIVE':
         data = request.get_json()
         if data and 'win' in data and 'place' in data and 'show' in data:
             win = data.get('win', 1)
             place = data.get('place', 2)
             show = data.get('show', 3)
-            
-            # Send command directly to ESP32 with parameters
-            command = f"ANIM:RESULTS_ACTIVE:{win}:{place}:{show}"
-            response = esp32.send_command(command)
-            
-            # Send official results to tote board
             tote_send('official', win, place, show)
-            
-            return jsonify({
-                'success': not response.startswith('ERROR'),
-                'animation': anim_name,
-                'response': response
-            })
-    
-    # Map animations to tote board commands
+            return led_reply(esp32.send(f"ANIM:RESULTS_ACTIVE:{win}:{place}:{show}"), animation=anim_name)
+
+    # The tote board's display for the animations that have one
     tote_mapping = {
         'WELCOME': ('welcome',),
         'RACE_START': ('race_start',),
@@ -294,22 +242,10 @@ def api_animation(anim_name):
         'BETTING_15': ('betting_open', 15),
         'BETTING_5': ('final_call',),
     }
-    
-    # Send to tote board if mapping exists
     if anim_name in tote_mapping:
-        tote_action = tote_mapping[anim_name]
-        if len(tote_action) > 1:
-            tote_send(tote_action[0], tote_action[1])
-        else:
-            tote_send(tote_action[0])
-    
-    # Regular animation (no parameters)
-    response = esp32.start_animation(anim_name)
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'animation': anim_name,
-        'response': response
-    })
+        tote_send(*tote_mapping[anim_name])
+
+    return led_reply(esp32.start_animation(anim_name), animation=anim_name)
 
 
 def load_params_cache():
@@ -582,13 +518,12 @@ def api_results():
             'show': show
         })
 
-        # Then the LED controller. The three cups were locked as they were
+        # Then the LED wall, through its worker. The three cups were locked as they were
         # picked (CUP:LOCK); what is left of the results on the LEDs is
         # RESULTS:FINALIZE, the winners' chase settling into the heartbeat,
         # which the page used to send itself (/api/results/finalize). The
-        # results stand whatever it answers.
-        response = esp32.send_command('RESULTS:FINALIZE')
-        leds = 'unreachable' if response.startswith('ERROR') else 'ok'
+        # results stand whatever the wall does: 'leds' is its health as last known.
+        esp32.send('RESULTS:FINALIZE')
 
         return jsonify({
             'success': True,
@@ -598,8 +533,7 @@ def api_results():
                 'show': show,
                 'next': after
             },
-            'leds': leds,
-            'response': response,
+            'leds': leds_word(),
             'race': race,
             'race_error': race_error
         })
@@ -701,22 +635,14 @@ def api_cup_lock():
     r = data.get('r', 255)
     g = data.get('g', 255)
     b = data.get('b', 255)
-    
+
     if not cup:
         return jsonify({
             'success': False,
             'error': 'Cup number required'
         }), 400
-    
-    command = f"CUP:LOCK:{cup}:{r}:{g}:{b}"
-    response = esp32.send_command(command)
-    
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'cup': cup,
-        'color': {'r': r, 'g': g, 'b': b},
-        'response': response
-    })
+
+    return led_reply(esp32.send(f"CUP:LOCK:{cup}:{r}:{g}:{b}"), cup=cup, color={'r': r, 'g': g, 'b': b})
 
 
 @app.route('/api/cup/unlock', methods=['POST'])
@@ -724,36 +650,20 @@ def api_cup_unlock():
     """Unlock cup(s) to return to animation"""
     data = request.get_json()
     cup = data.get('cup', 'ALL')
-    
-    if cup == 'ALL':
-        command = "CUP:UNLOCK:ALL"
-    else:
-        command = f"CUP:UNLOCK:{cup}"
-    
-    response = esp32.send_command(command)
-    
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'cup': cup,
-        'response': response
-    })
+    return led_reply(esp32.send(f"CUP:UNLOCK:{cup}"), cup=cup)
 
 
 @app.route('/api/results/finalize', methods=['POST'])
 def api_results_finalize():
     """Signal ESP32 to begin seamless winner blend (no LED interruption)"""
-    response = esp32.send_command('RESULTS:FINALIZE')
-    return jsonify({
-        'success': response == 'OK:RESULTS:FINALIZE',
-        'response': response
-    })
+    return led_reply(esp32.send('RESULTS:FINALIZE'))
 
 
 @app.route('/api/params', methods=['GET'])
 def api_params_get():
     """Get all animation params — fetch from ESP32 and cache locally."""
     try:
-        response = esp32.send_command('PARAM:GET:ALL')
+        response = esp32.ask('PARAM:GET:ALL')
         if response and response.startswith('PARAMS:'):
             params = parse_params_response(response)
             save_params_cache(params)
@@ -787,7 +697,7 @@ def api_params_set():
         return jsonify({'success': False, 'error': 'key and value required'}), 400
 
     command = f'PARAM:SET:{key}:{int(value)}'
-    response = esp32.send_command(command)
+    response = esp32.ask(command)
     success = response and response.startswith('OK:PARAM:SET')
 
     if success:
@@ -807,7 +717,7 @@ def api_params_set():
 @app.route('/api/params/save', methods=['POST'])
 def api_params_save():
     """Tell ESP32 to persist current params to EEPROM."""
-    response = esp32.send_command('PARAM:SAVE')
+    response = esp32.ask('PARAM:SAVE')
     success = response == 'OK:PARAM:SAVED'
     return jsonify({'success': success, 'response': response})
 
@@ -815,7 +725,7 @@ def api_params_save():
 @app.route('/api/params/reset', methods=['POST'])
 def api_params_reset():
     """Reset ESP32 params to defaults and clear local cache."""
-    response = esp32.send_command('PARAM:RESET')
+    response = esp32.ask('PARAM:RESET')
     success = response == 'OK:PARAM:RESET'
     if success:
         # Clear local cache so next GET fetches fresh defaults
@@ -908,97 +818,69 @@ def api_race():
 
 @app.route('/api/reset', methods=['POST'])
 def api_reset():
-    """Reset to idle state"""
-    response = esp32.reset()
-    
-    # Send welcome to tote board
+    """Reset to idle state: RESET to the wall, the welcome on the tote board"""
+    queued = esp32.reset()
     tote_send('welcome')
-    
-    return jsonify({
-        'success': not response.startswith('ERROR'),
-        'response': response
-    })
+    return led_reply(queued)
 
 
 @app.route('/api/tote/ping', methods=['GET'])
 def api_tote_ping():
-    """Test connection to tote board"""
-    if not TOTE_ENABLED or not tote:
+    """Ask the tote board for its /status: an ask, which waits up to the
+    board's timeout and answers at once while the board is marked down."""
+    if not tote:
         return jsonify({
             'success': False,
             'status': 'DISABLED',
             'message': 'Tote board is disabled'
         })
-    
-    is_connected = tote.ping()
+
+    online = tote.ping()
     return jsonify({
-        'success': is_connected,
-        'status': 'ONLINE' if is_connected else 'OFFLINE',
-        'response': tote.get_last_response()
+        'success': online,
+        'status': 'ONLINE' if online else 'OFFLINE'
     })
+
+
+TOTE_ACTIONS = ('welcome', 'scroll', 'betting_open', 'final_call', 'race_start', 'official', 'test', 'stop')
 
 
 @app.route('/api/tote/command', methods=['POST'])
 def api_tote_command():
-    """Send a command to tote board"""
-    if not TOTE_ENABLED or not tote:
+    """A display call on the tote board by name (TOTE_ACTIONS), with its arguments"""
+    if not tote:
         return jsonify({
             'success': False,
             'error': 'Tote board is disabled'
         }), 503
-    
+
     data = request.get_json()
     action = data.get('action', '')
-    params = data.get('params', {})
-    
-    if not action:
+
+    if action not in TOTE_ACTIONS:
         return jsonify({
             'success': False,
-            'error': 'No action provided'
+            'error': f"action must be one of {', '.join(TOTE_ACTIONS)}"
         }), 400
-    
-    response = tote_send(action, **params)
-    success = response and not response.startswith('ERROR')
-    
+
+    tote_send(action, **data.get('params', {}))
     return jsonify({
-        'success': success,
-        'action': action,
-        'response': response
+        'success': True,
+        'action': action
     })
-
-
-@app.route('/api/power', methods=['GET'])
-def api_power():
-    """Get software-estimated power draw from ESP32"""
-    power = esp32.get_power_status()
-    if power:
-        return jsonify({'success': True, **power})
-    return jsonify({'success': False, 'current_ma': 0, 'peak_ma': 0, 'min_ma': 0})
 
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
-    """Get system status"""
-    is_connected = esp32.is_connected()
-    
-    status = {
-        'esp32_connected': is_connected,
-        'esp32_ip': esp32.ip,
-        'esp32_port': esp32.port,
+    """Both devices' health as their workers last learned it (the Control
+    Center's two pills read it every 5 s): nothing here asks a device."""
+    return jsonify({
+        'leds': esp32.health(),
+        'tote': tote.health() if tote else {'enabled': False},
         'num_cups': NUM_CUPS,
         'total_leds': TOTAL_LEDS,
-        'version': VERSION,
-        'tote_enabled': TOTE_ENABLED
-    }
-    
-    if TOTE_ENABLED and tote:
-        status['tote_connected'] = tote.is_connected
-        status['tote_ip'] = tote.ip
-    else:
-        status['tote_connected'] = False
-        status['tote_ip'] = None
-    
-    return jsonify(status)
+        'version': VERSION
+    })
 
 
 @app.route('/api/esp32/config', methods=['GET'])
@@ -1284,20 +1166,12 @@ if __name__ == '__main__':
     if not WEATHER_API_KEY:
         print("  Weather:       no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off")
 
-    # Tote board information and startup
-    if TOTE_ENABLED and tote:
-        print(f"  Tote Board: {tote.ip}:{tote.port}")
-        print("\n  Testing tote board connection...")
-        if tote.ping():
-            print("  ✓ Tote board ONLINE")
-            # Send welcome message on startup
-            tote.welcome()
-            print("  ✓ Welcome message sent to tote board")
-        else:
-            print("  ✗ Tote board OFFLINE")
+    if tote:
+        print(f"  Tote Board:    {tote.ip}:{tote.port}")
+        tote.welcome()                      # the welcome at start, through its worker (which says if the board does not answer)
     else:
-        print("  Tote Board: DISABLED")
-    
+        print("  Tote Board:    none (DDM_TOTE_IP in pi5/.env)")
+
     print(f"  Racing Service: READY (auto-progression via POST /api/racing/start)")
     print(f"\n  Debug Mode: {FLASK_DEBUG}\n")
     print("="*60 + "\n")

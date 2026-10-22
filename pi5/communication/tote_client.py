@@ -1,162 +1,84 @@
-# tote_client.py - HTTP client to communicate with Interstate75 LED tote board
+# tote_client.py - The tote board (Interstate75 LED display), through one queued sender
+#
+# HTTP GET to the board, TOTE_TIMEOUT to answer. Nothing here waits for it on
+# a request thread: every display call hands its path to the Sender
+# (communication/sender.py) and returns; ping() asks and waits. One key for
+# the display (/tote): the newest figures replace older ones waiting, and the
+# last figures go out again when the board returns. The sender's probe,
+# /status every 5 s idle, keeps the board's health fresh for GET /api/status.
+
+import time
+from typing import Any, Dict
+from urllib.parse import urlencode
 
 import requests
-from urllib.parse import urlencode
+
+from communication.sender import Sender, Unreachable, logs_probes
+
+
+def key_of(path: str) -> str:
+    return path.partition("?")[0]
+
+
+def is_state(path: str) -> bool:
+    return path.startswith("/tote")
 
 
 class ToteClient:
-    """Client for sending commands to Interstate75 LED tote board via HTTP"""
-    
-    def __init__(self, ip, port=80, timeout=2.0):
+    def __init__(self, ip, port=80, timeout=2.0, clock=time.time, log=print):
         self.ip = ip
         self.port = port
         self.timeout = timeout
-        self.connected = False
-        self.last_response = ""
         self.base_url = f"http://{ip}:{port}"
-    
-    def _send(self, endpoint, params=None):
-        """
-        Send HTTP GET request to tote board
-        
-        Args:
-            endpoint: URL endpoint (e.g., "/status", "/tote")
-            params: Dictionary of query parameters
-        
-        Returns:
-            Response text, or error message
-        """
+        self.sender = Sender("Tote board", "[TOTE]", f"{ip}:{port}", self, timeout, key_of, is_state,
+                             probe="/status", clock=clock, log=log)
+
+    def exchange(self, path: str) -> str:
+        """One GET to the board, on the sender's thread. Raises Unreachable when it did not answer."""
         try:
-            url = f"{self.base_url}{endpoint}"
-            
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = requests.get(self.base_url + path, timeout=self.timeout)
             response.raise_for_status()
-            
-            self.last_response = response.text
-            self.connected = True
-            
-            param_str = f"?{urlencode(params)}" if params else ""
-            print(f"[TOTE] GET {endpoint}{param_str} | Status: {response.status_code}")
-            
-            return response.text
-        
         except requests.Timeout:
-            self.connected = False
-            error = "ERROR:TIMEOUT"
-            print(f"[TOTE] Timeout on {endpoint}")
-            return error
-        
+            raise Unreachable("TIMEOUT", "timed out")
         except requests.ConnectionError:
-            self.connected = False
-            error = "ERROR:CONNECTION_REFUSED"
-            print(f"[TOTE] Connection error to {self.base_url}")
-            return error
-        
+            raise Unreachable("CONNECTION_REFUSED", "connection refused")
         except requests.HTTPError as e:
-            self.connected = False
-            error = f"ERROR:HTTP:{e.response.status_code}"
-            print(f"[TOTE] HTTP error: {e}")
-            return error
-        
-        except Exception as e:
-            self.connected = False
-            error = f"ERROR:EXCEPTION:{str(e)}"
-            print(f"[TOTE] Exception: {e}")
-            return error
-    
-    def ping(self):
-        """Test connection to tote board"""
-        response = self._send("/status")
-        return not response.startswith("ERROR")
-    
-    @property
-    def is_connected(self):
-        """Check if tote board is reachable"""
-        return self.connected
-    
-    def welcome(self):
-        """Display welcome animation"""
-        return self._send("/tote", {"mode": "welcome"})
-    
-    def scroll(self, message, color="gold", speed=3):
-        """
-        Display scrolling message
-        
-        Args:
-            message: Text to scroll
-            color: Color name (e.g., "gold", "green", "red")
-            speed: Scroll speed 1-10 (default 3)
-        """
-        params = {
-            "mode": "scroll",
-            "msg": message,
-            "color": color,
-            "speed": speed
-        }
-        return self._send("/tote", params)
-    
-    def betting_open(self, minutes=60):
-        """
-        Display betting countdown
-        
-        Args:
-            minutes: Minutes until betting closes (default 60)
-        """
-        params = {
-            "mode": "betting",
-            "mins": minutes
-        }
-        return self._send("/tote", params)
-    
-    def final_call(self):
-        """Display final call for bets"""
-        return self._send("/tote", {"mode": "finalcall"})
-    
-    def race_start(self):
-        """Display race start animation"""
-        return self._send("/tote", {"mode": "racestart"})
-    
-    def official(self, win, place, show):
-        """
-        Display official race results
-        
-        Args:
-            win: Horse number for Win position (1-20)
-            place: Horse number for Place position (1-20)
-            show: Horse number for Show position (1-20)
-        """
-        params = {
-            "mode": "official",
-            "win": win,
-            "place": place,
-            "show": show
-        }
-        return self._send("/tote", params)
-    
-    def test(self):
-        """Display test pattern"""
-        return self._send("/tote", {"mode": "test"})
-    
-    def stop(self):
-        """Stop all animations and clear display"""
-        return self._send("/tote", {"mode": "stop"})
-    
-    def get_last_response(self):
-        """Get the last response received from tote board"""
-        return self.last_response
+            raise Unreachable(f"HTTP:{e.response.status_code}", f"HTTP {e.response.status_code}")
+        if path != "/status" or logs_probes():
+            print(f"[TOTE] GET {path} | Status: {response.status_code}")
+        return response.text
 
+    def _display(self, params: Dict[str, Any]) -> None:
+        self.sender.send("/tote?" + urlencode(params))
 
-# Global client instance
-_tote_client = None
+    def ping(self) -> bool:
+        return not self.sender.ask("/status").startswith("ERROR")
 
+    def health(self) -> Dict[str, Any]:
+        h = self.sender.health()
+        h["enabled"] = True
+        return h
 
-def init_tote_client(ip, port=80, timeout=2.0):
-    """Initialize the global tote client instance"""
-    global _tote_client
-    _tote_client = ToteClient(ip, port, timeout)
-    return _tote_client
+    def welcome(self) -> None:
+        self._display({"mode": "welcome"})
 
+    def scroll(self, message, color="gold", speed=3) -> None:
+        self._display({"mode": "scroll", "msg": message, "color": color, "speed": speed})
 
-def get_tote_client():
-    """Get the global tote client instance"""
-    return _tote_client
+    def betting_open(self, minutes=60) -> None:
+        self._display({"mode": "betting", "mins": minutes})
+
+    def final_call(self) -> None:
+        self._display({"mode": "finalcall"})
+
+    def race_start(self) -> None:
+        self._display({"mode": "racestart"})
+
+    def official(self, win, place, show) -> None:
+        self._display({"mode": "official", "win": win, "place": place, "show": show})
+
+    def test(self) -> None:
+        self._display({"mode": "test"})
+
+    def stop(self) -> None:
+        self._display({"mode": "stop"})

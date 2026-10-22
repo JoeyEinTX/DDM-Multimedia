@@ -27,19 +27,11 @@
     <div class="container">
         <!-- Top Status Bar -->
         <div class="top-status-bar">
-            <!-- Left: WiFi + Device status -->
+            <!-- Left: the two devices' health, a pill each (tap: the device modal) -->
             <div class="top-status-left">
-                <div class="footer-wifi" id="footer-wifi" title="WiFi Signal">
-                    <div class="wifi-bars">
-                        <span class="wifi-bar bar-1" id="wifi-bar-1"></span>
-                        <span class="wifi-bar bar-2" id="wifi-bar-2"></span>
-                        <span class="wifi-bar bar-3" id="wifi-bar-3"></span>
-                        <span class="wifi-bar bar-4" id="wifi-bar-4"></span>
-                    </div>
-                </div>
-                <div class="footer-device" id="footer-device" onclick="toggleDeviceModal()" title="Connected Devices">
-                    <span class="device-icon" id="device-icon">⬡</span>
-                    <span class="device-count-badge" id="device-count-badge">0</span>
+                <div class="footer-device" id="footer-device" onclick="toggleDeviceModal()" title="Devices">
+                    <span class="device-pill" id="device-leds">LED wall</span>
+                    <span class="device-pill" id="device-tote">Tote board</span>
                 </div>
             </div>
             <!-- Right: Hamburger menu button -->
@@ -52,9 +44,6 @@
             </div>
             <!-- Hidden elements kept for JS compatibility -->
             <span id="current-mode" style="display:none;">STANDBY</span>
-            <span id="device-count" style="display:none;">0</span>
-            <span id="device-plural" style="display:none;">s</span>
-            <span id="power-display" style="display:none;"></span>
         </div>
 
         <!-- Row 1: Hero Header — Logo -->
@@ -203,17 +192,13 @@
         </div>
     </div>
 
-    <!-- Device Status Modal - ESP32 Controllers Only -->
+    <!-- Device modal: the two devices, their addresses and health; the LED wall's address can be changed -->
     <div id="device-modal" class="modal">
         <div class="modal-content">
             <span class="modal-close-tab" onclick="closeDeviceModal()">&times;</span>
-            <h2>Connected Devices</h2>
+            <h2>Devices</h2>
             <div id="device-list" class="device-list">
-                <!-- Device list will be populated by JavaScript -->
-            </div>
-            <div id="no-devices" class="no-devices" style="display: none;">
-                <p>No devices connected</p>
-                <p class="device-note">Waiting for ESP32 controllers...</p>
+                <!-- The rows: renderDevices(), from /api/status every 5 s -->
             </div>
 
             <!-- ESP32 IP configuration -->

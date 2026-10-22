@@ -168,9 +168,9 @@ def test_led_client_off_without_an_address():
                 "socket.socket = refuse\n"
                 "from communication.esp32_client import ESP32Client\n"
                 "c = ESP32Client(ip='')\n"
-                "print(c.send_command('ANIM:BETTING_60'), c.send_command('STATUS'), c.ping(), c.connected)")
-    _check("no LED address: every command answers ERROR:NO_LED_CONTROLLER at once, no socket opened",
-           run.stdout.strip() == "ERROR:NO_LED_CONTROLLER ERROR:NO_LED_CONTROLLER False False", run.stdout + run.stderr[-400:])
+                "print(c.send('ANIM:BETTING_60'), c.ask('STATUS'), c.ping(), c.health()['enabled'])")
+    _check("no LED address: a send is dropped (and returns what was asked), an ask answers ERROR:NO_LED_CONTROLLER at once, no socket opened",
+           run.stdout.strip() == "ANIM:BETTING_60 ERROR:NO_LED_CONTROLLER False False", run.stdout + run.stderr[-400:])
     _check("no LED address: and logs nothing per command", run.stdout.strip().count("\n") == 0, run.stdout)
 
 
@@ -216,8 +216,8 @@ def test_main_starts_with_no_env():
                stdout.count("no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off") == 1, stdout[-800:])
         _check("the bridge idles: LQ_SERIAL_PORT is empty", "La Quiniela bridge idle: LQ_SERIAL_PORT is empty" in stdout + stderr,
                (stdout + stderr)[-800:])
-        _check("no LED controller is tried: no unreachable line", "LED controller unreachable" not in stdout)
-        _check("no tote board", "Tote Board: DISABLED" in stdout)
+        _check("no LED controller is tried: no unreachable line, no probe", "LED wall unreachable" not in stdout)
+        _check("no tote board", "Tote Board:    none (DDM_TOTE_IP in pi5/.env)" in stdout)
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/esp32/config", method="POST",
                                      data=json.dumps({"ip": "127.0.0.9"}).encode(), headers={"Content-Type": "application/json"})
         answer = json.loads(urllib.request.urlopen(req, timeout=30).read())

@@ -784,8 +784,10 @@ not the operator's), where it used to check them against posts 1-20.
 `POST /api/results` saves them first, always, and sets WINNER with them;
 only then does it tell the LED controller (`RESULTS:FINALIZE`, the winners'
 chase settling into the heartbeat: the three cups were already locked as
-they were picked). Its reply carries `"leds": "ok"` or `"unreachable"`, the
-dashboard's notification says `· LEDs unreachable` in red, and the results
+they were picked). The command is handed to the wall's worker
+(`communication/sender.py`: nothing in pi5 waits on the wall), its reply
+carries `"leds"`, the wall's health as last known (`online`, `unreachable`,
+`unknown`, `off`; the Control Center's pill says the same), and the results
 stand either way. `success` is false only when the file could not be written
 (500, `results not saved: ...`); then nothing moves.
 
@@ -1386,11 +1388,11 @@ Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
   never move the race state: the Animations list, the Animation Library's
   previews and a button toggled off are LEDs only. Nothing about the LEDs
   changed.
-- The race state does not wait on the LEDs: with the LED controller
-  unreachable a mode button still sets it, and its notification says both
-  (`Error: ERROR:TIMEOUT · FINAL CALL`). Nor do the results: SET WINNERS
-  saves them and sets WINNER first, and says `· LEDs unreachable` after
-  (the LED rule, under Results).
+- Nothing waits on the LEDs (since 2026-10-21): pi5 hands every LED command
+  to the wall's worker and answers at once; a mode button's line names the
+  race state (`Animation: FINAL_CALL · FINAL CALL`), and the wall's health is
+  the pill's, top left. The results the same: SET WINNERS saves them and sets
+  WINNER first (the LED rule, under Results).
 - The admin page shows the state read-only, from the model's `race_state`
   within its 5 s refresh, with a link to the dashboard to change it. `state
   N` on the cmd route sets the same value directly and starts no LED
@@ -1614,9 +1616,9 @@ thirteen buttons, twelve
 carrying a mode (TEST none: pi5 refuses it), the LED command each one sends (unchanged), the race
 state each one sets, the results making it WINNER and RESET making it
 AFTER_PARTY; the results saved, WINNER in one line and `"leds":
-"unreachable"` with the LED controller down (RESULTS:FINALIZE tried once,
+"unreachable"` with the LED wall down (RESULTS:FINALIZE handed to its worker
 after the save), a file that cannot be written moving nothing (500), the
-page's red `· LEDs unreachable` and its following the server's results, and
+page's following the server's results, and
 that nothing main.py runs at start removes a file; `POST /api/results`
 refusing a missing, null, repeated or out-of-field horse with a 400 that
 saves and sends nothing; and, in headless Chrome, the race-night guards:

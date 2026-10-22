@@ -239,118 +239,74 @@ function showNotification(message, type = 'success') {
     }, 3000);
 }
 
-// Track ESP32 connection state
-let esp32WasOnline = false;
+// =====================================================================
+// The devices: the LED wall and the tote board (Joey, DevPi, 2026-10-20)
+// =====================================================================
+// Neither blocks the race: pi5 hands every send to the device's worker and answers at once, so the page never
+// waits on a device and never asks after one per tap. GET /api/status, every 5 s, is what the workers last
+// learned; it feeds the two pills in the top bar (LED wall · online / unreachable since hh:mm / off), the rows
+// of the device modal, the power figures in the Tuning modal, and one toast when a device goes away (the race
+// goes on; the device catches up when it returns) and one when it is back. The AUTO card's dot reads it too.
+const DEVICE_NAMES = { leds: 'LED wall', tote: 'Tote board' };
+let devices = null;                                   // the last /api/status
+const deviceWasOnline = { leds: null, tote: null };   // per device, online as last rendered (null: never known)
 
-// Track ESP32 connection info
-let esp32Info = {
-    online: false,
-    ip: null
-};
-
-// Check ESP32 status
-async function checkESP32Status() {
-    try {
-        const response = await fetch('/api/ping');
-        const data = await response.json();
-        
-        const isOnline = data.success;
-        esp32Info.online = isOnline;
-        
-        if (isOnline) {
-            esp32WasOnline = true;
-        }
-        updateRaceControlDotFromEsp32();
-        if (!isOnline) {
-            // If ESP32 just went offline, clear active buttons
-            if (esp32WasOnline) {
-                clearActiveButton();
-                document.getElementById('current-mode').textContent = 'DISCONNECTED';
-                filterTuningGroups('DISCONNECTED');
-                showNotification('ESP32 disconnected - animation stopped', 'error');
-                esp32WasOnline = false;
-            }
-        }
-
-        // Update device count (ESP32 devices only - 0 or 1)
-        const deviceCount = isOnline ? 1 : 0;
-        document.getElementById('device-count').textContent = deviceCount;
-        document.getElementById('device-plural').textContent = deviceCount === 1 ? '' : 's';
-        
-        // Update device modal list
-        updateDeviceList();
-        
-    } catch (error) {
-        console.error('Error checking ESP32 status:', error);
-        esp32Info.online = false;
-        updateRaceControlDotFromEsp32();
-        
-        // If ESP32 just went offline, clear active buttons
-        if (esp32WasOnline) {
-            clearActiveButton();
-            document.getElementById('current-mode').textContent = 'DISCONNECTED';
-            filterTuningGroups('DISCONNECTED');
-            showNotification('ESP32 disconnected - animation stopped', 'error');
-            esp32WasOnline = false;
-        }
-
-        // Update device count
-        document.getElementById('device-count').textContent = '0';
-        document.getElementById('device-plural').textContent = 's';
-        
-        // Update device modal list
-        updateDeviceList();
-    }
+function hhmm(seconds) {
+    const t = new Date(seconds * 1000);
+    return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
 }
 
-// Get system status (ESP32 IP)
-async function getSystemStatus() {
+// 'online', 'unreachable since hh:mm', 'off' (no address set), or '' while nothing has been exchanged yet
+function deviceWord(device) {
+    if (!device.enabled) return 'off';
+    if (device.online === null) return '';
+    return device.online ? 'online' : 'unreachable since ' + hhmm(device.unreachable_since);
+}
+
+function ledsOnline() {
+    return !!(devices && devices.leds.online);
+}
+
+function renderDevices(status) {
+    devices = status;
+    const rows = [];
+    for (const which of ['leds', 'tote']) {
+        const device = status[which];
+        const name = DEVICE_NAMES[which];
+        const word = deviceWord(device);
+        const pill = document.getElementById('device-' + which);
+        pill.textContent = word ? `${name} · ${word}` : name;
+        pill.className = 'device-pill' + (!device.enabled ? ' off' : device.online === null ? '' : device.online ? ' online' : ' unreachable');
+        rows.push(`<div class="device-item"><span class="device-name">${name}</span>` +
+                  `<span class="device-address">${device.enabled ? device.address : ''}</span>` +
+                  `<span class="device-status-value${!device.enabled || device.online === null ? '' : device.online ? ' connected' : ' offline'}">` +
+                  `${word}</span></div>`);
+        // a toast on a change only: none for a device that was never away, or that was already away when the page opened
+        if (device.enabled && device.online !== null && deviceWasOnline[which] !== null && device.online !== deviceWasOnline[which]) {
+            showNotification(device.online ? `${name} back online`
+                : `${name} unreachable since ${hhmm(device.unreachable_since)} · the race goes on; it catches up when it returns`,
+                device.online ? 'success' : 'error');
+        }
+        if (device.enabled && device.online !== null) deviceWasOnline[which] = device.online;
+    }
+    document.getElementById('device-list').innerHTML = rows.join('');
+    const power = status.leds.power;
+    document.getElementById('tuning-power-display').textContent = power
+        ? `⚡ ${(power.current_ma / 1000).toFixed(1)}A (peak: ${(power.peak_ma / 1000).toFixed(1)}A)` : '⚡ --';
+    updateRaceControlDot();
+}
+
+async function pollDevices() {
     try {
         const response = await fetch('/api/status');
-        const data = await response.json();
-        
-        if (data.esp32_ip) {
-            esp32Info.ip = data.esp32_ip;
-            updateDeviceList();
-        }
+        renderDevices(await response.json());
     } catch (error) {
-        console.error('Error getting system status:', error);
-    }
-}
-
-// Update device list in modal
-function updateDeviceList() {
-    const deviceList = document.getElementById('device-list');
-    const noDevices = document.getElementById('no-devices');
-    
-    if (esp32Info.online) {
-        // Show device, hide "no devices" message
-        deviceList.style.display = 'flex';
-        noDevices.style.display = 'none';
-        
-        // Build device item
-        deviceList.innerHTML = `
-            <div class="device-item">
-                <span class="device-icon">🔌</span>
-                <span class="device-name">ESP32 LED Controller</span>
-                <span class="device-status-value connected">ONLINE</span>
-            </div>
-            <div class="device-item">
-                <span class="device-icon">💡</span>
-                <span class="device-name">IP Address</span>
-                <span class="device-status-value">${esp32Info.ip || '---'}</span>
-            </div>
-        `;
-    } else {
-        // Hide device list, show "no devices" message
-        deviceList.style.display = 'none';
-        noDevices.style.display = 'block';
+        console.error('Error polling the devices:', error);
     }
 }
 
 // Toggle device status modal
 function toggleDeviceModal() {
-    updateDeviceList(); // Refresh before showing
     const modal = document.getElementById('device-modal');
     modal.classList.add('active');
 }
@@ -444,13 +400,7 @@ async function updateEsp32Config() {
             showNotification(`ESP32 IP saved (${data.ip}) but PING failed`, 'error');
         }
 
-        // Refresh status panel so the device list reflects the new IP
-        if (typeof esp32Info !== 'undefined') {
-            esp32Info.ip = data.ip;
-        }
-        if (typeof checkESP32Status === 'function') {
-            checkESP32Status();
-        }
+        pollDevices();                   // the pills and the modal's rows follow the new address
     } catch (error) {
         console.error('Error updating ESP32 config:', error);
         setEsp32ConfigStatus('fail', 'Network error');
@@ -470,26 +420,17 @@ async function sendCommand(command, buttonElement, toggle = false) {
         showLoader();
         try {
             // Send command to stop (turn off LEDs)
-            const response = await fetch('/api/command', {
+            await fetch('/api/command', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ command: 'LED:ALL_OFF' })
             });
-
-            const data = await response.json();
-
-            if (data.success) {
-                showNotification('Test stopped', 'success');
-                document.getElementById('current-mode').textContent = 'IDLE';
-                filterTuningGroups('IDLE');
-                await checkESP32Status();
-                hideLoader();
-            } else {
-                hideLoader(true); // Hide immediately on error
-                showNotification(`Error: ${data.response}`, 'error');
-            }
+            showNotification('Test stopped', 'success');
+            document.getElementById('current-mode').textContent = 'IDLE';
+            filterTuningGroups('IDLE');
+            hideLoader();
         } catch (error) {
             hideLoader(true); // Hide immediately on error
             console.error('Error stopping command:', error);
@@ -505,31 +446,22 @@ async function sendCommand(command, buttonElement, toggle = false) {
 
     showLoader();
     try {
-        const response = await fetch('/api/command', {
+        await fetch('/api/command', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ command: command })
         });
+        showNotification(`Command sent: ${command}`, 'success');
+        document.getElementById('current-mode').textContent = command.split(':')[0];
+        filterTuningGroups(command.split(':')[0].toUpperCase());
 
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification(`Command sent: ${command}`, 'success');
-            document.getElementById('current-mode').textContent = command.split(':')[0];
-            filterTuningGroups(command.split(':')[0].toUpperCase());
-
-            // If toggle mode, set button as active
-            if (toggle) {
-                setActiveButton(buttonElement);
-            }
-            await checkESP32Status();
-            hideLoader();
-        } else {
-            hideLoader(true); // Hide immediately on error
-            showNotification(`Error: ${data.response}`, 'error');
+        // If toggle mode, set button as active
+        if (toggle) {
+            setActiveButton(buttonElement);
         }
+        hideLoader();
     } catch (error) {
         hideLoader(true); // Hide immediately on error
         console.error('Error sending command:', error);
@@ -559,9 +491,10 @@ function flashButton(buttonElement) {
 // /api/results/clear). Another dashboard, or Reset betting on La Quiniela's
 // admin page after the race, can change it too, so what it is now is read
 // back every 5 s, and again as a tap that could reopen betting is made. The
-// race state does not wait on the LEDs: with the LED controller unreachable
-// the button still moves it, and says so. (The Control Center has no ticker
-// since 2026-10-13: the TV's crawl is the only crawl.)
+// race state does not wait on the LEDs: pi5 hands the animation to the wall's
+// worker and answers at once, and the wall's health is the pill's, top left.
+// (The Control Center has no ticker since 2026-10-13: the TV's crawl is the
+// only crawl.)
 let raceModeInfo = null;   // {state, state_name, mode, label, source} as pi5 last reported it
 
 async function setRaceMode(mode) {
@@ -708,9 +641,9 @@ function updateRaceControlUI() {
         stateText.textContent = 'AUTO (API)';
         apiHint.style.display = 'inline';
         panels?.classList.add('race-control-auto');
-        // Status dot: green if ESP32 connected, yellow if not
+        // Status dot: green while the LED wall answers, yellow when not
         dot.classList.remove('status-manual', 'status-auto-connected', 'status-auto-disconnected');
-        dot.classList.add(esp32Info.online ? 'status-auto-connected' : 'status-auto-disconnected');
+        dot.classList.add(ledsOnline() ? 'status-auto-connected' : 'status-auto-disconnected');
     } else {
         stateText.textContent = 'MANUAL';
         apiHint.style.display = 'none';
@@ -781,13 +714,13 @@ function stopRaceStatePolling() {
     }
 }
 
-// Update status dot when ESP32 connection changes (AUTO mode)
-function updateRaceControlDotFromEsp32() {
+// The AUTO card's dot follows the LED wall's health (AUTO mode)
+function updateRaceControlDot() {
     if (raceControlMode !== 'auto') return;
     const dot = document.getElementById('race-control-dot');
     if (!dot) return;
     dot.classList.remove('status-auto-connected', 'status-auto-disconnected');
-    dot.classList.add(esp32Info.online ? 'status-auto-connected' : 'status-auto-disconnected');
+    dot.classList.add(ledsOnline() ? 'status-auto-connected' : 'status-auto-disconnected');
 }
 
 // =====================================================================
@@ -798,11 +731,10 @@ function updateRaceControlDotFromEsp32() {
 // at once: it is its own work), so a second state cannot overtake it. The
 // button tapped takes none until its own requests have ended and
 // MODE_HOLD_MS have passed, so a quick second tap cannot turn its animation
-// back off; it shows .is-sending meanwhile. The LEDs hold only that button:
-// with the LED controller slow or unreachable (pi5 waits up to 5 s for it)
-// every other mode can be pressed as soon as pi5 has the race state. The
-// full-screen loader did this before and held every button for the whole
-// LED call; the mode buttons no longer show it.
+// back off; it shows .is-sending meanwhile. (pi5 answers the LED request at
+// once as well, since 2026-10-21: the wall's worker takes it. The full-screen
+// loader once held every button for the whole LED call; the mode buttons no
+// longer show it.)
 const MODE_HOLD_MS = 2000;           // as long as the loader stayed up
 let raceStateSending = null;         // the race state's request while it is on its way
 const modesHeld = new Set();         // the mode buttons whose tap is still being sent
@@ -943,29 +875,18 @@ async function animate(animName, buttonElement) {
     }
     // One-shot animations that don't stay active
     const oneShotAnimations = ['IDLE'];
-    
+
     if (oneShotAnimations.includes(animName)) {
         // Clear all highlights and flash the button for one-shot
         clearAllActiveButtons();
         flashButton(buttonElement);
         showLoader();
         try {
-            const response = await fetch(`/api/animation/${animName}`, {
-                method: 'POST'
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                showNotification(`Animation: ${animName}`, 'success');
-                document.getElementById('current-mode').textContent = animName;
-                filterTuningGroups(animName.toUpperCase());
-                await checkESP32Status();
-                hideLoader();
-            } else {
-                hideLoader(true); // Hide immediately on error
-                showNotification(`Error: ${data.response}`, 'error');
-            }
+            await fetch(`/api/animation/${animName}`, { method: 'POST' });
+            showNotification(`Animation: ${animName}`, 'success');
+            document.getElementById('current-mode').textContent = animName;
+            filterTuningGroups(animName.toUpperCase());
+            hideLoader();
         } catch (error) {
             hideLoader(true); // Hide immediately on error
             console.error('Error sending animation:', error);
@@ -973,7 +894,7 @@ async function animate(animName, buttonElement) {
         }
         return;
     }
-    
+
     // Check toggle-off BEFORE clearing (so we can detect re-click on same button)
     const isToggleOff = (activeButton === buttonElement);
 
@@ -989,53 +910,36 @@ async function animate(animName, buttonElement) {
     if (isToggleOff) {
         try {
             // Send LED:ALL_OFF command to stop the animation and turn off LEDs
-            const response = await fetch('/api/command', {
+            await fetch('/api/command', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ command: 'LED:ALL_OFF' })
             });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showNotification('Animation stopped', 'success');
-                document.getElementById('current-mode').textContent = 'IDLE';
-                filterTuningGroups('IDLE');
-                clearActiveButton();
-                await checkESP32Status();
-            } else {
-                showNotification(`Error: ${data.response}`, 'error');
-            }
+            showNotification('Animation stopped', 'success');
+            document.getElementById('current-mode').textContent = 'IDLE';
+            filterTuningGroups('IDLE');
+            clearActiveButton();
         } catch (error) {
             console.error('Error stopping animation:', error);
             showNotification('Connection error', 'error');
         }
         return;
     }
-    
-    // Start new toggle animation. A mode button also names its mode to pi5
-    // (one race state); the LEDs are not waited for.
+
+    // Start new toggle animation. A mode button also names its mode to pi5 (one race state). The LEDs are not
+    // waited for: pi5 hands the animation to the wall's worker and answers at once, and what the wall is doing
+    // is the pill's, top left
     const raceSet = mode ? setRaceMode(mode) : null;
     if (raceSet) sendingRaceState(raceSet);
     try {
-        const response = await fetch(`/api/animation/${animName}`, {
-            method: 'POST'
-        });
-
-        const data = await response.json();
+        await fetch(`/api/animation/${animName}`, { method: 'POST' });
         const race = raceSet ? await raceSet : null;
-
-        if (data.success) {
-            showNotification(withRaceState(`Animation: ${animName}`, race), 'success');
-            document.getElementById('current-mode').textContent = animName;
-            filterTuningGroups(animName.toUpperCase());
-            setActiveButton(buttonElement);
-            await checkESP32Status();
-        } else {
-            showNotification(withRaceState(`Error: ${data.response}`, race), 'error');
-        }
+        showNotification(withRaceState(`Animation: ${animName}`, race), 'success');
+        document.getElementById('current-mode').textContent = animName;
+        filterTuningGroups(animName.toUpperCase());
+        setActiveButton(buttonElement);
     } catch (error) {
         console.error('Error sending animation:', error);
         showNotification(withRaceState('Connection error', raceSet ? await raceSet : null), 'error');
@@ -1055,23 +959,13 @@ async function standby() {
     sendingRaceState(raceSet);
     try {
         // Turn off all LEDs
-        const response = await fetch('/api/led/all_off', {
-            method: 'POST'
-        });
-
-        const data = await response.json();
+        await fetch('/api/led/all_off', { method: 'POST' });
         const race = await raceSet;
-
-        if (data.success) {
-            showNotification(withRaceState('Standby mode - LEDs off', race), 'success');
-            document.getElementById('current-mode').textContent = 'STANDBY';
-            filterTuningGroups('STANDBY');
-            // Clear active button state
-            clearActiveButton();
-            await checkESP32Status();
-        } else {
-            showNotification(`Error: ${data.response}`, 'error');
-        }
+        showNotification(withRaceState('Standby mode - LEDs off', race), 'success');
+        document.getElementById('current-mode').textContent = 'STANDBY';
+        filterTuningGroups('STANDBY');
+        // Clear active button state
+        clearActiveButton();
     } catch (error) {
         console.error('Error going to standby:', error);
         showNotification('Connection error', 'error');
@@ -1125,7 +1019,6 @@ async function sendReset() {
                 setRaceComplete(false);
                 // /api/results/clear ended the race on pi5 (AFTER PARTY): show it
                 await pollRaceMode();
-                await checkESP32Status();
                 hideLoader();
             } else {
                 hideLoader(true); // Hide immediately on error
@@ -1159,27 +1052,16 @@ async function emergencyStop() {
         clearAllActiveButtons();
         showLoader();
         try {
-            const response = await fetch('/api/led/all_off', {
-                method: 'POST'
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
-                document.getElementById('current-mode').textContent = 'STOPPED';
-                filterTuningGroups('STOPPED');
-                // Collapse emergency stop after use
-                const expanded = document.getElementById('emergency-expanded');
-                const icon = document.getElementById('emergency-icon');
-                expanded.classList.remove('active');
-                icon.style.display = 'flex';
-                await checkESP32Status();
-                hideLoader();
-            } else {
-                hideLoader(true); // Hide immediately on error
-                showNotification(`Error: ${data.response}`, 'error');
-            }
+            await fetch('/api/led/all_off', { method: 'POST' });
+            showNotification('EMERGENCY STOP - All LEDs OFF', 'error');
+            document.getElementById('current-mode').textContent = 'STOPPED';
+            filterTuningGroups('STOPPED');
+            // Collapse emergency stop after use
+            const expanded = document.getElementById('emergency-expanded');
+            const icon = document.getElementById('emergency-icon');
+            expanded.classList.remove('active');
+            icon.style.display = 'flex';
+            hideLoader();
         } catch (error) {
             hideLoader(true); // Hide immediately on error
             console.error('Error with emergency stop:', error);
@@ -2086,10 +1968,10 @@ async function closeResultsModal(keepAnimation = false) {
 
 // Confirm and apply results (horse numbers: what La Quiniela's cups and the
 // TV board are told; the LED cups were lit by post as they were picked), the
-// next finishers with them. pi5 saves them first, whatever the LED controller
-// does, and then sends it RESULTS:FINALIZE itself; data.leds says whether the
-// controller answered. A refusal from pi5 (a horse scratched since the picker
-// opened, a finisher it needs) goes in the note and the field is read again.
+// next finishers with them. pi5 saves them first, whatever the LED wall does,
+// and hands it RESULTS:FINALIZE itself (the pill, top left, says what the wall
+// is doing). A refusal from pi5 (a horse scratched since the picker opened, a
+// finisher it needs) goes in the note and the field is read again.
 async function resultsConfirm() {
     const winHorse = resultsState.win;
     const placeHorse = resultsState.place;
@@ -2117,15 +1999,11 @@ async function resultsConfirm() {
 
         if (data.success) {
             // The results stand either way. The line names the race state they set (WINNER); in red when La
-            // Quiniela refused it, with its reason; an unreachable LED controller only means the LEDs missed them
+            // Quiniela refused it, with its reason (what the LED wall does with them is the pill's, top left)
             const race = data.race ? { ok: true, ...data.race }
                 : { ok: false, error: data.race_error || 'La Quiniela did not answer' };
-            const set = withRaceState(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, race);
-            if (data.leds === 'unreachable') {
-                showNotification(`${set} · LEDs unreachable`, 'error');
-            } else {
-                showNotification(set, race.ok ? 'success' : 'error');
-            }
+            showNotification(withRaceState(`Results set: Win=${winHorse}, Place=${placeHorse}, Show=${showHorse}`, race),
+                race.ok ? 'success' : 'error');
             document.getElementById('current-mode').textContent = 'RESULTS';
             filterTuningGroups('RESULTS');
             localStorage.setItem('raceResults', JSON.stringify({
@@ -2144,7 +2022,6 @@ async function resultsConfirm() {
 
             closeResultsModal(true);
 
-            await checkESP32Status();
             hideLoader();
         } else {
             hideLoader(true); // Hide immediately on error
@@ -2953,24 +2830,14 @@ async function triggerAnimation(animName, buttonElement) {
     // Highlight selected button
     buttonElement.classList.add('active');
 
-    // Use existing sendAnimation for animations (sends to /api/animation/...)
+    // /api/animation/...: pi5 hands it to the wall's worker and answers at once
     try {
         showLoader();
-        const response = await fetch(`/api/animation/${animName}`, {
-            method: 'POST'
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification(`Animation: ${animName}`, 'success');
-            document.getElementById('current-mode').textContent = animName;
-            filterTuningGroups(animName.toUpperCase());
-            await checkESP32Status();
-            hideLoader();
-        } else {
-            hideLoader(true);
-            showNotification(`Error: ${data.response}`, 'error');
-        }
+        await fetch(`/api/animation/${animName}`, { method: 'POST' });
+        showNotification(`Animation: ${animName}`, 'success');
+        document.getElementById('current-mode').textContent = animName;
+        filterTuningGroups(animName.toUpperCase());
+        hideLoader();
     } catch (error) {
         hideLoader(true);
         console.error('Error triggering animation:', error);
@@ -2994,23 +2861,15 @@ async function triggerAnimCommand(command, buttonElement) {
 
     try {
         showLoader();
-        const response = await fetch('/api/command', {
+        await fetch('/api/command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: command })
         });
-        const data = await response.json();
-
-        if (data.success) {
-            showNotification(`Command: ${command}`, 'success');
-            document.getElementById('current-mode').textContent = command.replace('LED:', '');
-            filterTuningGroups(command.replace('LED:', '').toUpperCase());
-            await checkESP32Status();
-            hideLoader();
-        } else {
-            hideLoader(true);
-            showNotification(`Error: ${data.response}`, 'error');
-        }
+        showNotification(`Command: ${command}`, 'success');
+        document.getElementById('current-mode').textContent = command.replace('LED:', '');
+        filterTuningGroups(command.replace('LED:', '').toUpperCase());
+        hideLoader();
     } catch (error) {
         hideLoader(true);
         console.error('Error sending command:', error);
@@ -3083,127 +2942,6 @@ function updateFullscreenIcon() {
     }
 }
 
-// Poll power draw from ESP32 (also serves as connectivity check — replaces separate ping)
-// Update WiFi signal strength bars based on RSSI value
-// RSSI ranges: > -60 = excellent (4 bars), -60 to -70 = good (3 bars),
-//              -70 to -80 = fair (2 bars), < -80 = weak (1 bar), null = offline
-function updateWifiBars(rssi) {
-    const bars = [
-        document.getElementById('wifi-bar-1'),
-        document.getElementById('wifi-bar-2'),
-        document.getElementById('wifi-bar-3'),
-        document.getElementById('wifi-bar-4')
-    ];
-
-    if (!bars[0]) return;
-
-    // Clear all classes
-    bars.forEach(bar => {
-        if (bar) bar.classList.remove('active', 'weak', 'offline');
-    });
-
-    if (rssi === null || rssi === undefined) {
-        // Offline — all bars dim
-        bars.forEach(bar => { if (bar) bar.classList.add('offline'); });
-        return;
-    }
-
-    let activeBars;
-    let cls;
-    if (rssi > -60) {
-        activeBars = 4; cls = 'active';
-    } else if (rssi > -70) {
-        activeBars = 3; cls = 'active';
-    } else if (rssi > -80) {
-        activeBars = 2; cls = 'weak';
-    } else {
-        activeBars = 1; cls = 'weak';
-    }
-
-    for (let i = 0; i < activeBars; i++) {
-        if (bars[i]) bars[i].classList.add(cls);
-    }
-}
-
-// Update device icon and count badge
-function updateDeviceIndicator(count) {
-    const icon = document.getElementById('device-icon');
-    const badge = document.getElementById('device-count-badge');
-
-    if (!icon || !badge) return;
-
-    badge.textContent = count;
-
-    if (count > 0) {
-        icon.classList.add('connected');
-        badge.classList.add('connected');
-    } else {
-        icon.classList.remove('connected');
-        badge.classList.remove('connected');
-    }
-}
-
-async function pollPowerStatus() {
-    try {
-        const response = await fetch('/api/power');
-        const data = await response.json();
-        const el = document.getElementById('power-display');
-
-        if (data.success) {
-            const currentA = (data.current_ma / 1000).toFixed(1);
-            const peakA = (data.peak_ma / 1000).toFixed(1);
-            if (el) el.textContent = `⚡ ${currentA}A (peak: ${peakA}A)`;
-
-            // Update tuning modal power display
-            const tuningPower = document.getElementById('tuning-power-display');
-            if (tuningPower) tuningPower.textContent = `⚡ ${currentA}A (peak: ${peakA}A)`;
-
-            // ESP32 is online — STATUS command succeeded
-            esp32Info.online = true;
-            esp32WasOnline = true;
-            updateRaceControlDotFromEsp32();
-            document.getElementById('device-count').textContent = '1';
-            document.getElementById('device-plural').textContent = '';
-            updateDeviceIndicator(1);
-            updateDeviceList();
-
-            // Update WiFi signal bars from RSSI if available
-            if (data.rssi !== undefined) {
-                updateWifiBars(data.rssi);
-            } else {
-                // ESP32 is reachable — show at least 2 bars
-                updateWifiBars(-65);
-            }
-        } else {
-            if (el) el.textContent = '⚡ --';
-            handleEsp32Offline();
-        }
-    } catch (error) {
-        console.error('Error polling power status:', error);
-        handleEsp32Offline();
-    }
-}
-
-// Handle ESP32 going offline (used by pollPowerStatus on failure)
-function handleEsp32Offline() {
-    esp32Info.online = false;
-    updateRaceControlDotFromEsp32();
-    if (esp32WasOnline) {
-        clearActiveButton();
-        document.getElementById('current-mode').textContent = 'DISCONNECTED';
-        filterTuningGroups('DISCONNECTED');
-        showNotification('ESP32 disconnected - animation stopped', 'error');
-        esp32WasOnline = false;
-    }
-    document.getElementById('device-count').textContent = '0';
-    document.getElementById('device-plural').textContent = 's';
-    updateDeviceIndicator(0);
-    updateWifiBars(null);
-    const tuningPower = document.getElementById('tuning-power-display');
-    if (tuningPower) tuningPower.textContent = '⚡ --';
-    updateDeviceList();
-}
-
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DDM Horse Dashboard initialized');
@@ -3241,9 +2979,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Get system status
-    getSystemStatus();
-
     // Pre-populate ESP32 IP config field
     loadEsp32Config();
     
@@ -3259,9 +2994,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load initial results from server
     loadResultsFromServer();
     
-    // Poll power draw every 5 seconds (also detects ESP32 online/offline)
-    pollPowerStatus();
-    setInterval(pollPowerStatus, 5000);
+    // The two devices' health, now and every 5 s
+    pollDevices();
+    setInterval(pollDevices, 5000);
 
     // Listen for fullscreen changes
     document.addEventListener('fullscreenchange', updateFullscreenIcon);
@@ -3289,7 +3024,6 @@ function updateSpectatorIndicator(modeText) {
     var MODE_TO_SPECTATOR = {
         'STANDBY':            { text: '\u25CF DORMANT',      cls: 'dormant' },
         'IDLE':               { text: '\u25CF DORMANT',      cls: 'dormant' },
-        'DISCONNECTED':       { text: '\u25CF DORMANT',      cls: 'dormant' },
         'WELCOME':            { text: '\u25CF ENTRIES',       cls: 'betting' },
         'BETTING_60':         { text: '\u25CF BETTING OPEN',  cls: 'betting' },
         'BETTING_30':         { text: '\u25CF BETTING OPEN',  cls: 'betting' },

@@ -61,6 +61,8 @@ PI5_DIR = Path(__file__).resolve().parent.parent
 if str(PI5_DIR) not in sys.path:
     sys.path.insert(0, str(PI5_DIR))
 
+from communication.sender import Unreachable  # noqa: E402
+
 IPAD = (1180, 820)                        # an iPad's CSS pixels, landscape
 HORSES = {"win": 7, "place": 3, "show": 12}          # the three the scenarios tap, in the order they should fill
 OTHERS = (5, 9, 14)                       # horses for changes of mind (9 is also offered as post 9)
@@ -102,8 +104,8 @@ def available() -> bool:
 class Server:
     """main.app (a Rig's: the temp database, the board, the LED client stubbed) on a
     loopback port. `led_latency` is how long every LED command takes to answer, in
-    seconds, and `led_log` every command it was sent, with the time it arrived and the
-    time it was answered."""
+    seconds, `led_timeout` whether it then fails instead (the wall off), and `led_log`
+    every command it answered, with the time it arrived and the time it was answered."""
 
     def __init__(self, rig: Any, js: Optional[str] = None) -> None:
         import main                                       # the Rig has imported it, stubbed
@@ -111,12 +113,13 @@ class Server:
         self.main = main
         self.rig = rig
         self.led_latency = 0.0
+        self.led_timeout = False
         self.led_log: List[Tuple[float, str, float]] = []
         self.fail: set = set()                            # paths answered 503, as if pi5 could not
         self.t0 = time.monotonic()
-        self._saved = (main.esp32.send_command, main.WEATHER_API_KEY)
+        self._saved = (main.esp32.exchange, main.WEATHER_API_KEY)
         main.WEATHER_API_KEY = ""                          # nothing here may call WeatherAPI (the page no longer asks)
-        main.esp32.send_command = self._send_command
+        main.esp32.exchange = self._exchange              # the wall's worker calls it; a request never waits on it
         override = Path(js).read_bytes() if js else None
 
         def app(environ, start_response):
@@ -136,9 +139,11 @@ class Server:
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.httpd.server_port}/"
 
-    def _send_command(self, command: str) -> str:
+    def _exchange(self, command: str) -> str:
         arrived = time.monotonic() - self.t0
         time.sleep(self.led_latency)
+        if self.led_timeout:
+            raise Unreachable("TIMEOUT", "timed out")
         self.led_log.append((round(arrived, 3), command, round(time.monotonic() - self.t0, 3)))
         return "OK:" + command
 
@@ -148,7 +153,7 @@ class Server:
     def close(self) -> None:
         self.httpd.shutdown()
         self.httpd.server_close()
-        self.main.esp32.send_command, self.main.WEATHER_API_KEY = self._saved
+        self.main.esp32.exchange, self.main.WEATHER_API_KEY = self._saved
 
 
 # -----------------------------------------------------------------------------

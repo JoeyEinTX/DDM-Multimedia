@@ -918,50 +918,11 @@ body {
     color: #ffffff;
 }
 
-/* ── Footer WiFi Signal Bars ── */
-.footer-wifi {
-    display: flex;
-    align-items: flex-end;
-    cursor: default;
-}
-
-.wifi-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 16px;
-}
-
-.wifi-bar {
-    display: block;
-    width: 4px;
-    border-radius: 1px;
-    background: #333333;
-    transition: background 0.3s ease;
-}
-
-.wifi-bar.bar-1 { height: 4px; }
-.wifi-bar.bar-2 { height: 7px; }
-.wifi-bar.bar-3 { height: 11px; }
-.wifi-bar.bar-4 { height: 16px; }
-
-.wifi-bar.active {
-    background: #22c55e;
-}
-
-.wifi-bar.weak {
-    background: #f59e0b;
-}
-
-.wifi-bar.offline {
-    background: #555555;
-}
-
-/* ── Footer Device Indicator ── */
+/* ── The devices' pills, top left ── */
 .footer-device {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 8px;
     cursor: pointer;
     transition: opacity 0.2s ease;
 }
@@ -970,27 +931,25 @@ body {
     opacity: 0.8;
 }
 
-.device-icon {
-    font-size: 1.1em;
-    color: #444444;
-    transition: color 0.3s ease;
-    line-height: 1;
-}
-
-.device-icon.connected {
-    color: #22c55e;
-}
-
-.device-count-badge {
+.device-pill {
     font-size: 0.8em;
-    font-weight: 700;
-    color: #444444;
-    transition: color 0.3s ease;
-    min-width: 12px;
+    font-weight: 600;
+    color: #777777;
+    padding: 3px 9px;
+    border-radius: 10px;
+    border: 1px solid #333333;
+    white-space: nowrap;
+    transition: color 0.3s ease, border-color 0.3s ease;
 }
 
-.device-count-badge.connected {
+.device-pill.online {
     color: #22c55e;
+    border-color: rgba(34, 197, 94, 0.5);
+}
+
+.device-pill.unreachable {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.6);
 }
 
 /* ── Top Status Bar ── */
@@ -1234,17 +1193,16 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.device-icon {
-    font-size: 1.5em;
-    width: 32px;
-    text-align: center;
-}
-
 .device-name {
     flex: 1;
     font-size: 1em;
     color: #ffffff;
     font-weight: 500;
+}
+
+.device-address {
+    font-size: 0.85em;
+    color: #888888;
 }
 
 .device-status-value {
@@ -1262,17 +1220,6 @@ body {
 .device-status-value.offline {
     color: #ef4444;
     background: rgba(239, 68, 68, 0.15);
-}
-
-/* No Devices Message */
-.no-devices {
-    text-align: center;
-    padding: 32px 20px;
-    color: #888888;
-}
-
-.no-devices p {
-    margin: 8px 0;
 }
 
 /* ESP32 Network Config (inside Device Status modal) */
@@ -1370,11 +1317,6 @@ body {
 
 .esp32-config-status.pending {
     color: #cccccc;
-}
-
-.device-note {
-    font-size: 0.85em;
-    color: #666666;
 }
 
 /* Small Icon in Footer */

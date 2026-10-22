@@ -15,7 +15,7 @@ The dashboard is a single-page web application built with Flask, HTML, CSS, and 
 ### Header Section
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ [WIFI] [⬡ devices]                                     [☰] │
+│ [LED wall · online] [Tote board · off]                 [☰] │
 │                        [DDM LOGO]                           │
 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ serape band ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │
 │ [ AUTO / MANUAL ]                      [ RACE INFO ]        │
@@ -23,8 +23,10 @@ The dashboard is a single-page web application built with Flask, HTML, CSS, and 
 ```
 
 **Components:**
-- **Status bar** - WiFi bars and the LED controller's device count (tap for the device
-  status modal) on the left; the menu (☰) on the right
+- **Status bar** - two pills on the left, `LED wall` and `Tote board`, each `online`,
+  `unreachable since hh:mm` or `off` (no address set), from `/api/status` every 5 s (tap for
+  the device modal); the menu (☰) on the right. One toast when a device goes away (the race
+  goes on; the device catches up when it returns), one when it is back; none per tap
 - **DDM Logo** - Project branding
 - **Serape band**, then the **AUTO / MANUAL** and **RACE INFO** cards
 - **No ticker** (Joey, 2026-10-13, gap review OD9): the dot-matrix ticker under the logo
@@ -122,19 +124,9 @@ and FINISH 4, SET WINNERS (once confirmed) and HEARTBEAT 5, RESET 6.
 ---
 
 ### Footer Section
-```
-┌─────────────────────────────────────────────────────────────┐
-│ ● ONLINE  |  MODE: IDLE  |  1 Device  |  Powered by JoeyAI │
-└─────────────────────────────────────────────────────────────┘
-```
 
-**Components:**
-- **Connection Status** - Green dot (●) when ESP32 online, red when offline
-- **Current Mode** - Shows active animation or state
-- **Device Count** - Number of connected ESP32 devices (0 or 1)
-- **Branding** - "Powered by JoeyAI"
-
----
+The drawer's footer: "Powered by JoeyAI" and the version. The devices' health is in the
+status bar's pills, not here.
 
 ### Emergency Stop Button
 ```
@@ -438,35 +430,24 @@ own feed.
 
 ### 4. Device Status Modal
 
-**Trigger:** Click device status button (🔍) in header
+**Trigger:** Tap the pills in the status bar
 
 **Layout:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Device Status                              [X]     │
+│  Devices                                    [X]     │
 │                                                      │
-│  🔌 ESP32 LED Controller                   ONLINE   │
-│  💡 IP Address                     192.168.1.100    │
+│  LED wall      10.0.0.42:5005               online  │
+│  Tote board                                    off  │
 │                                                      │
-│                              [CLOSE]                │
-└─────────────────────────────────────────────────────┘
-```
-
-**When Offline:**
-```
-┌─────────────────────────────────────────────────────┐
-│  Device Status                              [X]     │
-│                                                      │
-│  No devices connected                               │
-│                                                      │
-│                              [CLOSE]                │
+│  ESP32 Network   IP Address [10.0.0.42] [Update]    │
 └─────────────────────────────────────────────────────┘
 ```
 
 **Features:**
-- Shows ESP32 connection status
-- Displays IP address when online
-- Updates automatically every 5 seconds
+- One row per device: its name, its address (when set), and `online`, `unreachable since
+  hh:mm` or `off`, from the same `/api/status` poll as the pills (every 5 s)
+- The LED wall's address can be changed here: saved to `pi5/.env`, tried at once
 
 ---
 

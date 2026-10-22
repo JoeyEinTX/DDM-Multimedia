@@ -24,7 +24,10 @@ Default: `http://localhost:5000` when running locally.
 ---
 
 #### `GET /api/ping`
-**Description:** Test connection to ESP32.
+**Description:** Ask the LED wall for its `PONG`. An ask: it waits up to the
+wall's timeout for the reply, and answers at once (`ERROR:UNREACHABLE`) while
+the wall is marked down. The Control Center no longer calls it; the senders
+probe on their own (below).
 
 **Response:**
 ```json
@@ -38,19 +41,30 @@ Default: `http://localhost:5000` when running locally.
 ---
 
 #### `GET /api/status`
-**Description:** Get system status and configuration.
+**Description:** Both devices' health as their workers last learned it: the
+Control Center's two pills (`LED wall`, `Tote board`) poll it every 5 s.
+Nothing here asks a device. Each device has one queued, coalescing sender
+(`pi5/communication/sender.py`) whose worker probes on its own timer (STATUS
+to the wall, `/status` to the tote board, after 5 s idle), so a device that
+is back is noticed within seconds and nothing in pi5 ever waits on one.
 
 **Response:**
 ```json
 {
-  "esp32_connected": true,
-  "esp32_ip": "192.168.1.100",
-  "esp32_port": 5005,
+  "leds": {"enabled": true, "online": false, "unreachable_since": 1761080400.0,
+           "address": "10.0.0.42:5005", "queued": 1,
+           "power": {"current_ma": 120, "peak_ma": 300, "min_ma": 80}},
+  "tote": {"enabled": false},
   "num_cups": 20,
   "total_leds": 640,
   "version": "3.0"
 }
 ```
+
+`online` is `null` until the first exchange (and again after the wall's
+address is changed). `unreachable_since` is a Unix time, `null` while online.
+`power` is the last STATUS answer (`null` until one). The tote's object has
+the same keys when a board is set (`DDM_TOTE_IP`), without `power`.
 
 ---
 
@@ -71,9 +85,17 @@ Default: `http://localhost:5000` when running locally.
 {
   "success": true,
   "command": "LED:ALL_ON",
-  "response": "OK"
+  "queued": "LED:ALL_ON",
+  "leds": "online"
 }
 ```
+
+No LED route waits on the wall: the command is handed to the wall's worker
+(`queued`; the newest of a kind replaces an older one still waiting, a command
+the wall never takes is dropped, and the state it missed is sent again when it
+answers) and `success` is true once it is queued. `leds` is the wall's health
+as last known: `online`, `unreachable`, `unknown` (nothing exchanged yet) or
+`off` (no address set). Every LED route below answers the same two fields.
 
 **Available Commands:**
 - `PING` - Test connection
@@ -99,20 +121,22 @@ Default: `http://localhost:5000` when running locally.
 ```json
 {
   "success": true,
-  "response": "OK"
+  "queued": "LED:ALL_ON",
+  "leds": "online"
 }
 ```
 
 ---
 
 #### `POST /api/led/all_off`
-**Description:** Turn all LEDs off.
+**Description:** Turn all LEDs off, and stop the tote board's display.
 
 **Response:**
 ```json
 {
   "success": true,
-  "response": "OK"
+  "queued": "LED:ALL_OFF",
+  "leds": "online"
 }
 ```
 
@@ -133,7 +157,8 @@ Default: `http://localhost:5000` when running locally.
 {
   "success": true,
   "brightness": 75,
-  "response": "OK"
+  "queued": "LED:BRIGHTNESS:75",
+  "leds": "online"
 }
 ```
 
@@ -157,7 +182,8 @@ Default: `http://localhost:5000` when running locally.
 {
   "success": true,
   "color": "FFD700",
-  "response": "OK"
+  "queued": "LED:COLOR:FFD700",
+  "leds": "online"
 }
 ```
 
@@ -183,7 +209,8 @@ Default: `http://localhost:5000` when running locally.
   "success": true,
   "horse": 5,
   "color": "FF0000",
-  "response": "OK"
+  "queued": "LED:CUP:5:FF0000",
+  "leds": "online"
 }
 ```
 
@@ -219,7 +246,8 @@ Default: `http://localhost:5000` when running locally.
 {
   "success": true,
   "animation": "CHAOS",
-  "response": "OK"
+  "queued": "ANIM:CHAOS",
+  "leds": "online"
 }
 ```
 
@@ -261,7 +289,8 @@ This will light up the winning cups in gold/silver/bronze with heartbeat on othe
   "success": true,
   "cup": 5,
   "color": {"r": 255, "g": 215, "b": 0},
-  "response": "OK"
+  "queued": "CUP:LOCK:5:255:215:0",
+  "leds": "online"
 }
 ```
 
@@ -294,7 +323,8 @@ Or unlock all:
 {
   "success": true,
   "cup": 5,
-  "response": "OK"
+  "queued": "CUP:UNLOCK:5",
+  "leds": "online"
 }
 ```
 
@@ -365,19 +395,17 @@ pays the owners of the real 1st, 2nd and 3rd from this record.
     "show": 8,
     "next": [3]
   },
-  "leds": "ok",
-  "response": "OK:RESULTS:FINALIZE",
+  "leds": "online",
   "race": {"rev": 42, "state": 5, "state_name": "WINNER", "mode": "RESULTS",
            "source": "dashboard", "gateway_online": true}
 }
 ```
 
 The results are facts about the race, not about the LEDs: they are saved
-first, always, and `success` is true once they are. `leds` is what the LED
-controller did with them afterwards: `"ok"`, or `"unreachable"` when it did
-not answer (`response` then carries the client's `ERROR:...`, and the
-dashboard's notification ends `· LEDs unreachable`, in red). The results
-stand either way.
+first, always, and `success` is true once they are. `RESULTS:FINALIZE` is
+then handed to the LED wall's worker, and `leds` is the wall's health as last
+known (`online`, `unreachable`, `unknown`, `off`); the Control Center's pill
+says the same. The results stand either way.
 
 `race` is the race state La Quiniela was given (below); `null` when La
 Quiniela is not running.
@@ -638,12 +666,13 @@ read them.
 ```json
 {
   "success": true,
-  "response": "OK"
+  "queued": "RESET",
+  "leds": "online"
 }
 ```
 
 **Side Effects:**
-- Sends `RESET` command to ESP32
+- Hands `RESET` to the LED wall's worker, and the welcome to the tote board
 - Does NOT clear results (use `/api/results/clear` for that)
 
 ---

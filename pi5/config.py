@@ -86,12 +86,12 @@ FLASK_SECRET_KEY = _env('FLASK_SECRET_KEY', '') or _secrets.token_hex(24)   # Fl
 # ESP32 Connection Settings (the LED controller on the mantle)
 ESP32_IP = _env('ESP32_IP', '')        # empty = no LED controller: the LEDs are off, everything else runs
 ESP32_PORT = _env('ESP32_PORT', 5005)
-SOCKET_TIMEOUT = 5.0  # Seconds
+SOCKET_TIMEOUT = 5.0  # Seconds the wall's worker waits for an answer (no request waits on the wall)
 
 # Tote Board Connection Settings (Interstate75 LED Display)
 TOTE_IP = _env('TOTE_IP', '')          # empty = no tote board
 TOTE_PORT = _env('TOTE_PORT', 80)
-TOTE_TIMEOUT = 2.0  # Seconds
+TOTE_TIMEOUT = 2.0  # Seconds the board's worker waits for an answer
 TOTE_ENABLED = _env('TOTE_ENABLED', bool(TOTE_IP))
 
 # Flask Settings
