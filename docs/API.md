@@ -333,24 +333,18 @@ Or unlock all:
 ### Results Endpoints
 
 #### `GET /api/results`
-**Description:** Get current race results (kept across a restart of pi5,
-until Reset betting or `/api/results/clear`).
+**Description:** The race's result as La Quiniela's board reads it (the one
+reader of `pi5/data/results.json`: `BettingBoard.results()`, what La Subasta
+and the TV read too), kept across a restart of pi5 until Reset betting or
+`/api/results/clear`.
 
 **Response (with results):**
 ```json
 {
   "success": true,
-  "results": {
-    "win": 5,
-    "place": 12,
-    "show": 8,
-    "next": [],
-    "timestamp": "2024-12-15T20:30:00.123456"
-  }
+  "results": {"win": 5, "place": 12, "show": 8, "next": [3], "ties": [[5, 12]]}
 }
 ```
-
-`next` is the finishers after SHOW, 4th first (below); `[]` when none was needed.
 
 **Response (no results):**
 ```json
@@ -370,8 +364,17 @@ it for the next finisher (its payout computation, M6), so the record goes on:
 `next` names the finishers after SHOW, 4th first, as many as it takes for
 three horses with bets to be named (`finishers_needed` in
 `pi5/la_quiniela/betting.py`), and a record that stops short is refused. The
-SET WINNERS dialog asks for them with a `4TH` card (a `5TH`...). La Subasta
-pays the owners of the real 1st, 2nd and 3rd from this record.
+SET WINNERS dialog asks for them with a `4TH` card (a `5TH`...). `ties` names
+the dead heats: each a list of two or three horses consecutive in the finish
+(win, place, show, then next), no horse in two; the dialog enters one with
+DEAD HEAT on a slot card. La Subasta pays the owners of the real 1st, 2nd
+and 3rd from this record; La Quiniela's payout (`payout_for`, the model's
+`payout`) applies the skip and pools a dead heat's positions.
+
+A result needs the figures at the post: in PRE-RACE, BETTING OPEN or FINAL
+CALL it is refused with a 409, `results before the post: the race is in
+BETTING OPEN, so there are no figures at the post to pay from; AT THE GATE
+takes them first`.
 
 **Request Body:**
 ```json
@@ -379,11 +382,12 @@ pays the owners of the real 1st, 2nd and 3rd from this record.
   "win": 5,
   "place": 12,
   "show": 8,
-  "next": [3]
+  "next": [3],
+  "ties": [[5, 12]]
 }
 ```
-`next` may be left out or empty when every horse named had bets at the post
-(or there are no figures at the post: unknown is not zero).
+`next` may be left out or empty when every horse named had bets at the post;
+`ties` may be left out or empty when nobody dead-heated.
 
 **Response:**
 ```json
@@ -393,7 +397,8 @@ pays the owners of the real 1st, 2nd and 3rd from this record.
     "win": 5,
     "place": 12,
     "show": 8,
-    "next": [3]
+    "next": [3],
+    "ties": [[5, 12]]
   },
   "leds": "online",
   "race": {"rev": 42, "state": 5, "state_name": "WINNER", "mode": "RESULTS",

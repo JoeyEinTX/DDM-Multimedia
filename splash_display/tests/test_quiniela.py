@@ -83,6 +83,7 @@ CONTRACT_KEYS = {
 PI5_MODEL_KEYS = CONTRACT_KEYS | {
     "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
     "cups_online", "cups_no_horse", "results", "closing",
+    "payout",                               # La Quiniela's payout from the record and the figures at the post (M6)
     "race", "weather",                      # race info lives in La Quiniela; pi5's weather for the crawl
     "pot_scale", "pot_counted", "hand_counted",     # the host's hand count of the cash box (the counted pot)
 }
@@ -842,13 +843,13 @@ class ApiTests(RouteCase):
     def test_the_page_carries_the_board_and_its_results_screen(self) -> None:
         html = self.client.get("/board").get_data(as_text=True)
         for needle in ('id="quiniela-board"', 'class="qb-stage"', 'id="qb-col-left"', 'id="qb-col-right"',
-                       'id="qb-results"', 'id="qb-result-win"', 'id="qb-result-place"', 'id="qb-result-show"',
+                       'id="qb-results"', 'id="qb-results-rows"', 'id="qb-result-tpl"', 'id="qb-result-horse-tpl"',
                        "One token drawn from each cup", "Drawn token takes the prize",
                        "js/quiniela_board.js", "css/quiniela_board.css"):
             self.assertIn(needle, html)
-        self.assertEqual(html.count('class="qb-result-prize"'), 3)
+        self.assertEqual(html.count('class="qb-result-prize"'), 1, "one horse template; the JS clones it per paying horse")
         js = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
-        for needle in ("'Official results coming'", "'Official results'", "m.results", "board_states"):
+        for needle in ("'Official results coming'", "'Official results'", "m.payout", "board_states"):
             self.assertIn(needle, js)
         self.assertNotIn("[1, 2, 3, 4", js, "the page never hard-codes pi5's board states")
 
@@ -1065,10 +1066,11 @@ class LookTests(RouteCase):
 
     def test_the_page_marks_the_totes_fields(self) -> None:
         html = self.client.get("/slides?look=dots").get_data(as_text=True)
-        # figures: the pot, three prizes, a row's bets (the template), the results' three counts and three prizes
-        self.assertEqual(html.count('data-tote="num"'), 1 + 3 + 1 + 3 + 3)
-        # names: a row's (the template), the results' three, and the countdown's AND THEY'RE OFF
-        self.assertEqual(html.count('data-tote="name"'), 1 + 3 + 1)
+        # figures: the pot, three prizes, a row's bets (the template), the results' count and prize (one horse
+        # template, cloned per paying horse)
+        self.assertEqual(html.count('data-tote="num"'), 1 + 3 + 1 + 1 + 1)
+        # names: a row's (the template), the results' one, and the countdown's AND THEY'RE OFF
+        self.assertEqual(html.count('data-tote="name"'), 1 + 1 + 1)
         for sign in ('class="qb-saddle"', 'class="qb-result-saddle"', 'id="qb-banner-text"', 'id="qb-toast-name"',
                      'class="qb-result-place"', 'class="qb-prize-k"'):
             tag = html[html.index(sign) - 40:html.index(">", html.index(sign))]
@@ -1255,11 +1257,17 @@ BOARD_PROBE_JS = r"""
             rows[el.dataset.horse] = el.querySelector('.qb-bets').textContent.trim();
             strips[el.dataset.horse] = strip(el);
         }
+        // The results screen's rows: results[slot] is the first horse of the row paying that slot (what the plain
+        // tests compare), resultRows every row with every horse (a dead heat has two or three)
         const results = {};
-        for (const p of ['win', 'place', 'show']) {
-            results[p] = { horse: document.getElementById('qb-result-' + p).dataset.horse,
-                           bets: text('#qb-result-' + p + ' .qb-result-count'),
-                           prize: text('#qb-result-' + p + ' .qb-result-prize') };
+        const resultRows = [];
+        for (const row of document.querySelectorAll('.qb-result')) {
+            const horses = [...row.querySelectorAll('.qb-result-horse')].map((h) => ({
+                horse: h.dataset.horse, bets: h.querySelector('.qb-result-count').textContent.trim(),
+                prize: h.querySelector('.qb-result-prize').textContent.trim(), name: h.querySelector('.qb-result-name').textContent.trim() }));
+            results[row.dataset.slot] = { horse: horses[0].horse, bets: horses[0].bets, prize: horses[0].prize };
+            resultRows.push({ slots: row.dataset.slots, skip: row.querySelector('.qb-result-skip').textContent.trim(),
+                              tie: row.classList.contains('qb-result--tie'), horses: horses });
         }
         const toast = document.getElementById('qb-toast');
         const pulses = [];
@@ -1308,7 +1316,7 @@ BOARD_PROBE_JS = r"""
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
-                 rows: rows, strips: strips, results: results, pulses: pulses, crawl: crawl(), sample: takeSample(), roster: roster(),
+                 rows: rows, strips: strips, results: results, resultRows: resultRows, pulses: pulses, crawl: crawl(), sample: takeSample(), roster: roster(),
                  header: header, counted: counted,
                  toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
@@ -1520,6 +1528,32 @@ class BoardPageTests(unittest.TestCase):
         self.assertEqual(seen["results"], self.WINNERS, "closing's bets and prizes, not the live model's")
         self.assertEqual((seen["pot"], seen["prizes"]), ("$154", ["$92", "$39", "$23"]))
 
+    def test_the_results_screen_shows_who_pays(self) -> None:
+        """La Quiniela's payout (pi5's payout_for, served as the model's payout) is what the screen shows: the
+        paying horses after a skip, with the skip noted, and a dead heat's horses in one row with their shares."""
+        base = self.results["payout"]
+        pays = [{"slots": ["win"], "horses": [{"horse": 1, "prize": 92}], "skipped": [19], "dead_heat": False},
+                {"slots": ["place"], "horses": [{"horse": 22, "prize": 39}], "skipped": [], "dead_heat": False},
+                {"slots": ["show"], "horses": [{"horse": 7, "prize": 23}], "skipped": [], "dead_heat": False}]
+        [seen] = run_board([dict(self.results, payout=dict(base, pays=pays, skipped=[19]))])
+        self.assertEqual([r["slots"] for r in seen["resultRows"]], ["win", "place", "show"])
+        self.assertEqual((seen["results"]["win"]["horse"], seen["results"]["win"]["prize"], seen["resultRows"][0]["skip"]),
+                         ("1", "$92", "#19 no bets"), "19 skipped for no bets: 1 pays WIN, and the row says why")
+        self.assertEqual((seen["results"]["show"]["horse"], seen["results"]["show"]["bets"]), ("7", "23"), "the bets from the figures at the post")
+        tie = [{"slots": ["win", "place"], "horses": [{"horse": 1, "prize": 66}, {"horse": 19, "prize": 65}], "skipped": [], "dead_heat": True},
+               {"slots": ["show"], "horses": [{"horse": 22, "prize": 23}], "skipped": [], "dead_heat": False}]
+        [seen] = run_board([dict(self.results, payout=dict(base, pays=tie))])
+        rows = seen["resultRows"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual((rows[0]["slots"], rows[0]["tie"], rows[0]["skip"]), ("win,place", True, "dead heat"))
+        self.assertEqual([(h["horse"], h["prize"], h["bets"]) for h in rows[0]["horses"]], [("1", "$66", "11"), ("19", "$65", "4")])
+        self.assertEqual((rows[1]["slots"], rows[1]["horses"][0]["horse"], rows[1]["horses"][0]["prize"]), ("show", "22", "$23"))
+        self.assertNotIn("place", seen["results"], "no row of its own: PLACE is pooled into the dead heat's")
+        [seen] = run_board([dict(self.results, payout=dict(base, pays=[]))])
+        self.assertEqual((seen["view"], seen["resultRows"]), ("results", []), "a result nobody with bets can be paid on: the screen, empty")
+        [seen] = run_board([dict(self.results, payout=None)])
+        self.assertEqual((seen["view"], seen["banner"]), ("rows", "Official results coming"), "no payout yet: the board waits")
+
     def test_the_frozen_board_and_official_results_coming_read_closing_too(self) -> None:
         seen = run_board([self.running])
         self.assertEqual((seen[0]["banner"], seen[0]["pot"]), ("Betting closed", "$154"))
@@ -1541,17 +1575,17 @@ class BoardPageTests(unittest.TestCase):
                          (True, "Betting open", "$0", "No bets"), "betting open again: live, from nothing")
 
     def test_without_closing_the_page_keeps_its_own_freeze(self) -> None:
-        # An older pi5 serves no closing: a page open through the close keeps
-        # what it showed when betting closed, and a page loaded after the
-        # draw can only show the live model. The second is what closing fixes.
+        # An older pi5 serves no closing and no payout: a page open through the close keeps what it showed when
+        # betting closed, and the results screen never comes (who pays is pi5's to compute: the board waits on
+        # OFFICIAL RESULTS COMING). A page loaded after the draw can only show the live model.
         old = [dict(m) for m in (self.open, self.closed, self.results)]
         for m in old:
             m.pop("closing")
+            m.pop("payout", None)
         seen = run_board(old)
-        self.assertEqual((seen[-1]["results"], seen[-1]["pot"]), (self.WINNERS, "$154"))
+        self.assertEqual((seen[-1]["view"], seen[-1]["banner"], seen[-1]["pot"]), ("rows", "Official results coming", "$154"))
         [seen] = run_board([old[-1]])
-        self.assertEqual(seen["results"]["win"], {"horse": "19", "bets": "0", "prize": "$80"})
-        self.assertEqual(seen["pot"], "$133")
+        self.assertEqual((seen["view"], seen["pot"]), ("rows", "$133"))
 
 
 @unittest.skipUnless(CHROME, "no Chrome or Chromium to run the board's script in")

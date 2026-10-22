@@ -340,35 +340,51 @@ three are RUNNING).
 
 ## 8. Results and the draw
 
-`DASH` → **SET WINNERS** → tap the horses that crossed **1st, 2nd and 3rd**, the real finish
-(each picker says the number and the name, `19 · GOLDEN TEMPO`; a horse that drew in shows
-under its own number) → **CONFIRM RESULTS**. That is WINNER: the LEDs light the three cups,
+In order: **FINISH** on `DASH` → **SET WINNERS** → **CONFIRM RESULTS** → refund any cup scratched
+after the post → count the cash → **Counted pot** on `ADMIN` → read `ADMIN` → **RESULTS** →
+draw → pay. The rule behind the RESULTS section is at the end of this section;
+`DDM_La_Quiniela_Spec.md` has it with worked examples.
+
+**SET WINNERS.** `DASH` → **SET WINNERS** → tap the horses that crossed **1st, 2nd and 3rd**, the
+real finish (each picker says the number and the name, `19 · GOLDEN TEMPO`; a horse that drew in
+shows under its own number) → **CONFIRM RESULTS**. That is WINNER: the LEDs light the three cups,
 the three cups' screens say WIN, PLACE, SHOW, and the TV flips to the **results board**,
-`OFFICIAL RESULTS`: three rows, WIN / PLACE / SHOW, each with the horse's cloth and name, the
-bets its cup held and its prize, big, at the right; the pot above. Opening the pickers
-changes nothing; confirming does. (WINNER without results, from **HEARTBEAT**: the TV says
-`OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.)
+`OFFICIAL RESULTS`: one row per prize paid, the horse whose cup is drawn from, with its cloth and
+name, the bets its cup held and its prize, a skipped finisher noted; the pot above. Opening the
+pickers changes nothing; confirming does. (WINNER without results, from **HEARTBEAT**: the TV says
+`OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.) pi5 refuses a
+result before AT THE GATE (`results before the post …`): there are no figures at the post to pay
+from yet.
 Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to change a
 pick, tap its slot on the right first, then the new horse (its × empties it). A horse
 already in another slot is refused, never moved. A horse dimmed and tagged red `NO BETS`
 had nothing in its cup at the post: La Quiniela skips it for the next finisher (La Subasta
-pays its owner all the same), so tap it where it finished and the dialog asks for the
-next finisher too: a `4TH` card appears under SHOW (a `5TH` if that one had no bets either,
-and so on until three horses with bets are named) and **CONFIRM RESULTS** waits until they
-are filled. The slot cards on the right are the check: read them before you press
-**CONFIRM RESULTS**. If a horse you picked had no bets, a red line above the button says so.
-The result is one record for both games: La Subasta's payouts follow it (its section,
-below), and from M6 so will La Quiniela's skip.
+pays its owner all the same), so tap it where it finished. Once the three slots cannot hold
+the horses with bets La Quiniela needs, a `4TH` card appears under SHOW (a `5TH` if that one
+had no bets either, and so on until three horses with bets are named, or every horse with
+bets when fewer had any), and **CONFIRM RESULTS** waits until they are filled; no card while
+the three slots are still empty. The slot cards on the right are the check: read them before
+you press **CONFIRM RESULTS**. If a horse you picked had no bets, a red line above the
+button says so.
+**A dead heat.** Tap the first of the tied horses into its slot, then **DEAD HEAT** on that
+card: the card under it is tied to it (`DEAD HEAT · with WIN`) and holds the other horse (the
+one already there, or the next you tap). Three deep: **DEAD HEAT** again on the second card.
+A dead heat for 3rd puts the second horse in a `4TH` card. **UNTIE** on the first card undoes
+it. The record carries the tie; the RESULTS section pools the prizes.
+**Opening SET WINNERS again** while a result stands shows `CHECK THE RESULTS` with the saved
+picks (the next finishers and a dead heat too), the three cups lit again: a correction is one
+tap on a slot, then the horse, then **CONFIRM RESULTS**; **CANCEL** leaves the result and puts
+the mantle back on it.
+The result is one record for both games: La Quiniela's RESULTS section reads it, and so does
+La Subasta's ledger (its section, below).
 **While the results stand the field is frozen:** `ADMIN` refuses a scratch or an undo with
 `The results are in, so the field is frozen: clear them in SET WINNERS first (RESET in the
-dialog), then scratch, then enter them again.` To correct a pick, open **SET WINNERS** again,
-tap the three (and any next finisher) again and confirm: the new record replaces the old on
-the TV, the cups and La Subasta. To scratch after the results: **SET WINNERS** → **RESET**, it
-asks `Clear the saved result?` → **Clear the result** (AFTER PARTY: the TV back to the
-slideshow, the LEDs off) → the scratch on `ADMIN` → back in the dialog, which has followed it
-(the horse is out of the grid, its slot empty, a line under the heading says so) → tap again
-→ **CONFIRM RESULTS**. A confirm that races a scratch is refused by pi5, `place: horse 12 is
-not in the field` under the heading, and the grid refreshed: pick again.
+dialog), then scratch, then enter them again.` To scratch after the results: **SET WINNERS** →
+**RESET**, it asks `Clear the saved result?` → **Clear the result** (AFTER PARTY: the TV back to
+the slideshow, the LEDs off) → the scratch on `ADMIN` → back in the dialog, which has
+followed it (the horse is out of the grid, its slot empty, a line under the heading says so)
+→ tap again → **CONFIRM RESULTS**. A confirm that races a scratch is refused by pi5, `place:
+horse 12 is not in the field` under the heading, and the grid refreshed: pick again.
 The line that follows names the race state the results set: `Results set: Win=19, Place=1,
 Show=22 · WINNER`, green. The results are saved whether or not the LED wall answers (its
 pill, top left, says; a wall that is back shows them by itself). A red `Results set: … ·
@@ -376,31 +392,49 @@ race state not set (La Quiniela: …)` means they are saved but La Quiniela did 
 WINNER, so the TV and the cups don't show them yet: the text after `La Quiniela:` says why
 (table at the end).
 
-- [ ] **Count the cash**, any time after AT THE GATE and always before you pay and before
-      **RESET** (in AFTER PARTY the box is read-only). Open the cash box's BETS
-      compartment, count the dollars. `ADMIN` → Race → Counted pot → type the
-      number → **Save count**. The line under the buttons reads `Saved: counted $152
-      (the scales said $154, −$2). WIN $91 · PLACE $38 · SHOW $23.` From now on
-      the pot and the three prizes, on `ADMIN` and on the TV (tagged `HAND COUNTED`
-      beside the pot), are those: the same 60 / 25 / 15, whole dollars. The bets per
-      horse stay as the scales read them, and the scales' figure and the difference
-      sit beside the box for information only: a few dollars either way is the
-      scales, nothing to fix. Typed it wrong, or counted again after a late bet? Type
-      it again and **Save count** (it overwrites), or **Clear** to go back to the
-      scales' figures. No `HAND COUNTED` tag on the TV means no count is saved.
-- [ ] WIN cup: shake it, pull **one** token. Read its number aloud. The guest with the
-      other half takes the WIN prize.
-- [ ] PLACE cup: one token, PLACE prize.
-- [ ] SHOW cup: one token, SHOW prize.
-- [ ] Pay in whole dollars, the amounts on the results board: your counted ones, with the
-      `HAND COUNTED` tag by the pot. Emptying the cups doesn't change them: the board
-      shows what each cup held when betting closed, and so does a TV reloaded, or pi5
-      restarted, in between; the count is kept with those figures.
+- [ ] **A cup scratched after the post?** Its tokens are refunded in cash at token value,
+      before you count: `ADMIN` → RESULTS → Refunds lists them (`cup 7: 12 tokens → refund
+      $12`). Hand the cash back; the horse cannot be in the finish (pi5 refuses it).
+- [ ] **Count the cash**, any time after AT THE GATE (after the refunds) and always before you
+      pay and before **RESET** (in AFTER PARTY the box is read-only). Open the cash box's BETS
+      compartment, count the dollars. `ADMIN` → Race → Counted pot → type the number →
+      **Save count**. The line under the buttons reads `Saved: counted $152 (the scales said
+      $154, −$2). WIN $91 · PLACE $38 · SHOW $23.` From now on the pot and the three prizes,
+      on `ADMIN` and on the TV (tagged `HAND COUNTED` beside the pot), are those: the same
+      60 / 25 / 15, whole dollars. The bets per horse stay as the scales read them, and the
+      scales' figure and the difference sit beside the box for information only: a few
+      dollars either way is the scales, nothing to fix. Typed it wrong, or counted again
+      after a late bet? Type it again and **Save count** (it overwrites), or **Clear** to go
+      back to the scales' figures. No `HAND COUNTED` tag on the TV means no count is saved.
+- [ ] **Read `ADMIN` → RESULTS** (under the Race section; it appears once the result is in,
+      within 5 s). The line at the top says which pot it uses (`your hand count`; `the scales
+      at the post`, less the refunds, until you enter one) and the three prizes. Then, for
+      WIN, PLACE and SHOW, the horse that pays, its prize and the draw: `WIN · #19 · $92 ·
+      draw one token from cup 19`. A finisher with no bets is shown skipped: `#7 no bets →
+      #3`. A dead heat shows both horses, each one's share, and `draw one token from each
+      cup`. With fewer than three horses with bets in the finish, the unpaid prizes are
+      added to WIN and the section says so. Pay what it says.
+- [ ] Each paying cup: shake it, pull **one** token. Read its number aloud. The guest with
+      the other half takes that cup's prize (in a dead heat each tied cup is drawn once, for
+      its own share).
+- [ ] Pay in whole dollars, the amounts in the RESULTS section (the TV's results screen shows
+      the same horses and prizes to the room). Emptying the cups doesn't change them: the
+      figures are the ones at the post, and so is a TV reloaded, or pi5 restarted, in
+      between; the count is kept with those figures.
 - [ ] Undrawn tokens are just tokens. Nobody else wins anything.
 
-Then, with the count entered and the prizes paid: `DASH` → **RESET** → OK (clears the
-results, LEDs off): AFTER PARTY, and the TV goes back to the slideshow. The saved
-count stays and shows read-only on `ADMIN` until **Reset betting**.
+**The rule** (OD3, OD5, Joey's examples of 2026-10-22; `DDM_La_Quiniela_Spec.md` has them):
+60 % WIN, 25 % PLACE, 15 % SHOW of the pot, whole dollars, PLACE and SHOW rounded half up,
+WIN takes the rest. The pot is the counted pot once entered, the scales' figure at the post
+less any refunds until then. A finisher whose cup held no bets at the post is skipped: the
+next finisher with bets takes that position's prize. Fewer than three horses with bets in the
+finish: the unpaid prizes go to WIN. Dead heat: the tied horses share the prizes of every
+position they jointly occupy, whole dollars, the odd dollar to the lower program number, one
+token drawn from each cup; a tied horse with no bets drops out of the tie. A horse scratched
+after the post cannot be in the finish and its cup's tokens are refunded at token value. The
+computation is `payout_for` in `pi5/la_quiniela/betting.py`, served as the model's `payout`
+(`GET /api/quiniela`): when the RESULTS section looks wrong, compare that against the record
+(`pi5/data/results.json`) and `closing`.
 
 ## 9. Another race on the same night
 
@@ -561,6 +595,8 @@ the restart).
 | `Saved: … NOT stored: pi5 could not write it…` in red under Save count | pi5 holds the count but its database refused the write | Pay from it. If pi5 restarts before the draw is paid, enter the count again. |
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: its state line is the state pi5 holds. Press the right button on `DASH` and read what it answers. |
 | TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: results not saved …` (pi5 could not write the file; the LED controller has nothing to do with it) | `DASH` → **SET WINNERS** → confirm again. Meanwhile the prizes are in the board's header (WIN / PLACE / SHOW under the pot, the figures at the post); draw and pay from those. |
+| `ADMIN` has no RESULTS section | no result is in, or the race never reached AT THE GATE (no figures at the post to pay from) | `DASH` → **AT THE GATE** (then the race as it ran), **SET WINNERS** → **CONFIRM RESULTS**; the section appears within 5 s. |
+| **CONFIRM RESULTS** answers `results before the post: …` under the heading | the race is in PRE-RACE, BETTING OPEN or FINAL CALL: no figures at the post to pay from | `DASH` → **AT THE GATE** (then THEY'RE OFF, FINISH as the race ran), then **SET WINNERS** again. |
 | The `LED wall` pill on `DASH` says `unreachable since hh:mm` (one red line said so when it dropped) | the LED controller stopped answering: power, Wi-Fi, or it rebooted | Nothing for the race: every button works as before, and the results are saved whatever the wall does. When it answers again the pill goes green, one green line says so, and the wall picks up the current animation by itself. If it stays red: power and Wi-Fi at the mantle; its address in the device panel (tap the pills). |
 | `Results set: … · race state not set (La Quiniela: …)` in red on `DASH` | the results are saved, but La Quiniela refused WINNER, so the TV and the cups don't show them; the text says why (`bridge not initialised`: pi5's La Quiniela side is not up) | Fix what it names (`journalctl -u ddm-pi5 -n 50`), then `DASH` → **SET WINNERS** → the same three → **CONFIRM RESULTS** again. |
 | pi5 restarted, or the TV reloaded, during the draw | nothing is lost: pi5 keeps the results and the figures at the post | Nothing. The TV finds pi5 again by itself and shows the results board as it was. |

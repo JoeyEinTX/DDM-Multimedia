@@ -142,10 +142,11 @@ def _lq_scratch(client, horse, number=None, name=None):
 _LQ_RESULTS = os.path.join(_LQ_TMP, "results.json")
 
 
-def _set_winners(win, place, show, after=()):
+def _set_winners(win, place, show, after=(), ties=()):
     tmp = _LQ_RESULTS + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"win": win, "place": place, "show": show, "next": list(after), "timestamp": "2027-05-01T19:02:00"}, fh)
+        json.dump({"win": win, "place": place, "show": show, "next": list(after), "ties": [list(t) for t in ties],
+                   "timestamp": "2027-05-01T19:02:00"}, fh)
     os.replace(tmp, _LQ_RESULTS)
 
 
@@ -598,6 +599,11 @@ def test_payouts():
     _check("the result read through the board: WIN 1, PLACE 2, SHOW 3, three rows in that order",
            led["results"] == {"win": 1, "place": 2, "show": 3} and [p["finish"] for p in led["payouts"]] == ["win", "place", "show"],
            str(led))
+    _set_winners(1, 2, 3, ties=[[1, 2]])            # a dead heat for 1st in the record (M6): the ledger reads slot order
+    tied = _ledger(client)
+    _check("a dead heat in the record: the ledger pays slot order as today, WIN 1, PLACE 2 (pool and split is a follow-up item)",
+           tied["results"] == {"win": 1, "place": 2, "show": 3} and _by_finish(tied) == by, str(tied))
+    _set_winners(1, 2, 3)
     _check("WIN pays Alice (horse 1) 6 pesos", by["win"]["bidder_id"] == alice["id"] and by["win"]["horse_id"] == 1
            and by["win"]["amount"] == 6 and by["win"]["bidder_identity"] == "Alice 🌮" and by["win"]["unowned"] is False
            and by["win"]["pays_horse_id"] is None and by["win"]["paid"] is None, str(by["win"]))

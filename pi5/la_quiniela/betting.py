@@ -164,6 +164,9 @@ COUNTED_POT_MAX = 10000
 # count's: those are the states that hold one (FINAL_CALL drops it with the
 # figures at the post).
 COUNT_IN_FORCE = CLOSED_STATES | frozenset({int(P.Phase.AFTER_PARTY)})
+# The figures at the post are held in these states too: a result can be entered (POST /api/results) and a
+# scratch is refunded in cash rather than re-bet.
+POST_HELD_STATES = COUNT_IN_FORCE
 
 # One race state. The dashboard's modes (its buttons, which drive the LEDs)
 # are the source of truth, and La Quiniela's race state (the cups, the TV
@@ -417,10 +420,13 @@ RESULT_KEYS = ("win", "place", "show")
 
 def _results_file(path: Any = None) -> Optional[Dict[str, Any]]:
     """The dashboard's results file as it reads: "win", "place", "show" as
-    horse numbers (0 where a place is missing or is no horse's number) and
+    horse numbers (0 where a place is missing or is no horse's number),
     "next", the finishers after SHOW in order, each a horse 1..24 named
-    nowhere else in the file (anything else is dropped). None when there is
-    no file or it is not a JSON object. The one parser of the file:
+    nowhere else in the file (anything else is dropped), and "ties", the
+    dead heats: each a list of two or three horses consecutive in the finish
+    (win, place, show, then next), no horse in two, put in the finish's
+    order; a tie that is anything else is dropped. None when there is no
+    file or it is not a JSON object. The one parser of the file:
     read_results() and read_record() are two views of it. Never raises."""
     target = Path(path) if path is not None else RESULTS_FILE
     try:
@@ -442,6 +448,19 @@ def _results_file(path: Any = None) -> Optional[Dict[str, Any]]:
             seen.add(h)
             after.append(h)
     out["next"] = after
+    order = [out[key] for key in RESULT_KEYS if out[key]] + after
+    tied: set = set()
+    ties: List[List[int]] = []
+    for group in (data.get("ties") if isinstance(data.get("ties"), list) else []):
+        horses = [0 if isinstance(v, bool) else (_as_int(v, 0) or 0) for v in group] if isinstance(group, list) else []
+        if not 2 <= len(horses) <= 3 or any(h not in order for h in horses) or tied & set(horses):
+            continue
+        at = sorted(order.index(h) for h in horses)
+        if at != list(range(at[0], at[0] + len(at))):
+            continue
+        tied |= set(horses)
+        ties.append([order[i] for i in at])
+    out["ties"] = ties
     return out
 
 
@@ -462,17 +481,106 @@ def read_results(path: Any = None) -> List[int]:
 
 def read_record(path: Any = None) -> Optional[Dict[str, Any]]:
     """The result as SET WINNERS recorded it, for whoever pays on it (La
-    Subasta, through BettingBoard.results()): {"win", "place", "show",
-    "next"}, the real 1st, 2nd and 3rd and the finishers after them, horse
-    numbers. None unless all three places are named, each a different horse
-    (a hand-made file naming two is no result)."""
+    Subasta, through BettingBoard.results(); La Quiniela's payout_for):
+    {"win", "place", "show", "next", "ties"}, the real 1st, 2nd and 3rd, the
+    finishers after them and the dead heats, horse numbers. None unless all
+    three places are named, each a different horse (a hand-made file naming
+    two is no result)."""
     data = _results_file(path)
     if data is None:
         return None
     places = [data[key] for key in RESULT_KEYS]
     if 0 in places or len(set(places)) != len(places):
         return None
-    return {"win": places[0], "place": places[1], "show": places[2], "next": list(data["next"])}
+    return {"win": places[0], "place": places[1], "show": places[2], "next": list(data["next"]), "ties": list(data["ties"])}
+
+
+def finish_groups(record: Dict[str, Any]) -> List[List[int]]:
+    """The finish as positions: the horses of the record in the order they
+    crossed, those that dead-heated together in one group ([[7, 12], [3]]
+    for 7 and 12 tied for 1st and 3 third)."""
+    order = [record["win"], record["place"], record["show"]] + list(record["next"])
+    joined = {h for group in record.get("ties", []) for h in group[1:]}
+    groups: List[List[int]] = []
+    for h in order:
+        if groups and h in joined:
+            groups[-1].append(h)
+        else:
+            groups.append([h])
+    return groups
+
+
+PRIZE_SLOTS = ("win", "place", "show")
+
+
+def payout_for(record: Dict[str, Any], bets: Dict[int, int], scale_pot: Any, counted: Optional[int],
+               split: Dict[str, Any], refunds: List[Dict[str, int]]) -> Dict[str, Any]:
+    """La Quiniela's payout from SET WINNERS' record and the figures at the
+    post (OD3, OD5; Joey's examples and answers of 2026-10-22): which cup
+    each prize is drawn from and for how much.
+
+    The pot is the hand count once entered, else the scales' figure at the
+    post less the refunds (a cup scratched after the post is refunded at
+    token value); the prizes are prizes_for's split of it. A finisher whose
+    cup held no bets cannot pay (no token to draw) and is skipped: the next
+    finisher with bets takes the position. Horses that dead-heated share the
+    prizes of every position they jointly occupy, in whole dollars, the odd
+    dollar(s) to the lower program number(s), one token drawn from each; a
+    tied horse with no bets drops out of the tie. Fewer than three horses
+    with bets in the finish: the unpaid prizes join the first pool.
+
+    {"pot", "pot_source" ("counted", "scale", "scale less refunds"),
+    "prizes", "pays": [{"slots": ("win",) or more for a dead heat, "horses":
+    [{"horse", "prize"}, ...] lowest number first, "skipped": the no-bets
+    horses crossing in or ahead of this group, "dead_heat"}], "skipped":
+    every finisher skipped, "unpaid_to_win", "refunds"}."""
+    refunded = sum(r["refund"] for r in refunds)
+    if counted is not None:
+        pot, source = int(counted), "counted"
+    else:
+        pot, source = round_half_up(scale_pot) - refunded, ("scale less refunds" if refunds else "scale")
+    prizes = prizes_for(pot, split)
+    by_position = [prizes[slot] for slot in PRIZE_SLOTS]
+    skipped: List[int] = []
+    pays: List[Dict[str, Any]] = []
+    position = 0
+    pending: List[int] = []                   # the no-bets horses since the last paying group
+    for group in finish_groups(record):
+        paying = sorted(h for h in group if bets.get(h, 0) > 0)
+        dropped = [h for h in group if bets.get(h, 0) <= 0]
+        skipped += dropped
+        pending += dropped
+        if not paying or position >= len(by_position):
+            continue
+        span = by_position[position:position + len(paying)]
+        pays.append({"slots": list(PRIZE_SLOTS[position:position + len(paying)]), "pool": sum(span), "horses": paying,
+                     "skipped": pending, "dead_heat": len(paying) > 1})
+        pending = []
+        position += len(paying)
+    unpaid = sum(by_position[position:])
+    if pays and unpaid:
+        pays[0]["pool"] += unpaid
+    for entry in pays:
+        each, odd = divmod(entry.pop("pool"), len(entry["horses"]))
+        entry["horses"] = [{"horse": h, "prize": each + (1 if i < odd else 0)} for i, h in enumerate(entry["horses"])]
+    return {"pot": pot, "pot_source": source, "prizes": prizes, "pays": pays, "skipped": skipped,
+            "unpaid_to_win": unpaid, "refunds": list(refunds)}
+
+
+def refunds_for(closing: Any, scratched: Dict[int, Optional[int]], entered: Dict[int, Tuple[int, float]],
+                token_value: float) -> List[Dict[str, int]]:
+    """The cups scratched after the post, with the tokens each held at the
+    post handed back in cash at token value ({"horse", "tokens", "refund"}),
+    by horse number; a scratch entered before the post was re-bet then and
+    refunds nothing, as does a cup that held nothing."""
+    bets = bets_at_post(closing) or {}
+    out: List[Dict[str, int]] = []
+    for horse in sorted(scratched):
+        at = entered.get(horse)
+        if at is None or at[0] not in POST_HELD_STATES or not bets.get(horse):
+            continue
+        out.append({"horse": horse, "tokens": bets[horse], "refund": round_half_up(bets[horse] * token_value)})
+    return out
 
 
 def bets_at_post(closing: Any) -> Optional[Dict[int, int]]:
@@ -911,6 +1019,7 @@ class BettingBoard:
             "cups_online": 0,
             "cups_no_horse": 0,
             "results": _results_dict(None),
+            "payout": None,
             "closing": money["closing"],
             "pot_scale": money["pot_scale"],
             "pot_counted": money["pot_counted"],
@@ -1217,6 +1326,13 @@ class BettingBoard:
             # above), when the pot and every prize come from the count.
             money = _money_view(closing, pot, prizes, split, race_state)
 
+            # La Quiniela's payout, once there is a record and the figures at the post to pay from
+            record_now = read_record(self._results_path)
+            payout = None
+            if record_now is not None and closing is not None:
+                payout = payout_for(record_now, bets_at_post(closing) or {}, closing["pot"], _stored_count(closing), split,
+                                    refunds_for(closing, self.store.scratches(), self.store.scratch_entries(), token_value))
+
             model = {
                 "link_ok": bool(link_ok),
                 "race_state": race_state,
@@ -1239,6 +1355,7 @@ class BettingBoard:
                 "cups_online": extras["cups_online"],
                 "cups_no_horse": extras["cups_no_horse"],
                 "results": _results_dict(extras["results"]),
+                "payout": payout,
                 "closing": money["closing"],
                 "pot_scale": money["pot_scale"],
                 "pot_counted": money["pot_counted"],

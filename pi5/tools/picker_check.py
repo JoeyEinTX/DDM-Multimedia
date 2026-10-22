@@ -290,7 +290,7 @@ class Chrome:
 # -----------------------------------------------------------------------------
 
 STATE_JS = """JSON.stringify({
-    win: resultsState.win, place: resultsState.place, show: resultsState.show, next: resultsState.next,
+    win: resultsState.win, place: resultsState.place, show: resultsState.show, next: resultsState.next, tied: resultsState.tied,
     posts: resultsPosts,
     slots: {win: document.getElementById('slot-win').innerText, place: document.getElementById('slot-place').innerText,
             show: document.getElementById('slot-show').innerText},
@@ -838,8 +838,10 @@ def s_nobets_confirm(c: Ctx) -> None:
         c.p.chrome.tap("#results-confirm-btn")
         c.p.chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
         c.check("  ... and pressing it records the real finish with the next finishers", c.server.rig.board.results(),
-                {"win": NO_CUP, "place": EMPTY_CUP, "show": sh, "next": [fourth, fifth]})
-        # A 4TH card goes when it is no longer needed: a horse with bets put in WIN instead
+                {"win": NO_CUP, "place": EMPTY_CUP, "show": sh, "next": [fourth, fifth], "ties": []})
+        # A 4TH card goes when it is no longer needed: a horse with bets put in WIN instead. The dialog opens on a
+        # saved result, so the result is cleared first and the scenario starts from an empty dialog.
+        c.server.rig.post("/api/results/clear")
         c.fresh(0.0)
         for n in (NO_CUP, HORSES["place"], sh):
             c.p.tap_horse(n)

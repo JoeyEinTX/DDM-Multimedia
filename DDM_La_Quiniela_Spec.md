@@ -1,7 +1,7 @@
 # DDM La Quiniela - Live Betting System Specification
 
-**Version:** 2.3  
-**Date:** May 2026  
+**Version:** 2.4  
+**Date:** 2026-10-22  
 **Status:** Design Phase - Ready for Prototyping  
 **Target Debut:** DDM 2027  
 **Author:** Joey + Claude  
@@ -39,10 +39,62 @@ La Quiniela uses the **LQ Controller** (dedicated ESP32 for reading scales and d
 
 ### Post-Race Payout
 
-1. Race results are determined (Win/Place/Show)
-2. Staff draws ticket halves from the winning cups
-3. Winners match their claim stub to the drawn ticket halves
-4. Winners claim their share of the prize pool
+1. The race finishes; the host enters the real finish in the Control Center's SET WINNERS
+   (1st, 2nd, 3rd; the next finishers when a horse in the money had no bets; a dead heat)
+2. A cup scratched after the post is refunded in cash; the host counts the BETS compartment
+   and enters the counted pot on the LQ admin page
+3. The LQ admin page's RESULTS section says which cup each prize is drawn from and for how
+   much; staff draws one ticket half from each paying cup
+4. Winners match their claim stub to the drawn halves and are paid the prize of that cup
+
+### La Quiniela's payout rule (gap review M6, OD3, OD5; decided by Joey on 2026-10-22 from the examples below)
+
+Computed by `payout_for` in `pi5/la_quiniela/betting.py` from SET WINNERS' record
+(`pi5/data/results.json`: `win`, `place`, `show`, `next`, `ties`) and the figures at the post;
+served as the model's `payout` (`GET /api/quiniela`); shown on the LQ admin page's RESULTS
+section and the TV's results screen. Nobody computes it by hand.
+
+- **Prizes:** 60 % WIN, 25 % PLACE, 15 % SHOW of the pot, whole dollars; PLACE and SHOW
+  rounded half up, WIN takes the rest, so the three sum to the pot.
+- **The pot:** the counted pot once the host enters it; until then the scales' figure at the
+  post, less the refunds of cups scratched after the post. The page says which it is using.
+- **A finisher with no bets at the post is skipped** for La Quiniela (an empty cup has no
+  token to draw): the next finisher with bets takes that position's prize. That is what the
+  record's 4TH and 5TH are for. Fewer than three horses with bets in the whole finish: the
+  unpaid prizes go to WIN (to the first pool).
+- **Dead heat:** the tied horses share the prizes of every position they jointly occupy,
+  whole dollars, the odd dollar(s) to the lower program number(s), and one token is drawn
+  from each tied cup. A tied horse with no bets drops out of the tie, and the skip applies.
+- **Scratched after the post:** the horse cannot be in the finish (pi5 refuses it), its cup's
+  tokens are refunded in cash at token value, and the counted pot, counted after the refunds,
+  is the truth.
+- **A result needs the figures at the post:** pi5 refuses one before AT THE GATE.
+- One token is drawn from each paying cup; the guest holding the matching half wins that
+  prize.
+
+Worked examples, pot $154 (WIN $92, PLACE $39, SHOW $23) unless said; the bets in brackets
+are each cup's tokens at the post:
+
+| # | Finish as entered | Pays | Draw |
+|---|---|---|---|
+| 1 | 7 (12), 3 (9), 12 (5) | 7 WIN $92, 3 PLACE $39, 12 SHOW $23 | one token each from cups 7, 3, 12 |
+| 2 | 7 (0), 3, 12; 4TH 5 | 7 skipped: 3 WIN $92, 12 PLACE $39, 5 SHOW $23 | cups 3, 12, 5 |
+| 3 | 7 (0), 3 (0), 12; 4TH 5, 5TH 9 | 12 WIN $92, 5 PLACE $39, 9 SHOW $23 | cups 12, 5, 9 |
+| 4 | pot $12 (7/3/2); 7 (0), 3 (0), 19 (12), nobody else bet | 19 WIN $12: PLACE and SHOW unpaid, both to WIN | one token from cup 19 |
+| 5 | 7 and 12 dead heat for 1st, 3 third | 7 and 12 share WIN+PLACE $131: 7 $66, 12 $65 (the odd dollar to the lower number); 3 SHOW $23 | one each from 7 ($66), 12 ($65), 3 ($23) |
+| 6 | 7 first; 3 and 12 dead heat for 2nd | 7 WIN $92; 3 and 12 share PLACE+SHOW $62: $31 each | 7, 3 ($31), 12 ($31) |
+| 7 | 7, 3; 12 and 5 dead heat for 3rd | 7 $92, 3 $39; 5 and 12 share SHOW $23: 5 $12, 12 $11 (4th pays nothing) | 7, 3, 5 ($12), 12 ($11) |
+| 8 | 3, 7 and 12 dead heat for 1st | the whole $154 three ways: 3 $52, 7 $51, 12 $51 (the two odd dollars to the lowest numbers, one each) | one each from 3, 7, 12 |
+| 9 | 7 and 12 dead heat for 1st, 12 has no bets; 3 third, 5 fourth | 12 drops out of the tie and the skip applies: 7 WIN $92, 3 PLACE $39, 5 SHOW $23 | 7, 3, 5 |
+| 10 | 7 and 12 dead heat for 1st, both no bets; 3, 5, 9 next | both drop: 3 WIN $92, 5 PLACE $39, 9 SHOW $23 | 3, 5, 9 |
+| 11 | 7 scratched after the post with 12 tokens in its cup; finish 3, 12, 5; the scales said $166 at the post | 7 refused in the finish; refund `cup 7: 12 tokens → $12`; the prizes on $166 − $12 = $154 (`the scales at the post, less the refunds`) until the count is entered, then on the count | 3, 12, 5 |
+| Q4 | pot $12; 19 and 5 dead heat for 1st, nobody else bet | SHOW's unpaid $2 joins the tie's pool: $12 shared, 5 $6, 19 $6 | one each from 5 and 19 |
+
+Every case sums to the pot; in a tie the odd dollar(s) go to the lower program number(s).
+These examples are the table test `test_payout_rule` in `pi5/la_quiniela/test_betting.py`.
+
+La Subasta reads the same record and pays the owners of the real 1st, 2nd and 3rd, its
+own rule (`DDM_La_Subasta_Spec.md`); a dead heat in La Subasta's ledger is a follow-up item.
 
 ---
 
@@ -647,7 +699,7 @@ DEVPI
 | LED base resizing | Pending | Keep 4" or resize to 4.5" to match cups |
 | Ticket scored line thickness | Pending | Test prints to dial in break strength |
 | Ticket 3-color layout | Pending | Design in progress |
-| Prize pool split ratio | Pending | Win/Place/Show percentages |
+| Prize pool split ratio | Decided | 60 / 25 / 15, whole dollars, WIN takes the rounding (La Quiniela's payout rule, above) |
 | ESP32 WiFi vs wired | Pending | WiFi simpler, wired more reliable |
 
 ---
@@ -671,6 +723,7 @@ DEVPI
 | 2.1 | May 2026 | Revised to modular stacking system: separate scale base underneath LED base, added WS2812B 8x8 matrix displays on betting cups |
 | 2.2 | May 2026 | Consolidated architecture: single ESP32 handles scales + displays, DevPi handles logic/dashboard (no dedicated La Quiniela Pi), updated GPIO assignments and software architecture |
 | 2.3 | May 2026 | Established official nomenclature: LQ Controller (ESP32 hardware) and LQ Module (DevPi software), updated all references throughout document |
+| 2.4 | 2026-10-22 | La Quiniela's payout rule written down with worked examples (gap review M6, OD3, OD5): the skip, dead heats, the unpaid prizes, refunds after the post; computed by `payout_for` and shown on the LQ admin page and the TV |
 
 ---
 

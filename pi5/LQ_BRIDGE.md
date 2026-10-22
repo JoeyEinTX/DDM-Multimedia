@@ -1190,6 +1190,7 @@ rewrites `Cache-Control`.
                {"was": {"number": 20, "name": "SOCIETY MAN"}, "now": null}],
  "cups_online": 20, "cups_no_horse": 0,
  "results": null,
+ "payout": null,
  "closing": null,
  "pot_scale": null, "pot_counted": null, "hand_counted": false,
  "race": {"name": "KENTUCKY DERBY", "year": 2027, "post_at": 1809212220.0, "post_local": "5:57 PM CDT",
@@ -1207,6 +1208,25 @@ fields' shapes plus `at`:
             "horses": {"1": {"tokens": 0}, "7": {"tokens": 23}, "...": "...24 entries...", "22": {"tokens": 10}},
             "at": 1777664400.2}
 ```
+
+Once SET WINNERS has a result and the figures at the post exist, `payout` is
+La Quiniela's payout from them (`payout_for`; gap review M6, OD3: the rule and
+the examples in `DDM_La_Quiniela_Spec.md`), what the LQ admin page's RESULTS
+section and the TV's results screen show; `null` otherwise:
+
+```json
+"payout": {"pot": 154, "pot_source": "counted", "prizes": {"win": 92, "place": 39, "show": 23},
+           "pays": [{"slots": ["win"], "horses": [{"horse": 3, "prize": 92}], "skipped": [7], "dead_heat": false},
+                    {"slots": ["place", "show"], "horses": [{"horse": 5, "prize": 31}, {"horse": 12, "prize": 31}],
+                     "skipped": [], "dead_heat": true}],
+           "skipped": [7], "unpaid_to_win": 0, "refunds": [{"horse": 9, "tokens": 4, "refund": 4}]}
+```
+
+`pot_source` is `counted`, `scale` or `scale less refunds`; `pays` has one entry per prize paid, in finishing
+order, `slots` the prize(s) the entry pays (two or three in a dead heat, pooled), `horses` the cups to draw
+from with each one's share (lowest number first), `skipped` the no-bets finishers crossing in or ahead of
+it; `unpaid_to_win` the prizes of positions nobody with bets filled, added to the first pool; `refunds` the
+cups scratched after the post, each refunded at token value.
 
 The first eleven keys are the original contract and are unchanged; the rest
 are additive (the splash relays the whole model untouched). From the snapshot,

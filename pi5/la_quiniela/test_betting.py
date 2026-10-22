@@ -43,7 +43,7 @@ from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
     DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, RENUM_LATE_S, RENUM_RECENT_S, RENUM_SETTLE_S, BettingBoard, clean_weather, clear_results,
     load_board_settings,
-    prizes_for, read_results, round_half_up, sse_events, validate_cmd,
+    finish_groups, payout_for, prizes_for, read_record, read_results, round_half_up, sse_events, validate_cmd,
 )
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import LqBridge  # noqa: E402
@@ -65,7 +65,7 @@ MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", 
               # additive since the payout model: see "Betting board" in LQ_BRIDGE.md
               "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
               # additive since protocol v2
-              "cups_online", "cups_no_horse", "results",
+              "cups_online", "cups_no_horse", "results", "payout",
               # additive since pi5 holds the figures at the post
               "closing",
               # additive since race info lives in La Quiniela (the race; each horse's odds too)
@@ -253,7 +253,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 29 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 29, str(sorted(m)))
+    _check("exactly the 30 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 30, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -1090,7 +1090,7 @@ def test_model_route():
     _check("GET /api/quiniela 200 JSON", r.status_code == 200 and r.mimetype == "application/json")
     _check("Cache-Control: no-store", r.headers.get("Cache-Control") == "no-store", str(r.headers.get("Cache-Control")))
     m = r.get_json()
-    _check("the 28 keys", set(m) == MODEL_KEYS, str(sorted(m)))
+    _check("the 30 keys", set(m) == MODEL_KEYS, str(sorted(m)))
     _check("fresh: link down, PRE_RACE", m["link_ok"] is False and m["race_state"] == 0 and m["race_state_name"] == "PRE_RACE")
     _check("24 horses, no tokens, no leader", len(m["horses"]) == 24 and m["total_tokens"] == 0 and m["leader"] is None)
     _check("token_value and board_states", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"])
@@ -2778,6 +2778,163 @@ def test_results_from_the_dashboard_file():
 
 
 # -----------------------------------------------------------------------------
+# La Quiniela's payout rule (gap review M6, OD3, OD5; Joey's examples and answers, 2026-10-22)
+# -----------------------------------------------------------------------------
+# One record, SET WINNERS', and the figures at the post: which cup each prize is
+# drawn from and for how much. A finisher whose cup held no bets is skipped for
+# the next with bets; tied horses share the prizes of the positions they jointly
+# occupy, whole dollars, the odd dollar to the lower program number, and a tied
+# horse with no bets drops out; fewer than three with bets, the unpaid prizes
+# join the first pool; a cup scratched after the post is refunded at token value
+# and the pot is the scales' figure less the refunds until the count is entered.
+
+PAYOUT_BETS = {7: 12, 3: 9, 12: 5, 5: 4, 9: 2, 19: 12}      # tokens at the post; a horse not here held none
+
+
+def record(win, place, show, next=(), ties=()):
+    return {"win": win, "place": place, "show": show, "next": list(next), "ties": [list(t) for t in ties]}
+
+
+def write_record(board, data):
+    Path(board._results_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(board._results_path).write_text(json.dumps(data), encoding="utf-8")
+
+
+def pays(result):
+    """The payout as a table row: [(slots, [(horse, prize), ...], skipped), ...]."""
+    return [(tuple(p["slots"]), [(h["horse"], h["prize"]) for h in p["horses"]], tuple(p["skipped"])) for p in result["pays"]]
+
+
+def test_payout_rule():
+    bets = PAYOUT_BETS
+
+    def pay(rec, pot=154, b=bets, counted=None, refunds=()):
+        return payout_for(rec, b, pot, counted, SPLIT, list(refunds))
+
+    examples = [
+        ("1 plain: 7, 3, 12", pay(record(7, 3, 12)),
+         [(("win",), [(7, 92)], ()), (("place",), [(3, 39)], ()), (("show",), [(12, 23)], ())]),
+        ("2 one no-bets horse in the money, a 4TH: 4 (no bets), 3, 12; 5", pay(record(4, 3, 12, next=[5])),
+         [(("win",), [(3, 92)], (4,)), (("place",), [(12, 39)], ()), (("show",), [(5, 23)], ())]),
+        ("3 two no-bets horses, a 5TH: 4, 2, 12; 5, 9", pay(record(4, 2, 12, next=[5, 9])),
+         [(("win",), [(12, 92)], (4, 2)), (("place",), [(5, 39)], ()), (("show",), [(9, 23)], ())]),
+        ("4 one horse with bets in the whole field, a $12 pot: 4, 2, 19", pay(record(4, 2, 19), pot=12, b={19: 12}),
+         [(("win",), [(19, 12)], (4, 2))]),
+        ("5 two-way tie for 1st: 7 and 12, then 3", pay(record(7, 12, 3, ties=[[7, 12]])),
+         [(("win", "place"), [(7, 66), (12, 65)], ()), (("show",), [(3, 23)], ())]),
+        ("6 two-way tie for 2nd: 7; 3 and 12", pay(record(7, 3, 12, ties=[[3, 12]])),
+         [(("win",), [(7, 92)], ()), (("place", "show"), [(3, 31), (12, 31)], ())]),
+        ("7 two-way tie for 3rd: 7, 3; 12 and 5 (4th pays nothing)", pay(record(7, 3, 12, next=[5], ties=[[12, 5]])),
+         [(("win",), [(7, 92)], ()), (("place",), [(3, 39)], ()), (("show",), [(5, 12), (12, 11)], ())]),
+        ("8 three-way tie for 1st: 3, 7, 12", pay(record(3, 7, 12, ties=[[3, 7, 12]])),
+         [(("win", "place", "show"), [(3, 52), (7, 51), (12, 51)], ())]),
+        ("9 a tie where one horse has no bets: 7 and 12 for 1st, 12 no bets; 3; 5",
+         pay(record(7, 12, 3, next=[5], ties=[[7, 12]]), b={**bets, 12: 0}),
+         [(("win",), [(7, 92)], (12,)), (("place",), [(3, 39)], ()), (("show",), [(5, 23)], ())]),
+        ("10 a tie where both have no bets: 4 and 2 for 1st; 3; 5, 9", pay(record(4, 2, 3, next=[5, 9], ties=[[4, 2]])),
+         [(("win",), [(3, 92)], (4, 2)), (("place",), [(5, 39)], ()), (("show",), [(9, 23)], ())]),
+        ("11 a horse scratched after the post (7, 12 tokens): 3, 12, 5 on the scales' $166 less the refund",
+         pay(record(3, 12, 5), pot=166.0, refunds=[{"horse": 7, "tokens": 12, "refund": 12}]),
+         [(("win",), [(3, 92)], ()), (("place",), [(12, 39)], ()), (("show",), [(5, 23)], ())]),
+        ("Q4 a tie for 1st with nobody else betting, a $12 pot: 19 and 5",
+         pay(record(19, 5, 4, ties=[[19, 5]]), pot=12, b={19: 12, 5: 4}),
+         [(("win", "place"), [(5, 6), (19, 6)], ())]),
+    ]
+    for name, got, want in examples:
+        _check(f"example {name}", pays(got) == want, str(pays(got)))
+        paid = sum(h["prize"] for p in got["pays"] for h in p["horses"])
+        _check(f"...sums to the pot (${got['pot']})", paid == got["pot"], f"{paid} of {got['pot']}")
+    four = pay(record(4, 2, 19), pot=12, b={19: 12})
+    _check("example 4: PLACE $3 and SHOW $2 unpaid, both to WIN; the skipped horses listed", four["unpaid_to_win"] == 5 and four["skipped"] == [4, 2]
+           and four["prizes"] == {"win": 7, "place": 3, "show": 2}, str(four))
+    _check("example Q4: SHOW's $2 unpaid into the tie's pool", pay(record(19, 5, 4, ties=[[19, 5]]), pot=12, b={19: 12, 5: 4})["unpaid_to_win"] == 2)
+    eleven = pay(record(3, 12, 5), pot=166.0, refunds=[{"horse": 7, "tokens": 12, "refund": 12}])
+    _check("example 11: the pot is the scales' figure less the refunds, labelled so, the refunds listed",
+           eleven["pot"] == 154 and eleven["pot_source"] == "scale less refunds"
+           and eleven["refunds"] == [{"horse": 7, "tokens": 12, "refund": 12}], str(eleven))
+    counted = pay(record(3, 12, 5), pot=166.0, counted=150, refunds=[{"horse": 7, "tokens": 12, "refund": 12}])
+    _check("...once counted, the count is the pot (counted after the refunds), the refunds still listed",
+           counted["pot"] == 150 and counted["pot_source"] == "counted" and counted["prizes"] == prizes_for(150, SPLIT)
+           and pays(counted)[0] == (("win",), [(3, 89)], ()) and len(counted["refunds"]) == 1, str(counted))
+    _check("no refunds, no count: the scales' figure at the post, rounded half up", pay(record(7, 3, 12), pot=153.5)["pot"] == 154
+           and pay(record(7, 3, 12))["pot_source"] == "scale")
+    none = pay(record(4, 2, 1), b={})
+    _check("nobody in the finish held bets: nothing to pay, the whole pot unpaid", none["pays"] == [] and none["unpaid_to_win"] == 154
+           and none["skipped"] == [4, 2, 1])
+    _check("the finish as positions: ties joined, in finishing order",
+           finish_groups(record(7, 12, 3, ties=[[7, 12]])) == [[7, 12], [3]]
+           and finish_groups(record(7, 3, 12, next=[5], ties=[[12, 5]])) == [[7], [3], [12, 5]]
+           and finish_groups(record(3, 7, 12, ties=[[3, 7, 12]])) == [[3, 7, 12]]
+           and finish_groups(record(7, 3, 12, next=[5, 9])) == [[7], [3], [12], [5], [9]])
+    for pot in (1, 2, 3, 10, 11, 13, 99, 101, 154, 155, 1000):
+        for rec in (record(7, 12, 3, ties=[[7, 12]]), record(3, 7, 12, ties=[[3, 7, 12]]), record(7, 3, 12, next=[5], ties=[[12, 5]]),
+                    record(4, 2, 19), record(19, 5, 4, ties=[[19, 5]])):
+            got = pay(rec, pot=pot, b={**bets, 4: 0, 2: 0})
+            shares = [h["prize"] for p in got["pays"] for h in p["horses"]]
+            _check(f"pot {pot}, {rec['ties'] or 'no tie'}, {rec['win']}/{rec['place']}/{rec['show']}: whole dollars summing to the pot, "
+                   "shares within a dollar of each other",
+                   sum(shares) == pot and all(isinstance(s, int) for s in shares)
+                   and all(max(h["prize"] for h in p["horses"]) - min(h["prize"] for h in p["horses"]) <= 1 for p in got["pays"]), str(got["pays"]))
+
+
+def test_record_ties_in_the_file():
+    board, wall, _ = fresh_board()
+    path = board._results_path
+    write_record(board, {"win": 7, "place": 12, "show": 3, "next": [5], "ties": [[7, 12]]})
+    _check("a dead heat in the file: read_record carries it, read_results is the three slots as before",
+           read_record(path) == {"win": 7, "place": 12, "show": 3, "next": [5], "ties": [[7, 12]]} and read_results(path) == [7, 12, 3],
+           str(read_record(path)))
+    write_record(board, {"win": 7, "place": 12, "show": 3, "next": [5, 9], "ties": [[12, 3], [5, 9]]})
+    _check("two ties, each of consecutive finishers, kept in the finish's order", read_record(path)["ties"] == [[12, 3], [5, 9]])
+    write_record(board, {"win": 7, "place": 12, "show": 3, "ties": [[12, "7"]]})
+    _check("a tie listed out of order, a string inside: coerced and put in the finish's order", read_record(path)["ties"] == [[7, 12]])
+    write_record(board, {"win": 7, "place": 12, "show": 3})
+    _check("no ties key: an empty list", read_record(path)["ties"] == [])
+    for name, ties in (("not consecutive", [[7, 3]]), ("a horse not in the finish", [[7, 8]]), ("four deep", [[7, 12, 3, 5]]),
+                       ("one horse", [[7]]), ("not a list", "7,12"), ("junk inside", [["x", 12]])):
+        write_record(board, {"win": 7, "place": 12, "show": 3, "next": [5], "ties": ties})
+        _check(f"a tie that is {name} is dropped, the record stands", read_record(path)["ties"] == [] and read_results(path) == [7, 12, 3],
+               str(read_record(path)))
+    write_record(board, {"win": 7, "place": 12, "show": 3, "ties": [[7, 12], [12, 3]]})
+    _check("a horse in two ties: the second is dropped", read_record(path)["ties"] == [[7, 12]])
+
+
+def test_payout_in_the_model():
+    b, wall, _ = fresh_board()
+    cups = [cup_entry(1, horse=7, count=12, online=True), cup_entry(2, horse=3, count=9, online=True),
+            cup_entry(3, horse=12, count=5, online=True), cup_entry(4, horse=5, count=4, online=True)]
+    b.apply_snapshot(snap(phase=1, cups=cups))
+    write_record(b, record(4, 3, 12, next=[5]))
+    b.apply_snapshot(snap(phase=1, cups=cups))
+    _check("before the post: no figures, so no payout", b.model()["payout"] is None and "payout" in b.model())
+    b.apply_snapshot(snap(phase=3, cups=cups))
+    p = b.model()["payout"]
+    _check("at the post: the payout from the record and the figures, on the scales' $30: 4 skipped, 3 WIN $17, 12 PLACE $8, 5 SHOW $5",
+           p is not None and p["pot"] == 30 and p["pot_source"] == "scale"
+           and pays(p) == [(("win",), [(3, 17)], (4,)), (("place",), [(12, 8)], ()), (("show",), [(5, 5)], ())], str(p))
+    _check("...in the JSON the pages get", json.loads(b.model_json())["payout"]["pot"] == 30)
+    b.set_pot_counted(154)
+    p = b.model()["payout"]
+    _check("the count entered: the prizes follow it at once", p["pot"] == 154 and p["pot_source"] == "counted"
+           and pays(p) == [(("win",), [(3, 92)], (4,)), (("place",), [(12, 39)], ()), (("show",), [(5, 23)], ())], str(p))
+    b.set_pot_counted(None)
+    b.store.scratch_gateway(7, state=4, at=1000.0)                    # after the post: a refund, not a re-bet
+    b.apply_snapshot(snap(phase=4, cups=cups))
+    p = b.model()["payout"]
+    _check("a scratch after the post: cup 7's 12 tokens refunded, the pot the scales' $30 less $12",
+           p["refunds"] == [{"horse": 7, "tokens": 12, "refund": 12}] and p["pot"] == 18 and p["pot_source"] == "scale less refunds"
+           and pays(p) == [(("win",), [(3, 10)], (4,)), (("place",), [(12, 5)], ()), (("show",), [(5, 3)], ())], str(p))
+    b.store.scratch_gateway(9, state=1, at=900.0)                     # before the post: re-bet then, nothing to refund
+    b.apply_snapshot(snap(phase=4, cups=cups))
+    _check("a scratch from before the post refunds nothing", b.model()["payout"]["refunds"] == [{"horse": 7, "tokens": 12, "refund": 12}])
+    write_record(b, record(7, 12, 3, ties=[[7, 12]]))
+    b.apply_snapshot(snap(phase=5, cups=cups))
+    _check("the record changed (a dead heat): the payout follows on the next model", b.model()["payout"]["pays"][0]["dead_heat"] is True)
+    b.reset_betting()
+    _check("Reset betting: no record, no payout", b.model()["payout"] is None)
+
+
+# -----------------------------------------------------------------------------
 # The figures at the post (the model's closing)
 # -----------------------------------------------------------------------------
 
@@ -3464,7 +3621,7 @@ def test_admin_page():
            and '"same"' in html and chr(0x2212) in html)
     _check("...the figures say which they are (hand counted, or the scales'), and the page does no prize arithmetic of its own",
            "hand counted" in html and ("Pot " + chr(0xb7) + " scale") in html and "model.split" not in html and "* 0.2" not in html and "* 0.6" not in html)
-    _check("well under 700 lines", html.count("\n") < 700, str(html.count("\n")))
+    _check("under 800 lines (the RESULTS section of M6 took it past 700)", html.count("\n") < 800, str(html.count("\n")))
 
 
 def test_reopen_takes_fresh_figures():
@@ -4206,6 +4363,9 @@ def main():
     _run("renumber — a late cup does not change the model every second", test_a_late_cup_does_not_churn_the_model)
     _run("scratch — after betting opens every scratch hands the tokens back: rebet (Joey, 2026-10-14)", test_rebet_after_betting_opens)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
+    _run("payout — La Quiniela's rule on Joey's examples: skips, dead heats, the unpaid prizes, refunds, rounding", test_payout_rule)
+    _run("payout — a dead heat in the record: kept, checked, ordered", test_record_ties_in_the_file)
+    _run("payout — in the model: from the post, following the count, a refund after the post, gone with Reset betting", test_payout_in_the_model)
     _run("closing — the figures at the post: taken, held, dropped, saved", test_closing_figures)
     _run("closing — reopened from the post with FINAL CALL, the next close takes fresh figures (B1)", test_reopen_takes_fresh_figures)
     _run("closing — a database from before lq_closing gains it at start", test_lq_closing_on_an_existing_database)

@@ -347,6 +347,7 @@ def build_model(
     race: Optional[Dict[str, Any]] = None,
     weather: Optional[Dict[str, Any]] = None,
     odds: Optional[Dict[int, str]] = None,
+    payout: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The contract's model: horses "1".."24"; share 4 dp, pot 2 dp, leader =
     strictly most tokens (lowest horse on a tie, None when nothing is bet;
@@ -439,6 +440,7 @@ def build_model(
         "cups_no_horse": 0,
         "results": dict(zip(("win", "place", "show"), wps)) if len(wps) == 3 else None,
         "closing": closing,
+        "payout": payout,
         "race": race if race is not None else race_for(None),
         "weather": weather,
     }, None)               # no hand count here: pot_scale from `closing`, pot_counted None, hand_counted False
@@ -477,6 +479,24 @@ def apply_count(model: Dict[str, Any], counted: Optional[int]) -> Dict[str, Any]
         if model["race_state"] in COUNT_IN_FORCE:
             model["pot"], model["prizes"], model["hand_counted"] = shown["pot"], dict(shown["prizes"]), True
     return model
+
+
+def payout_of(results: Optional[Tuple[int, ...]], model: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """La Quiniela's payout as pi5 serves it (the model's payout, pi5's
+    betting.payout_for) for the plain race the fake plays: each slot's horse
+    paid that slot's prize from the figures at the post (the count's once
+    entered), nobody skipped, no dead heat, no refund. None without a result
+    or without figures at the post. A test wanting a skip or a dead heat
+    hands build_model its own payout."""
+    closing = model["closing"]
+    if results is None or closing is None:
+        return None
+    prizes = closing["prizes"]
+    return {"pot": int(round(closing["pot"])), "pot_source": "counted" if model["pot_counted"] is not None else "scale",
+            "prizes": dict(prizes),
+            "pays": [{"slots": [slot], "horses": [{"horse": horse, "prize": prizes[slot]}], "skipped": [], "dead_heat": False}
+                     for slot, horse in zip(("win", "place", "show"), results)],
+            "skipped": [], "unpaid_to_win": 0, "refunds": []}
 
 
 def seed_events(now: Optional[float] = None) -> List[Dict[str, Any]]:
@@ -547,7 +567,9 @@ class FakePi5:
         elif self.phase in CLOSED_STATES and self.closing is None:
             self.closing = closing_of(model)
         model["closing"] = self.closing
-        return apply_count(model, self.counted)
+        model = apply_count(model, self.counted)
+        model["payout"] = payout_of(self.results, model)
+        return model
 
     def _publish_locked(self) -> None:
         self._json = _dumps(self._build())

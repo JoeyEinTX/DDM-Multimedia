@@ -334,6 +334,8 @@ Show payout  = Total Pot × 0.15 → the owner of the horse that crossed 3rd
 
 Whole pesos, La Quiniela's own rounding (`prizes_for`, OD5): PLACE and SHOW rounded half up, WIN takes the rest, so the three always sum to the pot. A horse nobody bet in La Quiniela is skipped there (M6), not here: its owner is paid all the same.
 
+**A dead heat (the record's `ties`, M6): slot order, pending a follow-up.** The ledger pays the horse in the record's WIN slot the WIN payout and the horse in the PLACE slot the PLACE payout, as the tied horses were entered, exactly as it pays a plain finish. That is not the rule: Joey decided on 2026-10-22 that La Subasta pools the tied positions' payouts and splits them between the owners, as La Quiniela does, and that it is not built yet (the vault's status page carries the follow-up item "La Subasta: dead heats pool and split"). Until it is, read the ledger's dead heat as slot order, not as the rule.
+
 ### Example
 
 Total pot = 11 pesos

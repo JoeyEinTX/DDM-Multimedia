@@ -287,22 +287,16 @@
     const headerEl      = board.querySelector('.qb-header');
     const resultsEl     = $('qb-results');
 
-    // The results screen's three rows: place -> { el, saddle, name, count,
-    // unit, prize } and what each last showed (horse, nameText, prizeText).
-    const resultRows = {};
-    for (const place of PLACES) {
-        const el = $('qb-result-' + place);
-        resultRows[place] = {
-            el,
-            saddle: el.querySelector('.qb-result-saddle'),
-            name:   el.querySelector('.qb-result-name'),
-            bets:   el.querySelector('.qb-result-bets'),
-            count:  el.querySelector('.qb-result-count'),
-            unit:   el.querySelector('.qb-result-unit'),
-            prize:  el.querySelector('.qb-result-prize'),
-            horse: null, nameText: null, prizeText: null, countText: null,
-        };
-    }
+    // The results screen's rows, one per prize paid (buildResultRows): { el,
+    // horses: [{ el, saddle, name, bets, count, unit, prize, horse, scale,
+    // nameText, countText, prizeText }] }, from the model's payout, rebuilt
+    // when who pays what changes; a dead heat puts two or three horses in one
+    // row, each drawn at `scale` of a row of its own.
+    const resultsRowsEl  = $('qb-results-rows');
+    const resultTpl      = $('qb-result-tpl');
+    const resultHorseTpl = $('qb-result-horse-tpl');
+    let resultRows = [];
+    let resultsKey = null;
 
     // The rows on screen: horse -> { el, name, bets, displayed, target, raf,
     // nameText, and in "dots" digits, need, scroll, scrollKey }, built from
@@ -401,8 +395,8 @@
         model = m;
 
         const state = Number(m.race_state);
-        const results = RESULT_STATES.includes(state) ? resultsOf(m) : null;
-        const spec = results ? RESULTS_BANNER : (BANNERS[state] || {
+        const payout = RESULT_STATES.includes(state) ? payoutOf(m) : null;
+        const spec = payout ? RESULTS_BANNER : (BANNERS[state] || {
             text: String(m.race_state_name || ('state ' + state)).replace(/_/g, ' '),
             cls: 'qb-banner--closed',
             frozen: false,
@@ -435,7 +429,7 @@
         closingKey = key;
         renderCounted(m.hand_counted === true);   // after the paint: the tag hangs off the figure just written (99 -> 100 moves it)
         renderNames(m);            // live in every state
-        renderResults(m, results); // the results screen, or back to the rows
+        renderResults(m, payout);  // the results screen, or back to the rows
         renderCloses(m, state);
         fitHeader();               // the header's widths may have changed: fitted, and the tag placed again
 
@@ -859,35 +853,42 @@
         return p;
     }
 
-    function fitResultName(el) {
-        if (dottedNames) fitTiles(el, RESULT_NAME_PITCH);
-        else fitText(el, RESULT_NAME_MAX_PX, RESULT_NAME_MIN_PX);
+    // A dead heat stacks two or three horses in one row: each is drawn at r.scale of a row of its own
+    function scaled(pitches, scale) {
+        return [Math.max(pitches[1], Math.round(pitches[0] * scale)), pitches[1]];
+    }
+
+    function fitResultName(r) {
+        if (dottedNames) fitTiles(r.name, scaled(RESULT_NAME_PITCH, r.scale));
+        else fitText(r.name, Math.round(RESULT_NAME_MAX_PX * r.scale), RESULT_NAME_MIN_PX);
     }
 
     // The prize's strip hangs from the right of its cell: the cell is what
     // the strip may fill, so it is measured on the row, not on the strip.
     function fitResultPrize(r) {
-        if (!dottedFigures) { fitText(r.prize, RESULT_PRIZE_MAX_PX, RESULT_PRIZE_MIN_PX); return; }
+        if (!dottedFigures) { fitText(r.prize, Math.round(RESULT_PRIZE_MAX_PX * r.scale), RESULT_PRIZE_MIN_PX); return; }
         r.prize.style.width = '100%';
         const cell = r.prize.clientWidth;
-        let p = RESULT_PRIZE_PITCH[0];
+        const pitches = scaled(RESULT_PRIZE_PITCH, r.scale);
+        let p = pitches[0];
         const chars = r.prize.textContent.length;
-        while (chars * DOT_CELL * p > cell + p / 2 && p > RESULT_PRIZE_PITCH[1]) p--;
+        while (chars * DOT_CELL * p > cell + p / 2 && p > pitches[1]) p--;
         const tile = DOT_CELL * p;
         r.prize.style.fontSize = (DOT_EM * p) + 'px';
         r.prize.style.width = Math.min(cell, Math.max(chars, Math.floor((cell + p / 2) / tile)) * tile) + 'px';
     }
 
     function fitResultCount(r) {
-        if (dottedFigures) fitDots(r.count, RESULT_COUNT_PITCH, r.bets);
+        if (dottedFigures) fitDots(r.count, scaled(RESULT_COUNT_PITCH, r.scale), r.bets);
     }
 
     function refitNames() {
         for (const n of field) if (rows[n]) fitName(rows[n]);
-        for (const place of PLACES) {
-            const r = resultRows[place];
-            if (r.nameText != null) fitResultName(r.name);
-            if (r.prizeText != null) { fitResultPrize(r); fitResultCount(r); }
+        for (const row of resultRows) {
+            for (const r of row.horses) {
+                if (r.nameText != null) fitResultName(r);
+                if (r.prizeText != null) { fitResultPrize(r); fitResultCount(r); }
+            }
         }
     }
 
@@ -929,32 +930,65 @@
     }
 
     // ---- Results ----------------------------------------------------
-    // The model's results, {win, place, show}, when all three are in: three
-    // different horses 1-24. Anything else (null until the dashboard has
-    // them, a place still missing) is no results yet.
-    function resultsOf(m) {
-        const r = m.results;
-        if (!r || typeof r !== 'object') return null;
-        const out = {};
-        const seen = new Set();
-        for (const place of PLACES) {
-            const n = Number(r[place]);
-            if (!Number.isInteger(n) || n < 1 || n > HORSES || seen.has(n)) return null;
-            seen.add(n);
-            out[place] = n;
-        }
-        return out;
+    // La Quiniela's payout, as pi5 serves it (the model's payout, from
+    // betting.payout_for): what turns the frozen board into the results
+    // screen. {pot, pot_source, prizes, pays: [{slots, horses: [{horse,
+    // prize}], skipped, dead_heat}], skipped, unpaid_to_win, ...}; null until
+    // the dashboard's SET WINNERS has been confirmed (and the figures at the
+    // post exist to pay from).
+    function payoutOf(m) {
+        const p = m.payout;
+        if (!p || typeof p !== 'object' || !Array.isArray(p.pays)) return null;
+        return p;
     }
 
-    // The results screen. Who won and the names come from the live model;
-    // the bets each cup held and the prizes from the picture on the board
-    // (`shown`: the figures at the post, pi5's closing, or without them the
-    // page's own freeze): the cups are emptied for the draw while this
-    // screen is up, and the count that matters is the one they held. A
-    // horse that was never in the field still gets its row (cloth, name,
-    // 0 bets): the results say what they say.
-    function renderResults(m, results) {
-        const on = !!results;
+    const TIE_SCALE = { 1: 1, 2: 0.6, 3: 0.42 };
+
+    // The rows: one per prize paid, the slot(s) it pays and the skip or the
+    // dead heat under them, then each paying horse's cloth, name, bets and
+    // share. Built when the shape changes (who pays what); the texts are
+    // written by renderResults.
+    function buildResultRows(payout) {
+        resultsRowsEl.textContent = '';
+        resultRows = payout.pays.map((pay) => {
+            const el = resultTpl.content.firstElementChild.cloneNode(true);
+            el.id = 'qb-result-' + pay.slots[0];
+            el.dataset.slot = pay.slots[0];
+            el.dataset.slots = pay.slots.join(',');
+            el.dataset.horse = String(pay.horses[0].horse);
+            el.classList.toggle('qb-result--win', pay.slots[0] === 'win');
+            el.classList.toggle('qb-result--tie', !!pay.dead_heat);
+            el.querySelector('.qb-result-slots').textContent = pay.slots.join(' + ');
+            el.querySelector('.qb-result-skip').textContent = pay.skipped.length
+                ? pay.skipped.map((n) => '#' + n).join(', ') + ' no bets' : (pay.dead_heat ? 'dead heat' : '');
+            const horsesEl = el.querySelector('.qb-result-horses');
+            const scale = TIE_SCALE[pay.horses.length] || TIE_SCALE[3];
+            const horses = pay.horses.map((h) => {
+                const hel = resultHorseTpl.content.firstElementChild.cloneNode(true);
+                hel.dataset.horse = String(h.horse);
+                const c = SADDLE[h.horse] || SADDLE_FALLBACK;
+                const saddle = hel.querySelector('.qb-result-saddle');
+                saddle.style.background = c.bg;
+                saddle.style.color = c.fg;
+                saddle.textContent = String(h.horse);
+                horsesEl.appendChild(hel);
+                return { el: hel, saddle, name: hel.querySelector('.qb-result-name'), bets: hel.querySelector('.qb-result-bets'),
+                         count: hel.querySelector('.qb-result-count'), unit: hel.querySelector('.qb-result-unit'),
+                         prize: hel.querySelector('.qb-result-prize'), horse: h.horse, scale: scale,
+                         nameText: null, countText: null, prizeText: null };
+            });
+            resultsRowsEl.appendChild(el);
+            return { el, horses };
+        });
+    }
+
+    // The results screen. Who pays and how much come from the payout; the
+    // names from the live model; the bets each cup held from the picture on
+    // the board (`shown`: the figures at the post, pi5's closing, or without
+    // them the page's own freeze): the cups are emptied for the draw while
+    // this screen is up, and the count that matters is the one they held.
+    function renderResults(m, payout) {
+        const on = !!payout;
         const view = on ? 'results' : 'rows';
         if (board.dataset.view !== view) {
             board.dataset.view = view;
@@ -962,42 +996,39 @@
             syncScrolls();         // the rows' scrolls stop under the results screen
         }
         if (!on) return;
-        const from = shown || m;
-        const prizes = (from.prizes && typeof from.prizes === 'object') ? from.prizes : {};
-        for (const place of PLACES) {
-            const n = results[place];
-            const r = resultRows[place];
-            if (r.horse !== n) {
-                r.horse = n;
-                r.el.dataset.horse = String(n);
-                const c = SADDLE[n] || SADDLE_FALLBACK;
-                r.saddle.style.background = c.bg;
-                r.saddle.style.color = c.fg;
-                r.saddle.textContent = String(n);
-            }
-            const name = horseName(m.horses[String(n)], n);
-            if (name !== r.nameText) {
-                r.nameText = name;
-                r.name.textContent = name;
-                fitResultName(r.name);
-            }
-            const h = from.horses && from.horses[String(n)];
-            const tokens = Math.max(0, parseInt(h && h.tokens, 10) || 0);
-            const count = String(tokens);
-            setText(r.unit, tokens === 1 ? 'Bet' : 'Bets');
-            if (count !== r.countText) {
-                r.countText = count;
-                r.count.textContent = count;
-                fitResultCount(r);
-            }
-            const v = Number(prizes[place]);
-            const prize = '$' + (Number.isFinite(v) ? Math.round(v) : 0);
-            if (prize !== r.prizeText) {
-                r.prizeText = prize;
-                r.prize.textContent = prize;
-                fitResultPrize(r);
-            }
+        const key = JSON.stringify(payout.pays.map((p) => [p.slots, p.horses.map((h) => h.horse), p.skipped, !!p.dead_heat]));
+        if (key !== resultsKey) {
+            resultsKey = key;
+            buildResultRows(payout);
         }
+        const from = shown || m;
+        payout.pays.forEach((pay, i) => {
+            pay.horses.forEach((h, j) => {
+                const r = resultRows[i].horses[j];
+                const n = h.horse;
+                const name = horseName(m.horses[String(n)], n);
+                if (name !== r.nameText) {
+                    r.nameText = name;
+                    r.name.textContent = name;
+                    fitResultName(r);
+                }
+                const held = from.horses && from.horses[String(n)];
+                const tokens = Math.max(0, parseInt(held && held.tokens, 10) || 0);
+                const count = String(tokens);
+                setText(r.unit, tokens === 1 ? 'Bet' : 'Bets');
+                if (count !== r.countText) {
+                    r.countText = count;
+                    r.count.textContent = count;
+                    fitResultCount(r);
+                }
+                const prize = '$' + Math.round(Number(h.prize) || 0);
+                if (prize !== r.prizeText) {
+                    r.prizeText = prize;
+                    r.prize.textContent = prize;
+                    fitResultPrize(r);
+                }
+            });
+        });
     }
 
     // The field: every horse with in_field true, in numeric order. A horse

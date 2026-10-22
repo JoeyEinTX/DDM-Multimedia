@@ -2887,6 +2887,48 @@ a.drawer-link {
     display: flex;
 }
 
+/* A dead heat: DEAD HEAT on a filled card ties the card after it to it; the tied card says so and joins the one above */
+.results-modal-named .slot-tie {
+    display: none;
+    position: absolute;
+    right: 8px;
+    bottom: 6px;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 2px solid #666666;
+    border-radius: 16px;
+    background: #222222;
+    color: #dddddd;
+    font-size: 0.72em;
+    font-weight: 800;
+    letter-spacing: 1px;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.results-modal-named .result-slot.is-filled .slot-tie {
+    display: block;
+}
+
+.results-modal-named .result-slot.is-tied {
+    margin-top: -8px;
+    border-top-style: dashed;
+    border-top-color: #E0E0E0;
+}
+
+.results-modal-named .slot-tied-label {
+    display: block;
+    min-height: 1.2em;
+    font-size: 0.72em;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #E0E0E0;
+}
+
+.results-modal-named .slot-tied-label:empty {
+    display: none;
+}
+
 /* Which slot a placed horse is in, on its own button */
 .winner-pick-tag {
     display: none;

@@ -1332,7 +1332,7 @@ const NEXT_SLOT = 'next:';                 // a next finisher's slot key: next:0
 const RESULTS_FIELD_POLL_MS = 2000;
 
 function freshResultsState() {
-    return { chosen: null, win: null, place: null, show: null, next: [] };
+    return { chosen: null, win: null, place: null, show: null, next: [], tied: [] };
 }
 let resultsState = freshResultsState();
 
@@ -1405,10 +1405,14 @@ function finishersNeeded(named) {
     return Math.max(0, Math.min(3, withBets.length) - have);
 }
 
-// The next finishers' slot keys: one card per finisher named after SHOW, and
-// one per finisher still needed
+// The next finishers' slot keys: one card per finisher named after SHOW, one
+// per finisher La Quiniela still needs beyond the empty WIN, PLACE and SHOW
+// slots (those take the next horses first), and one for a dead heat marked on
+// the last card (its partner's)
 function nextSlotKeys() {
-    const count = resultsState.next.length + finishersNeeded(namedFinish());
+    const empty = RESULT_SLOTS.filter((key) => !resultsState[key]).length;
+    let count = resultsState.next.length + Math.max(0, finishersNeeded(namedFinish()) - empty);
+    resultsState.tied.forEach((key) => { if (isNextSlot(key)) count = Math.max(count, nextIndex(key) + 1); });
     const keys = [];
     for (let i = 0; i < count; i++) keys.push(NEXT_SLOT + i);
     return keys;
@@ -1531,6 +1535,33 @@ function pickerFollowsField() {
     if (notes.length) resultsNote(notes.join(' '));
 }
 
+// The result pi5 held when the picker opened ({win, place, show, next, ties} or null): the dialog opens on it,
+// CHECK THE RESULTS with the picks, so a correction is one tap; CANCEL puts the mantle back on it
+let savedOnOpen = null;
+
+function preloadResults(saved) {
+    resultsState = freshResultsState();
+    RESULT_SLOTS.forEach((key) => { resultsState[key] = saved[key] || null; });
+    resultsState.next = (saved.next || []).slice();
+    const order = namedFinish();
+    (saved.ties || []).forEach((group) => {
+        group.slice(1).forEach((horse) => {
+            const i = order.indexOf(horse);
+            if (i >= 0) resultsState.tied.push(i < RESULT_SLOTS.length ? RESULT_SLOTS[i] : NEXT_SLOT + (i - RESULT_SLOTS.length));
+        });
+    });
+    // the three cups lit as their picks were (a next finisher's is not: the mantle shows the three that crossed first)
+    const postOf = {};
+    ((quinielaField && quinielaField.posts) || []).forEach((p) => { postOf[p.horse] = p.post; });
+    RESULT_SLOTS.forEach((key) => {
+        const horse = resultsState[key];
+        resultsPosts[key] = horse && postOf[horse] !== undefined ? postOf[horse] : null;
+        if (resultsPosts[key] === null) return;
+        const colour = RESULT_COLOURS[key];
+        ledCall('/api/cup/lock', { cup: resultsPosts[key], r: colour.r, g: colour.g, b: colour.b });
+    });
+}
+
 // Show results modal with the pickers
 let resultsModalOpening = false;
 async function showResultsModal() {
@@ -1561,12 +1592,15 @@ async function showResultsModal() {
         // Start RESULTS_ENTRY animation (clears cup locks internally)
         await ledCall('/api/animation/RESULTS_ENTRY');
 
-        // The field as La Quiniela has it now (names, replacements, scratches) and its
+        // The field as La Quiniela has it now (names, replacements, scratches), its
         // figures at the post (the NO BETS marks: read here only, so nothing changes
-        // them while the picker is open)
-        const [, bets] = await Promise.all([loadQuinielaField(), loadBetsAtPost()]);
+        // them while the picker is open) and the result pi5 holds, if one does
+        const [, bets, saved] = await Promise.all([loadQuinielaField(), loadBetsAtPost(), savedResultsOnPi5()]);
         resultsBets = bets;
         generateSaddleClothGrid();
+        savedOnOpen = saved;
+        if (saved) preloadResults(saved);
+        RESULT_SLOTS.forEach((key) => updateSlot(key, getSlot(key)));
         updateResultsModalUI();
 
         const modal = document.getElementById('results-modal');
@@ -1722,7 +1756,15 @@ function renderNextSlots() {
         value.id = `slot-${key}`;
         const hint = document.createElement('span');
         hint.className = 'slot-hint';
-        card.append(label, clear, value, hint);
+        const tiedLabel = document.createElement('span');
+        tiedLabel.className = 'slot-tied-label';
+        const tie = document.createElement('button');
+        tie.type = 'button';
+        tie.className = 'slot-tie';
+        tie.dataset.slot = key;
+        tie.textContent = 'DEAD HEAT';
+        tie.onclick = (event) => { event.stopPropagation(); tieAfter(key); };
+        card.append(label, clear, value, hint, tiedLabel, tie);
         sidebar.insertBefore(card, confirmSection);
         updateSlot(key, getSlot(key));
     }
@@ -1785,6 +1827,47 @@ function chooseSlot(slot) {
     updateResultsModalUI();
 }
 
+// A dead heat: the DEAD HEAT button on a filled card marks the card after it
+// as tied with it (the horse there, or the next horse tapped, crossed
+// together with this one); pressed again, it unties them. Two or three horses
+// share a position; the record carries them as ties, and La Quiniela's payout
+// pools the positions they occupy. resultsState.tied holds the keys of the
+// cards tied with the one before.
+function slotKeyAfter(key) {
+    const keys = allSlotKeys();
+    const i = keys.indexOf(key);
+    if (i >= 0 && i + 1 < keys.length) return keys[i + 1];
+    return NEXT_SLOT + (isNextSlot(key) ? nextIndex(key) + 1 : 0);
+}
+
+// The keys of the dead heat `key` is in: itself alone when it is in none
+function tieGroupOf(key) {
+    const keys = allSlotKeys();
+    let start = keys.indexOf(key);
+    if (start < 0) return [key];
+    while (start > 0 && resultsState.tied.includes(keys[start])) start--;
+    let end = start;
+    while (end + 1 < keys.length && resultsState.tied.includes(keys[end + 1])) end++;
+    return keys.slice(start, end + 1);
+}
+
+function tieAfter(key) {
+    const after = slotKeyAfter(key);
+    if (resultsState.tied.includes(after)) {
+        resultsState.tied = resultsState.tied.filter((k) => k !== after);
+    } else {
+        if (tieGroupOf(key).length + tieGroupOf(after).length > 3) {
+            resultsNote('A dead heat is two or three horses.');
+            updateResultsModalUI();
+            return;
+        }
+        resultsState.tied.push(after);
+        if (!getSlot(after)) resultsState.chosen = after;       // the partner's card takes the next tap
+    }
+    resultsNote('');
+    updateResultsModalUI();
+}
+
 // The x on a filled slot: empty it, and the next horse tap fills it
 function clearSlot(slot) {
     if (!getSlot(slot)) return;
@@ -1802,6 +1885,9 @@ function clearSlot(slot) {
 
 // Update modal UI from the state
 function updateResultsModalUI() {
+    // a tie mark whose leading card is empty is no tie any more
+    const before = allSlotKeys();
+    resultsState.tied = resultsState.tied.filter((key) => before.indexOf(key) > 0 && !!getSlot(before[before.indexOf(key) - 1]));
     renderNextSlots();
     const header = document.getElementById('results-modal-header');
     const subtext = document.getElementById('results-modal-subtitle');
@@ -1818,6 +1904,11 @@ function updateResultsModalUI() {
         show:  { text: 'CHOOSE SHOW',   change: 'CHANGE SHOW',   color: '#CD7F32', sub: 'Tap the 3rd place horse' }
     };
     const headFor = (key) => {
+        if (resultsState.tied.includes(key)) {
+            const prev = keys[keys.indexOf(key) - 1];
+            return { text: 'DEAD HEAT', change: 'DEAD HEAT', color: '#E0E0E0',
+                     sub: `Tap the horse that crossed together with ${horseLabel(getSlot(prev))} (${slotName(prev)}).` };
+        }
         if (!isNextSlot(key)) return heads[key];
         const skipped = namedFinish().filter((h) => hadNoBets(h)).map((h) => `#${h}`);
         const name = slotName(key);
@@ -1853,6 +1944,13 @@ function updateResultsModalUI() {
         card.classList.toggle('is-filled', !!getSlot(key));
         const hint = card.querySelector('.slot-hint');
         if (hint) hint.textContent = (key === slot) ? (getSlot(key) ? 'TAP THE NEW HORSE' : 'TAP A HORSE') : '';
+        // the dead heat: this card tied with the one before, and the button that ties the next one to it
+        const tied = resultsState.tied.includes(key);
+        card.classList.toggle('is-tied', tied);
+        const tiedLabel = card.querySelector('.slot-tied-label');
+        if (tiedLabel) tiedLabel.textContent = tied ? `DEAD HEAT \u00b7 with ${slotName(keys[keys.indexOf(key) - 1])}` : '';
+        const tieBtn = card.querySelector('.slot-tie');
+        if (tieBtn) tieBtn.textContent = resultsState.tied.includes(slotKeyAfter(key)) ? 'UNTIE' : 'DEAD HEAT';
     });
 
     // Update button states in grid: a placed horse says which slot it is in, a horse
@@ -1928,6 +2026,7 @@ async function resultsReset() {
             'Clear the result');
         if (!yes) return;
         await clearResults();
+        savedOnOpen = null;
     }
 
     // The page's own state first, in this turn; the LEDs follow
@@ -1962,7 +2061,9 @@ async function closeResultsModal(keepAnimation = false) {
         if (pendingResults) showResultsRevealModal();
 
         await ledCall('/api/cup/unlock', { cup: 'ALL' });
-        await ledCall('/api/command', { command: 'LED:ALL_OFF' });
+        // a result still stands: the mantle back on it; none: off
+        if (savedOnOpen) await ledCall('/api/animation/RESULTS_ACTIVE', { win: savedOnOpen.win, place: savedOnOpen.place, show: savedOnOpen.show });
+        else await ledCall('/api/command', { command: 'LED:ALL_OFF' });
     }
 }
 
@@ -1979,6 +2080,15 @@ async function resultsConfirm() {
     const after = resultsState.next.slice();
     const named = [winHorse, placeHorse, showHorse].concat(after);
     if (named.some((h) => !h) || new Set(named).size !== named.length) return;
+    // the dead heats: each run of cards tied with the one before, as groups of horses in finishing order
+    const groups = [];
+    allSlotKeys().forEach((key) => {
+        const horse = getSlot(key);
+        if (!horse) return;
+        if (groups.length && resultsState.tied.includes(key)) groups[groups.length - 1].push(horse);
+        else groups.push([horse]);
+    });
+    const ties = groups.filter((group) => group.length > 1);
 
     // Set flag to skip reveal popup on this device
     justSubmittedResults = true;
@@ -1992,7 +2102,7 @@ async function resultsConfirm() {
         const response = await fetch('/api/results', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse, next: after })
+            body: JSON.stringify({ win: winHorse, place: placeHorse, show: showHorse, next: after, ties: ties })
         });
 
         const data = await response.json();

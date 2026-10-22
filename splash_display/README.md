@@ -357,9 +357,16 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "ts"}`.
 - `results` is `{"win": 19, "place": 1, "show": 22}` (horse numbers) once
   the dashboard's SET WINNERS has been confirmed, `null` until then and
-  again after a reset. In WINNER it is what turns the frozen board into
-  the results screen (below). `cups_online` and `cups_no_horse` are the
-  admin page's; the board does not read them.
+  again after a reset; the board reads `payout` instead. `payout` is La
+  Quiniela's payout from that result and the figures at the post, as pi5
+  computes it (`betting.payout_for`; `pi5/LQ_BRIDGE.md`): `{"pot",
+  "pot_source", "prizes", "pays": [{"slots", "horses": [{"horse",
+  "prize"}], "skipped", "dead_heat"}], "skipped", "unpaid_to_win",
+  "refunds"}`, `null` until there is a result and figures to pay from. In
+  WINNER it is what turns the frozen board into the results screen (below):
+  one row per prize paid, the horse whose cup is drawn from (two or three in
+  a dead heat), the finisher skipped for no bets. `cups_online` and
+  `cups_no_horse` are the admin page's; the board does not read them.
 - `closing` is the figures at the post: `{"pot", "prizes",
   "total_tokens", "horses": {"1": {"tokens"}, ... "24": ...}, "at"}`, the
   live fields' shapes as they were when betting closed, or `null`. pi5
@@ -496,8 +503,8 @@ contain `race_state`:
 | 1 `BETTING_OPEN` | BETTING OPEN (green), CLOSES IN under it | live |
 | 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing), CLOSES IN under it | live |
 | 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen**: the figures at the post, pi5's `closing` (names and the chyron stay live); back in 1 or 2 they go live again |
-| 5 `WINNER`, `results` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board with the figures at the post |
-| 5 `WINNER`, `results` in | OFFICIAL RESULTS (gold) | the **results screen** (below), from the same figures |
+| 5 `WINNER`, `payout` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board with the figures at the post |
+| 5 `WINNER`, `payout` in | OFFICIAL RESULTS (gold) | the **results screen** (below): who pays, from the same figures |
 
 On `/slides` the board is down outside 3, 4 and 5 and the playlist runs.
 On `/board` it is up in every state: in 0 the banner reads the state's name,

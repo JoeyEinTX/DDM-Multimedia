@@ -395,7 +395,7 @@ def test_results_and_reset_are_modes():
     r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
     body = r.get_json()
     _check("POST /api/results: success, the results as sent (and no next finisher)", r.status_code == 200 and body["success"] is True
-           and body["results"] == {"win": 19, "place": 1, "show": 22, "next": []}, str(body))
+           and body["results"] == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []}, str(body))
     _check("...the LED wall told after them (RESULTS:FINALIZE, which the page used to send), its health online in the reply",
            wait_for(lambda: rig.led == ["ANIM:RESULTS_ENTRY", "RESULTS:FINALIZE"], 2.0) and body["leds"] == "online",
            f"{rig.led} {body.get('leds')}")
@@ -451,11 +451,11 @@ def test_results_stand_without_the_leds():
     r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
     body = r.get_json()
     _check("LED wall down: 200, success, the results as sent, leds unreachable",
-           r.status_code == 200 and body["success"] is True and body["results"] == {"win": 19, "place": 1, "show": 22, "next": []}
+           r.status_code == 200 and body["success"] is True and body["results"] == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []}
            and body["leds"] == "unreachable", str(body))
     _check("...saved all the same, horse numbers in the file",
            json.loads(rig.results_file.read_text()) | {"timestamp": None}
-           == {"win": 19, "place": 1, "show": 22, "next": [], "timestamp": None})
+           == {"win": 19, "place": 1, "show": 22, "next": [], "ties": [], "timestamp": None})
     _check("...WINNER with the results in one state line, byte-exact",
            body["race"]["state"] == 5 and rig.lines() == [state_line(rev + 1, 5, [], [], [19, 1, 22])], str(rig.lines()))
     _check("...the TV's model has them", rig.model()["results"] == {"win": 19, "place": 1, "show": 22}
@@ -648,11 +648,11 @@ def test_results_record_the_real_finish():
         body = r.get_json()
         saved = json.loads(rig.results_file.read_text())
         _check("three horses with bets: 200 as before, and the reply and the file carry next: []",
-               r.status_code == 200 and body["results"] == {"win": 19, "place": 1, "show": 22, "next": []}
+               r.status_code == 200 and body["results"] == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []}
                and (saved["win"], saved["place"], saved["show"], saved["next"]) == (19, 1, 22, []), str(body))
         _check("GET /api/results carries next too", rig.client.get("/api/results").get_json()["results"]["next"] == [])
         _check("BettingBoard.results(): the record, the one reader",
-               rig.board.results() == {"win": 19, "place": 1, "show": 22, "next": []}, str(rig.board.results()))
+               rig.board.results() == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []}, str(rig.board.results()))
         # the real finish: 7 crossed first with no bets at the post
         refused("7 (no bets) for WIN with no next finisher", {"win": 7, "place": 1, "show": 22},
                 "#7 (WIN) had no bets at the post: La Quiniela skips it, so enter the next finisher too (4th)")
@@ -677,7 +677,7 @@ def test_results_record_the_real_finish():
         saved = json.loads(rig.results_file.read_text())
         _check("7, 1, 22 and the next finishers 4 (no bets either) and 12: 200, the record saved with next [4, 12]",
                r.status_code == 200 and body["success"] is True
-               and body["results"] == {"win": 7, "place": 1, "show": 22, "next": [4, 12]} and saved["next"] == [4, 12], str(body))
+               and body["results"] == {"win": 7, "place": 1, "show": 22, "next": [4, 12], "ties": []} and saved["next"] == [4, 12], str(body))
         _check("the state line carries the three real finishers only: the cups and the TV show the real finish until M6",
                rig.lines() == [state_line(rev + 1, 5, [], [], [7, 1, 22])], str(rig.lines()))
         finish = {h["number"]: h["finish"] for h in rig.client.get("/api/race").get_json()["horses"] if h["finish"]}
@@ -685,49 +685,41 @@ def test_results_record_the_real_finish():
                rig.model()["results"] == {"win": 7, "place": 1, "show": 22} and finish == {7: 1, 1: 2, 22: 3}, str(finish))
         _check("the results event carries the three", events == [("results", {"win": 7, "place": 1, "show": 22})], str(events))
         _check("BettingBoard.results() carries next; GET /api/results too",
-               rig.board.results() == {"win": 7, "place": 1, "show": 22, "next": [4, 12]}
+               rig.board.results() == {"win": 7, "place": 1, "show": 22, "next": [4, 12], "ties": []}
                and rig.client.get("/api/results").get_json()["results"]["next"] == [4, 12])
         r = rig.post("/api/results", {"win": 7, "place": 1, "show": 22, "next": [4, 12, 15]})
         _check("next finishers beyond the need are kept as given (the host may know the whole order)",
                r.status_code == 200 and rig.board.results()["next"] == [4, 12, 15])
         r = rig.post("/api/results", {"win": 19, "place": 1, "show": 22})
         _check("a correction overwrites the record whole: next is [] again",
-               r.status_code == 200 and rig.board.results() == {"win": 19, "place": 1, "show": 22, "next": []})
+               r.status_code == 200 and rig.board.results() == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []})
         rig.post("/api/results/clear")
-        # no figures at the post: unknown is not zero (a rig whose cups never reported: betting open, no figures; and
-        # the figures WINNER then takes from the cups hold no bets, so nothing is needed on the next POST either)
+        # no figures at the post (a rig whose cups never reported, betting open): nothing to pay from, so no result (M6)
         fresh = Rig()
         fresh.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
         fresh.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
         fresh.post("/api/quiniela/mode", {"mode": "BETTING_60"})
         _check("betting open, no cup heard: no figures at the post", fresh.model()["closing"] is None)
         r = fresh.post("/api/results", {"win": 7, "place": 1, "show": 22})
-        _check("with no figures at the post nothing is known about bets: 7 for WIN goes through, next []",
-               r.status_code == 200 and fresh.board.results()["next"] == [], str(r.get_json()))
-        r = fresh.post("/api/results", {"win": 7, "place": 1, "show": 22, "next": [4]})
-        _check("...a next finisher given anyway is checked and kept", r.status_code == 200 and fresh.board.results()["next"] == [4],
-               str(r.get_json()))
-        r = fresh.post("/api/results", {"win": 7, "place": 1, "show": 22, "next": [9]})
-        _check("...9 in next is still not in the field", r.status_code == 400 and r.get_json()["error"] == "next: horse 9 is not in the field"
-               and fresh.board.results()["next"] == [4], str(r.get_json()))
-        main.RESULTS_FILE = str(rig.results_file)          # Rig() pointed the routes at the fresh rig's file
-        # what the file reads as
-        rig.results_file.write_text(json.dumps({"win": 19, "place": 1, "show": 22, "timestamp": "2027-05-01T19:02:00"}))
-        _check("a results file from before `next`: the record reads next [], GET /api/results too",
-               rig.board.results() == {"win": 19, "place": 1, "show": 22, "next": []}
-               and rig.client.get("/api/results").get_json()["results"]["next"] == [])
-        rig.results_file.write_text(json.dumps({"win": 19, "place": 1, "show": 22, "next": [1, 30, "x", 12, 12, 4]}))
+        _check("with no figures at the post there is nothing to pay from: a result is refused until AT THE GATE takes them (M6)",
+               r.status_code == 409 and "before the post" in r.get_json()["error"] and fresh.board.results() is None, str(r.get_json()))
+        # what the file reads as (the routes read through the board, the fresh rig's now)
+        fresh.results_file.write_text(json.dumps({"win": 19, "place": 1, "show": 22, "timestamp": "2027-05-01T19:02:00"}))
+        _check("a results file from before `next`: the record reads next [] and ties [], GET /api/results too",
+               fresh.board.results() == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []}
+               and fresh.client.get("/api/results").get_json()["results"] == {"win": 19, "place": 1, "show": 22, "next": [], "ties": []})
+        fresh.results_file.write_text(json.dumps({"win": 19, "place": 1, "show": 22, "next": [1, 30, "x", 12, 12, 4]}))
         _check("junk in next is dropped (a repeat, a number no horse has, a string): the record reads next [12, 4]",
-               rig.board.results()["next"] == [12, 4], str(rig.board.results()))
-        rig.results_file.write_text(json.dumps({"win": 19, "place": 1}))
+               fresh.board.results()["next"] == [12, 4], str(fresh.board.results()))
+        fresh.results_file.write_text(json.dumps({"win": 19, "place": 1}))
         _check("a hand-made file naming two: no record, and the state line's view is [19, 1, 0] as before",
-               rig.board.results() is None and read_results(rig.results_file) == [19, 1, 0])
-        rig.results_file.write_text(json.dumps({"win": 19, "place": 19, "show": 1}))
-        _check("a horse twice: no record, no results for the line", rig.board.results() is None and read_results(rig.results_file) == [0, 0, 0])
-        rig.results_file.write_text("not json")
-        _check("a broken file: no record", rig.board.results() is None and read_results(rig.results_file) == [0, 0, 0])
-        rig.results_file.unlink()
-        _check("no file: no record", rig.board.results() is None)
+               fresh.board.results() is None and read_results(fresh.results_file) == [19, 1, 0])
+        fresh.results_file.write_text(json.dumps({"win": 19, "place": 19, "show": 1}))
+        _check("a horse twice: no record, no results for the line", fresh.board.results() is None and read_results(fresh.results_file) == [0, 0, 0])
+        fresh.results_file.write_text("not json")
+        _check("a broken file: no record", fresh.board.results() is None and read_results(fresh.results_file) == [0, 0, 0])
+        fresh.results_file.unlink()
+        _check("no file: no record", fresh.board.results() is None)
     finally:
         main.broadcast_sse = saved_broadcast
 
@@ -939,6 +931,226 @@ def test_picker_records_the_real_finish():
     _check("a pick nobody bet is warned about over CONFIRM RESULTS in the new words: the real finish, La Quiniela skips it",
            "no bets at the post, so La Quiniela skips it " in ui and "can't pay" not in js and "Enter the next finisher instead" not in js)
     _check("the next cards have a colour of their own", '.result-slot[data-slot^="next:"]' in css)
+
+
+# -----------------------------------------------------------------------------
+# La Quiniela's payout rule (gap review M6, OD3; Joey's examples and answers, 2026-10-22)
+# -----------------------------------------------------------------------------
+
+def _pays(payout):
+    return [(tuple(p["slots"]), [(h["horse"], h["prize"]) for h in p["horses"]], tuple(p["skipped"])) for p in payout["pays"]]
+
+
+def _at_the_post(rig, counts):
+    """The field named and the given cups at the post ({horse: tokens}); the race RUNNING."""
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    _cups_at_post(rig, counts)
+
+
+def test_results_with_a_dead_heat():
+    rig = Rig()
+    _at_the_post(rig, {7: 12, 3: 9, 12: 5, 5: 4, 19: 12})                 # $42: WIN 25, PLACE 11, SHOW 6
+    r = rig.post("/api/results", {"win": 7, "place": 12, "show": 3, "ties": [[7, 12]]})
+    body = r.get_json()
+    _check("7 and 12 dead heat for 1st, 3 third: saved with the tie, WINNER", r.status_code == 200 and body["success"] is True
+           and body["results"] == {"win": 7, "place": 12, "show": 3, "next": [], "ties": [[7, 12]]} and rig.bridge.phase == 5, str(body))
+    _check("the record carries it; the cups' state line is the three slots as before",
+           rig.board.results() == {"win": 7, "place": 12, "show": 3, "next": [], "ties": [[7, 12]]}
+           and rig.lines()[-1] == state_line(rig.bridge.state_rev, 5, [], [], [7, 12, 3]), str(rig.lines()[-1:]))
+    p = rig.model()["payout"]
+    _check("the model's payout: 7 and 12 share WIN+PLACE ($36 of $42, $18 each), 3 SHOW $6",
+           p["pot"] == 42 and _pays(p) == [(("win", "place"), [(7, 18), (12, 18)], ()), (("show",), [(3, 6)], ())], str(p))
+    cases = (("a tie that is not consecutive in the finish", {"win": 7, "place": 12, "show": 3, "ties": [[7, 3]]}, "consecutive"),
+             ("a tie four deep", {"win": 7, "place": 12, "show": 3, "next": [5], "ties": [[7, 12, 3, 5]]}, "two or three"),
+             ("a tie of one", {"win": 7, "place": 12, "show": 3, "ties": [[7]]}, "two or three"),
+             ("a horse in two ties", {"win": 7, "place": 12, "show": 3, "ties": [[7, 12], [12, 3]]}, "twice"),
+             ("a tie naming a horse not in the finish", {"win": 7, "place": 12, "show": 3, "ties": [[7, 8]]}, "not in the finish"),
+             ("ties that are not a list of lists", {"win": 7, "place": 12, "show": 3, "ties": "7,12"}, "ties must be"))
+    for name, body, words in cases:
+        r = rig.post("/api/results", body)
+        reply = r.get_json() or {}
+        _check(f"{name}: 400 that says so, the record as it was", r.status_code == 400 and words in reply.get("error", "")
+               and rig.board.results()["ties"] == [[7, 12]], f"{r.status_code} {reply}")
+    r = rig.post("/api/results", {"win": 7, "place": 4, "show": 3, "next": [5], "ties": [[7, 4]]})
+    p = rig.model()["payout"]
+    _check("7 and 4 dead heat, 4 no bets (example 9): recorded as the tie it was; La Quiniela drops 4 and pays 7 WIN, 3 PLACE, 5 SHOW",
+           r.status_code == 200 and rig.board.results()["ties"] == [[7, 4]]
+           and _pays(p) == [(("win",), [(7, 25)], (4,)), (("place",), [(3, 11)], ()), (("show",), [(5, 6)], ())], str(p))
+
+
+def test_results_refused_before_the_post():
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    for mode, state in (("WELCOME", 0), ("BETTING_60", 1), ("FINAL_CALL", 2)):
+        rig.post("/api/quiniela/mode", {"mode": mode})
+        r = rig.post("/api/results", {"win": 7, "place": 3, "show": 12})
+        reply = r.get_json() or {}
+        _check(f"a result in {mode} (state {state}): 409, before the post, nothing saved, the state as it was",
+               r.status_code == 409 and "before the post" in reply.get("error", "") and not rig.results_file.exists()
+               and rig.bridge.phase == state, f"{r.status_code} {reply}")
+    _cups_at_post(rig, {7: 12, 3: 9, 12: 5})
+    for mode in ("AT_THE_GATE", "GATES_BURST", "HEARTBEAT_COOLDOWN"):
+        rig.post("/api/quiniela/mode", {"mode": mode})
+        r = rig.post("/api/results", {"win": 7, "place": 3, "show": 12})
+        _check(f"...in {mode}: accepted", r.status_code == 200 and rig.bridge.phase == 5, str(r.get_json()))
+    rig.post("/api/results/clear")
+    r = rig.post("/api/results", {"win": 7, "place": 3, "show": 12})
+    _check("in AFTER PARTY, the figures at the post still held: accepted, WINNER again", r.status_code == 200 and rig.bridge.phase == 5)
+
+
+def test_results_have_one_reader():
+    rig = Rig()
+    _at_the_post(rig, {7: 12, 3: 9, 12: 5, 5: 4})
+    _check("no record: GET /api/results says so", rig.client.get("/api/results").get_json() == {"success": False, "message": "No results available"})
+    rig.post("/api/results", {"win": 7, "place": 3, "show": 12, "next": [5], "ties": [[3, 12]]})
+    got = rig.client.get("/api/results").get_json()
+    _check("GET /api/results is the board's record: the finish, the next finishers and the ties, nothing else",
+           got == {"success": True, "results": {"win": 7, "place": 3, "show": 12, "next": [5], "ties": [[3, 12]]}}, str(got))
+    _check("the spectator page reads the same record", rig.client.get("/api/spectator/state").get_json()["results"] == got["results"])
+    _check("main.py has no reader of its own any more", not hasattr(main, "load_results"))
+
+
+def test_payout_on_the_pages_source():
+    rig = Rig()
+    js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True).replace("\r\n", "\n")
+    admin = rig.client.get("/quiniela/admin").get_data(as_text=True).replace("\r\n", "\n")
+    opened = _js_function(js, "async function showResultsModal()")
+    _check("the dialog opens on the saved result (CHECK THE RESULTS with the picks: a correction is one tap)",
+           "savedResultsOnPi5()" in opened and "preloadResults(" in opened and "function preloadResults(saved)" in js)
+    keys = _js_function(js, "function nextSlotKeys()")
+    _check("the next cards appear only when a named horse had no bets and a horse with bets is left to name: the empty WIN, PLACE and SHOW count first",
+           "finishersNeeded(namedFinish())" in keys and "empty" in keys)
+    _check("a dead heat is entered on a slot card and sent as ties",
+           "function tieAfter(key)" in js and "ties: ties" in _js_function(js, "async function resultsConfirm()") and "slot-tie" in js)
+    _check("the admin page has a RESULTS section: the paying horses, the skips, the draw instruction, the refunds, which pot",
+           'id="results"' in admin and 'id="results-pays"' in admin and 'id="results-refunds"' in admin and 'id="results-pot"' in admin
+           and "function renderResults()" in admin and "draw one token from cup" in admin)
+
+
+def _picker_payout(picker_check, requests, slow):
+    """The bench: one cup with bets (19), the rest empty. The cards only when needed, the dialog reopening on the
+    saved result, a dead heat entered, the admin page's RESULTS section, and a result refused before the post."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    _cups_at_post(rig, {19: 12})                                   # only 19 held bets at the post ($12); RUNNING
+    server = picker_check.Server(rig)
+    picker = picker_check.Picker(server, touch=True)
+    chrome = picker.chrome
+    modal_up = "document.getElementById('results-modal').classList.contains('active')"
+    cards = "document.querySelectorAll('.result-slot[data-slot^=\"next:\"]').length"
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def picks():
+        st = picker.state()
+        return (st["win"], st["place"], st["show"])
+
+    try:
+        picker.open()
+        st = picker.state()
+        _check("an empty dialog, one horse with bets in the field: CHOOSE WINNER and no 4TH card (the empty slots come first)",
+               st["header"] == "CHOOSE WINNER" and chrome.eval(cards) == 0, f"{st['header']} cards {chrome.eval(cards)}")
+        picker.tap_horse(7)
+        settle(0.3)
+        picker.tap_horse(3)
+        settle(0.3)
+        _check("7 and 3 (no bets) as WIN and PLACE: still no card, SHOW can take the horse with bets",
+               chrome.eval(cards) == 0 and picks() == (7, 3, None), str(picks()))
+        picker.tap_horse(19)
+        settle(0.3)
+        st = picker.state()
+        _check("19 as SHOW: the one horse with bets is named, no card, CHECK THE RESULTS, CONFIRM RESULTS up",
+               chrome.eval(cards) == 0 and st["confirm"] is True and st["header"] == "CHECK THE RESULTS", str(st))
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("!" + modal_up, timeout=10)
+        saved = rig.board.results()
+        _check("confirmed: 7 / 3 / 19, no next finisher, no tie", saved == {"win": 7, "place": 3, "show": 19, "next": [], "ties": []}, str(saved))
+        p = rig.model()["payout"]
+        _check("La Quiniela pays 19 the whole $12: 7 and 3 skipped, PLACE and SHOW unpaid, both to WIN",
+               _pays(p) == [(("win",), [(19, 12)], (7, 3))] and p["unpaid_to_win"] == 5, str(p))
+        # the dialog reopened while the result stands: CHECK THE RESULTS with the saved picks, a correction one tap
+        chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
+        server.led_log.clear()
+        picker.open()
+        st = picker.state()
+        _check("reopened while the result stands: CHECK THE RESULTS with the saved picks in the slots, the three cups lit again",
+               st["header"] == "CHECK THE RESULTS" and picks() == (7, 3, 19) and st["confirm"] is True
+               and wait_for(lambda: any(c.startswith("CUP:LOCK:19:") for c in server.led("CUP:LOCK")), 3.0), str(st))
+        chrome.tap(".result-slot[data-slot='show']")
+        settle(0.3)
+        picker.tap_horse(12)
+        settle(0.3)
+        _check("a correction in one tap: SHOW is 12 now, WIN and PLACE as they were; 12 had no bets, so a 4TH card asks for 19",
+               picks() == (7, 3, 12) and chrome.eval(cards) == 1, f"{picks()} cards {chrome.eval(cards)}")
+        picker.tap_horse(19)
+        settle(0.3)
+        _check("19 as 4TH: complete again", picker.state()["next"] == [19] and picker.state()["confirm"] is True)
+        # a dead heat: DEAD HEAT on WIN ties PLACE's horse to it
+        chrome.tap(".slot-tie[data-slot='win']")
+        settle(0.3)
+        tied = chrome.eval("JSON.stringify(resultsState.tied)")
+        ribbon = chrome.eval("document.querySelector(\".result-slot[data-slot='place'] .slot-tied-label\").innerText")
+        _check("DEAD HEAT on WIN: PLACE is tied with it and its card says so", json.loads(tied) == ["place"] and "DEAD HEAT" in ribbon
+               and "WIN" in ribbon, f"{tied} {ribbon!r}")
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("!" + modal_up, timeout=10)
+        saved = rig.board.results()
+        _check("confirmed with the tie: 7 and 3 dead heat for 1st, 12 third, 19 fourth",
+               saved == {"win": 7, "place": 3, "show": 12, "next": [19], "ties": [[7, 3]]}, str(saved))
+        p = rig.model()["payout"]
+        _check("...both tied horses had no bets, 12 too: 19 pays WIN, the whole pot", _pays(p) == [(("win",), [(19, 12)], (7, 3, 12))], str(p))
+        chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
+        picker.open()
+        tied = chrome.eval("JSON.stringify(resultsState.tied)")
+        _check("reopened on the tie: the saved dead heat is in the dialog", json.loads(tied) == ["place"] and picks() == (7, 3, 12)
+               and picker.state()["next"] == [19], f"{tied} {picks()}")
+        chrome.tap("#results-cancel-btn")
+        chrome.wait_for("!" + modal_up, timeout=10)
+        _check("CANCEL with a result standing puts the mantle back on it (RESULTS_ACTIVE), not off",
+               wait_for(lambda: any(c.startswith("ANIM:RESULTS_ACTIVE:7:3:12") for c in server.led("ANIM:")), 3.0), str(server.led("ANIM:")[-3:]))
+        # the admin page's RESULTS section reads the same payout
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.getElementById('results') && !document.getElementById('results').hidden"
+                        " && document.getElementById('results-pays').innerText.length > 0", timeout=15)
+        text = chrome.eval("document.getElementById('results-pays').innerText + ' | ' + document.getElementById('results-pot').innerText")
+        _check("the admin page's RESULTS section: WIN pays 19 $12, the skipped horses named, the draw instruction, the pot and its source",
+               "WIN" in text and "#7, #3, #12 no bets" in text and "$12" in text and "draw one token from cup 19" in text
+               and "the scales at the post" in text and "added to the WIN pool" in text, text[:400])
+        # before the post: RESET ends the race (AFTER PARTY), Reset betting puts it in PRE-RACE with the result and the
+        # figures at the post gone; a result is refused there
+        rig.post("/api/results/clear")
+        reset = rig.post("/api/quiniela/reset")
+        assert reset.status_code == 200, reset.get_json()
+        picker.load()
+        picker.open()
+        for horse in (7, 3, 12):
+            picker.tap_horse(horse)
+            settle(0.3)
+        chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=5)
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("document.getElementById('results-pick-note').innerText.includes('before the post')", timeout=8)
+        _check("before the post: pi5 refuses, the dialog shows its line, nothing saved, the picker open",
+               rig.board.results() is None and chrome.eval(modal_up) and "AT THE GATE" in picker.note() and rig.bridge.phase == 0,
+               repr(picker.note()))
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        picker.close()
+        server.close()
+
+
+def test_picker_payout_in_a_browser():
+    """SET WINNERS in headless Chrome on the bench's field (one cup with bets): no 4TH card on an empty dialog, the
+    dialog reopening on the saved result with a correction one tap, a dead heat entered and saved, CANCEL putting the
+    mantle back, the admin page's RESULTS section, and a result refused before the post. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("payout picker checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _picker_payout(picker_check, requests, slow))
 
 
 # -----------------------------------------------------------------------------
@@ -1336,8 +1548,8 @@ def test_picker_marks_horses_nobody_bet():
     _check("unknown is not zero: with no figures at the post no horse is marked",
            "resultsBets !== null &&" in _js_function(js, "function hadNoBets(horse)"))
     open_ = _js_function(js, "async function showResultsModal()")
-    _check("the figures are read as the picker opens, with the field, and only there",
-           "Promise.all([loadQuinielaField(), loadBetsAtPost()])" in open_ and "resultsBets = bets;" in open_)
+    _check("the figures are read as the picker opens, with the field and the saved result, and only there",
+           "Promise.all([loadQuinielaField(), loadBetsAtPost(), savedResultsOnPi5()])" in open_ and "resultsBets = bets;" in open_)
     at = js.index("async function showResultsModal()")
     writes = [w.start() for w in re.finditer(r"\bresultsBets\s*=[^=]", js)]
     _check("...nothing else writes them (the declaration aside), so the marks cannot change while the picker is open",
@@ -2259,7 +2471,7 @@ def _control_center_taps(picker_check, touch, requests, slow):
         _check(f"Control Center {mode}: SET WINNERS, a double tap on RESET sends its unlock once; a RESET after new picks unlocks again",
                reset_once == 1 and posts(t, "/api/cup/unlock") == 1
                and chrome.eval("JSON.stringify(resultsState)") == json.dumps({"chosen": None, "win": None, "place": None, "show": None,
-                                                                              "next": []}, separators=(",", ":")),
+                                                                              "next": [], "tied": []}, separators=(",", ":")),
                str((reset_once, posts(t, "/api/cup/unlock"), chrome.eval("JSON.stringify(resultsState)"))))
         pick_three()
         chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=10)
@@ -2500,6 +2712,7 @@ def _race_night_guards(picker_check, touch, requests, slow, full):
 
         # CONFIRM RESULTS: a success names the race state it set; a La Quiniela refusal is red with its reason.
         def confirm_results(horses):
+            rig.post("/api/results/clear")               # the dialog opens on a saved result: start it empty
             ready()
             chrome.eval("(() => { const n = document.getElementById('notification'); n.classList.remove('show');"
                         " n.textContent = ''; return 1; })()")
@@ -2707,7 +2920,7 @@ def _picker_follows_the_field(picker_check, requests, slow):
         chrome.tap("#results-confirm-btn")
         chrome.wait_for("!" + modal_up, timeout=10)
         saved = rig.board.results()
-        _check("1 for PLACE, confirmed: saved 7 / 1 / 19, WINNER", saved == {"win": 7, "place": 1, "show": 19, "next": []}
+        _check("1 for PLACE, confirmed: saved 7 / 1 / 19, WINNER", saved == {"win": 7, "place": 1, "show": 19, "next": [], "ties": []}
                and rig.bridge.phase == 5, str(saved))
         # RESET in the dialog with a result saved: it asks, then clears the result through the panel's own route
         chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
@@ -2724,8 +2937,8 @@ def _picker_follows_the_field(picker_check, requests, slow):
                          "between if you need to.", "Clear the result"], str(asked))
         chrome.tap("#ask-cancel")
         settle(0.9)
-        _check("Cancel: nothing sent, the result stands, the picks as they were (none)",
-               posts(t, "/api/results/clear") == 0 and rig.board.results() is not None and picker.state()["win"] is None)
+        _check("Cancel: nothing sent, the result stands, the picks as they were (the saved result's: the dialog opened on it)",
+               posts(t, "/api/results/clear") == 0 and rig.board.results() is not None and picker.state()["win"] == 7)
         chrome.wait_for("askPending === null && askHold === null", timeout=5)
         chrome.tap("#results-reset-btn")
         chrome.wait_for(ASK_UP_JS, timeout=6)
@@ -3059,6 +3272,11 @@ def main_():
     _run("results — refused while the field cannot be read (a degraded store, no La Quiniela)",
          test_results_refused_while_the_field_cannot_be_read)
     _run("results — the field is frozen while a result stands: a scratch or an undo is refused", test_field_frozen_while_a_result_stands)
+    _run("payout — a dead heat in the record, checked and paid; a tied horse with no bets drops out (M6)", test_results_with_a_dead_heat)
+    _run("payout — a result before the post is refused; from AT THE POST on it is taken", test_results_refused_before_the_post)
+    _run("payout — one reader of the record: GET /api/results and the spectator page read the board's", test_results_have_one_reader)
+    _run("payout — the dialog reopens on the saved result, the cards only when needed, a dead heat; the admin page's RESULTS section",
+         test_payout_on_the_pages_source)
     _run("La Subasta — pays the owners of the real 1st, 2nd and 3rd from SET WINNERS' record; a correction, RESET, Reset betting",
          test_la_subasta_pays_on_set_winners)
     _run("the wall — a state change never waits on it: the real client against a socket nothing answers on",
@@ -3080,6 +3298,8 @@ def main_():
     _run("admin page — one tap, one request; one scratch, one record, one reply; the rows reset", test_admin_one_tap_one_request_in_a_browser)
     _run("admin page — Scratch asks first: the question, the confirm step, only Confirm sends", test_admin_scratch_asks_first_in_a_browser)
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
+    _run("payout — SET WINNERS in a browser: the cards only when needed, the reopen on the saved result, a dead heat, the admin page's RESULTS, "
+         "refused before the post", test_picker_payout_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
     _run("SET WINNERS — the picker follows a scratch while open; a stale dialog cannot save it; RESET clears a saved result, in a browser",
          test_picker_follows_the_field_in_a_browser)

@@ -34,7 +34,7 @@ from la_subasta import la_subasta_bp, init_la_subasta, follow_la_quiniela
 from la_quiniela import (la_quiniela_bp, init_la_quiniela, start_la_quiniela,
                          quiniela_board_bp, init_board, start_board, get_board)
 from la_quiniela import racetime
-from la_quiniela.betting import bets_at_post, finishers_needed, ordinal
+from la_quiniela.betting import POST_HELD_STATES, bets_at_post, finishers_needed, ordinal, race_state_name
 from la_quiniela.board import field_by_post, migrate_race_setup
 from la_quiniela.odds import init_odds
 import config as _config
@@ -304,53 +304,83 @@ def _and(items):
 
 
 def results_arg(data):
-    """(win, place, show, next), or (None, why) for a body that is not the
-    real finish: three different horses in the field, and after them the
-    next finishers ("next", a list, 4th first, each in the field and named
-    once) when one of those named had no bets at the post, as many as La
-    Quiniela needs to skip it (la_quiniela.betting.finishers_needed). Every
-    place is required: a missing one is refused, never filled in. The field
-    is never guessed: with no La Quiniela, or a store that could not read
-    its database (its field is a default, not the operator's), the results
-    are refused rather than checked against posts 1-20."""
+    """(win, place, show, next, ties), None, 200, or None, why, status for a
+    body that is not the real finish: three different horses in the field,
+    after them the next finishers ("next", a list, 4th first, each in the
+    field and named once) when one of those named had no bets at the post,
+    as many as La Quiniela needs to skip it (la_quiniela.betting.finishers_needed),
+    and the dead heats ("ties": lists of two or three horses consecutive in
+    the finish, no horse in two). Every place is required: a missing one is
+    refused, never filled in. The field is never guessed: with no La
+    Quiniela, or a store that could not read its database (its field is a
+    default, not the operator's), the results are refused rather than
+    checked against posts 1-20. Before the post (the race in 0, 1 or 2)
+    there are no figures to pay from, so a result is refused (409) until AT
+    THE GATE has taken them."""
     if not isinstance(data, dict):
-        return None, 'results must be {"win": N, "place": N, "show": N}, and "next": [N, ...] (the finishers after SHOW) when a horse named had no bets at the post'
+        return None, 'results must be {"win": N, "place": N, "show": N}, and "next": [N, ...] (the finishers after SHOW) when a horse named had no bets at the post', 400
     picks = []
     for key in ('win', 'place', 'show'):
         if key not in data or data[key] is None:
-            return None, f'{key} is missing: WIN, PLACE and SHOW are all required'
+            return None, f'{key} is missing: WIN, PLACE and SHOW are all required', 400
         value = data[key]
         if isinstance(value, bool) or not isinstance(value, int):
-            return None, f'{key} must be a horse number, not {value!r}'
+            return None, f'{key} must be a horse number, not {value!r}', 400
         picks.append(value)
     if len(set(picks)) != 3:
-        return None, 'WIN, PLACE and SHOW must be three different horses'
+        return None, 'WIN, PLACE and SHOW must be three different horses', 400
     after = data.get('next')
     if after is None:
         after = []
     if not isinstance(after, list):
-        return None, 'next must be a list of horse numbers (the finishers after SHOW, 4th first)'
+        return None, 'next must be a list of horse numbers (the finishers after SHOW, 4th first)', 400
     named = list(picks)
     for value in after:
         if isinstance(value, bool) or not isinstance(value, int):
-            return None, f'next: {value!r} is not a horse number'
+            return None, f'next: {value!r} is not a horse number', 400
         if value in named:
-            return None, f'next: horse {value} is named twice'
+            return None, f'next: horse {value} is named twice', 400
         named.append(value)
+    ties = data.get('ties')
+    if ties is None:
+        ties = []
+    if not isinstance(ties, list) or not all(isinstance(group, list) for group in ties):
+        return None, 'ties must be a list of dead heats, each a list of horse numbers ([[7, 12]])', 400
+    tied = set()
+    groups = []
+    for group in ties:
+        if not 2 <= len(group) <= 3:
+            return None, 'ties: a dead heat is two or three horses', 400
+        for value in group:
+            if isinstance(value, bool) or not isinstance(value, int):
+                return None, f'ties: {value!r} is not a horse number', 400
+            if value not in named:
+                return None, f'ties: horse {value} is not in the finish', 400
+            if value in tied:
+                return None, f'ties: horse {value} is tied twice', 400
+        at = sorted(named.index(h) for h in group)
+        if at != list(range(at[0], at[0] + len(at))):
+            return None, f'ties: {group} are not consecutive in the finish', 400
+        tied.update(group)
+        groups.append([named[i] for i in at])
     try:
         board = get_board()
     except Exception as e:
-        return None, f'La Quiniela is not running, so the field is unknown: results not saved ({e})'
+        return None, f'La Quiniela is not running, so the field is unknown: results not saved ({e})', 400
     if board.store.load_failed:
         return None, ("La Quiniela's store could not read its database, so the field is unknown: results not saved "
-                      "(restart pi5 once the database is readable)")
+                      "(restart pi5 once the database is readable)"), 400
+    state = board.race_state_now()
+    if state not in POST_HELD_STATES:
+        return None, (f"results before the post: the race is in {race_state_name(state).replace('_', ' ')}, so there are no "
+                      "figures at the post to pay from; AT THE GATE takes them first"), 409
     field = {entry['horse'] for entry in field_by_post(board)['posts']}
     for key, horse in zip(('win', 'place', 'show'), picks):
         if horse not in field:
-            return None, f'{key}: horse {horse} is not in the field'
+            return None, f'{key}: horse {horse} is not in the field', 400
     for horse in after:
         if horse not in field:
-            return None, f'next: horse {horse} is not in the field'
+            return None, f'next: horse {horse} is not in the field', 400
     bets = bets_at_post(board.model().get('closing'))
     needed = finishers_needed(named, bets, field)
     if needed:
@@ -358,20 +388,22 @@ def results_arg(data):
         skipped = [f'#{horse} ({label})' for horse, label in zip(named, labels) if not bets.get(horse)]
         asked = [ordinal(len(named) + 1 + i) for i in range(needed)]
         return None, (f"{_and(skipped)} had no bets at the post: La Quiniela skips {'it' if len(skipped) == 1 else 'them'}, "
-                      f"so enter the next finisher{'s' if needed > 1 else ''} too ({_and(asked)})")
-    return (picks[0], picks[1], picks[2], after), None
+                      f"so enter the next finisher{'s' if needed > 1 else ''} too ({_and(asked)})"), 400
+    return (picks[0], picks[1], picks[2], after, groups), None, 200
 
 
-def save_results(win, place, show, after):
-    """Save the record to file: the real 1st, 2nd and 3rd and the finishers
-    after them. The file outlives a restart, so it is written whole or not
-    at all (a temporary file, flushed to the card, renamed over it): a power
-    cut mid-write leaves the old file, never half a new one."""
+def save_results(win, place, show, after, ties):
+    """Save the record to file: the real 1st, 2nd and 3rd, the finishers
+    after them and the dead heats. The file outlives a restart, so it is
+    written whole or not at all (a temporary file, flushed to the card,
+    renamed over it): a power cut mid-write leaves the old file, never half
+    a new one."""
     results = {
         'win': win,
         'place': place,
         'show': show,
         'next': list(after),
+        'ties': [list(group) for group in ties],
         'timestamp': datetime.now().isoformat()
     }
     tmp = RESULTS_FILE + '.tmp'
@@ -385,17 +417,6 @@ def save_results(win, place, show, after):
     except Exception as e:
         print(f"Error saving results: {e}")
         return False
-
-
-def load_results():
-    """Load results from file"""
-    try:
-        if os.path.exists(RESULTS_FILE):
-            with open(RESULTS_FILE, 'r') as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"Error loading results: {e}")
-    return None
 
 
 def load_animation_registry():
@@ -459,25 +480,15 @@ def broadcast_sse(event, data):
 def api_results():
     """Get or set race results"""
     if request.method == 'GET':
-        # GET - return current results
-        results = load_results()
-        if results:
-            return jsonify({
-                'success': True,
-                'results': {
-                    'win': results.get('win'),
-                    'place': results.get('place'),
-                    'show': results.get('show'),
-                    'next': list(results.get('next') or []),
-                    'timestamp': results.get('timestamp')
-                }
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'No results available'
-            })
-    
+        # GET: the record as the board reads it (the one reader; La Subasta and the TV read the same)
+        record = get_board().results()
+        if record:
+            return jsonify({'success': True, 'results': record})
+        return jsonify({
+            'success': False,
+            'message': 'No results available'
+        })
+
     else:
         # POST - set new results. They are facts about the race, not about
         # the LEDs: saved first, always, and La Quiniela goes to WINNER with
@@ -487,20 +498,20 @@ def api_results():
         # finishers after them when one named had no bets at the post, or a
         # 400 and nothing saved (a missing key used to be filled in with
         # horse 1, 2 or 3).
-        picks, error = results_arg(request.get_json(silent=True))
+        picks, error, status = results_arg(request.get_json(silent=True))
         if error:
             return jsonify({
                 'success': False,
                 'error': error
-            }), 400
-        win, place, show, after = picks
+            }), status
+        win, place, show, after, ties = picks
 
         # Save to file, first
-        if not save_results(win, place, show, after):
+        if not save_results(win, place, show, after, ties):
             return jsonify({
                 'success': False,
                 'error': 'results not saved: pi5 could not write results.json (its console says why)',
-                'results': {'win': win, 'place': place, 'show': show, 'next': after},
+                'results': {'win': win, 'place': place, 'show': show, 'next': after, 'ties': ties},
                 'race': None
             }), 500
 
@@ -531,7 +542,8 @@ def api_results():
                 'win': win,
                 'place': place,
                 'show': show,
-                'next': after
+                'next': after,
+                'ties': ties
             },
             'leds': leds_word(),
             'race': race,
@@ -544,7 +556,7 @@ def spectator_state():
     """Return current race state and horse data for spectator display."""
     try:
         state_data = racing_service.get_current_state_data()
-        results = load_results()
+        results = get_board().results()
         return jsonify({
             'success': True,
             'state': state_data.get('state', 'DORMANT'),

@@ -66,6 +66,15 @@
   <div id="horses"></div>
 </section>
 
+<!-- What La Quiniela pays, from SET WINNERS' record and the figures at the post (the model's payout): read with the
+     cash box open, so it is big. Hidden until a result is in. -->
+<section id="results" hidden>
+  <h2>Results · La Quiniela pays</h2>
+  <div id="results-pot" class="note"></div>
+  <div id="results-pays"></div>
+  <div id="results-refunds"></div>
+</section>
+
 <section id="race-info">
   <h2>Race info</h2>
   <p class="note">The race the TV counts down to and lists: its name, and the date and post time
@@ -220,6 +229,44 @@
     renderCounted();
     renderCloses();
     renderHorses();
+    renderResults();
+  }
+  // ---- the payout --------------------------------------------------------------
+  // La Quiniela pays from SET WINNERS' record and the figures at the post (pi5's payout_for, served as the model's
+  // payout): for each prize the cup to draw from, the skip when a finisher had no bets, each share in a dead heat,
+  // the refunds for cups scratched after the post, and which pot the prizes come from.
+  var POT_SOURCES = { counted: "your hand count", scale: "the scales at the post", "scale less refunds": "the scales at the post, less the refunds" };
+  function renderResults() {
+    var p = model.payout, html = "";
+    $("results").hidden = !p;
+    if (!p) { return; }
+    $("results-pot").textContent = "Pot " + money(p.pot) + " \u00b7 " + (POT_SOURCES[p.pot_source] || p.pot_source) +
+      " \u00b7 WIN " + money(p.prizes.win) + " \u00b7 PLACE " + money(p.prizes.place) + " \u00b7 SHOW " + money(p.prizes.show);
+    p.pays.forEach(function (pay) {
+      var payers = pay.horses.map(function (h) { return "#" + h.horse; }).join(" & ");
+      html += '<div class="pay' + (pay.dead_heat ? " tie" : "") + '"><div class="pay-slot">' +
+        pay.slots.map(function (s) { return s.toUpperCase(); }).join(" + ") +
+        (pay.dead_heat ? ' <span class="tag tie">DEAD HEAT</span>' : "") + "</div>" +
+        (pay.skipped.length ? '<div class="skip">' + pay.skipped.map(function (h) { return "#" + h; }).join(", ") +
+                              " no bets \u2192 " + payers + "</div>" : "") +
+        pay.horses.map(function (h) {
+          var c = CLOTH[h.horse] || ["#808080", "#fff"];
+          return '<div class="pay-horse"><div class="cloth" style="background:' + c[0] + ';color:' + c[1] + '">' + h.horse + "</div>" +
+            '<div class="pay-name">' + esc(storedName(h.horse) || "HORSE " + h.horse) + "</div>" +
+            '<div class="pay-prize">' + money(h.prize) + "</div></div>";
+        }).join("") +
+        '<div class="draw">' + (pay.dead_heat
+          ? "Dead heat: draw one token from each cup; " + pay.horses.map(function (h) { return "cup " + h.horse + " pays " + money(h.prize); }).join(", ")
+          : "draw one token from cup " + pay.horses[0].horse) + "</div></div>";
+    });
+    if (!p.pays.length) { html = '<div class="note">Nobody to pay: no cup in the finish held bets at the post.</div>'; }
+    if (p.unpaid_to_win) { html += '<div class="note">' + money(p.unpaid_to_win) + " of PLACE and SHOW had no horse with bets to pay: added to the WIN pool.</div>"; }
+    $("results-pays").innerHTML = html;
+    $("results-refunds").innerHTML = p.refunds.length
+      ? "<h3>Refunds</h3>" + p.refunds.map(function (r) {
+          return '<div class="refund">cup ' + r.horse + ": " + r.tokens + " token" + (r.tokens === 1 ? "" : "s") + " \u2192 refund " + money(r.refund) + "</div>";
+        }).join("") + '<div class="note">Scratched after the post: hand the cash back at token value. Count the BETS compartment after the refunds.</div>'
+      : "";
   }
   // The pot and prizes above are the model's pot and prizes: the hand count's once there is
   // one, the scales' live figures before it. After the post, say which.

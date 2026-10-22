@@ -301,17 +301,28 @@ const SADDLE_CLOTHS = {
 - **The real finish:** the host picks the horses that crossed 1st, 2nd and 3rd, never a
   substitute (Joey, 2026-10-20). A horse whose cup held no bets at the post is dimmed and
   tagged `NO BETS` (red, top left; a slot's tag is top right): La Quiniela skips it for the
-  next finisher (its payout computation, M6; La Subasta pays its owner all the same), so
-  when one is picked a `4TH` card appears under SHOW asking for the next finisher, then a
-  `5TH` if that one had no bets either, until three horses with bets are named
-  (`finishersNeeded`, the same rule as pi5's `finishers_needed`), and CONFIRM RESULTS waits
-  for them. The marks come from La Quiniela's figures at the post (`closing` in
+  next finisher (its payout computation, `payout_for`; La Subasta pays its owner all the same),
+  so once WIN, PLACE and SHOW can no longer hold the horses with bets La Quiniela needs, a
+  `4TH` card appears under SHOW asking for the next finisher, then a `5TH` if that one had
+  no bets either, until three horses with bets are named (`finishersNeeded`, the same rule
+  as pi5's `finishers_needed`, less the empty slots: no card on an empty dialog), and
+  CONFIRM RESULTS waits for them. The marks come from La Quiniela's figures at the post (`closing` in
   `GET /api/quiniela`), by **horse** number (22 running for 9 is horse 22); a horse no cup
   claimed counts as no bets. Its slot card shows the tag, and a line above CONFIRM RESULTS
   says `#7 SO HAPPY: no bets at the post, so La Quiniela skips it for the next finisher. La
   Subasta pays its owner all the same.` A next finisher's cup is not lit: the LEDs show the
   three that crossed first. With no figures at the post (the race never reached the post,
   betting reopened, pi5 not answering) nothing is marked, nothing is asked and nothing says so
+- **A dead heat:** DEAD HEAT on a filled card ties the card under it to it (`DEAD HEAT · with
+  WIN`): the horse there, or the next one tapped, crossed together with it; DEAD HEAT again on
+  the second card makes it three deep; a dead heat for 3rd puts the other horse in a `4TH`
+  card; UNTIE on the first card undoes it. The record carries the tie (`ties`), and La
+  Quiniela's payout pools the positions the tied horses occupy (`RACE_NIGHT.md`, section 8)
+- **Reopening while a result stands:** the dialog opens on the saved result, `CHECK THE
+  RESULTS` with the picks, the next finishers and any dead heat in their slots and the three
+  cups lit again, so a correction is one tap on a slot and the new horse; CANCEL leaves the
+  result and puts the mantle back on it (`RESULTS_ACTIVE`). pi5 refuses a result before AT
+  THE GATE (no figures at the post to pay from); its line shows under the heading
 - **Sidebar slots:** WIN, PLACE and SHOW, and a card per next finisher (`4TH`, `5TH`...)
   while one is needed, each with its horse's saddle cloth number and name in large type
   (readable from arm's length on an iPad); the active slot is lit. They are the check

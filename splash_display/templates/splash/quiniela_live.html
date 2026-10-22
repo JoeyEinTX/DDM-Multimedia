@@ -18,9 +18,10 @@
 
    The stage (.qb-stage) holds two views, and the board's data-view says
    which one shows: the two columns ("rows"), or the results screen
-   ("results") once the race is over and the model carries its results:
-   three rows, WIN / PLACE / SHOW, each with the horse's cloth and name,
-   the bets its cup held and the prize. The JS writes all of it.
+   ("results") once the race is over and the model carries La Quiniela's
+   payout: one row per prize paid, the horse whose cup is drawn from (two
+   or three in a dead heat) with its cloth and name, the bets its cup held
+   and its share, and the finisher skipped for no bets. The JS writes all of it.
 
    data-look is the look the page was asked for (server.board_look():
    ?look=, else config.QUINIELA_LOOK): "impact", "dots" or "numbers". Both
@@ -68,24 +69,32 @@
             {% endfor %}
         </div>
 
-        {# The results screen (race state 5 with results). #}
+        {# The results screen (race state 5 or 6 with La Quiniela's payout in the model): one row per prize
+           paid, built by the JS from #qb-result-tpl and #qb-result-horse-tpl: the slot(s) it pays, under them
+           the finisher skipped for no bets or "dead heat", then the paying horse (two or three in a dead
+           heat), each with its cloth and name, the bets its cup held at the post and its share. #}
         <div class="qb-results" id="qb-results" aria-hidden="true">
-            <div class="qb-results-rows">
-                {% for place in ('win', 'place', 'show') %}
-                <div class="qb-result qb-result--{{ place }}" id="qb-result-{{ place }}" data-horse="">
-                    <div class="qb-result-place">{{ place }}</div>
-                    <div class="qb-result-saddle"></div>
-                    <div class="qb-result-name" data-tote="name"></div>
-                    <div class="qb-result-bets"><span class="qb-result-count" data-tote="num">0</span><span class="qb-result-unit">Bets</span></div>
-                    <div class="qb-result-prize" data-tote="num">$0</div>
-                </div>
-                {% endfor %}
-            </div>
+            <div class="qb-results-rows" id="qb-results-rows"></div>
             <div class="qb-results-rule">
                 <span>One token drawn from each cup</span><span class="qb-results-dot">·</span><span>Drawn token takes the prize</span>
             </div>
         </div>
     </div>
+
+    <template id="qb-result-tpl">
+        <div class="qb-result" data-slot="" data-slots="" data-horse="">
+            <div class="qb-result-place"><span class="qb-result-slots"></span><span class="qb-result-skip"></span></div>
+            <div class="qb-result-horses"></div>
+        </div>
+    </template>
+    <template id="qb-result-horse-tpl">
+        <div class="qb-result-horse" data-horse="">
+            <div class="qb-result-saddle"></div>
+            <div class="qb-result-name" data-tote="name"></div>
+            <div class="qb-result-bets"><span class="qb-result-count" data-tote="num">0</span><span class="qb-result-unit">Bets</span></div>
+            <div class="qb-result-prize" data-tote="num">$0</div>
+        </div>
+    </template>
 
     {# One row, cloned by the JS per horse in the field; the number, the
        saddle-cloth colours, the name and the count are written by the JS.

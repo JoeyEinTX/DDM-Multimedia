@@ -1,7 +1,7 @@
 # DDM System Architecture Spec
 
-**Version:** 1.3
-**Date:** 2026-10-21
+**Version:** 1.4
+**Date:** 2026-10-22
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
 **Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
@@ -309,13 +309,26 @@ There is no roster line. A v1 `roster` line is ignored.
     (`finishers_needed` in `pi5/la_quiniela/betting.py`; the route refuses a record that
     stops short), and records them in `next`. The record is one for both games.
   - La Quiniela's skip (a finisher whose cup had no bets is skipped for the next finisher,
-    OD3) is applied by its payout computation in M6, reading this record. Until M6 the TV, the
-    cups and the LEDs show the real finish as WIN, PLACE and SHOW.
+    OD3) is applied by its payout computation (`payout_for`, 2026-10-22, below), reading this record;
+    the TV's results screen shows the paying horses, the cups and the LEDs the real finish. (Before M6 the TV, the
+    cups and the LEDs show the real finish as WIN, PLACE and SHOW.)
   - La Subasta pays the owners of the real 1st, 2nd and 3rd (section 8).
   - The SET WINNERS picker marks any horse whose cup had no bets at the post, from the
     figures at the post, so the host does not have to spot it. [DECIDED 2026-09-29, BUILT]
   - (Before 2026-10-20 the host entered the next horse into the empty cup's finish position;
     the horse that really finished there was not recorded.)
+- **La Quiniela's payout is computed, never worked out by hand.** [DECIDED 2026-10-22, BUILT; the rule
+  and Joey's worked examples in `DDM_La_Quiniela_Spec.md`] `payout_for` in `pi5/la_quiniela/betting.py` reads
+  the record and the figures at the post and is served as the model's `payout`; the LQ admin page's RESULTS
+  section (which cup each prize is drawn from and for how much, the skips, the refunds, which pot) and the
+  TV's results screen read it. The pot is the counted pot once entered, the scales' figure at the post less
+  the refunds until then. A finisher with no bets is skipped for the next with bets; fewer than three with
+  bets, the unpaid prizes go to WIN. Dead heat (the record's `ties`, entered on a slot card in SET WINNERS):
+  the tied horses share the prizes of the positions they jointly occupy, whole dollars, the odd dollar to
+  the lower program number, one token from each cup; a tied horse with no bets drops out. A horse scratched
+  after the post is refused in the finish and its cup's tokens refunded at token value. A result is
+  refused before AT THE GATE (no figures to pay from). First thing to check when it misbehaves:
+  `GET /api/quiniela`'s `payout` against `pi5/data/results.json` and `closing`.
 
 ### Betting lock
 
@@ -639,6 +652,9 @@ gateway says hello.
   a scratch; La Subasta's ledger derived from the record, whole pesos, the paid-out marks
 - The LED wall and the tote board never block the race: one queued, coalescing sender per device,
   the device catching up on return, the Control Center's two health pills (2026-10-21)
+- La Quiniela's payout rule written down and computed (gap review M6, OD3): `payout_for` on the record and the
+  figures at the post, the LQ admin page's RESULTS section, the TV's results screen from it; dead heats in
+  the record and the dialog; a result refused before the post (2026-10-22)
 
 ### Next
 

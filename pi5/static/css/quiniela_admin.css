@@ -85,6 +85,19 @@ button.big { min-height: 68px; font-size: 22px; letter-spacing: .02em; }
 .tag.show { background: #cd7f32; color: #14140f; } .tag.scr { background: var(--rose); color: #fff; }
 /* A cup still on its old number a minute after a renumber pair (pi5 keeps sending it). */
 .tag.ren { background: #f0b429; color: #14140f; }
+.tag.tie { background: #e0e0e0; color: #14140f; }
+/* What La Quiniela pays: one block per prize (or per dead heat), big enough to read with the cash box open */
+.pay { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+.pay.tie { border-color: #e0e0e0; }
+.pay-slot { color: var(--dim); font-size: 16px; letter-spacing: .08em; text-transform: uppercase; }
+.pay .skip { color: var(--rose); font-size: 18px; font-weight: 700; margin-top: 4px; }
+.pay-horse { display: grid; grid-template-columns: 52px 1fr auto; gap: 0 12px; align-items: center; margin-top: 6px; }
+.pay-horse .cloth { width: 48px; height: 42px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+                    font-size: 24px; font-weight: 800; }
+.pay-name { font-size: 22px; font-weight: 600; min-height: 1.3em; }
+.pay-prize { font-size: 40px; font-weight: 800; color: var(--gold); }
+.pay .draw { margin-top: 8px; font-size: 20px; font-weight: 700; color: var(--fg); }
+.refund { font-size: 20px; font-weight: 700; color: var(--fg); margin-top: 4px; }
 /* When an offline cup was last heard, under its status: a ghost from an old database reads as a date. */
 .hrow .hstat .heard { display: block; font-size: 12px; text-align: right; }
 /* Race info: a name, then the date and the post time side by side, labelled above. */
