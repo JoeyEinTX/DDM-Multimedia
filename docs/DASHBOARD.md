@@ -282,20 +282,22 @@ const SADDLE_CLOTHS = {
   AFTER PARTY, the TV back to the slideshow, the LEDs off), the picker staying open; the
   field is frozen while a result stands, so this is how the host scratches after the
   results and enters them again. Cancel clears nothing
-- **Pickers with names:** one per post in mantle order, 4 across and 5 down,
-  each showing the horse that runs from that post as `19 · GOLDEN TEMPO`: the
-  number on its saddle cloth, then the name from La Quiniela's names store
-  (`HORSE n` where it has none). The list comes from `GET /api/quiniela/field`
-  when the modal opens and every 2 s while it is open
-- **Scratches:** a horse scratched with a replacement shows the replacement's
-  number and name in its place (post 9 offers `22 · OCELLI`); a horse scratched
-  with no replacement is not offered (its place in the grid stays empty). A scratch
-  made on the LQ admin page while the picker is open reaches it within 2 s: the horse
-  leaves the grid, its slot empties (its cup unlocks) and the note under the heading
-  says `#3 MYSTIK DAN was scratched: PLACE is empty, tap the horse that finished there.`
-  (`#9 ENCINO was scratched.` for a horse not picked); a replacement shows under its
-  post. A confirm that races the scratch is refused by pi5 (`place: horse 12 is not in
-  the field`), shown in the note, and the field read again at once
+- **Pickers with names:** one per horse in the field, in program-number order, 4 across
+  (Joey, 2026-10-23): a horse that drew in stands where its number falls, at the end, and a
+  scratched horse leaves no blank. Each shows the number on its saddle cloth, then the name
+  from La Quiniela's names store (`HORSE n` where it has none), as `19 · GOLDEN TEMPO`. A tile
+  carries the horse's own number (what the results record) and the post it runs from (the LED
+  cup that lights: 21 running for 19 lights cup 19); a tap uses the tile's own, never its
+  position in the grid. The list comes from `GET /api/quiniela/field` (by post: the page
+  sorts it by horse) when the modal opens and every 2 s while it is open
+- **Scratches:** a horse scratched with a replacement is replaced in the list by the
+  replacement, at the end (`22 · OCELLI` after 20); a horse scratched with no replacement is
+  not offered, and the others close up. A scratch made on the LQ admin page while the picker
+  is open reaches it within 2 s: the horse leaves the grid, its slot empties (its cup
+  unlocks) and the note under the heading says `#3 MYSTIK DAN was scratched: PLACE is empty,
+  tap the horse that finished there.` (`#9 ENCINO was scratched.` for a horse not picked). A
+  confirm that races the scratch is refused by pi5 (`place: horse 12 is not in the field`),
+  shown in the note, and the field read again at once
 - **Post and horse:** a pick lights the LED cup of the **post** (9) and records
   the **horse** (22); the results carry horse numbers
 - **The real finish:** the host picks the horses that crossed 1st, 2nd and 3rd, never a
@@ -323,6 +325,10 @@ const SADDLE_CLOTHS = {
   cups lit again, so a correction is one tap on a slot and the new horse; CANCEL leaves the
   result and puts the mantle back on it (`RESULTS_ACTIVE`). pi5 refuses a result before AT
   THE GATE (no figures at the post to pay from); its line shows under the heading
+- **A card's parts, each in a place of its own** (Joey, 2026-10-23): a head row with the slot's
+  name, DEAD HEAT / UNTIE and the × (the two buttons 44 px each way); under it the tie line
+  (`DEAD HEAT · with WIN`) when the card is tied; then the horse's cloth, its name (whole, in
+  as many lines as it needs: `EMERGING MARKET`) and the NO BETS badge under the name
 - **Sidebar slots:** WIN, PLACE and SHOW, and a card per next finisher (`4TH`, `5TH`...)
   while one is needed, each with its horse's saddle cloth number and name in large type
   (readable from arm's length on an iPad); the active slot is lit. They are the check

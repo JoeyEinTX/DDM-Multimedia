@@ -1,7 +1,7 @@
 # DDM La Quiniela - Live Betting System Specification
 
-**Version:** 2.4  
-**Date:** 2026-10-22  
+**Version:** 2.5  
+**Date:** 2026-10-26  
 **Status:** Design Phase - Ready for Prototyping  
 **Target Debut:** DDM 2027  
 **Author:** Joey + Claude  
@@ -67,7 +67,10 @@ section and the TV's results screen. Nobody computes it by hand.
   from each tied cup. A tied horse with no bets drops out of the tie, and the skip applies.
 - **Scratched after the post:** the horse cannot be in the finish (pi5 refuses it), its cup's
   tokens are refunded in cash at token value, and the counted pot, counted after the refunds,
-  is the truth.
+  is the truth. **A scratch at or after the post has no replacement** (Joey, 2026-10-23): the
+  field is set at the gate, so pi5 refuses a replacement in race states 3 to 6 and the admin
+  page offers only the No replacement box, ticked; the TV's crawl says `· TOKENS REFUNDED`
+  after it, where before the post it says `· RE-BET YOUR TOKENS`.
 - **A result needs the figures at the post:** pi5 refuses one before AT THE GATE.
 - One token is drawn from each paying cup; the guest holding the matching half wins that
   prize.
@@ -724,6 +727,7 @@ DEVPI
 | 2.2 | May 2026 | Consolidated architecture: single ESP32 handles scales + displays, DevPi handles logic/dashboard (no dedicated La Quiniela Pi), updated GPIO assignments and software architecture |
 | 2.3 | May 2026 | Established official nomenclature: LQ Controller (ESP32 hardware) and LQ Module (DevPi software), updated all references throughout document |
 | 2.4 | 2026-10-22 | La Quiniela's payout rule written down with worked examples (gap review M6, OD3, OD5): the skip, dead heats, the unpaid prizes, refunds after the post; computed by `payout_for` and shown on the LQ admin page and the TV |
+| 2.5 | 2026-10-26 | A scratch at or after the post has no replacement (the field is set at the gate) and its tokens are refunded in cash; the TV says `TOKENS REFUNDED` for it and, when nobody is paid, says so |
 
 ---
 

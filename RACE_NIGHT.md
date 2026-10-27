@@ -305,7 +305,8 @@ While open:
 - Someone takes a token back out: the count drops and the pot drops. That's correct.
 - Enter any also-eligible replacement before pressing **60 MIN**. After 60 MIN every scratch
   means: empty that cup and hand the tokens back to re-bet. If a replacement is known, enter
-  it: it draws in with the empty cup (the row and the TV say `re-bet`).
+  it: it draws in with the empty cup (the row and the TV say `re-bet`). From **AT THE GATE** on
+  there is no replacement (section 7).
 - A same-day scratch (vet scratch, gate scratch): `ADMIN` → Scratches → In the field →
   that horse's row → tick *No replacement* → Scratch. The row leaves the board, the crawl
   says `RE-BET YOUR TOKENS`, its tokens leave the pot. Empty that cup and hand the tokens
@@ -338,6 +339,12 @@ three are RUNNING).
 (`ADMIN` → Race shows them under their own names: `2 · FINAL CALL`, `3 · AT THE POST`,
 `4 · RUNNING`.)
 
+A horse scratched at the post or after has no replacement: the field was set at the gate. `ADMIN` →
+Scratches offers only *No replacement*, ticked (pi5 refuses a replacement, `409 The field is set at the
+gate`); its cup's tokens are refunded in cash, not re-bet, the crawl says `TOKENS REFUNDED`, and
+section 8 lists the refund. If the row still offers a number list, the race is not in AT THE POST,
+RUNNING or WINNER: check the state on `ADMIN` → Race.
+
 ## 8. Results and the draw
 
 In order: **FINISH** on `DASH` → **SET WINNERS** → **CONFIRM RESULTS** → refund any cup scratched
@@ -346,13 +353,17 @@ draw → pay. The rule behind the RESULTS section is at the end of this section;
 `DDM_La_Quiniela_Spec.md` has it with worked examples.
 
 **SET WINNERS.** `DASH` → **SET WINNERS** → tap the horses that crossed **1st, 2nd and 3rd**, the
-real finish (each picker says the number and the name, `19 · GOLDEN TEMPO`; a horse that drew in
-shows under its own number) → **CONFIRM RESULTS**. That is WINNER: the LEDs light the three cups,
+real finish (the pickers run in program-number order, a horse that drew in at the end, a scratched
+horse gone with no blank; each says the number and the name, `19 · GOLDEN TEMPO`) →
+**CONFIRM RESULTS**. That is WINNER: the LEDs light the three cups,
 the three cups' screens say WIN, PLACE, SHOW, and the TV flips to the **results board**,
 `OFFICIAL RESULTS`: one row per prize paid, the horse whose cup is drawn from, with its cloth and
 name, the bets its cup held and its prize, a skipped finisher noted; the pot above. Opening the
 pickers changes nothing; confirming does. (WINNER without results, from **HEARTBEAT**: the TV says
-`OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.) pi5 refuses a
+`OFFICIAL RESULTS COMING` over the frozen board until the results are confirmed.) When no cup in the
+finish held bets, nobody is paid and the board says `NO LA QUINIELA PRIZES THIS RACE`, the reason in a
+line, and `cup 19 scratched after the post: tokens refunded` for each refunded cup; `ADMIN` → RESULTS
+says the same. pi5 refuses a
 result before AT THE GATE (`results before the post …`): there are no figures at the post to pay
 from yet.
 Each tap fills one slot, the next empty one (WIN, then PLACE, then SHOW); to change a
@@ -616,7 +627,8 @@ the restart).
 - Prizes are 60 / 25 / 15 percent of the pot, whole dollars, WIN takes the rounding.
 - Fewer tokens in a cup, better shot at the draw.
 - Scratched before Friday: the alternate takes over, with its own number.
-  Scratched on Saturday: your tokens come back to you; re-bet them on another horse.
+  Scratched on Saturday: your tokens come back to you; re-bet them on another horse (or, once
+  betting has closed, your money comes back).
 - Totals based on cheap Chinese electronics. Final results hand counted.
 
 ---

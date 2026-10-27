@@ -75,6 +75,13 @@
            heat), each with its cloth and name, the bets its cup held at the post and its share. #}
         <div class="qb-results" id="qb-results" aria-hidden="true">
             <div class="qb-results-rows" id="qb-results-rows"></div>
+            {# Nobody paid (the payout has no row: no cup in the finish held bets at the post): the screen says so in
+               place of the rows and the rule, with the cups scratched after the post, which the JS fills. #}
+            <div class="qb-results-none" id="qb-results-none">
+                <div class="qb-results-none-title">No La Quiniela prizes this race</div>
+                <div class="qb-results-none-why">No cup in the finish held bets at the post</div>
+                <div class="qb-results-none-refunds" id="qb-results-refunds"></div>
+            </div>
             <div class="qb-results-rule">
                 <span>One token drawn from each cup</span><span class="qb-results-dot">·</span><span>Drawn token takes the prize</span>
             </div>

@@ -498,10 +498,13 @@
   // name); a refused one leaves the rows as they were, to fix and press again.
   var scratchKey = null, scratchBusy = false, freshRows = false;     // busy: further taps in the lists are ignored
   function horseState(n) { return (model && model.horses && model.horses[n]) || {}; }
+  // From AT THE GATE on (race states 3 to 6) the field is set (Joey, 2026-10-23): a scratch has no replacement, pi5
+  // refuses one, and the tokens in its cup are refunded in cash. A row then offers only the No replacement box, ticked.
+  function afterTheGate() { var s = model && model.race_state; return s >= 3 && s <= 6; }
   function scratchSignature() {
     var flags = [], n, m;
     for (n = 1; n <= HORSES; n++) { m = horseState(n); flags.push([m.in_field ? 1 : 0, m.scratched ? 1 : 0, m.cup == null ? 0 : m.cup]); }
-    return JSON.stringify([horses, flags, (model && model.scratches) || []]);
+    return JSON.stringify([horses, flags, (model && model.scratches) || [], afterTheGate()]);
   }
   // A number nobody has: no cup carries it, it is not in the field, and it
   // is not the was or now of any scratch. Only an also-eligible can be one:
@@ -529,7 +532,7 @@
     Array.prototype.forEach.call(freshRows ? [] : list.querySelectorAll(".horse"), function (row) {
       var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]"), c = row.querySelector("[data-norepl]");
       saved[row.getAttribute("data-horse")] = { num: s && s.hasAttribute("data-picked") ? s.value : "",
-                                                name: r && r.hasAttribute("data-typed") ? r.value : null, norepl: !!(c && c.checked) };
+                                                name: r && r.hasAttribute("data-typed") ? r.value : null, norepl: !!(c && c.checked && !c.disabled) };
     });
     buildScratches(list, done);
     scratchKey = key;
@@ -537,6 +540,7 @@
       var row = list.querySelector('.horse[data-horse="' + n + '"]');
       if (!row) { return; }                                          // just scratched: nothing left to carry
       var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]");
+      if (!s) { return; }                                            // from AT THE GATE on a row has neither: nothing to carry over
       if (saved[n].num && s.querySelector('option[value="' + saved[n].num + '"]')) {
         s.value = saved[n].num; s.setAttribute("data-picked", ""); r.value = storedName(Number(saved[n].num));
       }
@@ -549,7 +553,7 @@
     return free.map(function (n) { return '<option value="' + n + '">' + esc(label(n)) + "</option>"; }).join("");
   }
   function buildScratches(list, done) {
-    var html = "", n, m, free = unusedNumbers(), first = free.length ? free[0] : null;
+    var html = "", n, m, free = unusedNumbers(), first = free.length ? free[0] : null, late = afterTheGate();
     for (n = 1; n <= HORSES; n++) {
       m = horseState(n);
       if (!m.in_field) { continue; }
@@ -559,10 +563,11 @@
           '<div class="note">' + (m.cup == null ? "no cup yet" : (m.conflict ? "\u26a0 " + m.cups.length + " cups" : (m.online ? "cup online" : "cup offline"))) +
           (m.replaced != null ? " · replaces " + esc(m.replaced || "(unnamed)") : "") + "</div></div>" +
         '<div class="controls">' +
-          '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
-          '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">' +
+          (late ? "" : '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
+            '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">') +
           '<button class="danger" data-scratch>Scratch</button>' +
-          '<label><input type="checkbox" data-norepl> No replacement (the horse is out: its tokens are handed back to re-bet)</label>' +
+          '<label><input type="checkbox" data-norepl' + (late ? " checked disabled" : "") + "> No replacement (the horse is out: its tokens are " +
+            (late ? "refunded in cash" : "handed back to re-bet") + ")</label>" +
           '<div class="status rowstatus" data-rowstatus></div>' +
         "</div></div>";
     }
@@ -580,7 +585,8 @@
         '<div><div class="name">' + esc(was.name || "(no name)") + "</div>" +
           '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") + (s.rebet ? " · re-bet" : "") +
                                             (chained ? " · undo #" + now.number + " first" : "")
-                                          : "no replacement: out of the race, tokens out of the pot") + "</div></div>" +
+                                          : s.refund ? "no replacement: out of the race, tokens refunded in cash"
+                                                     : "no replacement: out of the race, tokens out of the pot") + "</div></div>" +
         '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
         '<div class="status rowstatus" data-rowstatus></div>' +
         "</div>";
@@ -609,13 +615,13 @@
   function askHtml() {
     var who = "#" + ask.horse + (storedName(ask.horse) ? " " + storedName(ask.horse).toUpperCase() : ""), r = ask.body && ask.body.replacement;
     if (!ask.body) { return "<p>No replacement? Tick No replacement, or enter the replacement's name.</p><button data-ask-norepl>No replacement</button>"; }
-    // Betting open (the model's betting_open): tokens never move to another horse (Joey, 2026-10-14); 3-5: OD3, as before.
-    var open = !!(model && model.betting_open), post = !!(model && model.race_state >= 3 && model.race_state <= 5);
+    // Betting open (the model's betting_open): tokens never move to another horse (Joey, 2026-10-14).
+    var open = !!(model && model.betting_open);
     return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in." + (open ? " Betting is open: " +
                            "empty this cup and hand the tokens back to re-bet; #" + r.number + " starts empty." : "")
-                         : "Scratch " + who + ", no replacement: its tokens are handed back to re-bet.") + "</p>" +
-      (r && post ? "<p>Betting is open: the tokens in this cup will ride on #" +
-        r.number + ". After 60 MIN, use No replacement.</p>" : "") + '<button class="danger" data-confirm>Confirm scratch</button><button data-cancel>Cancel</button>';
+                         : "Scratch " + who + ", no replacement: its tokens are " +
+                           (afterTheGate() ? "refunded in cash at token value." : "handed back to re-bet.")) + "</p>" +
+      '<button class="danger" data-confirm>Confirm scratch</button><button data-cancel>Cancel</button>';
   }
   function applyRowNotes() {
     Array.prototype.forEach.call(document.querySelectorAll("#scratch-list .horse, #scratched-list .horse"), function (row) {
@@ -644,8 +650,9 @@
       ask = null; applyRowNotes(); return;
     } else {                                       // Scratch, or the question's No replacement: the step, nothing sent
       if (btn.hasAttribute("data-ask-norepl")) { row.querySelector("[data-norepl]").checked = true; }
-      var num = row.querySelector("[data-repl-num]").value;
-      var name = row.querySelector("[data-repl-name]").value.trim();
+      var pick = row.querySelector("[data-repl-num]");                // none from AT THE GATE on
+      var num = pick ? pick.value : "";
+      var name = pick ? row.querySelector("[data-repl-name]").value.trim() : "";
       var norepl = row.querySelector("[data-norepl]").checked;
       if (!norepl && !num) { clearRowNotes(); report("no free number: tick No replacement", "err"); return; }
       var typed = /^#?\s*(\d{1,2})(?:\s*[-.:)]\s*|\s+)(\S.*)$/.exec(name);   // #21 Test, 21 Test, 21. Test, 21 - Test
@@ -666,7 +673,7 @@
       if (path.indexOf("unscratch") >= 0) {
         what = "Undone " + horse;
       } else if (r.body.kind === "gateway") {
-        what = "Scratched " + horse + (r.body.cup == null ? " (no cup is on that number yet)" : "");
+        what = "Scratched " + horse + (r.body.cup == null ? " (no cup is on that number yet)" : "") + (r.body.refund ? " \u00b7 tokens refunded" : "");
       } else {
         what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "") +
                (r.body.rebet ? " · re-bet" : "");

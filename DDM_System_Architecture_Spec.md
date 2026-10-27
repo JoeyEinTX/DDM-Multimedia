@@ -1,7 +1,7 @@
 # DDM System Architecture Spec
 
-**Version:** 1.4
-**Date:** 2026-10-22
+**Version:** 1.5
+**Date:** 2026-10-26
 **Target:** DDM 2027
 **Repo:** `github.com/JoeyEinTX/DDM-Multimedia`
 **Matches:** `main` at `6fc2be9` (2026-09-27), plus the decisions of 2026-09-29
@@ -345,16 +345,23 @@ There is no roster line. A v1 `roster` line is ignored.
    **Once betting is open, tokens never move to another horse.** [DECIDED 2026-10-14] Every scratch
    after 60 MIN, with or without a replacement, hands the tokens in that cup back to the bettors to
    re-bet; a replacement entered then still draws in, with an empty cup, and the board says
-   `· RE-BET YOUR TOKENS` after it. A scratch after the figures are taken at the post is OD3's case.
+   `· RE-BET YOUR TOKENS` after it. **From the post on the field is set: a scratch has no replacement** and
+   its cup's tokens are refunded in cash (OD3). [DECIDED 2026-10-23, BUILT] A replacement entered in race
+   states 3 to 6 is refused (`POST /api/quiniela/scratch`, 409), the admin page then offers only the No
+   replacement box, ticked, and the board says `· TOKENS REFUNDED` after the horse (the model's `refund`
+   flag, from `lq_scratch_entered`). First thing to check when a row still offers a replacement late: the
+   race state on the admin page.
 2. **Same day, no replacement: re-bet.** [DECIDED]
    - The horse leaves the field, its cup shows the red X, and its tokens drop out of the pot
      while they are in that cup.
    - The host empties the cup and **hands the tokens back to the bettors**, who re-drop them
      in other cups. The pot climbs back as they do.
    - Anyone who takes a token back and does not re-bet is settled by the counted pot.
-   - **The `TOKENS REFUNDED` wording goes**, from the TV board, `RACE_NIGHT.md` and
-     `pi5/LQ_BRIDGE.md`. [DECIDED 2026-09-29, BUILT] Replacement wording on the board:
-     `· RE-BET YOUR TOKENS`, every character in the tote look's dot font. [BUILT]
+   - **The `TOKENS REFUNDED` wording goes** for a same-day scratch, from the TV board,
+     `RACE_NIGHT.md` and `pi5/LQ_BRIDGE.md`. [DECIDED 2026-09-29, BUILT] Replacement wording on the
+     board: `· RE-BET YOUR TOKENS`, every character in the tote look's dot font. [BUILT] It comes back
+     for a scratch at or after the post only, where the tokens really are refunded in cash.
+     [DECIDED 2026-10-23, BUILT]
 
 - A scratch of either kind is entered once, on the admin page, and can be undone (a chain
   undoes last record first). [BUILT]
@@ -655,6 +662,10 @@ gateway says hello.
 - La Quiniela's payout rule written down and computed (gap review M6, OD3): `payout_for` on the record and the
   figures at the post, the LQ admin page's RESULTS section, the TV's results screen from it; dead heats in
   the record and the dialog; a result refused before the post (2026-10-22)
+- The field in program-number order everywhere (SET WINNERS' grid was the one page out of order); the SET
+  WINNERS cards laid out so nothing sits on anything; the TV says so when nobody is paid; a scratch at or
+  after the post has no replacement and its tokens are refunded in cash, the TV saying `TOKENS REFUNDED`
+  (2026-10-26)
 
 ### Next
 

@@ -1383,6 +1383,301 @@ def test_device_indicators_in_a_browser():
 
 
 # -----------------------------------------------------------------------------
+# The field in program-number order, the SET WINNERS cards, a scratch after the post (Joey, 2026-10-23)
+# -----------------------------------------------------------------------------
+
+TILES_JS = """JSON.stringify([...document.querySelectorAll('.winner-pick-btn')].map((b) => {
+    const r = b.getBoundingClientRect();
+    return {post: Number(b.dataset.post), horse: Number(b.dataset.horse), shown: b.querySelector('.winner-pick-num').textContent.trim(),
+            title: b.title, top: Math.round(r.top), left: Math.round(r.left)};
+}))"""
+
+
+def _grid_rows(tiles):
+    """The horses of the grid as laid out: one list per visual row, left to right."""
+    rows = {}
+    for tile in tiles:
+        rows.setdefault(tile["top"], []).append(tile)
+    return [[t["horse"] for t in sorted(row, key=lambda t: t["left"])] for _, row in sorted(rows.items())]
+
+
+def _picker_field_order(picker_check, requests, slow):
+    """#21 draws in for #19 (post 19 is its LED cup); later #7 is scratched with no replacement. The grid lists the field in
+    program-number order, #21 last, no blank where #7 was, and a tap on a tile records that tile's own program number, never
+    its position in the grid: tiles are tapped by position and compared with the field as the store has it."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 19, "replacement": {"number": 21, "name": "Late Entry"}})
+    _cups_at_post(rig, {**{n: 2 for n in range(1, 21) if n != 19}, 21: 3})
+    server = picker_check.Server(rig)
+    picker = picker_check.Picker(server, touch=True)
+    chrome = picker.chrome
+    modal_up = "document.getElementById('results-modal').classList.contains('active')"
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def tiles():
+        return json.loads(chrome.eval(TILES_JS))
+
+    def field():                                     # the store's, not the page's
+        return [h["number"] for h in rig.board.store.field()["horses"]]
+
+    def tap_position(k):                             # the k-th tile of the grid, 1-based, as a finger finds it
+        chrome.tap(f".winner-pick-btn:nth-child({k})")
+        settle(0.3)
+
+    try:
+        picker.open()
+        t = tiles()
+        _check("#19 replaced by #21: the grid lists the field by program number, 21 last, the last row 17, 18, 20, 21",
+               [x["horse"] for x in t] == field() == [n for n in range(1, 19)] + [20, 21]
+               and _grid_rows(t)[-1] == [17, 18, 20, 21], str(_grid_rows(t)))
+        _check("...each tile shows its own number and carries its post: 21 runs from post 19, the LED cup",
+               all(x["shown"] == str(x["horse"]) and x["title"].startswith(f"{x['horse']} \u00b7") for x in t)
+               and next(x for x in t if x["horse"] == 21)["post"] == 19 and all(x["post"] == x["horse"] for x in t if x["horse"] != 21),
+               str([(x["post"], x["horse"]) for x in t if x["post"] != x["horse"]]))
+        tap_position(20)
+        st = picker.state()
+        _check("the last tile (21): WIN is horse 21 and its cup is post 19, its colour locked on that cup",
+               st["win"] == 21 and st["posts"]["win"] == 19 and wait_for(lambda: "CUP:LOCK:19:255:215:0" in server.led("CUP:LOCK"), 3.0),
+               f"{st['win']} {st['posts']} {server.led('CUP:LOCK')}")
+        _check("...and its slot card names it", "LATE ENTRY" in st["slots"]["win"].upper(), repr(st["slots"]["win"]))
+        r = rig.post("/api/quiniela/scratch", {"horse": 7})
+        assert r.status_code == 200, r.get_json()
+        chrome.wait_for("!document.querySelector(\".winner-pick-btn[data-horse='7']\")", timeout=8)
+        settle(0.3)
+        t = tiles()
+        _check("#7 scratched with no replacement while the picker is open: the grid closes up (no blank), the last row 18, 20, 21",
+               [x["horse"] for x in t] == field() == [n for n in range(1, 19) if n != 7] + [20, 21]
+               and _grid_rows(t)[-1] == [18, 20, 21] and not chrome.eval("document.querySelectorAll('.winner-pick-gap').length"),
+               str(_grid_rows(t)))
+        _check("...the pick of 21 stays, on post 19", picker.state()["win"] == 21 and picker.state()["posts"]["win"] == 19)
+        tap_position(7)                              # where 7 was: now 8
+        tap_position(1)
+        st = picker.state()
+        _check("the 7th tile is now horse 8, the 1st horse 1: PLACE 8, SHOW 1, each the tile's own number",
+               (st["win"], st["place"], st["show"]) == (21, 8, 1) and st["posts"]["place"] == 8 and st["posts"]["show"] == 1, str(st))
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("!" + modal_up, timeout=10)
+        saved = rig.board.results()
+        _check("CONFIRM RESULTS records the numbers of the tiles that were tapped: 21, 8, 1",
+               saved == {"win": 21, "place": 8, "show": 1, "next": [], "ties": []}, str(saved))
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        picker.close()
+        server.close()
+
+
+def test_picker_grid_in_program_number_order_in_a_browser():
+    """Joey, 2026-10-23: SET WINNERS lists the field by program number (a replacement where its number falls, no blanks),
+    and a tap records the tile's own number. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("SET WINNERS order checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _picker_field_order(picker_check, requests, slow))
+
+
+CARDS_BOXES_JS = """JSON.stringify([...document.querySelectorAll('.result-slot')].map((card) => {
+    const rect = (el) => { const r = el.getBoundingClientRect(); return {left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+                                                                          width: r.width, height: r.height}; };
+    const part = (sel) => { const el = card.querySelector(sel); if (!el) return null; const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return null; const r = rect(el); return r.width && r.height ? r : null; };
+    const name = card.querySelector('.slot-horse-name');
+    let text = null;
+    if (name) { const range = document.createRange(); range.selectNodeContents(name);
+                text = Object.assign(rect(range), {clipped: name.scrollWidth > name.clientWidth + 1, font: parseFloat(getComputedStyle(name).fontSize),
+                                                   words: name.textContent}); }
+    return {slot: card.dataset.slot, filled: card.classList.contains('is-filled'), card: rect(card),
+            parts: {clear: part('.slot-clear'), saddle: part('.slot-saddle'), name: text, nobets: part('.slot-nobets'),
+                    tied: part('.slot-tied-label'), tie: part('.slot-tie')},
+            tieText: (card.querySelector('.slot-tie') || {}).textContent || '', tiedText: (card.querySelector('.slot-tied-label') || {}).textContent || ''};
+}))"""
+
+
+def _overlap(a, b):
+    return a["left"] < b["right"] - 0.5 and b["left"] < a["right"] - 0.5 and a["top"] < b["bottom"] - 0.5 and b["top"] < a["bottom"] - 0.5
+
+
+def _picker_cards(picker_check, requests, slow):
+    """The longest names of the 2026 field on the WIN, PLACE, SHOW and 4TH cards, one of them with NO BETS and a dead heat
+    between the first two: every part of a card (the x, the cloth, the name, the NO BETS badge, the tie line, the DEAD HEAT
+    / UNTIE button) has a place of its own, the name whole, and what is pressed is 44 px or more each way."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": "5. Right to Party\n12. Chief Wallabee\n15. Emerging Market\n19. Golden Tempo"})
+    _cups_at_post(rig, {n: 2 for n in range(1, 21) if n != 15})                  # 15 held nothing at the post
+    server = picker_check.Server(rig)
+    picker = picker_check.Picker(server, touch=True)
+    chrome = picker.chrome
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def boxes():
+        return {c["slot"]: c for c in json.loads(chrome.eval(CARDS_BOXES_JS))}
+
+    def problems(cards):
+        out = []
+        for slot, c in cards.items():
+            if not c["filled"]:
+                continue
+            parts = {k: v for k, v in c["parts"].items() if v}
+            names = sorted(parts)
+            for i, a in enumerate(names):
+                for b in names[i + 1:]:
+                    if _overlap(parts[a], parts[b]):
+                        out.append(f"{slot}: {a} overlaps {b}")
+            for k, v in parts.items():
+                if v["left"] < c["card"]["left"] - 1 or v["right"] > c["card"]["right"] + 1 or v["bottom"] > c["card"]["bottom"] + 1:
+                    out.append(f"{slot}: {k} sticks out of its card")
+            if parts["name"]["clipped"]:
+                out.append(f"{slot}: the name is clipped")
+            if parts["name"]["font"] < 18:
+                out.append(f"{slot}: the name is down to {parts['name']['font']}px")
+            for k in ("clear", "tie"):
+                if k in parts and (parts[k]["width"] < 44 or parts[k]["height"] < 44):
+                    out.append(f"{slot}: {k} is {parts[k]['width']:.0f} x {parts[k]['height']:.0f}")
+        return out
+
+    try:
+        picker.open()
+        for horse in (15, 19, 5):
+            picker.tap_horse(horse)
+            settle(0.3)
+        picker.tap_horse(12)                         # 15 had no bets: the 4TH card asks for the next finisher
+        settle(0.3)
+        cards = boxes()
+        _check("WIN 15 EMERGING MARKET (NO BETS), PLACE 19 GOLDEN TEMPO, SHOW 5 RIGHT TO PARTY, 4TH 12 CHIEF WALLABEE: four cards, "
+               "every part in a place of its own, every name whole",
+               sorted(cards) == ["next:0", "place", "show", "win"] and cards["win"]["parts"]["nobets"] is not None
+               and cards["win"]["tieText"] == "DEAD HEAT" and not problems(cards), str(problems(cards)))
+        chrome.tap(".slot-tie[data-slot='win']")
+        settle(0.3)
+        cards = boxes()
+        _check("a dead heat between WIN and PLACE: PLACE says so on a line of its own, WIN's button reads UNTIE, nothing covered",
+               cards["place"]["tiedText"] == "DEAD HEAT \u00b7 with WIN" and cards["place"]["parts"]["tied"] is not None
+               and cards["win"]["tieText"] == "UNTIE" and not problems(cards), f"{cards['place']['tiedText']!r} {problems(cards)}")
+        _check("...the name and the tie line of PLACE are two boxes, one above the other",
+               cards["place"]["parts"]["tied"]["bottom"] <= cards["place"]["parts"]["name"]["top"] + 0.5
+               or cards["place"]["parts"]["name"]["bottom"] <= cards["place"]["parts"]["tied"]["top"] + 0.5)
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        picker.close()
+        server.close()
+
+
+def test_slot_cards_have_a_place_for_everything_in_a_browser():
+    """Joey, 2026-10-23: on the WIN / PLACE / SHOW / 4TH cards the DEAD HEAT and UNTIE buttons sat on top of the horse name,
+    the NO BETS badge and the tie line. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("SET WINNERS card checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _picker_cards(picker_check, requests, slow))
+
+
+def _admin_after_the_post(picker_check, requests, slow):
+    """The LQ admin page with #21 drawn in for #19: its lists in program-number order; the Scratches row with the number list
+    and name field until AT THE GATE, and from AT THE GATE on only the No replacement box, ticked; its step and its notes
+    say the tokens are refunded; Undo as ever; back to FINAL CALL the number list and name field return."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    rig.post("/api/quiniela/scratch", {"horse": 19, "replacement": {"number": 21, "name": "Late Entry"}})
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    row = lambda n: f'#scratch-list .horse[data-horse="{n}"] '            # noqa: E731
+    who = "#9 " + DERBY[8].upper()
+
+    def settle(seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            chrome.eval("1")
+            time.sleep(0.05)
+
+    def controls(n):                                  # what row n offers, as the page shows it
+        return json.loads(chrome.eval("""(() => { const row = document.querySelector('#scratch-list .horse[data-horse="%d"]');
+            const shown = (el) => !!el && getComputedStyle(el).display !== 'none' && el.offsetParent !== null;
+            const box = row.querySelector('[data-norepl]');
+            return JSON.stringify({num: shown(row.querySelector('[data-repl-num]')), name: shown(row.querySelector('[data-repl-name]')),
+                                   scratch: shown(row.querySelector('[data-scratch]')), box: shown(box),
+                                   ticked: !!box && box.checked, locked: !!box && box.disabled,
+                                   label: box ? box.parentElement.innerText.trim() : ''}); })()""" % n))
+
+    def step():
+        return chrome.eval("(() => { const el = document.querySelector('" + row(9) + "[data-rowstatus]'); return el ? el.innerText.trim() : ''; })()")
+
+    def wait_state(n):
+        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}"})
+        chrome.wait_for(f"document.getElementById('state-now').textContent.trim().startsWith('{n} ')", timeout=12)
+        settle(0.3)
+
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('" + row(9) + "[data-scratch]')", timeout=20)
+        settle(0.4)
+        horses = chrome.eval("[...document.querySelectorAll('#horses .hrow')].map((r) => Number(r.dataset.horse))")
+        field_rows = chrome.eval("[...document.querySelectorAll('#scratch-list .horse')].map((r) => Number(r.dataset.horse))")
+        scratched_rows = chrome.eval("[...document.querySelectorAll('#scratched-list .horse')].map((r) => Number(r.dataset.horse))")
+        _check("#21 drawn in for #19: Horses lists 1 to 24 in order, the Scratches field rows 1-18, 20, 21, the Scratched row 19",
+               horses == list(range(1, 25)) and field_rows == list(range(1, 19)) + [20, 21] and scratched_rows == [19],
+               f"{horses} {field_rows} {scratched_rows}")
+        c = controls(9)
+        _check("before the gate (PRE-RACE): the number list, the name field, Scratch and the unticked box",
+               c["num"] and c["name"] and c["scratch"] and c["box"] and not c["ticked"] and not c["locked"], str(c))
+        wait_state(3)
+        c = controls(9)
+        _check("AT THE POST: no number list, no name field; Scratch and the No replacement box, ticked, nothing to untick, "
+               "saying the tokens are refunded in cash",
+               not c["num"] and not c["name"] and c["scratch"] and c["box"] and c["ticked"] and c["locked"]
+               and "refunded in cash" in c["label"] and "re-bet" not in c["label"], str(c))
+        chrome.tap(row(9) + "[data-scratch]")
+        settle(0.4)
+        _check(f"Scratch asks at once, no question about a name: Scratch {who}, no replacement, its tokens refunded in cash",
+               step().startswith(f"Scratch {who}, no replacement: its tokens are refunded in cash at token value.")
+               and "re-bet" not in step(), repr(step()))
+        t = time.monotonic()
+        chrome.tap(row(9) + "[data-confirm]")
+        chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
+        settle(0.4)
+        note = chrome.eval("document.querySelector('#scratched-list .horse[data-horse=\"9\"] .note').innerText")
+        _check("Confirm: 9 scratched with no replacement, the reply line and the Scratched row both say the tokens are refunded",
+               rig.board.store.scratches().get(9, 0) is None
+               and next(s for s in rig.model()["scratches"] if s["was"]["number"] == 9)["refund"] is True
+               and "tokens refunded in cash" in note
+               and chrome.eval("document.querySelector('#scratched-list .horse[data-horse=\"9\"] [data-rowstatus]').innerText.trim()")
+               .endswith("\u00b7 tokens refunded"), repr(note))
+        chrome.tap('#scratched-list .horse[data-horse="9"] [data-undo]')
+        chrome.wait_for("!!document.querySelector('" + row(9) + "[data-scratch]')", timeout=10)
+        _check("Undo as ever", 9 not in rig.board.store.scratches())
+        wait_state(2)
+        c = controls(9)
+        _check("back to FINAL CALL (betting reopened): the number list and the name field return, the box is the host's again",
+               c["num"] and c["name"] and c["box"] and not c["ticked"] and not c["locked"] and "re-bet" in c["label"], str(c))
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+def test_admin_scratch_after_the_post_in_a_browser():
+    """Joey, 2026-10-23: from AT THE GATE on a scratch has no replacement; the LQ admin page's Scratches row offers only
+    No replacement, ticked, and says the tokens are refunded; its field lists run in program-number order. Skipped where
+    there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("admin page after-the-post checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _admin_after_the_post(picker_check, requests, slow))
+
+
+# -----------------------------------------------------------------------------
 # The weather, for the TV's crawl
 # -----------------------------------------------------------------------------
 
@@ -1973,9 +2268,9 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
     chrome = picker_check.Chrome(touch=touch, size=(1366, 1024))
     who = "#9 " + DERBY[8].upper()
     # Joey's rule (2026-10-14): with betting open (the model's betting_open: 60 MIN to FINAL CALL) a replacement's step
-    # says to empty the cup and hand the tokens back; at the post and after (OD3's case) the line of 58eb25e stays.
+    # says to empty the cup and hand the tokens back. From AT THE GATE on (2026-10-23) there is no replacement at all:
+    # test_admin_scratch_after_the_post_in_a_browser.
     new_line = "Betting is open: empty this cup and hand the tokens back to re-bet; #21 starts empty."
-    open_line = "Betting is open: the tokens in this cup will ride on #21. After 60 MIN, use No replacement."
 
     def posts(since, path="/api/quiniela/scratch"):
         return sum(1 for t, m, p in requests if t >= since and m == "POST" and p == path)
@@ -2021,7 +2316,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         buttons = json.loads(chrome.eval(ADMIN_STEP_BUTTONS_JS))
         _check(f"admin page {mode}: ...which ticks the box and goes on to the confirm step: Scratch {who}, no replacement",
                chrome.eval(ADMIN_NOREPL_JS) is True and said.startswith(f"Scratch {who}, no replacement: its tokens are handed back to re-bet.")
-               and open_line[:15] not in said and posts(t) == 0, repr(said))
+               and posts(t) == 0, repr(said))
         _check(f"admin page {mode}: ...Confirm scratch and Cancel, 44 px or more each way",
                [b[0] for b in buttons] == ["Confirm scratch", "Cancel"] and all(min(b[1:]) >= 44 for b in buttons), str(buttons))
         tap("[data-cancel]")
@@ -2033,7 +2328,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         settle(0.3)
         said = scratch()
         _check(f"admin page {mode}: with a name, the confirm step: Scratch {who}: #21 TEST draws in (no betting-open line before betting opens)",
-               said.startswith(f"Scratch {who}: #21 TEST draws in.") and open_line not in said and new_line not in said
+               said.startswith(f"Scratch {who}: #21 TEST draws in.") and new_line not in said
                and posts(t) == 0, repr(said))
         tap("[data-repl-name]")
         chrome.call("Input.insertText", text="y")
@@ -2047,21 +2342,19 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         _check(f"admin page {mode}: Cancel keeps the typed name and sends nothing",
                chrome.eval(ADMIN_NAME_JS) == "Test" and step() == "" and posts(t) == 0, chrome.eval(ADMIN_NAME_JS))
         lines = {}
-        for n in (1, 2, 3, 4, 5, 6, 0):
+        for n in (1, 2, 0):
             state(n)
             said = scratch()
-            lines[n] = (new_line in said, open_line in said)
+            lines[n] = new_line in said
             tap("[data-cancel]")
-        _check(f"admin page {mode}: with a replacement, the empty-the-cup line while betting is open (1, 2), the old line at "
-               "the post and after (3-5, OD3's case), neither before or after the race",
-               lines == {0: (False, False), 1: (True, False), 2: (True, False), 3: (False, True), 4: (False, True),
-                         5: (False, True), 6: (False, False)}, str(lines))
+        _check(f"admin page {mode}: with a replacement, the empty-the-cup line while betting is open (1, 2), not before it (0)",
+               lines == {0: False, 1: True, 2: True}, str(lines))
         state(1)
         tap("[data-norepl]")
         said = scratch()
         _check(f"admin page {mode}: ...and with No replacement the no-replacement line as before, neither of the others",
                said.startswith(f"Scratch {who}, no replacement: its tokens are handed back to re-bet.")
-               and open_line not in said and new_line not in said, repr(said))
+               and new_line not in said, repr(said))
         tap("[data-cancel]")
         tap("[data-norepl]")
         said = scratch()
@@ -2078,7 +2371,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         reply = "Scratched 9 " + chr(0x2192) + " #21 TEST \u00b7 re-bet"
         _check(f"admin page {mode}: a double tap on Confirm scratch sends one request: one record, 9 -> 21 TEST, re-bet, one reply line",
                posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": {"number": 21, "name": "TEST"},
-                                                              "rebet": True}]
+                                                              "rebet": True, "refund": False}]
                and chrome.eval(ADMIN_LINES_JS % json.dumps(reply)) == 1, f"{posts(t)} requests, {rig.model()['scratches']}")
         row_note = chrome.eval("document.querySelector('#scratched-list .horse[data-horse=\"9\"] .note').innerText")
         _check(f"admin page {mode}: ...and its Scratched row says re-bet, so the host knows to empty that cup",
@@ -2095,7 +2388,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         tap("[data-confirm]")
         chrome.wait_for("!!document.querySelector('#scratched-list .horse[data-horse=\"9\"]')", timeout=10)
         _check(f"admin page {mode}: Confirm sends what the step said: 9 scratched with no replacement",
-               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": None, "rebet": True}],
+               posts(t) == 1 and rig.model()["scratches"] == [{"was": {"number": 9, "name": DERBY[8].upper()}, "now": None, "rebet": True, "refund": False}],
                str(rig.model()["scratches"]))
         _check(f"admin page {mode}: no confirm() or alert() dialog anywhere, no page errors",
                chrome.eval("window.__dialogs") == 0 and not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
@@ -2880,8 +3173,10 @@ def _picker_follows_the_field(picker_check, requests, slow):
         settle(0.5)
         _check("...its cup unlocked", "CUP:UNLOCK:3" in server.led("CUP:UNLOCK"), str(server.led("CUP:")))
         _check("...the next tap fills PLACE", chrome.eval("activeSlot()") == "place")
-        r = rig.post("/api/quiniela/scratch", {"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
-        assert r.status_code == 200, r.get_json()
+        # a replacement is refused from the gate on (the race is RUNNING here), so this one is a record entered at BETTING OPEN
+        # (state 1) and read by the open picker: what the page does with a replacement is what is tested
+        rig.board.store.scratch_replace(9, 22, "Ocelli", state=1, at=time.time())
+        rig.board.refresh()
         chrome.wait_for("!!document.querySelector(\".winner-pick-btn[data-horse='22']\")", timeout=6)
         at9 = chrome.eval("(() => { const b = document.querySelector(\".winner-pick-btn[data-post='9']\");"
                           " return b ? [b.dataset.horse, b.title] : null; })()")
@@ -3300,6 +3595,12 @@ def main_():
     _run("Control Center — one tap, one send; a slow LED controller holds only the button tapped", test_control_center_one_tap_one_send_in_a_browser)
     _run("payout — SET WINNERS in a browser: the cards only when needed, the reopen on the saved result, a dead heat, the admin page's RESULTS, "
          "refused before the post", test_picker_payout_in_a_browser)
+    _run("field order — SET WINNERS lists the field by program number and a tap records the tile's own number, in a browser",
+         test_picker_grid_in_program_number_order_in_a_browser)
+    _run("SET WINNERS cards — the name, the badge, the tie line and the button each have a place, in a browser",
+         test_slot_cards_have_a_place_for_everything_in_a_browser)
+    _run("scratch after the post — no replacement, only the ticked box, the tokens refunded; the admin lists in order, in a browser",
+         test_admin_scratch_after_the_post_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
     _run("SET WINNERS — the picker follows a scratch while open; a stale dialog cannot save it; RESET clears a saved result, in a browser",
          test_picker_follows_the_field_in_a_browser)

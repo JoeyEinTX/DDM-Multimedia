@@ -329,7 +329,9 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   an event. `scratches` is one record per scratch, ordered by
   `was.number`: `{"was": {"number", "name"}, "now": {"number", "name"}}`
   for a replacement, `"now": null` for a gateway scratch, names
-  upper-cased (`""` when unnamed).
+  upper-cased (`""` when unnamed), each with `rebet` (its cup's tokens are
+  handed back to re-bet) and `refund` (the scratch was entered at the post or
+  after: they are refunded in cash, and `rebet` is false); the crawl reads both.
 - `pot` = the tokens in play x `token_value`. `prizes` are whole dollars
   that always sum to the pot: place and show are the pot times their
   split, rounded half up (Decimal `ROUND_HALF_UP`, never Python's
@@ -520,6 +522,12 @@ after the draw, a second screen, a phone, a restarted splash or pi5. A
 model without `closing` (an older pi5) keeps the page's own freeze, what
 it showed when betting closed, which a page loaded later cannot know.
 
+**Nobody paid.** When the payout has no row (no cup in the finish held bets at the
+post) the results screen says `NO LA QUINIELA PRIZES THIS RACE`, the reason in one
+line and `cup 19 scratched after the post: tokens refunded` for each cup in the
+payout's `refunds`; the rows and the footer rule (a token drawn from each cup) are
+not shown then.
+
 **The hand count's tag.** While `hand_counted` is true the pot wears a small
 tag, `HAND COUNTED`, to the left of the POT figure, at its middle: the pot
 and the three prizes on the board (and on the results screen, whose header
@@ -660,7 +668,8 @@ the live board follows pixel for pixel where practical):
   badges in their cloth colours, the old name struck through, the gold
   arrow), a scratch with no replacement reads `[20] FULLEFFORT · RE-BET YOUR
   TOKENS` (badge, name, the note as bright as the name: it tells the
-  bettors what to do); an unnamed horse prints
+  bettors what to do; `· TOKENS REFUNDED` instead when the record says
+  `refund`); an unnamed horse prints
   `HORSE n`, and an entry that is not a record (the older string shape) is
   ignored; then the remaining `chyron` lines, gold diamonds between items.
   That is the track of `impact` and `numbers`; `dots` says the scratches
@@ -723,7 +732,7 @@ stand still and the message steps across them, a character a tile.
   DRAWS IN` (`{old number} {old name} SCRATCHED - {new number} {new name}
   DRAWS IN`, in number order), then the same-day scratches under one
   `SCRATCHED`, each its number, name and note: `SCRATCHED 20 FULLEFFORT ·
-  RE-BET YOUR TOKENS`. The face's own
+  RE-BET YOUR TOKENS` (`· TOKENS REFUNDED` when the record says `refund`). The face's own
   characters stay as they are (it draws a lower-case letter, an accented
   one, a curly quote or a dash as the plain capital or mark, `SEÑOR` as
   `SENOR`). **A character the face lacks** is its base letter when it

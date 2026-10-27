@@ -257,30 +257,36 @@
                 <div class="results-sidebar">
                     <div class="result-slot" data-slot="win" role="button" tabindex="0" onclick="chooseSlot('win')"
                          onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('win'); }">
-                        <span class="slot-label win">WIN</span>
-                        <button type="button" class="slot-clear" data-slot="win" aria-label="Clear WIN" onclick="event.stopPropagation(); clearSlot('win')">&times;</button>
+                        <div class="slot-head">
+                            <span class="slot-label win">WIN</span>
+                            <button type="button" class="slot-tie" data-slot="win" onclick="event.stopPropagation(); tieAfter('win')">DEAD HEAT</button>
+                            <button type="button" class="slot-clear" data-slot="win" aria-label="Clear WIN" onclick="event.stopPropagation(); clearSlot('win')">&times;</button>
+                        </div>
+                        <div class="slot-tied-label"></div>
                         <div class="slot-value" id="slot-win"></div>
                         <span class="slot-hint"></span>
-                        <span class="slot-tied-label"></span>
-                        <button type="button" class="slot-tie" data-slot="win" onclick="event.stopPropagation(); tieAfter('win')">DEAD HEAT</button>
                     </div>
                     <div class="result-slot" data-slot="place" role="button" tabindex="0" onclick="chooseSlot('place')"
                          onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('place'); }">
-                        <span class="slot-label place">PLACE</span>
-                        <button type="button" class="slot-clear" data-slot="place" aria-label="Clear PLACE" onclick="event.stopPropagation(); clearSlot('place')">&times;</button>
+                        <div class="slot-head">
+                            <span class="slot-label place">PLACE</span>
+                            <button type="button" class="slot-tie" data-slot="place" onclick="event.stopPropagation(); tieAfter('place')">DEAD HEAT</button>
+                            <button type="button" class="slot-clear" data-slot="place" aria-label="Clear PLACE" onclick="event.stopPropagation(); clearSlot('place')">&times;</button>
+                        </div>
+                        <div class="slot-tied-label"></div>
                         <div class="slot-value" id="slot-place"></div>
                         <span class="slot-hint"></span>
-                        <span class="slot-tied-label"></span>
-                        <button type="button" class="slot-tie" data-slot="place" onclick="event.stopPropagation(); tieAfter('place')">DEAD HEAT</button>
                     </div>
                     <div class="result-slot" data-slot="show" role="button" tabindex="0" onclick="chooseSlot('show')"
                          onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('show'); }">
-                        <span class="slot-label show">SHOW</span>
-                        <button type="button" class="slot-clear" data-slot="show" aria-label="Clear SHOW" onclick="event.stopPropagation(); clearSlot('show')">&times;</button>
+                        <div class="slot-head">
+                            <span class="slot-label show">SHOW</span>
+                            <button type="button" class="slot-tie" data-slot="show" onclick="event.stopPropagation(); tieAfter('show')">DEAD HEAT</button>
+                            <button type="button" class="slot-clear" data-slot="show" aria-label="Clear SHOW" onclick="event.stopPropagation(); clearSlot('show')">&times;</button>
+                        </div>
+                        <div class="slot-tied-label"></div>
                         <div class="slot-value" id="slot-show"></div>
                         <span class="slot-hint"></span>
-                        <span class="slot-tied-label"></span>
-                        <button type="button" class="slot-tie" data-slot="show" onclick="event.stopPropagation(); tieAfter('show')">DEAD HEAT</button>
                     </div>
 
                     <!-- Final confirmation (shown when all 3 are set): the slot cards above are the check; here only a warning for a pick nobody bet, then the button -->

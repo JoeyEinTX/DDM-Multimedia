@@ -293,6 +293,8 @@
     // when who pays what changes; a dead heat puts two or three horses in one
     // row, each drawn at `scale` of a row of its own.
     const resultsRowsEl  = $('qb-results-rows');
+    const noneRefundsEl  = $('qb-results-refunds');   // nobody paid: the cups scratched after the post, refunded
+    let noneKey = null;
     const resultTpl      = $('qb-result-tpl');
     const resultHorseTpl = $('qb-result-horse-tpl');
     let resultRows = [];
@@ -982,6 +984,21 @@
         });
     }
 
+    // Nobody paid: the cups scratched after the post, one line each (the message itself is the page's)
+    function renderNobodyPaid(payout) {
+        const lines = (payout.refunds || []).map((r) => 'cup ' + r.horse + ' scratched after the post: tokens refunded');
+        const key = lines.join('\n');
+        if (key === noneKey) return;
+        noneKey = key;
+        noneRefundsEl.textContent = '';
+        for (const line of lines) {
+            const el = document.createElement('div');
+            el.className = 'qb-results-none-refund';
+            el.textContent = line;
+            noneRefundsEl.appendChild(el);
+        }
+    }
+
     // The results screen. Who pays and how much come from the payout; the
     // names from the live model; the bets each cup held from the picture on
     // the board (`shown`: the figures at the post, pi5's closing, or without
@@ -996,6 +1013,9 @@
             syncScrolls();         // the rows' scrolls stop under the results screen
         }
         if (!on) return;
+        const nobody = payout.pays.length === 0;     // no cup in the finish held bets at the post: the screen says so
+        resultsEl.classList.toggle('is-none', nobody);
+        if (nobody) renderNobodyPaid(payout);
         const key = JSON.stringify(payout.pays.map((p) => [p.slots, p.horses.map((h) => h.horse), p.skipped, !!p.dead_heat]));
         if (key !== resultsKey) {
             resultsKey = key;
@@ -1303,9 +1323,11 @@
     // name, and "· RE-BET YOUR TOKENS" after it when pi5's record says
     // rebet (a replacement entered after betting opened: its cup's tokens
     // were handed back; the board reads the flag, it decides nothing); no
-    // replacement: badge, name and "· RE-BET YOUR TOKENS", as
-    // bright as the name, since it tells the bettors what to do; an
-    // unnamed horse prints HORSE n); the remaining chyron lines. Gold
+    // replacement: badge, name and "· RE-BET YOUR TOKENS", or "· TOKENS
+    // REFUNDED" when the record says refund (entered at the post or after:
+    // refunded in cash, OD3), as bright as the name, since it tells the
+    // bettors what to do; an unnamed horse prints HORSE n); the remaining
+    // chyron lines. Gold
     // diamonds between items. (The dots look says the scratches in words,
     // without cloths, struck names or arrows: tileMessage.)
     // The live items change in place, every second (tickLive), a text for
@@ -1346,7 +1368,7 @@
         // The scratches as the crawl reads them, not as the JSON happened to order their keys: the model the relay
         // hands a page when it loads and pi5's stream carry the same record with its keys in two orders, and that
         // is no update.
-        const said = scratches.map((x) => [scratchSide(x && x.was), x && x.now == null ? 'none' : scratchSide(x && x.now), !!(x && x.rebet === true)]);
+        const said = scratches.map((x) => [scratchSide(x && x.was), x && x.now == null ? 'none' : scratchSide(x && x.now), !!(x && x.rebet === true), !!(x && x.refund === true)]);
         const key = JSON.stringify([lines, said, m.names_rev == null ? null : m.names_rev, shape]);
         if (key === crawlKey) { updateLive(live); return; }
         crawlKey = key;
@@ -1456,14 +1478,18 @@
             items.push(item('<span class="qb-crawl-text qb-crawl-live" data-live="' + kind + '">' + esc(text) + '</span>'));
         }
         const parts = [];
-        const note = crawlText('· RE-BET YOUR TOKENS', 'qb-crawl-note');
+        const rebet = crawlText('· RE-BET YOUR TOKENS', 'qb-crawl-note');
+        const refunded = crawlText('· TOKENS REFUNDED', 'qb-crawl-note');
+        // what the bettors are told about the tokens of a scratched cup: refunded in cash when the record says so
+        // (entered at the post or after), else re-bet (no replacement, or a replacement entered while betting was open)
+        const noteFor = (x) => (x.refund === true ? refunded : (x.now == null || x.rebet === true) ? rebet : '');
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
                 parts.push(crawlBadge(was.n)
                     + crawlText(was.name)
-                    + note);
+                    + noteFor(x));
                 continue;
             }
             const now = scratchSide(x.now);
@@ -1473,7 +1499,7 @@
                 + crawlText('▶', 'qb-crawl-arrow')
                 + crawlBadge(now.n)
                 + crawlText(now.name)
-                + (x.rebet === true ? note : ''));
+                + noteFor(x));
         }
         if (parts.length) {
             items.push(item(crawlText('Scratched', 'qb-crawl-lbl') + parts.join('<span class="qb-crawl-gap"></span>')));
@@ -1633,16 +1659,20 @@
         // red wherever it stands. A replacement is an item of its own: 9 THE
         // PUMA SCRATCHED - 22 OCELLI DRAWS IN, in the model's order (pi5's: by
         // number). The same-day scratches follow in one item under a red
-        // SCRATCHED, each its number, name and · RE-BET YOUR TOKENS, a two-tile
-        // gap between them. A replacement whose record says rebet (entered
-        // after betting opened) ends with the same note, after a blank.
+        // SCRATCHED, each its number, name and · RE-BET YOUR TOKENS (· TOKENS
+        // REFUNDED when the record says refund: entered at the post or after), a
+        // two-tile gap between them. A replacement whose record says rebet
+        // (entered after betting opened) ends with the same note, after a blank.
         const sameDay = [];
-        const note = () => { gap(1); words('· RE-BET YOUR TOKENS'); };
+        const note = (x) => {
+            if (x.refund === true) { gap(1); words('· TOKENS REFUNDED'); }
+            else if (x.now == null || x.rebet === true) { gap(1); words('· RE-BET YOUR TOKENS'); }
+        };
         for (const x of scratches) {
             const was = scratchSide(x && x.was);
             if (!was) continue;                            // not the record shape: ignored
             if (x.now == null) {
-                sameDay.push(() => { words(String(was.n)); gap(1); words(was.name); note(); });
+                sameDay.push(() => { words(String(was.n)); gap(1); words(was.name); note(x); });
                 continue;
             }
             const now = scratchSide(x.now);
@@ -1653,7 +1683,7 @@
                 const red = ch.length + tileChars(was.n + ' ' + was.name).length + 1;
                 words(was.n + ' ' + was.name + ' SCRATCHED - ' + now.n + ' ' + now.name + ' DRAWS IN');
                 st.fill(TS_LABEL, red, red + 'SCRATCHED'.length);
-                if (x.rebet === true) note();
+                note(x);
             });
         }
         if (sameDay.length) {

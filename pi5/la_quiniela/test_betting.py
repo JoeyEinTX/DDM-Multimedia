@@ -1303,7 +1303,7 @@ def test_names_and_replacement_scratch_in_the_model():
     _check("horse 9: no cup, no tokens, out of the field, its name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
     _check("scratches lists the record, upper-cased",
-           m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": False}], str(m["scratches"]))
+           m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": False, "refund": False}], str(m["scratches"]))
     _check("the pot still counts the cup: 17, prizes 10 / 4 / 3", m["pot"] == 17.0 and m["total_tokens"] == 17
            and m["prizes"] == {"win": 10, "place": 4, "show": 3}, str((m["pot"], m["prizes"])))
     _check("names_rev 2 and NO events: the count came with the cup", m["names_rev"] == 2 and m["events"] == [], str(m["events"]))
@@ -1340,7 +1340,7 @@ def test_names_and_replacement_scratch_in_the_model():
     b.apply_snapshot(renumbered)
     m = b.model()
     _check("...first in scratches (ordered by was.number) with was ''",
-           m["scratches"][0] == {"was": {"number": 1, "name": ""}, "now": {"number": 21, "name": "LATE ENTRY"}, "rebet": False}, str(m["scratches"]))
+           m["scratches"][0] == {"was": {"number": 1, "name": ""}, "now": {"number": 21, "name": "LATE ENTRY"}, "rebet": False, "refund": False}, str(m["scratches"]))
     _check("21 is in the field with replaced '' (a record, an unnamed horse); 1 is out",
            m["horses"]["21"]["in_field"] is True and m["horses"]["21"]["replaced"] == "" and m["horses"]["1"]["in_field"] is False)
     _check("Undo clears the name the scratch gave 21 (it had none before)", b.store.unscratch_replace(1) == 21
@@ -1399,14 +1399,14 @@ def test_in_field_rules():
     m = b.model()
     _check("model, the state's bit for 20 (no record yet): 20 out, listed with now null after the record",
            m["horses"]["20"]["in_field"] is False and m["horses"]["20"]["scratched"] is True
-           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}, "rebet": False},
-                                  {"was": {"number": 20, "name": ""}, "now": None, "rebet": True}], str(m["scratches"]))
+           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}, "rebet": False, "refund": False},
+                                  {"was": {"number": 20, "name": ""}, "now": None, "rebet": True, "refund": False}], str(m["scratches"]))
     b.apply_snapshot(snap(scratched=[22], cups=[cup_entry(n, horse=(22 if n == 9 else n), count=1) for n in range(1, 21)]))
     m = b.model()
     _check("model, the now itself scratched: 22 out, one scratches entry (the record) for 9, one for 22",
            m["horses"]["22"]["in_field"] is False
-           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}, "rebet": False},
-                                  {"was": {"number": 22, "name": ""}, "now": None, "rebet": True}], str(m["scratches"]))
+           and m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": {"number": 22, "name": ""}, "rebet": False, "refund": False},
+                                  {"was": {"number": 22, "name": ""}, "now": None, "rebet": True, "refund": False}], str(m["scratches"]))
     b.apply_snapshot(snap(cups=[cup_entry(n, horse=(23 if n == 3 else n), count=1) for n in range(1, 21)]))
     m = b.model()
     _check("model, a cup saying it is 23 with no record: 23 is not in the field (an also-eligible only stands in through a record), 3 still is",
@@ -1563,7 +1563,7 @@ def test_scratch_before_any_cup_reports_the_horse():
     m = client.get("/api/quiniela").get_json()
     _check("the model: 9 out, 22 in on no cup, the record listed",
            m["horses"]["9"]["in_field"] is False and m["horses"]["22"]["in_field"] is True and m["horses"]["22"]["cup"] is None
-           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": False}], str(m["scratches"]))
+           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": False, "refund": False}], str(m["scratches"]))
     # A cup set to 9 on its own screen: the pair goes down; it hears it and reports 22; the pair leaves the line.
     b.handle_raw_line(telem(MAC_A, horse=9, count=0))
     get_board().refresh()
@@ -1634,7 +1634,7 @@ def test_kind2_scratch_removes_tokens_from_the_pot():
     _check("total_tokens still counts every cup: 15", m["total_tokens"] == 15)
     _check("share unchanged (of every cup)", m["horses"]["9"]["share"] == round(10 / 15, 4))
     _check("scratches carries {was, now: null}, no replaced, names_rev bumped by the record",
-           m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": None, "rebet": True}] and m["horses"]["9"]["replaced"] is None
+           m["scratches"] == [{"was": {"number": 9, "name": ""}, "now": None, "rebet": True, "refund": False}] and m["horses"]["9"]["replaced"] is None
            and m["names_rev"] == 1 and board.store.scratches() == {9: None}, str(m["scratches"]))
     _check("no event for the scratch", m["events"] == [], str(m["events"]))
     board.store.unscratch_gateway(9)
@@ -1673,7 +1673,7 @@ def test_no_replacement_scratch_is_about_the_horse():
     h20 = m["horses"]["20"]
     _check("the model: 20 scratched, out of the field, no cup, 0 tokens", h20["scratched"] is True and h20["in_field"] is False
            and h20["cup"] is None and h20["tokens"] == 0, str(h20))
-    _check("scratches carries {was 20, now null}", m["scratches"] == [{"was": {"number": 20, "name": "SOCIETY MAN"}, "now": None, "rebet": True}], str(m["scratches"]))
+    _check("scratches carries {was 20, now null}", m["scratches"] == [{"was": {"number": 20, "name": "SOCIETY MAN"}, "now": None, "rebet": True, "refund": False}], str(m["scratches"]))
     _check("pot unchanged, no events", m["pot"] == 3.0 and m["events"] == [], str((m["pot"], m["events"])))
     _check("persisted: {20: None} on the bridge's database", HorseStore(b.db).scratches() == {20: None})
     r = client.post("/api/quiniela/scratch", json={"horse": 20})
@@ -1881,7 +1881,7 @@ def test_reset_clears_closes_at_and_keeps_names():
     board.store.set_closes_at(1_700_000_600.0)
     board.refresh()
     m = board.model()
-    record = {"was": {"number": 3, "name": "FIERCENESS"}, "now": {"number": 21, "name": "LATE ENTRY"}, "rebet": False}
+    record = {"was": {"number": 3, "name": "FIERCENESS"}, "now": {"number": 21, "name": "LATE ENTRY"}, "rebet": False, "refund": False}
     _check("before the reset: names, a record, closes_at", m["horses"]["9"]["name"] == "ENCINO"
            and m["scratches"] == [record] and m["closes_at"] == 1_700_000_600.0, str(m["scratches"]))
     _check("persisted: a second store on the same db reads them", HorseStore(b.db).closes_at == 1_700_000_600.0
@@ -2148,7 +2148,7 @@ def test_routes_scratch_and_unscratch():
            str(m["horses"]["22"]))
     _check("9 left the field: no cup, 0 tokens, name kept",
            m["horses"]["9"] == dict(UNASSIGNED, name="ENCINO"), str(m["horses"]["9"]))
-    _check("scratches carries the record", m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": True}])
+    _check("scratches carries the record", m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": {"number": 22, "name": "OCELLI"}, "rebet": True, "refund": False}])
     _check("NO events: the ticker is exactly as before", m["events"] == events_before, str(m["events"]))
     _check("the pot did not move: 17, total 17, prizes 10 / 4 / 3", m["pot"] == 17.0 and m["total_tokens"] == 17
            and m["prizes"] == {"win": 10, "place": 4, "show": 3}, str((m["pot"], m["prizes"])))
@@ -2218,7 +2218,7 @@ def test_routes_scratch_and_unscratch():
     _check("the model: scratched, out of the field, tokens out of the pot, a no-replacement entry in scratches",
            m["horses"]["9"]["scratched"] is True and m["horses"]["9"]["in_field"] is False and m["horses"]["9"]["tokens"] == 13
            and m["total_tokens"] == 18 and m["pot"] == 5.0 and m["prizes"] == {"win": 3, "place": 1, "show": 1}
-           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": None, "rebet": True}], str((m["pot"], m["scratches"])))
+           and m["scratches"] == [{"was": {"number": 9, "name": "ENCINO"}, "now": None, "rebet": True, "refund": False}], str((m["pot"], m["scratches"])))
     _check("names_rev bumped by the record, no events", m["names_rev"] == 4 and m["events"] == events_before)
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     got = r.get_json()
@@ -2234,7 +2234,7 @@ def test_routes_scratch_and_unscratch():
     m = client.get("/api/quiniela").get_json()
     _check("...15 scratched and out of the field with no cup, in scratches with now null",
            m["horses"]["15"]["scratched"] is True and m["horses"]["15"]["in_field"] is False and m["horses"]["15"]["cup"] is None
-           and m["scratches"] == [{"was": {"number": 15, "name": "DOMESTIC PRODUCT"}, "now": None, "rebet": True}], str(m["scratches"]))
+           and m["scratches"] == [{"was": {"number": 15, "name": "DOMESTIC PRODUCT"}, "now": None, "rebet": True, "refund": False}], str(m["scratches"]))
     r = client.post("/api/quiniela/unscratch", json={"horse": 15})
     _check("...and undone", r.status_code == 200 and r.get_json()["kind"] == "gateway" and r.get_json()["cup"] is None, str(r.get_json()))
     port.written.clear()
@@ -2712,18 +2712,18 @@ def test_rebet_after_betting_opens():
     r = scratch(2, 11, 23)
     _check("a replacement at FINAL CALL: rebet true", r["ok"] and r["rebet"] is True and entry(11)["rebet"] is True, str(r))
     r = scratch(3, 12, 24)
-    _check("a replacement at the post (the figures taken: OD3's case, M6): rebet false, as before",
-           r["ok"] and r["rebet"] is False and entry(12)["rebet"] is False, str(r))
+    _check("a replacement at the post is refused (the field is set at the gate): nothing recorded",
+           r["ok"] is False and 12 not in board.store.scratches(), str(r))
     for state, horse in ((0, 13), (1, 14)):
         r = scratch(state, horse)
         _check(f"no replacement in race state {state}: rebet true", r["ok"] and entry(horse)["rebet"] is True, str(r))
     _check("the state at entry is stored and read back by a second store",
-           {w: s for w, (s, at) in HorseStore(b.db).scratch_entries().items()} == {9: 0, 10: 1, 11: 2, 12: 3, 13: 0, 14: 1}
+           {w: s for w, (s, at) in HorseStore(b.db).scratch_entries().items()} == {9: 0, 10: 1, 11: 2, 13: 0, 14: 1}
            and all(at > 1_700_000_000 for _, at in HorseStore(b.db).scratch_entries().values()))
     # Records from before lq_scratch_entered: no state at entry. They derive as they always did.
     b.set_state(phase=1)
     board.refresh()
-    for was in (13, 14, 12, 11):
+    for was in (13, 14, 11):
         client.post("/api/quiniela/unscratch", json={"horse": was})
     board.store.scratch_gateway(16)                          # as a caller from before passes no state
     board.store.scratch_replace(17, 23, "Old")
@@ -2735,6 +2735,67 @@ def test_rebet_after_betting_opens():
     _check("Undo works on a new record and on old ones, and drops its entry row",
            all(x["ok"] for x in rs) and 10 not in board.store.scratch_entries()
            and set(HorseStore(b.db).scratch_entries()) == {9}, str(rs))
+
+
+def test_scratch_after_the_post_refunds():
+    """Joey, 2026-10-23 (OD3): from AT THE GATE on (race states 3 to 6) a scratch has no replacement, because the field
+    is set at the gate and a horse drawing in then would have nobody's tokens and no finish, and its cup's tokens are
+    refunded in cash rather than re-bet. The route refuses a replacement in 3-6 (409) and says so; a scratch with no
+    replacement is taken and the reply and the model's record say `refund` (and not `rebet`). Before the post nothing
+    changes: a replacement still draws in, and a scratch re-bets while betting is open. A record from before
+    lq_scratch_entered has no state, so it never refunds."""
+    from la_quiniela.betting import scratch_rebets, scratch_refunds
+    _check("scratch_refunds: entered at the post or after (3 to 6), yes; before it, or with no state recorded, no",
+           [scratch_refunds((s, 1.0)) for s in range(7)] == [False, False, False, True, True, True, True]
+           and scratch_refunds(None) is False)
+    _check("scratch_rebets: a scratch that refunds is not re-bet, whatever the replacement",
+           [scratch_rebets(None, (s, 1.0)) for s in range(7)] == [True, True, True, False, False, False, False]
+           and [scratch_rebets(22, (s, 1.0)) for s in range(7)] == [False, True, True, False, False, False, False])
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    wall = FakeClock(1_700_000_000.0)
+    client = _make_board_app(b, wall=wall, log_dir=tmpdir() / "logs").test_client()
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    board = get_board()
+
+    def scratch(state, horse, number=None):
+        b.set_state(phase=state)
+        board.refresh()
+        body = {"horse": horse}
+        if number is not None:
+            body["replacement"] = {"number": number, "name": "Late %d" % number}
+        return client.post("/api/quiniela/scratch", json=body)
+
+    def entry(horse):
+        return next(s for s in client.get("/api/quiniela").get_json()["scratches"] if s["was"]["number"] == horse)
+
+    for state, horse in ((3, 1), (4, 2), (5, 3), (6, 4)):
+        r = scratch(state, horse, 21)
+        body = r.get_json()
+        _check(f"a replacement in race state {state}: 409, the field is set at the gate, nothing recorded",
+               r.status_code == 409 and body["ok"] is False and "no replacement" in body["error"] and "AT THE GATE" in body["error"]
+               and horse not in board.store.scratches() and board.store.scratch_entries().get(horse) is None, str(body))
+    _check("...and 21 is still free, in nobody's field", not board.store.in_field(21) and not board.store.scratches())
+    for state, horse in ((3, 5), (4, 6), (5, 7), (6, 8)):
+        r = scratch(state, horse)
+        body = r.get_json()
+        _check(f"no replacement in race state {state}: taken; the reply says refund; the model's record says refund and not rebet",
+               r.status_code == 200 and body["ok"] and body["refund"] is True
+               and entry(horse)["refund"] is True and entry(horse)["rebet"] is False, str(body))
+    for state, horse in ((0, 9), (1, 10), (2, 11)):
+        r = scratch(state, horse)
+        body = r.get_json()
+        _check(f"no replacement in race state {state}: re-bet, no refund",
+               r.status_code == 200 and body["refund"] is False and entry(horse)["refund"] is False and entry(horse)["rebet"] is True,
+               str(body))
+    r = scratch(2, 12, 21)
+    _check("a replacement at FINAL CALL still draws in: not a refund", r.status_code == 200 and r.get_json()["rebet"] is True
+           and entry(12)["refund"] is False, str(r.get_json()))
+    board.store.scratch_gateway(13)                          # a caller from before lq_scratch_entered: no state at entry
+    board.refresh()
+    _check("a record with no state at entry never refunds", entry(13)["refund"] is False and entry(13)["rebet"] is True)
+    r = client.post("/api/quiniela/unscratch", json={"horse": 5})
+    _check("Undo of a refunded scratch works", r.status_code == 200 and r.get_json()["ok"] and 5 not in board.store.scratch_entries())
 
 
 def test_results_from_the_dashboard_file():
@@ -3589,11 +3650,11 @@ def test_admin_page():
     _check("a replacement number picker, a name box, No replacement and Undo",
            all(s in html for s in ("<select", "data-repl-num", "data-repl-name", "data-norepl", "data-undo", "No replacement")))
     _check("sends the replacement as {number, name}", "replacement = { number:" in html)
-    _check("Scratch asks first, in the row: the question, the confirm step of both kinds, the betting-open line, Confirm and Cancel",
+    _check("Scratch asks first, in the row: the question, the confirm step of both kinds, the betting-open line, the refund line from the gate on, Confirm and Cancel",
            all(s in html for s in ("No replacement? Tick No replacement, or enter the replacement's name.", "data-ask-norepl",
-                                   ", no replacement: its tokens are handed back to re-bet.", " draws in.",
-                                   "Betting is open: the tokens in this cup will ride on #", ". After 60 MIN, use No replacement.",
+                                   ", no replacement: its tokens are ", "handed back to re-bet.", "refunded in cash at token value.", " draws in.",
                                    "model.race_state >= 1 && model.race_state <= 5", "data-confirm>Confirm scratch", "data-cancel>Cancel"))
+           and "Betting is open: the tokens in this cup will ride on #" not in html
            and "confirm(" not in html.split("function onScratchClick")[1].split("function ")[0])
     _check("the Horse names help: a number with nothing after it clears that horse's name, a blank line leaves it alone",
            "A number with nothing after it (<code>21.</code>) clears that horse's name; a blank line leaves it alone." in html)
@@ -4362,6 +4423,8 @@ def main():
     _run("renumber — only a cup heard within 10 minutes of the pair can be late; a ghost that turns up follows", test_who_can_be_late)
     _run("renumber — a late cup does not change the model every second", test_a_late_cup_does_not_churn_the_model)
     _run("scratch — after betting opens every scratch hands the tokens back: rebet (Joey, 2026-10-14)", test_rebet_after_betting_opens)
+    _run("scratch — from AT THE GATE on a scratch has no replacement and its tokens are refunded in cash (Joey, 2026-10-23)",
+         test_scratch_after_the_post_refunds)
     _run("results — from the dashboard's file into the state line", test_results_from_the_dashboard_file)
     _run("payout — La Quiniela's rule on Joey's examples: skips, dead heats, the unpaid prizes, refunds, rounding", test_payout_rule)
     _run("payout — a dead heat in the record: kept, checked, ordered", test_record_ties_in_the_file)

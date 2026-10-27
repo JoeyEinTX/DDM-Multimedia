@@ -25,7 +25,7 @@
 # more, [{"from", "to", "mac", "kind", "since", "online"}], for the admin
 # page's badge, empty when none; heard: when the horse's cup was last heard,
 # unix seconds, while no cup claiming it is online, else null), betting_open
-# on the model and rebet per scratch (Joey, 2026-10-14: once betting is open
+# on the model and rebet and refund per scratch (Joey, 2026-10-14: once betting is open
 # every scratch hands its cup's tokens back to re-bet; BETTING_OPEN_STATES is
 # the one test, and the admin page and the TV read these two, never the race
 # state, for it). results is {"win",
@@ -132,9 +132,10 @@ REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN), int
 # post (AT THE GATE, AT_THE_POST): the one test of it. Once it is open, tokens
 # never move to another horse (Joey, 2026-10-14): every scratch hands the
 # tokens in that cup back to re-bet, a replacement drawing in with an empty
-# cup. A scratch after the figures are taken (3-5) is gap review OD3's case
-# (M6) and reads as before. The model carries it as betting_open and per
-# scratch as rebet; the admin page and the TV read those.
+# cup. From the post on (POST_HELD_STATES) a scratch has no replacement and its
+# tokens are refunded in cash (scratch_refunds; gap review OD3, M6). The model
+# carries it as betting_open and per scratch as rebet and refund; the admin
+# page and the TV read those.
 BETTING_OPEN_STATES = frozenset({int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
 
 
@@ -145,9 +146,12 @@ def betting_open(race_state: Any) -> bool:
 
 def scratch_rebets(now: Optional[int], entered: Optional[Tuple[int, float]]) -> bool:
     """Whether a scratch hands its cup's tokens back to re-bet: one with no
-    replacement always; a replacement only when it was entered while betting
-    was open. A record from before lq_scratch_entered has no state at entry
-    and reads as it always did: a replacement does not re-bet."""
+    replacement unless it refunds (scratch_refunds); a replacement only when
+    it was entered while betting was open. A record from before
+    lq_scratch_entered has no state at entry and reads as it always did: a
+    replacement does not re-bet."""
+    if scratch_refunds(entered):
+        return False
     if now is None:
         return True
     return entered is not None and betting_open(entered[0])
@@ -167,6 +171,14 @@ COUNT_IN_FORCE = CLOSED_STATES | frozenset({int(P.Phase.AFTER_PARTY)})
 # The figures at the post are held in these states too: a result can be entered (POST /api/results) and a
 # scratch is refunded in cash rather than re-bet.
 POST_HELD_STATES = COUNT_IN_FORCE
+
+
+def scratch_refunds(entered: Optional[Tuple[int, float]]) -> bool:
+    """Whether a scratch refunds its cup's tokens in cash: one entered at the post or after (POST_HELD_STATES;
+    Joey, 2026-10-23, OD3). The field is set at the gate, so such a scratch has no replacement either (POST
+    /api/quiniela/scratch refuses one). A record from before lq_scratch_entered has no state at entry and
+    never refunds."""
+    return entered is not None and entered[0] in POST_HELD_STATES
 
 # One race state. The dashboard's modes (its buttons, which drive the LEDs)
 # are the source of truth, and La Quiniela's race state (the cups, the TV
@@ -577,7 +589,7 @@ def refunds_for(closing: Any, scratched: Dict[int, Optional[int]], entered: Dict
     out: List[Dict[str, int]] = []
     for horse in sorted(scratched):
         at = entered.get(horse)
-        if at is None or at[0] not in POST_HELD_STATES or not bets.get(horse):
+        if not scratch_refunds(at) or not bets.get(horse):
             continue
         out.append({"horse": horse, "tokens": bets[horse], "refund": round_half_up(bets[horse] * token_value)})
     return out
@@ -1041,8 +1053,8 @@ class BettingBoard:
         stands in for (the "was" of the record whose "now" is n), else None.
         odds: the track's odds for program number n (set_odds()), else None.
         scratches: one entry per scratch ordered by was.number, {"was":
-        {"number", "name"}, "now": {"number", "name"}, "rebet"} for a
-        replacement record and {"was": {...}, "now": None, "rebet": true}
+        {"number", "name"}, "now": {"number", "name"}, "rebet", "refund"} for a
+        replacement record and {"was": {...}, "now": None, "rebet": true, "refund": false}
         for a no-replacement scratch; names upper-cased, "" when unnamed.
         rebet: the cup's tokens are handed back to re-bet (scratch_rebets:
         no replacement, or a replacement entered while betting was open).
@@ -1081,7 +1093,7 @@ class BettingBoard:
         for was in sorted(set(records) | gateway):
             now = records.get(was)
             scratches.append({"was": named(was), "now": named(now) if now is not None else None,
-                              "rebet": scratch_rebets(now, entered.get(was))})
+                              "rebet": scratch_rebets(now, entered.get(was)), "refund": scratch_refunds(entered.get(was))})
         return horses, scratches
 
     def model(self) -> Dict[str, Any]:

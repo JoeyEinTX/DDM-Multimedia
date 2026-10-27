@@ -1611,27 +1611,21 @@ async function showResultsModal() {
     }
 }
 
-// Generate the pickers: one per post, in mantle order (4 columns x 5 rows).
-// Each shows the horse that runs from that post as "19 · GOLDEN TEMPO": the
-// number on its saddle cloth, then La Quiniela's name (HORSE n without one).
-// A post whose horse was replaced shows the replacement's number and name;
-// a post whose horse was scratched with no replacement is left blank. A horse
-// whose cup held no bets at the post is dimmed and tagged NO BETS.
+// Generate the pickers: one per horse in the field, in program-number order
+// (4 across): a replacement stands where its number falls, at the end, and a
+// scratched horse leaves no blank (Joey, 2026-10-23). Each shows the horse as
+// "19 · GOLDEN TEMPO": the number on its saddle cloth, then La Quiniela's name
+// (HORSE n without one). A tile carries two numbers, and a tap uses the tile's
+// own: the horse, which the results record, and the post it runs from, the LED
+// cup that lights (21 running for 19 lights cup 19). A horse whose cup held no
+// bets at the post is dimmed and tagged NO BETS.
 function generateSaddleClothGrid() {
     const grid = document.getElementById('saddle-cloth-grid');
     grid.innerHTML = '';
 
-    const byPost = {};
-    ((quinielaField && quinielaField.posts) || defaultField().posts).forEach(p => { byPost[p.post] = p; });
-
-    for (let post = 1; post <= 20; post++) {
-        const entry = byPost[post];
-        if (!entry) {
-            const gap = document.createElement('div');
-            gap.className = 'winner-pick-gap';
-            grid.appendChild(gap);
-            continue;
-        }
+    const entries = ((quinielaField && quinielaField.posts) || defaultField().posts).slice().sort((a, b) => a.horse - b.horse);
+    for (const entry of entries) {
+        const post = entry.post;
         const horse = entry.horse;
         const name = horseDisplayName(horse);
 
@@ -1751,20 +1745,23 @@ function renderNextSlots() {
         clear.setAttribute('aria-label', `Clear ${name}`);
         clear.innerHTML = '&times;';
         clear.onclick = (event) => { event.stopPropagation(); clearSlot(key); };
-        const value = document.createElement('div');
-        value.className = 'slot-value';
-        value.id = `slot-${key}`;
-        const hint = document.createElement('span');
-        hint.className = 'slot-hint';
-        const tiedLabel = document.createElement('span');
-        tiedLabel.className = 'slot-tied-label';
         const tie = document.createElement('button');
         tie.type = 'button';
         tie.className = 'slot-tie';
         tie.dataset.slot = key;
         tie.textContent = 'DEAD HEAT';
         tie.onclick = (event) => { event.stopPropagation(); tieAfter(key); };
-        card.append(label, clear, value, hint, tiedLabel, tie);
+        const head = document.createElement('div');
+        head.className = 'slot-head';
+        head.append(label, tie, clear);
+        const tiedLabel = document.createElement('div');
+        tiedLabel.className = 'slot-tied-label';
+        const value = document.createElement('div');
+        value.className = 'slot-value';
+        value.id = `slot-${key}`;
+        const hint = document.createElement('span');
+        hint.className = 'slot-hint';
+        card.append(head, tiedLabel, value, hint);
         sidebar.insertBefore(card, confirmSection);
         updateSlot(key, getSlot(key));
     }

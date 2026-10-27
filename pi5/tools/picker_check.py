@@ -408,7 +408,7 @@ class Picker:
         return json.loads(self.chrome.eval(MARKS_JS))
 
     def marked(self) -> List[int]:
-        """The horses the grid tags NO BETS (the tag shown, not just the class), in post order."""
+        """The horses the grid tags NO BETS (the tag shown, not just the class), in the grid's order."""
         return [m["horse"] for m in self.marks() if m["shown"]]
 
     def warnings(self) -> dict:
@@ -1016,6 +1016,7 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("SET WINNERS", "horse buttons (the grid)", ".winner-pick-btn", True),
     ("SET WINNERS", "slot cards", ".result-slot", True),
     ("SET WINNERS", "slot clear x", ".slot-clear", True),
+    ("SET WINNERS", "slot DEAD HEAT / UNTIE", ".slot-tie", True),
     ("SET WINNERS", "CONFIRM RESULTS", "#results-confirm-btn", False),
     ("SET WINNERS", "RESET", "#results-reset-btn", False),
     ("SET WINNERS", "CANCEL", "#results-cancel-btn", False),
@@ -1028,8 +1029,8 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "Counted pot field", "#counted-input", False),
     ("admin page", "Counted pot Save count", "#counted-save", False),
     ("admin page", "Counted pot Clear", "#counted-clear", False),
-    ("admin page", "scratch: replacement number", "#scratch-list select", True),
-    ("admin page", "scratch: replacement name", "#scratch-list input[data-repl-name]", True),
+    ("admin page before the gate", "scratch: replacement number", "#scratch-list select", True),
+    ("admin page before the gate", "scratch: replacement name", "#scratch-list input[data-repl-name]", True),
     ("admin page", "scratch: No replacement (its label)", "#scratch-list label:has(input[data-norepl])", True),
     ("admin page", "scratch: Scratch", "#scratch-list button[data-scratch]", True),
     ("admin page", "scratch: Undo", "#scratched-list button[data-undo]", True),
@@ -1041,7 +1042,7 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "close time +15 / +30 / +60", "#closes button[data-min]", True),
     ("admin page", "close time Clear", "#closes-clear", False),
 ]
-WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "ask first", "admin page")
+WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "ask first", "admin page before the gate", "admin page")
 
 TAP_JS = r"""((sel, several, min) => {
   const els = (several ? [...document.querySelectorAll(sel)] : [document.querySelector(sel)])
@@ -1157,7 +1158,14 @@ def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
                 rows += _measure(chrome, "ask first")
                 chrome.eval("askAnswer(false); 1")
                 chrome.wait_for("!document.getElementById('ask-modal').classList.contains('active')", timeout=10)
-                # the admin page: betting closed (AT THE GATE), so the counted pot shows; a horse scratched, for Undo
+                # the admin page before the gate: a Scratches row still has its number list and its name field (the
+                # run at the size before this one left the race at the gate: betting open again)
+                rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+                chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#scratch-list select')", timeout=20)
+                time.sleep(0.3)
+                rows += _measure(chrome, "admin page before the gate")
+                # the admin page: betting closed (AT THE GATE), so the counted pot shows and a row has only its No replacement box; a horse scratched, for Undo
                 rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
                 if not rig.model().get("scratches"):
                     rig.post("/api/quiniela/scratch", {"horse": 20})

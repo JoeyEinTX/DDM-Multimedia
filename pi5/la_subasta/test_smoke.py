@@ -3093,6 +3093,46 @@ def test_guest_js_follows_the_field():
            "saddle.style.color = horse.saddle_cloth_text_color" in js)
 
 
+def test_horse_lists_run_in_program_number_order():
+    """Joey, 2026-10-23: the field is shown in program-number order everywhere. #21 drawn in for #19 and #7 scratched with
+    no replacement: the horses endpoint (the admin page's lists and pickers read it as it is) lists 1-6, 8-18, 20, 21, and
+    so does the guest page's card list, in a phone-sized Chrome. Skipped where there is no Chrome (the endpoint is checked
+    all the same)."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    transition(AuctionState.OPEN)
+    _check("19 -> 21 (Great White) and 7 out: both recorded",
+           _lq_scratch(client, 19, 21, "Great White").status_code == 200 and _lq_scratch(client, 7).status_code == 200)
+    want = [n for n in range(1, 19) if n != 7] + [20, 21]
+    ids = [h["horse_id"] for h in client.get("/la-subasta/api/horses").get_json()["horses"]]
+    _check("GET /api/horses: the field by program number, 21 last", ids == want, str(ids))
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("guest page order check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    alice = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "\U0001f32e"}).get_json()["bidder"]
+    httpd = _serve(app, set())
+    base = f"http://127.0.0.1:{httpd.server_port}/la-subasta/"
+    chrome = picker_check.Chrome(touch=True, size=(390, 844))
+    try:
+        chrome.call("Network.enable")
+        chrome.call("Network.setBlockedURLs", urls=["*socket.io*"])
+        chrome.call("Page.navigate", url=base + "api/state")
+        chrome.wait_for("document.readyState === 'complete'", timeout=20)
+        identity = {"bidder_id": alice["id"], "name": alice["name"], "emoji": alice["emoji"], "identity": alice["identity"]}
+        chrome.eval("localStorage.clear(); localStorage.setItem('la_subasta_onboarded', 'true'); "
+                    f"localStorage.setItem('la_subasta_identity', {json.dumps(json.dumps(identity))}); true")
+        chrome.call("Page.navigate", url=base)
+        chrome.wait_for(f"document.querySelectorAll('.ls-horse-card').length === {len(want)}", timeout=20)
+        cards = chrome.eval("[...document.querySelectorAll('.ls-horse-card')].map((c) => Number(c.dataset.horseId))")
+        _check("the guest page lists the cards by program number, 21 last", cards == want, str(cards))
+    finally:
+        chrome.close()
+        httpd.stop()
+
+
 def test_horses_scratched_flag_roundtrip():
     """A client that loads /api/horses AFTER a scratch (the 'window B opened
     later' case) must not see the horse: the list is La Quiniela's field, not
@@ -3878,6 +3918,8 @@ def main():
     _run("identity — a phone rejoins: last year's, this year's, a wipe, no answer (Chrome)",
          test_guest_page_rejoins_in_chrome)
     _run("scratch — guest page follows the field live", test_guest_js_follows_the_field)
+    _run("field order — the horses endpoint and the guest page list the field by program number (Joey, 2026-10-23)",
+         test_horse_lists_run_in_program_number_order)
     _run("guest UI — /api/horses scratched flag round-trip (regression)",
          test_horses_scratched_flag_roundtrip)
     _run("guest UI — static assets served", test_static_assets_served)

@@ -1257,6 +1257,9 @@ BOARD_PROBE_JS = r"""
             rows[el.dataset.horse] = el.querySelector('.qb-bets').textContent.trim();
             strips[el.dataset.horse] = strip(el);
         }
+        // The rows as the TV lays them out: every horse in document order, and per column
+        const order = [...document.querySelectorAll('.qb-rows [data-horse]')].map((el) => Number(el.dataset.horse));
+        const columns = [...document.querySelectorAll('.qb-rows')].map((col) => [...col.querySelectorAll('[data-horse]')].map((el) => Number(el.dataset.horse)));
         // The results screen's rows: results[slot] is the first horse of the row paying that slot (what the plain
         // tests compare), resultRows every row with every horse (a dead heat has two or three)
         const results = {};
@@ -1269,6 +1272,18 @@ BOARD_PROBE_JS = r"""
             resultRows.push({ slots: row.dataset.slots, skip: row.querySelector('.qb-result-skip').textContent.trim(),
                               tie: row.classList.contains('qb-result--tie'), horses: horses });
         }
+        // The results screen when nobody is paid: its message, the reason, the refunds, and whether the rows and the
+        // footer rule are on show
+        const noneEl = document.getElementById('qb-results-none');
+        const shown = (el) => getComputedStyle(el).display !== 'none';
+        const none = noneEl ? { shown: shown(noneEl), title: text('#qb-results-none .qb-results-none-title'),
+                                why: text('#qb-results-none .qb-results-none-why'),
+                                refunds: [...noneEl.querySelectorAll('.qb-results-none-refund')].map((e) => e.textContent.trim()),
+                                rows: shown(document.getElementById('qb-results-rows')), rule: shown(document.querySelector('.qb-results-rule')),
+                                box: (() => { const box4 = (el) => { const b = el.getBoundingClientRect(); return [r2(b.left), r2(b.top), r2(b.right), r2(b.bottom)]; };
+                                              return { screen: box4(document.getElementById('qb-results')),
+                                                       title: box4(noneEl.querySelector('.qb-results-none-title')), why: box4(noneEl.querySelector('.qb-results-none-why')),
+                                                       refunds: [...noneEl.querySelectorAll('.qb-results-none-refund')].map(box4) }; })() } : null;
         const toast = document.getElementById('qb-toast');
         const pulses = [];
         for (const el of document.querySelectorAll('.qb-rows .qb-row.is-pulse')) {
@@ -1316,7 +1331,7 @@ BOARD_PROBE_JS = r"""
         return { state: board.dataset.state, view: board.dataset.view || 'rows', look: board.dataset.look,
                  visible: board.classList.contains('is-visible'), banner: text('#qb-banner-text'),
                  pot: text('#qb-pot'), prizes: [text('#qb-prize-win'), text('#qb-prize-place'), text('#qb-prize-show')],
-                 rows: rows, strips: strips, results: results, resultRows: resultRows, pulses: pulses, crawl: crawl(), sample: takeSample(), roster: roster(),
+                 rows: rows, strips: strips, order: order, columns: columns, results: results, resultRows: resultRows, none: none, pulses: pulses, crawl: crawl(), sample: takeSample(), roster: roster(),
                  header: header, counted: counted,
                  toast: toast.classList.contains('is-shown') ? text('#qb-toast-num') + ' ' + text('#qb-toast-name') + ' ' + text('#qb-toast-delta') : null };
     }
@@ -1553,6 +1568,46 @@ class BoardPageTests(unittest.TestCase):
         self.assertEqual((seen["view"], seen["resultRows"]), ("results", []), "a result nobody with bets can be paid on: the screen, empty")
         [seen] = run_board([dict(self.results, payout=None)])
         self.assertEqual((seen["view"], seen["banner"]), ("rows", "Official results coming"), "no payout yet: the board waits")
+
+    def test_the_rows_follow_the_program_numbers_in_every_look(self) -> None:
+        """Joey, 2026-10-23: the field is shown in program-number order everywhere, a replacement where its number
+        falls (the end), the first ten in the left column and the rest in the right. The 2026 field has 5, 9 and 13
+        replaced by 21, 22 and 23 and 20 scratched."""
+        field = [n for n in range(1, 20) if n not in (5, 9, 13)] + [21, 22, 23]
+        for look in ("impact", "dots", "numbers"):
+            [seen] = run_board([redesign_model()], look=look, styled=True)
+            self.assertEqual(seen["order"], field, look)
+            self.assertEqual(seen["columns"], [field[:10], field[10:]], look)
+
+    def test_nobody_paid_the_screen_says_so(self) -> None:
+        """Joey, 2026-10-23: when La Quiniela pays nobody (no cup in the finish held bets at the post) the results
+        screen says so, with the reason in one line and the refunds, instead of an empty space between its header and
+        its footer; the footer rule (a token drawn from each cup) is not shown then."""
+        base = self.results["payout"]
+        refunds = [{"horse": 19, "tokens": 4, "refund": 4}, {"horse": 7, "tokens": 2, "refund": 2}]
+        nobody = dict(base, pays=[], skipped=[19, 1, 22], unpaid_to_win=base["pot"], refunds=refunds)
+        for look in ("dots", "impact"):
+            [seen] = run_board([dict(self.results, payout=nobody)], look=look, styled=True)
+            none = seen["none"]
+            self.assertEqual((seen["view"], seen["banner"], seen["resultRows"]), ("results", "Official results", []), look)
+            self.assertEqual((none["shown"], none["title"], none["why"]),
+                             (True, "No La Quiniela prizes this race", "No cup in the finish held bets at the post"), look)
+            self.assertEqual(none["refunds"], ["cup 19 scratched after the post: tokens refunded",
+                                               "cup 7 scratched after the post: tokens refunded"], look)
+            self.assertEqual((none["rows"], none["rule"]), (False, False), look + ": no rows, no footer rule")
+            box = none["box"]
+            stack = [box["title"], box["why"]] + box["refunds"]
+            screen = box["screen"]
+            for part in stack:
+                self.assertTrue(part[0] >= screen[0] and part[2] <= screen[2] and part[1] >= screen[1] and part[3] <= screen[3],
+                                f"{look}: {part} inside the screen {screen}")
+            for above, below in zip(stack, stack[1:]):
+                self.assertLessEqual(above[3], below[1] + 1, f"{look}: one under the other, nothing on top of anything")
+        [seen] = run_board([dict(self.results, payout=dict(nobody, refunds=[]))], look="dots", styled=True)
+        self.assertEqual((seen["none"]["shown"], seen["none"]["refunds"]), (True, []), "no refunds: the message alone")
+        [seen] = run_board([self.results], look="dots", styled=True)
+        self.assertEqual((seen["none"]["shown"], seen["none"]["rows"], seen["none"]["rule"]), (False, True, True),
+                         "prizes paid: the rows and the rule, not the message")
 
     def test_the_frozen_board_and_official_results_coming_read_closing_too(self) -> None:
         seen = run_board([self.running])
@@ -2322,6 +2377,13 @@ class StepCrawlTests(unittest.TestCase):
             if s.get("now") is not None:
                 s["rebet"] = s["was"]["number"] == 9
         rebet["names_rev"] += 1
+        # Joey, 2026-10-23 (OD3): a scratch entered at the post or after has no replacement and its tokens are
+        # refunded in cash: pi5's record says refund and not rebet, and the board says so after the horse.
+        refund = crawl_model(post_in=74 * 60 + 30)
+        for s in refund["scratches"]:
+            if s.get("now") is None:
+                s["refund"], s["rebet"] = True, False
+        refund["names_rev"] += 1
         undone = crawl_model(post_in=74 * 60 + 30)                  # 9 -> 22 undone on the admin page
         undone["scratches"] = [s for s in undone["scratches"] if s["was"]["number"] != 9]
         undone["names_rev"] += 1
@@ -2348,6 +2410,9 @@ class StepCrawlTests(unittest.TestCase):
             "rebet": ([rebet, {"__sample": 14000}], dict(plain, query="crawl_tps=60")),
             "rebet-numbers": ([rebet], dict(look="numbers", styled=True)),
             "rebet-impact": ([rebet], dict(look="impact", styled=True)),
+            "refund": ([refund], plain),
+            "refund-numbers": ([refund], dict(look="numbers", styled=True)),
+            "refund-impact": ([refund], dict(look="impact", styled=True)),
         })
 
     def got(self, name: str) -> List[dict]:
@@ -2435,6 +2500,21 @@ class StepCrawlTests(unittest.TestCase):
             self.assertIn(self.GAP + line + self.GAP, snap["text"], f"{line}: on the tiles, an item between two diamonds")
         self.assertIn(self.GAP + "SCRATCHED 20 FULLEFFORT \u00b7 RE-BET YOUR TOKENS" + self.GAP, snap["text"],
                       "the same-day scratch reads as it did")
+
+    def test_a_scratch_at_or_after_the_post_says_tokens_refunded(self) -> None:
+        # The record's refund flag (entered in race states 3 to 6) replaces the re-bet note: on the tiles of dots, and
+        # on the track of numbers and impact. Before the post, and with no flag, the note is RE-BET as ever.
+        snap = self.got("refund")[0]["crawl"]["snapshot"]
+        self.assertIn(self.GAP + "SCRATCHED 20 FULLEFFORT \u00b7 TOKENS REFUNDED" + self.GAP, snap["text"])
+        self.assertNotIn("RE-BET", snap["text"])
+        for run in ("refund-numbers", "refund-impact"):
+            n = self.got(run)[-1]["crawl"]["note"]
+            self.assertIsNotNone(n, f"{run}: the track carries the note")
+            self.assertEqual(n["text"], "\u00b7 TOKENS REFUNDED", run)
+            self.assertEqual(n["note"], n["name"], f"{run}: as bright as the name before it")
+        default = self.got("default")[0]["crawl"]["snapshot"]
+        self.assertIn("RE-BET YOUR TOKENS", default["text"])
+        self.assertNotIn("REFUNDED", default["text"])
 
     def test_undoing_a_replacement_takes_its_line_away_at_the_next_loop(self) -> None:
         first, waited, offered, sampled = self.got("undo")
@@ -2707,13 +2787,14 @@ class StepCrawlSourceTests(unittest.TestCase):
     JS = (HERE / "static" / "js" / "quiniela_board.js").read_text(encoding="utf-8")
     CSS = (HERE / "static" / "css" / "quiniela_board.css").read_text(encoding="utf-8")
 
-    def test_the_board_says_refund_nowhere(self) -> None:
-        # A same-day scratch's tokens are handed back to be re-bet (spec section 6): no word of a refund in the
-        # board's script, stylesheet or page, and the crawl's note is the new wording.
-        page = (HERE / "templates" / "splash" / "quiniela_live.html").read_text(encoding="utf-8")
-        for name, text in (("script", self.JS), ("stylesheet", self.CSS), ("page", page)):
-            self.assertNotIn("refund", text.lower(), name)
+    def test_the_board_says_refund_only_for_a_scratch_at_or_after_the_post(self) -> None:
+        # A same-day scratch's tokens are handed back to be re-bet (spec section 6); from the post on they are
+        # refunded in cash (OD3). The crawl has both notes, each on the track and on the tiles, and picks the refund
+        # by the record's flag alone; the stylesheet and the page say nothing of refunds outside the no-prizes screen.
         self.assertEqual(self.JS.count("'\u00b7 RE-BET YOUR TOKENS'"), 2, "the track and the tiles")
+        self.assertEqual(self.JS.count("'\u00b7 TOKENS REFUNDED'"), 2, "the track and the tiles")
+        self.assertIn("x.refund === true", self.JS)
+        self.assertNotIn("refund", self.CSS.lower().replace("qb-results-none-refund", ""))
 
     def test_the_rate_is_a_constant_at_the_top_and_the_url_can_change_it(self) -> None:
         self.assertLess(self.JS.index("const CRAWL_TILES_PER_SEC"), self.JS.index("function makeRow"))

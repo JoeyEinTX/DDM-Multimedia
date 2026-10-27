@@ -657,6 +657,43 @@
 }
 .qb-result--win .qb-result-prize { color: var(--qb-gold); }
 
+/* Nobody paid: the message stands where the rows would; the rows and the footer rule (a token drawn from each
+   cup) are not true then and are not shown. */
+.qb-results-none {
+    display: none;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 0 60px;
+    text-align: center;
+}
+.qb-results.is-none .qb-results-none { display: flex; }
+.qb-results.is-none .qb-results-rows,
+.qb-results.is-none .qb-results-rule { display: none; }
+.qb-results-none-title {
+    font-size: 88px;
+    line-height: 1.1;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--qb-gold);
+}
+.qb-results-none-why,
+.qb-results-none-refund {
+    font-size: 44px;
+    line-height: 1.2;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+.qb-results-none-why { color: var(--qb-muted); }
+.qb-results-none-refunds {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+}
+
 .qb-results-rule {
     flex: 0 0 64px;
     display: flex;

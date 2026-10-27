@@ -44,7 +44,8 @@ from flask import Blueprint, Response, jsonify, render_template, request
 from la_quiniela import protocol as P
 from la_quiniela import racetime
 from la_quiniela.betting import (
-    COUNTED_POT_MAX, MODE_STATES, BettingBoard, betting_open, CountRefused, load_board_settings, sse_events, validate_cmd,
+    COUNTED_POT_MAX, MODE_STATES, BettingBoard, betting_open, CountRefused, load_board_settings, scratch_refunds, sse_events,
+    validate_cmd,
 )
 from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
@@ -86,6 +87,11 @@ RESET_REFUSED = ("Reset betting works only before the race (0) or after it (6). 
 # the field and stay editable.
 RESULTS_FROZEN = ("The results are in, so the field is frozen: clear them in SET WINNERS first (RESET in the dialog), "
                   "then scratch, then enter them again.")
+
+# The field is set at the gate (Joey, 2026-10-23): a horse drawing in after it would have nobody's tokens and no
+# finish, so from AT THE GATE on a scratch has no replacement and its tokens are refunded in cash.
+NO_LATE_REPLACEMENT = ("The field is set at the gate: from AT THE GATE on a scratch has no replacement, and the "
+                       "tokens in its cup are refunded in cash. Scratch it with no replacement.")
 
 # The Race Setup page kept a post time as a time of day, which it treated as
 # on this date and on Churchill's clock (it printed "6:57 PM ET"): what
@@ -527,7 +533,10 @@ def api_quiniela_scratch():
     if not in_field(horse, records, gateway):
         return _bad(f"horse {horse} is not in the field")
     replacement = body.get("replacement")
-    entered = {"state": board.race_state_now(), "at": time.time()}     # whether it re-bets (betting.scratch_rebets)
+    entered = {"state": board.race_state_now(), "at": time.time()}     # whether it re-bets or refunds (betting.scratch_rebets, scratch_refunds)
+    refund = scratch_refunds((entered["state"], entered["at"]))
+    if replacement is not None and refund:
+        return _bad(NO_LATE_REPLACEMENT, 409)
     if replacement is None:
         try:
             done = board.store.scratch_gateway(horse, **entered)
@@ -535,7 +544,7 @@ def api_quiniela_scratch():
             return _bad(str(exc))
         board.refresh()
         return jsonify({"ok": True, "kind": "gateway", "horse": horse, "cup": on_cups.get(horse),
-                        "scratched": True, "rev": _rev(board), "gateway_online": _gateway_online(snap),
+                        "scratched": True, "refund": refund, "rev": _rev(board), "gateway_online": _gateway_online(snap),
                         "names_rev": board.store.names_rev, **done})
     parsed, error = _replacement_arg(replacement)
     if error:
