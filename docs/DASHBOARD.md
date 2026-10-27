@@ -296,8 +296,9 @@ const SADDLE_CLOTHS = {
   is open reaches it within 2 s: the horse leaves the grid, its slot empties (its cup
   unlocks) and the note under the heading says `#3 MYSTIK DAN was scratched: PLACE is empty,
   tap the horse that finished there.` (`#9 ENCINO was scratched.` for a horse not picked). A
-  confirm that races the scratch is refused by pi5 (`place: horse 12 is not in the field`),
-  shown in the note, and the field read again at once
+  confirm that races the scratch is refused by pi5 (`place: horse 12 is not in the field`) and
+  the field read again at once: the scratched horse's card empties, CONFIRM RESULTS goes until
+  it is picked again, and the note under the heading says why
 - **Post and horse:** a pick lights the LED cup of the **post** (9) and records
   the **horse** (22); the results carry horse numbers
 - **The real finish:** the host picks the horses that crossed 1st, 2nd and 3rd, never a
@@ -310,30 +311,41 @@ const SADDLE_CLOTHS = {
   as pi5's `finishers_needed`, less the empty slots: no card on an empty dialog), and
   CONFIRM RESULTS waits for them. The marks come from La Quiniela's figures at the post (`closing` in
   `GET /api/quiniela`), by **horse** number (22 running for 9 is horse 22); a horse no cup
-  claimed counts as no bets. Its slot card shows the tag, and a line above CONFIRM RESULTS
-  says `#7 SO HAPPY: no bets at the post, so La Quiniela skips it for the next finisher. La
-  Subasta pays its owner all the same.` A next finisher's cup is not lit: the LEDs show the
+  claimed counts as no bets. Its card shows the badge, and one quiet note above CONFIRM RESULTS
+  says it once for all of them, in the order of the finish: `#7, #4: no bets at the post. La
+  Quiniela skips them; La Subasta still pays their owners.` (`skips it` and `its owner` for
+  one). A next finisher's cup is not lit: the LEDs show the
   three that crossed first. With no figures at the post (the race never reached the post,
   betting reopened, pi5 not answering) nothing is marked, nothing is asked and nothing says so
-- **A dead heat:** DEAD HEAT on a filled card ties the card under it to it (`DEAD HEAT · with
-  WIN`): the horse there, or the next one tapped, crossed together with it; DEAD HEAT again on
-  the second card makes it three deep; a dead heat for 3rd puts the other horse in a `4TH`
-  card; UNTIE on the first card undoes it. The record carries the tie (`ties`), and La
-  Quiniela's payout pools the positions the tied horses occupy (`RACE_NIGHT.md`, section 8)
+- **A dead heat** (Joey, 2026-10-26): the horses that crossed together are one card. The small
+  **DEAD HEAT** link on the seam under a filled card ties the card after it to it (the horse
+  there, or the next one tapped): the two become one card headed `WIN · PLACE — DEAD HEAT`, the
+  horses side by side in it, with one **UNTIE**; the link under it again makes it three deep (the
+  third horse under the two), and a dead heat for 3rd merges SHOW with a `4TH` card. UNTIE
+  undoes the whole dead heat. There is no link where a dead heat would pass three horses. The
+  record carries the tie (`ties`), and La Quiniela's payout pools the positions the tied
+  horses occupy (`RACE_NIGHT.md`, section 8)
 - **Reopening while a result stands:** the dialog opens on the saved result, `CHECK THE
   RESULTS` with the picks, the next finishers and any dead heat in their slots and the three
   cups lit again, so a correction is one tap on a slot and the new horse; CANCEL leaves the
   result and puts the mantle back on it (`RESULTS_ACTIVE`). pi5 refuses a result before AT
-  THE GATE (no figures at the post to pay from); its line shows under the heading
-- **A card's parts, each in a place of its own** (Joey, 2026-10-23): a head row with the slot's
-  name, DEAD HEAT / UNTIE and the × (the two buttons 44 px each way); under it the tie line
-  (`DEAD HEAT · with WIN`) when the card is tied; then the horse's cloth, its name (whole, in
-  as many lines as it needs: `EMERGING MARKET`) and the NO BETS badge under the name
-- **Sidebar slots:** WIN, PLACE and SHOW, and a card per next finisher (`4TH`, `5TH`...)
-  while one is needed, each with its horse's saddle cloth number and name in large type
-  (readable from arm's length on an iPad); the active slot is lit. They are the check
-  before CONFIRM RESULTS: the picks are not listed a second time. A name wraps only between
-  words; a word too wide for the card takes a smaller size until it fits
+  THE GATE (no figures at the post to pay from); its reason stands over CONFIRM RESULTS
+- **A card shows the pick and nothing else** (Joey, 2026-10-26): the place's name, the horse's
+  cloth, its name (whole, in as many lines as it needs: `EMERGING MARKET`) and the NO BETS badge
+  under the name. The × that empties it sits at the card's top corner, above the cloth (44 px
+  each way); a dead heat's cells have none (UNTIE first, then ×). The DEAD HEAT link sits on
+  the seam between two cards (and under the last): its pill in the middle of the 14 px gap, its
+  44 px tap area reaching into the padding of the cards on each side, never over a cloth, a
+  name, a badge or a button; it shows only under a filled card, and only where the dead heat
+  would be two or three horses
+- **Cards:** WIN, PLACE and SHOW, and a card per next finisher (`4TH`, `5TH`...) while one is
+  needed, all made by `renderResultCards()` (`ddm_control.js`) into `#results-cards`, each with
+  its horse's saddle cloth number and name in large type (readable from arm's length on an
+  iPad: a single card has the cloth beside the name, a dead heat's cells the cloth over it);
+  the active slot is lit. They are the check before CONFIRM RESULTS: the picks are not listed
+  a second time. A name wraps only between words; a word too wide for its room takes a smaller
+  size until it fits. At 1180 x 820 a three-way dead heat, a 4TH and a 5TH card, the note and
+  CONFIRM RESULTS all show with the dialog not scrolling
 - **Live LED preview:** Selected cups light up immediately
   - Win: Gold (#FFD700)
   - Place: Silver (#C0C0C0)
@@ -342,8 +354,11 @@ const SADDLE_CLOTHS = {
 - **Navigation:**
   - RESET - Clear all and start over; with a result saved on pi5, asks and clears that too
   - CANCEL - Close without setting anything
-  - CONFIRM - Apply results and close modal; it sits one card gap under the SHOW card, with
-    a warning above it for any pick nobody bet (the slot cards are the last look)
+  - CONFIRM - Apply results and close modal; it sits under the last card, with one quiet note
+    above it for any pick nobody bet (the cards are the last look). When pi5 refuses, its
+    reason stands right over the button in the button's own type size and the button reads
+    NOT SAVED in a red outline until a pick changes (`#results-confirm-refusal`; the note is
+    `#results-confirm-notes`)
 
 **Behavior:**
 - Which slot a tap fills is decided from the picker's own state, in the moment of the tap;
@@ -356,19 +371,19 @@ const SADDLE_CLOTHS = {
   poll (every 2 s) takes out only a horse that has left the field (`pickerFollowsField`),
   the other picks, the chosen slot and the marks staying as they were
 - pi5 refuses a result that names a horse not in the field whatever the page shows, so a
-  stale dialog cannot save a scratched horse; its line goes in the note under the heading
-  and the field is read again. While a result stands the LQ admin page refuses a scratch
+  stale dialog cannot save a scratched horse; the field is read again at once and the
+  horse's card empties, with a line under the heading. While a result stands the LQ admin page refuses a scratch
   or an undo (409, "the field is frozen"), so the result and the field cannot move under
   each other; RESET in the dialog is the way to clear the result first
 - The figures at the post are read once, with the field, as the modal opens, and the NO
   BETS marks stay as they were while it is open (they are frozen figures; nothing in the
   background re-reads them); opening the modal again reads them again
-- A modal taller than the screen (NO BETS warnings on a short screen, Safari's bars)
+- A modal taller than the screen (the note and a refusal on a short screen, Safari's bars)
   scrolls instead of running off the top and bottom, and when the confirm section appears
   CONFIRM RESULTS is scrolled into view
 - Header changes color by the active slot (Gold/Silver/Bronze): CHOOSE WINNER / PLACE /
   SHOW, CHANGE ... when replacing one, CHECK THE RESULTS when all three are set
-- The confirm section (any NO BETS lines and CONFIRM RESULTS) appears when every slot is
+- The confirm section (the note, a refusal and CONFIRM RESULTS) appears when every slot is
   set, the next finishers' cards included, and no slot is being changed
 - Closing without confirming unlocks cups and turns off LEDs; a tap on the dark backdrop
   does not close the modal once a pick is made (CANCEL does)
@@ -377,7 +392,9 @@ const SADDLE_CLOTHS = {
 - Tests: `la_quiniela/test_dashboard.py`, which drives the real picker in headless Chrome
   through `pi5/tools/picker_check.py` (mouse and touch, a slow LED controller, a forced
   refresh, NO BETS marks from figures at the post set up on the server, the right column
-  at 1554 x 1116, 1180 x 820, 820 x 1180 and a 740 px tall view, in a wide font too). `python
+  at 1554 x 1116, 1180 x 820, 820 x 1180 and a 740 px tall view, in a wide font too; the dead
+  heat cards, the seam links, the note, the refusal and the 1180 x 820 fit are in
+  `test_dashboard.py`'s `_picker_cards`). `python
   tools/picker_check.py --reproduce` from `pi5/` prints the timing table, `--shots DIR`
   takes screenshots (the NO BETS marks among them)
 

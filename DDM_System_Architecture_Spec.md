@@ -323,7 +323,7 @@ There is no roster line. A v1 `roster` line is ignored.
   section (which cup each prize is drawn from and for how much, the skips, the refunds, which pot) and the
   TV's results screen read it. The pot is the counted pot once entered, the scales' figure at the post less
   the refunds until then. A finisher with no bets is skipped for the next with bets; fewer than three with
-  bets, the unpaid prizes go to WIN. Dead heat (the record's `ties`, entered on a slot card in SET WINNERS):
+  bets, the unpaid prizes go to WIN. Dead heat (the record's `ties`, entered in SET WINNERS as one card for the horses that crossed together):
   the tied horses share the prizes of the positions they jointly occupy, whole dollars, the odd dollar to
   the lower program number, one token from each cup; a tied horse with no bets drops out. A horse scratched
   after the post is refused in the finish and its cup's tokens refunded at token value. A result is

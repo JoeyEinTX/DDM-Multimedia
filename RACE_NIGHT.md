@@ -374,14 +374,17 @@ pays its owner all the same), so tap it where it finished. Once the three slots 
 the horses with bets La Quiniela needs, a `4TH` card appears under SHOW (a `5TH` if that one
 had no bets either, and so on until three horses with bets are named, or every horse with
 bets when fewer had any), and **CONFIRM RESULTS** waits until they are filled; no card while
-the three slots are still empty. The slot cards on the right are the check: read them before
-you press **CONFIRM RESULTS**. If a horse you picked had no bets, a red line above the
-button says so.
-**A dead heat.** Tap the first of the tied horses into its slot, then **DEAD HEAT** on that
-card: the card under it is tied to it (`DEAD HEAT · with WIN`) and holds the other horse (the
-one already there, or the next you tap). Three deep: **DEAD HEAT** again on the second card.
-A dead heat for 3rd puts the second horse in a `4TH` card. **UNTIE** on the first card undoes
-it. The record carries the tie; the RESULTS section pools the prizes.
+the three slots are still empty. The cards on the right are the check: read them before you
+press **CONFIRM RESULTS**. If a horse you picked had no bets, one grey note above the button
+names it (`#15, #12: no bets at the post. La Quiniela skips them; La Subasta still pays their
+owners.`).
+**A dead heat.** Tap the first of the tied horses into its slot, then the small **DEAD HEAT**
+link on the seam under its card: the two cards become one, headed `WIN · PLACE — DEAD HEAT`,
+with the other horse beside the first (the one already there, or the next you tap). Three
+deep: the link under that card again (the third horse sits under the two). A dead heat for 3rd
+merges SHOW with a `4TH` card. **UNTIE** on the merged card undoes the whole dead heat; to
+take one horse out, untie and tap its **×**; to change one, tap its cell, then the new horse.
+The record carries the tie; the RESULTS section pools the prizes.
 **Opening SET WINNERS again** while a result stands shows `CHECK THE RESULTS` with the saved
 picks (the next finishers and a dead heat too), the three cups lit again: a correction is one
 tap on a slot, then the horse, then **CONFIRM RESULTS**; **CANCEL** leaves the result and puts
@@ -394,8 +397,12 @@ dialog), then scratch, then enter them again.` To scratch after the results: **S
 **RESET**, it asks `Clear the saved result?` → **Clear the result** (AFTER PARTY: the TV back to
 the slideshow, the LEDs off) → the scratch on `ADMIN` → back in the dialog, which has
 followed it (the horse is out of the grid, its slot empty, a line under the heading says so)
-→ tap again → **CONFIRM RESULTS**. A confirm that races a scratch is refused by pi5, `place:
-horse 12 is not in the field` under the heading, and the grid refreshed: pick again.
+→ tap again → **CONFIRM RESULTS**. A confirm that races a scratch is refused by pi5 and the
+grid refreshed: the scratched horse's card is empty, a line under the heading says so, and
+**CONFIRM RESULTS** is gone until you pick it again.
+**A confirm pi5 refuses with the picks as they are** (the race is not at the post yet) leaves
+the dialog open: pi5's reason stands right over the button in red and the button turns into a
+red-outlined **NOT SAVED** until you change a pick. Nothing was saved.
 The line that follows names the race state the results set: `Results set: Win=19, Place=1,
 Show=22 · WINNER`, green. The results are saved whether or not the LED wall answers (its
 pill, top left, says; a wall that is back shows them by itself). A red `Results set: … ·
@@ -607,7 +614,7 @@ the restart).
 | Board on the TV, wrong state | state didn't take, or somebody pressed another button | `ADMIN` → Race: its state line is the state pi5 holds. Press the right button on `DASH` and read what it answers. |
 | TV stays on `OFFICIAL RESULTS COMING` | it is WINNER and pi5 has no results: they were never confirmed, or **CONFIRM RESULTS** answered `Error: results not saved …` (pi5 could not write the file; the LED controller has nothing to do with it) | `DASH` → **SET WINNERS** → confirm again. Meanwhile the prizes are in the board's header (WIN / PLACE / SHOW under the pot, the figures at the post); draw and pay from those. |
 | `ADMIN` has no RESULTS section | no result is in, or the race never reached AT THE GATE (no figures at the post to pay from) | `DASH` → **AT THE GATE** (then the race as it ran), **SET WINNERS** → **CONFIRM RESULTS**; the section appears within 5 s. |
-| **CONFIRM RESULTS** answers `results before the post: …` under the heading | the race is in PRE-RACE, BETTING OPEN or FINAL CALL: no figures at the post to pay from | `DASH` → **AT THE GATE** (then THEY'RE OFF, FINISH as the race ran), then **SET WINNERS** again. |
+| **CONFIRM RESULTS** turns red and says **NOT SAVED** under `results before the post: …` | the race is in PRE-RACE, BETTING OPEN or FINAL CALL: no figures at the post to pay from | `DASH` → **AT THE GATE** (then THEY'RE OFF, FINISH as the race ran), then **SET WINNERS** again. |
 | The `LED wall` pill on `DASH` says `unreachable since hh:mm` (one red line said so when it dropped) | the LED controller stopped answering: power, Wi-Fi, or it rebooted | Nothing for the race: every button works as before, and the results are saved whatever the wall does. When it answers again the pill goes green, one green line says so, and the wall picks up the current animation by itself. If it stays red: power and Wi-Fi at the mantle; its address in the device panel (tap the pills). |
 | `Results set: … · race state not set (La Quiniela: …)` in red on `DASH` | the results are saved, but La Quiniela refused WINNER, so the TV and the cups don't show them; the text says why (`bridge not initialised`: pi5's La Quiniela side is not up) | Fix what it names (`journalctl -u ddm-pi5 -n 50`), then `DASH` → **SET WINNERS** → the same three → **CONFIRM RESULTS** again. |
 | pi5 restarted, or the TV reloaded, during the draw | nothing is lost: pi5 keeps the results and the figures at the post | Nothing. The TV finds pi5 again by itself and shows the results board as it was. |
@@ -617,7 +624,8 @@ the restart).
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
 | `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: `sudo systemctl restart ddm-pi5`, and `journalctl -u ddm-pi5 -n 50` says why it was down. Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
 | `ADMIN` → Scratch or Undo answers `The results are in, so the field is frozen: …` | the results stand, and the field can't move under the payouts derived from them (La Subasta's) | Section 8: `DASH` → **SET WINNERS** → **RESET** → **Clear the result**, then the scratch, then the results again. |
-| **CONFIRM RESULTS** leaves the dialog open with `… horse 12 is not in the field` under the heading, or `#7 (WIN) had no bets at the post: … enter the next finisher too (4th)` | pi5 refused the record: a horse scratched since the dialog opened (the grid has just refreshed), or a `4TH` finisher is needed | Tap again what the dialog asks for and confirm. The results are never guessed: a refusal saves nothing. |
+| **CONFIRM RESULTS** leaves the dialog open: the scratched horse's card is empty with a line under the heading, or the button is red and says **NOT SAVED** under `#7 (WIN) had no bets at the post: … enter the next finisher too (4th)` | pi5 refused the record: a horse scratched since the dialog opened (the grid has just refreshed), or a `4TH` finisher is needed | Tap again what the dialog asks for and confirm. The results are never guessed: a refusal saves nothing. |
+| No **DEAD HEAT** link between two cards, or the picks column runs past the bottom of the iPad | the link shows only under a filled card, and only where the dead heat would be two or three horses (a three-way one is full); the column is built by `renderResultCards()` in `ddm_control.js` into `#results-cards`, the grey note and the red **NOT SAVED** reason are `#results-confirm-notes` and `#results-confirm-refusal` over the button | Fill the card above the link first. Past the bottom: the iPad at 1180 x 820 landscape shows all of it; Safari's bars cost about 80 px, and the dialog then scrolls. |
 
 ## The rules, for anyone who asks
 

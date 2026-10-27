@@ -897,8 +897,8 @@ def test_picker_records_the_real_finish():
     """The page's side, read from the source (the picker itself is driven in test_picker_in_a_browser and
     test_picker_follows_the_field_in_a_browser): the confirm sends the next finishers; the rule is the server's,
     computed from the frozen figures and the field; the field is polled only while the picker is open; a server
-    refusal goes in the dialog's own note line; RESET asks before it clears a saved result, in the page's own ask
-    modal (no browser confirm), through the panel's own clearResults; the warning's new words."""
+    refusal stands beside the button; RESET asks before it clears a saved result, in the page's own ask
+    modal (no browser confirm), through the panel's own clearResults; the note's words."""
     rig = Rig()
     js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True).replace("\r\n", "\n")
     html = rig.client.get("/", base_url="http://joeydevpi.local:5000").get_data(as_text=True)
@@ -906,15 +906,16 @@ def test_picker_records_the_real_finish():
     confirm = _js_function(js, "async function resultsConfirm()")
     _check("CONFIRM RESULTS sends the three and the next finishers",
            "const after = resultsState.next.slice();" in confirm and "next: after" in confirm, confirm[:400])
-    _check("...and a refusal from pi5 goes in the dialog's note line and reads the field again, the picker left open",
-           "resultsNote(" in confirm and "loadQuinielaField()" in confirm and "closeResultsModal(true)" in confirm)
+    _check("...and a refusal from pi5 stands beside the button (the state's refusal, not the note line) and reads the field again, the picker left open",
+           "resultsState.refusal = {" in confirm and "resultsNote(" not in confirm and "loadQuinielaField()" in confirm
+           and "closeResultsModal(true)" in confirm)
     needed = _js_function(js, "function finishersNeeded(named)")
     _check("the rule is one: three horses with bets among those named, the field's horses only, nothing while the figures are unknown",
            "resultsBets === null" in needed and "Math.min(3" in needed and "quinielaField" in needed)
-    _check("the finish goes on in slot cards of their own: next:0 is 4TH", "'next:'" in js and "ordinalLabel(" in js
-           and "function renderNextSlots()" in js)
-    _check("no fixed 4TH card in the markup: they are made as needed, before the confirm section",
-           "4TH" not in html and 'id="results-confirm-section"' in html)
+    _check("the finish goes on in cards of their own: next:0 is 4TH", "'next:'" in js and "ordinalLabel(" in js
+           and "function renderResultCards()" in js)
+    _check("no card in the markup: the places' cards are all made by script into #results-cards, ahead of the confirm section",
+           "4TH" not in html and 'data-slot="win"' not in html and html.index('id="results-cards"') < html.index('id="results-confirm-section"'))
     _check("the field is read every 2 s while the picker is open and only then",
            "function startResultsFieldPoll()" in js and "function stopResultsFieldPoll()" in js
            and "startResultsFieldPoll();" in _js_function(js, "async function showResultsModal()")
@@ -928,8 +929,9 @@ def test_picker_records_the_real_finish():
            "askFirst('Clear the saved result?'" in reset and "await clearResults()" in reset and "await savedResultsOnPi5()" in reset
            and "confirm(" not in reset)
     ui = _js_function(js, "function updateResultsModalUI()")
-    _check("a pick nobody bet is warned about over CONFIRM RESULTS in the new words: the real finish, La Quiniela skips it",
-           "no bets at the post, so La Quiniela skips it " in ui and "can't pay" not in js and "Enter the next finisher instead" not in js)
+    _check("a pick nobody bet is said once over CONFIRM RESULTS: no bets at the post, La Quiniela skips it, La Subasta still pays",
+           "no bets at the post. La Quiniela skips " in ui and "La Subasta still pays " in ui and "can't pay" not in js
+           and "Enter the next finisher instead" not in js)
     _check("the next cards have a colour of their own", '.result-slot[data-slot^="next:"]' in css)
 
 
@@ -1020,11 +1022,20 @@ def test_payout_on_the_pages_source():
     keys = _js_function(js, "function nextSlotKeys()")
     _check("the next cards appear only when a named horse had no bets and a horse with bets is left to name: the empty WIN, PLACE and SHOW count first",
            "finishersNeeded(namedFinish())" in keys and "empty" in keys)
-    _check("a dead heat is entered on a slot card and sent as ties",
-           "function tieAfter(key)" in js and "ties: ties" in _js_function(js, "async function resultsConfirm()") and "slot-tie" in js)
+    _check("a dead heat is made on the link on the seam under a card, undone by UNTIE, and sent as ties",
+           "function tieAfter(key)" in js and "function untie(key)" in js and "ties: ties" in _js_function(js, "async function resultsConfirm()")
+           and "link.onclick = () => tieAfter(last);" in _js_function(js, "function renderResultCards()"))
     _check("the admin page has a RESULTS section: the paying horses, the skips, the draw instruction, the refunds, which pot",
            'id="results"' in admin and 'id="results-pays"' in admin and 'id="results-refunds"' in admin and 'id="results-pot"' in admin
            and "function renderResults()" in admin and "draw one token from cup" in admin)
+
+
+# CONFIRM RESULTS and the reason pi5 gave: the words, the button's, the type sizes, how near the reason stands, the outline
+REFUSAL_JS = """JSON.stringify((() => { const b = document.getElementById('results-confirm-btn'), r = document.getElementById('results-confirm-refusal');
+    const bb = b.getBoundingClientRect(), rb = r.getBoundingClientRect(), bs = getComputedStyle(b), rs = getComputedStyle(r);
+    return {button: b.innerText.trim(), reason: r.innerText.trim(), refused: b.classList.contains('is-refused'),
+            outline: [bs.outlineStyle, bs.outlineWidth, bs.outlineColor], buttonSize: bs.fontSize, reasonSize: rs.fontSize,
+            gap: bb.top - rb.bottom, within: rb.left >= bb.left - 1 && rb.right <= bb.right + 1, onScreen: bb.top >= 0 && bb.bottom <= innerHeight}; })())"""
 
 
 def _picker_payout(picker_check, requests, slow):
@@ -1089,13 +1100,13 @@ def _picker_payout(picker_check, requests, slow):
         picker.tap_horse(19)
         settle(0.3)
         _check("19 as 4TH: complete again", picker.state()["next"] == [19] and picker.state()["confirm"] is True)
-        # a dead heat: DEAD HEAT on WIN ties PLACE's horse to it
-        chrome.tap(".slot-tie[data-slot='win']")
+        # a dead heat: the link on the seam under WIN ties PLACE's horse to it
+        chrome.tap(".seam button[data-after='win']")
         settle(0.3)
         tied = chrome.eval("JSON.stringify(resultsState.tied)")
-        ribbon = chrome.eval("document.querySelector(\".result-slot[data-slot='place'] .slot-tied-label\").innerText")
-        _check("DEAD HEAT on WIN: PLACE is tied with it and its card says so", json.loads(tied) == ["place"] and "DEAD HEAT" in ribbon
-               and "WIN" in ribbon, f"{tied} {ribbon!r}")
+        title = chrome.eval("document.querySelector('.is-dead-heat .group-title').innerText")
+        _check("the seam under WIN: PLACE is tied with it and one card says so", json.loads(tied) == ["place"]
+               and title == "WIN · PLACE — DEAD HEAT", f"{tied} {title!r}")
         chrome.tap("#results-confirm-btn")
         chrome.wait_for("!" + modal_up, timeout=10)
         saved = rig.board.results()
@@ -1106,8 +1117,9 @@ def _picker_payout(picker_check, requests, slow):
         chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
         picker.open()
         tied = chrome.eval("JSON.stringify(resultsState.tied)")
-        _check("reopened on the tie: the saved dead heat is in the dialog", json.loads(tied) == ["place"] and picks() == (7, 3, 12)
-               and picker.state()["next"] == [19], f"{tied} {picks()}")
+        title = chrome.eval("(document.querySelector('.is-dead-heat .group-title') || {}).innerText")
+        _check("reopened on the tie: the saved dead heat is in the dialog, as one card", json.loads(tied) == ["place"] and picks() == (7, 3, 12)
+               and picker.state()["next"] == [19] and title == "WIN · PLACE — DEAD HEAT", f"{tied} {picks()} {title!r}")
         chrome.tap("#results-cancel-btn")
         chrome.wait_for("!" + modal_up, timeout=10)
         _check("CANCEL with a result standing puts the mantle back on it (RESULTS_ACTIVE), not off",
@@ -1132,10 +1144,22 @@ def _picker_payout(picker_check, requests, slow):
             settle(0.3)
         chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=5)
         chrome.tap("#results-confirm-btn")
-        chrome.wait_for("document.getElementById('results-pick-note').innerText.includes('before the post')", timeout=8)
-        _check("before the post: pi5 refuses, the dialog shows its line, nothing saved, the picker open",
-               rig.board.results() is None and chrome.eval(modal_up) and "AT THE GATE" in picker.note() and rig.bridge.phase == 0,
-               repr(picker.note()))
+        chrome.wait_for("document.getElementById('results-confirm-refusal').innerText.includes('before the post')", timeout=8)
+        settle(0.5)                                                  # the button's colours ease over 0.2 s
+        shown = json.loads(chrome.eval(REFUSAL_JS))
+        _check("before the post: pi5 refuses, nothing saved, the picker open, no line under the heading",
+               rig.board.results() is None and chrome.eval(modal_up) and rig.bridge.phase == 0 and picker.note() == "", repr(picker.note()))
+        _check("...its reason stands right over the button in the button's own type size, the button says NOT SAVED in a red outline",
+               "AT THE GATE" in shown["reason"] and shown["button"] == "NOT SAVED" and shown["refused"]
+               and shown["outline"] == ["solid", "3px", "rgb(211, 47, 47)"] and shown["reasonSize"] == shown["buttonSize"]
+               and 0 <= shown["gap"] <= 12 and shown["within"] and shown["onScreen"], str(shown))
+        chrome.tap(".result-slot[data-slot='show']")
+        settle(0.3)
+        picker.tap_horse(1)
+        settle(0.3)
+        shown = json.loads(chrome.eval(REFUSAL_JS))
+        _check("a pick changed: the button is CONFIRM RESULTS again, the reason gone",
+               shown["button"] == "CONFIRM RESULTS" and not shown["refused"] and shown["reason"] == "", str(shown))
         _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
     finally:
         picker.close()
@@ -1482,34 +1506,59 @@ def test_picker_grid_in_program_number_order_in_a_browser():
     _with_counted_requests(lambda requests, slow: _picker_field_order(picker_check, requests, slow))
 
 
-CARDS_BOXES_JS = """JSON.stringify([...document.querySelectorAll('.result-slot')].map((card) => {
+CARDS_BOXES_JS = """JSON.stringify([...document.querySelectorAll('.result-group')].map((group) => {
     const rect = (el) => { const r = el.getBoundingClientRect(); return {left: r.left, top: r.top, right: r.right, bottom: r.bottom,
                                                                           width: r.width, height: r.height}; };
-    const part = (sel) => { const el = card.querySelector(sel); if (!el) return null; const cs = getComputedStyle(el);
+    const shown = (el) => { if (!el) return null; const cs = getComputedStyle(el);
         if (cs.display === 'none' || cs.visibility === 'hidden') return null; const r = rect(el); return r.width && r.height ? r : null; };
-    const name = card.querySelector('.slot-horse-name');
-    let text = null;
-    if (name) { const range = document.createRange(); range.selectNodeContents(name);
-                text = Object.assign(rect(range), {clipped: name.scrollWidth > name.clientWidth + 1, font: parseFloat(getComputedStyle(name).fontSize),
-                                                   words: name.textContent}); }
-    return {slot: card.dataset.slot, filled: card.classList.contains('is-filled'), card: rect(card),
-            parts: {clear: part('.slot-clear'), saddle: part('.slot-saddle'), name: text, nobets: part('.slot-nobets'),
-                    tied: part('.slot-tied-label'), tie: part('.slot-tie')},
-            tieText: (card.querySelector('.slot-tie') || {}).textContent || '', tiedText: (card.querySelector('.slot-tied-label') || {}).textContent || ''};
+    const cell = (card) => {
+        const name = card.querySelector('.slot-horse-name');
+        let text = null;
+        if (name) { const range = document.createRange(); range.selectNodeContents(name);
+                    text = Object.assign(rect(range), {clipped: name.scrollWidth > name.clientWidth + 1, font: parseFloat(getComputedStyle(name).fontSize),
+                                                       words: name.textContent}); }
+        const part = (sel) => shown(card.querySelector(sel));
+        return {slot: card.dataset.slot, filled: card.classList.contains('is-filled'), card: rect(card),
+                buttons: [...card.querySelectorAll('button')].filter(shown).map((b) => b.className),
+                parts: {label: part('.slot-label'), clear: part('.slot-clear'), saddle: part('.slot-saddle'), name: text, nobets: part('.slot-nobets')}};
+    };
+    return {dead: group.classList.contains('is-dead-heat'), box: rect(group),
+            title: (group.querySelector('.group-title') || {}).innerText || '', untie: shown(group.querySelector('.group-untie')),
+            cells: [...group.querySelectorAll('.result-slot')].map(cell)};
 }))"""
+
+SEAMS_JS = """JSON.stringify([...document.querySelectorAll('.seam button')].map((b) => { const r = b.getBoundingClientRect();
+    return {after: b.dataset.after, text: b.textContent, left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height}; }))"""
+
+# The column against the viewport (the modal's scroll, the sidebar, CONFIRM RESULTS), the note over the button with its colours,
+# and any dashed line or "with WIN" caption left over from the old dead heat
+FIT_JS = """JSON.stringify((() => { const m = document.getElementById('results-modal'), s = document.querySelector('.results-sidebar').getBoundingClientRect(),
+    b = document.getElementById('results-confirm-btn').getBoundingClientRect(), n = document.getElementById('results-confirm-notes');
+    return {viewport: [innerWidth, innerHeight], scroll: [m.scrollHeight, m.clientHeight], sidebar: [s.top, s.bottom], button: [b.top, b.bottom],
+            note: n.innerText, noteColour: getComputedStyle(n).color, noteBorder: getComputedStyle(n).borderTopColor,
+            boxes: document.querySelectorAll('.confirm-notes, .confirm-warning').length,
+            dashed: [...document.querySelectorAll('.result-group, .result-slot')].some((el) => getComputedStyle(el).borderTopStyle === 'dashed'),
+            caption: m.innerText.includes('with WIN')}; })())"""
 
 
 def _overlap(a, b):
     return a["left"] < b["right"] - 0.5 and b["left"] < a["right"] - 0.5 and a["top"] < b["bottom"] - 0.5 and b["top"] < a["bottom"] - 0.5
 
 
+def _grey(css_colour):
+    channels = [int(n) for n in re.findall(r"\d+", css_colour)[:3]]
+    return max(channels) - min(channels) <= 24
+
+
 def _picker_cards(picker_check, requests, slow):
-    """The longest names of the 2026 field on the WIN, PLACE, SHOW and 4TH cards, one of them with NO BETS and a dead heat
-    between the first two: every part of a card (the x, the cloth, the name, the NO BETS badge, the tie line, the DEAD HEAT
-    / UNTIE button) has a place of its own, the name whole, and what is pressed is 44 px or more each way."""
+    """The picks column of SET WINNERS (Joey, 2026-10-26: laid out for a room that is waiting), the longest names of the 2026
+    field on the cards, 15 and 12 with no bets: a card shows the pick and nothing else, the x alone at its top corner above
+    the cloth; a dead heat is one card, two horses side by side or three, with one UNTIE and no caption or dashed line; a
+    dead heat for third merges SHOW with 4TH; the link on every seam; the note; and 1180 x 820 holds a three-way dead heat, a
+    4TH and a 5TH card and the note with the whole column on screen. What is pressed is 44 px or more each way."""
     rig = Rig()
-    rig.client.put("/api/quiniela/horses", json={"text": "5. Right to Party\n12. Chief Wallabee\n15. Emerging Market\n19. Golden Tempo"})
-    _cups_at_post(rig, {n: 2 for n in range(1, 21) if n != 15})                  # 15 held nothing at the post
+    rig.client.put("/api/quiniela/horses", json={"text": "3. Grand Mo the First\n5. Right to Party\n12. Chief Wallabee\n15. Emerging Market\n19. Golden Tempo"})
+    _cups_at_post(rig, {n: 2 for n in range(1, 21) if n not in (15, 12)})                  # 15 and 12 held nothing at the post
     server = picker_check.Server(rig)
     picker = picker_check.Picker(server, touch=True)
     chrome = picker.chrome
@@ -1520,53 +1569,164 @@ def _picker_cards(picker_check, requests, slow):
             chrome.eval("1")
             time.sleep(0.05)
 
-    def boxes():
-        return {c["slot"]: c for c in json.loads(chrome.eval(CARDS_BOXES_JS))}
+    def groups():
+        return json.loads(chrome.eval(CARDS_BOXES_JS))
 
-    def problems(cards):
+    def seams():
+        return {s["after"]: s for s in json.loads(chrome.eval(SEAMS_JS))}
+
+    def order(gs):
+        return [[c["slot"] for c in g["cells"]] for g in gs]
+
+    def problems(gs):
+        """What is wrong with the cards as laid out: a part over another or outside its card, a name clipped or small, a
+        button that is not the x (or any in a dead heat's cell), the x not at the top corner above the cloth, a target under 44 px."""
         out = []
-        for slot, c in cards.items():
-            if not c["filled"]:
-                continue
-            parts = {k: v for k, v in c["parts"].items() if v}
-            names = sorted(parts)
-            for i, a in enumerate(names):
-                for b in names[i + 1:]:
-                    if _overlap(parts[a], parts[b]):
-                        out.append(f"{slot}: {a} overlaps {b}")
-            for k, v in parts.items():
-                if v["left"] < c["card"]["left"] - 1 or v["right"] > c["card"]["right"] + 1 or v["bottom"] > c["card"]["bottom"] + 1:
-                    out.append(f"{slot}: {k} sticks out of its card")
-            if parts["name"]["clipped"]:
-                out.append(f"{slot}: the name is clipped")
-            if parts["name"]["font"] < 18:
-                out.append(f"{slot}: the name is down to {parts['name']['font']}px")
-            for k in ("clear", "tie"):
-                if k in parts and (parts[k]["width"] < 44 or parts[k]["height"] < 44):
-                    out.append(f"{slot}: {k} is {parts[k]['width']:.0f} x {parts[k]['height']:.0f}")
+        for g in gs:
+            if g["dead"] and (not g["untie"] or g["untie"]["width"] < 44 or g["untie"]["height"] < 44):
+                out.append(f"{g['title']}: UNTIE is missing or under 44 px")
+            for c in g["cells"]:
+                if not c["filled"]:
+                    continue
+                parts = {k: v for k, v in c["parts"].items() if v}
+                names = sorted(parts)
+                for i, a in enumerate(names):
+                    for b in names[i + 1:]:
+                        if _overlap(parts[a], parts[b]):
+                            out.append(f"{c['slot']}: {a} overlaps {b}")
+                for k, v in parts.items():
+                    if v["left"] < c["card"]["left"] - 1 or v["right"] > c["card"]["right"] + 1 or v["bottom"] > c["card"]["bottom"] + 1:
+                        out.append(f"{c['slot']}: {k} sticks out of its card")
+                if parts["name"]["clipped"]:
+                    out.append(f"{c['slot']}: the name is clipped")
+                if parts["name"]["font"] < (14 if g["dead"] else 18):
+                    out.append(f"{c['slot']}: the name is down to {parts['name']['font']}px")
+                if c["buttons"] != ([] if g["dead"] else ["slot-clear"]) or (g["dead"] and "label" in parts):
+                    out.append(f"{c['slot']}: buttons {c['buttons']}, label {'label' in parts}")
+                clear = parts.get("clear")
+                if clear and (clear["width"] < 44 or clear["height"] < 44 or clear["bottom"] > parts["saddle"]["top"] + 0.5
+                              or clear["right"] < c["card"]["right"] - 14):
+                    out.append(f"{c['slot']}: the x is {clear['width']:.0f} x {clear['height']:.0f}, not alone at the top corner above the cloth")
+        return out
+
+    def seam_problems(gs, links):
+        """A link under 44 px each way, over a cloth, a name, a badge, an x or an UNTIE, or reaching more than 11 px into the card
+        above or 19 into the card below (its padding, and the middle of the head row)."""
+        out = []
+        pressed = [(c["slot"], k, v) for g in gs for c in g["cells"] for k, v in c["parts"].items() if v and k != "label"]
+        pressed += [("the dead heat", "UNTIE", g["untie"]) for g in gs if g["untie"]]
+        for after, s in links.items():
+            if s["width"] < 44 or s["height"] < 44:
+                out.append(f"the link after {after} is {s['width']:.0f} x {s['height']:.0f}")
+            out += [f"the link after {after} covers {owner}'s {k}" for owner, k, v in pressed if _overlap(s, v)]
+        for i, g in enumerate(gs):
+            s = links.get(g["cells"][-1]["slot"])
+            below = gs[i + 1]["box"]["top"] if i + 1 < len(gs) else None
+            if s and (s["top"] < g["box"]["bottom"] - 11.5 or s["top"] > g["box"]["bottom"] + 0.5
+                      or (below is not None and (s["bottom"] < below - 0.5 or s["bottom"] > below + 19.5))):
+                out.append(f"the link after {g['cells'][-1]['slot']} is at {s['top']:.0f}-{s['bottom']:.0f} between the cards at {g['box']['bottom']:.0f} and {below}")
         return out
 
     try:
         picker.open()
-        for horse in (15, 19, 5):
+        for horse in (15, 19, 5, 3):                 # 15 had no bets: the 4TH card asks for the next finisher
             picker.tap_horse(horse)
             settle(0.3)
-        picker.tap_horse(12)                         # 15 had no bets: the 4TH card asks for the next finisher
+        gs, links = groups(), seams()
+        _check("WIN 15 EMERGING MARKET (NO BETS), PLACE 19 GOLDEN TEMPO, SHOW 5 RIGHT TO PARTY, 4TH 3 GRAND MO THE FIRST: four cards, each the "
+               "place's name, the cloth, the name whole and the badge where it applies, the x alone at its top corner above the cloth",
+               order(gs) == [["win"], ["place"], ["show"], ["next:0"]] and not problems(gs), str(problems(gs)))
+        _check("a link on every seam, between the cards and under the last: a 44 px tap area in the middle of the gap, over no cloth, name, "
+               "badge or x", sorted(links) == ["next:0", "place", "show", "win"] and not seam_problems(gs, links), str(seam_problems(gs, links)))
+        fit = json.loads(chrome.eval(FIT_JS))
+        _check("one quiet box over CONFIRM RESULTS says it once: #15, no bets at the post, La Quiniela skips it, La Subasta still pays its owner",
+               fit["note"] == "#15: no bets at the post. La Quiniela skips it; La Subasta still pays its owner." and fit["boxes"] == 1
+               and _grey(fit["noteColour"]) and _grey(fit["noteBorder"]), str(fit))
+        chrome.eval("(() => { const link = document.querySelector(\".seam button[data-after='win']\"); link.click(); link.click(); return 1; })()")
         settle(0.3)
-        cards = boxes()
-        _check("WIN 15 EMERGING MARKET (NO BETS), PLACE 19 GOLDEN TEMPO, SHOW 5 RIGHT TO PARTY, 4TH 12 CHIEF WALLABEE: four cards, "
-               "every part in a place of its own, every name whole",
-               sorted(cards) == ["next:0", "place", "show", "win"] and cards["win"]["parts"]["nobets"] is not None
-               and cards["win"]["tieText"] == "DEAD HEAT" and not problems(cards), str(problems(cards)))
-        chrome.tap(".slot-tie[data-slot='win']")
+        _check("a click that fires twice on the link under WIN ties once", chrome.eval("resultsState.tied.length") == 1, chrome.eval("JSON.stringify(resultsState.tied)"))
+        gs, links = groups(), seams()
+        g = gs[0]
+        _check("a dead heat between WIN and PLACE: one card, taller than a single one, headed WIN · PLACE — DEAD HEAT, the two horses side by "
+               "side inside it, one UNTIE, no x or button in the cells",
+               order(gs) == [["win", "place"], ["show"], ["next:0"]] and g["dead"] and g["title"] == "WIN · PLACE — DEAD HEAT"
+               and abs(g["cells"][0]["card"]["top"] - g["cells"][1]["card"]["top"]) < 1
+               and g["cells"][0]["card"]["right"] <= g["cells"][1]["card"]["left"] + 1 and g["box"]["height"] > gs[1]["box"]["height"]
+               and not problems(gs), f"{g['title']!r} {problems(gs)}")
+        fit = json.loads(chrome.eval(FIT_JS))
+        _check("...no dashed line and no 'DEAD HEAT · with WIN' caption; its link ties SHOW in as the third, SHOW's and 4TH's stay",
+               not fit["dashed"] and not fit["caption"] and sorted(links) == ["next:0", "place", "show"] and not seam_problems(gs, links),
+               f"{fit['dashed']} {fit['caption']} {sorted(links)} {seam_problems(gs, links)}")
+        chrome.tap(".seam button[data-after='place']")
         settle(0.3)
-        cards = boxes()
-        _check("a dead heat between WIN and PLACE: PLACE says so on a line of its own, WIN's button reads UNTIE, nothing covered",
-               cards["place"]["tiedText"] == "DEAD HEAT \u00b7 with WIN" and cards["place"]["parts"]["tied"] is not None
-               and cards["win"]["tieText"] == "UNTIE" and not problems(cards), f"{cards['place']['tiedText']!r} {problems(cards)}")
-        _check("...the name and the tie line of PLACE are two boxes, one above the other",
-               cards["place"]["parts"]["tied"]["bottom"] <= cards["place"]["parts"]["name"]["top"] + 0.5
-               or cards["place"]["parts"]["name"]["bottom"] <= cards["place"]["parts"]["tied"]["top"] + 0.5)
+        gs, links = groups(), seams()
+        g = gs[0]
+        _check("a dead heat of three: one card headed WIN · PLACE · SHOW — DEAD HEAT, two horses side by side and the third under them, one "
+               "UNTIE, no link under it (a dead heat is two or three horses), the 4TH card's link stays",
+               order(gs) == [["win", "place", "show"], ["next:0"]] and g["title"] == "WIN · PLACE · SHOW — DEAD HEAT"
+               and abs(g["cells"][0]["card"]["top"] - g["cells"][1]["card"]["top"]) < 1
+               and g["cells"][2]["card"]["top"] >= max(g["cells"][0]["card"]["bottom"], g["cells"][1]["card"]["bottom"]) - 1
+               and sorted(links) == ["next:0"] and not problems(gs) and not seam_problems(gs, links), f"{g['title']!r} {problems(gs)} {sorted(links)}")
+        chrome.tap(".group-untie")
+        settle(0.3)
+        _check("UNTIE: the whole dead heat is undone, four cards again",
+               order(groups()) == [["win"], ["place"], ["show"], ["next:0"]] and chrome.eval("resultsState.tied.length") == 0)
+        chrome.tap(".seam button[data-after='show']")
+        settle(0.3)
+        gs = groups()
+        _check("a dead heat for third: SHOW and the 4TH card are one card, headed SHOW · 4TH — DEAD HEAT",
+               order(gs) == [["win"], ["place"], ["show", "next:0"]] and gs[2]["title"] == "SHOW · 4TH — DEAD HEAT" and not problems(gs),
+               f"{gs[2]['title']!r} {problems(gs)}")
+        # a dead heat for third with no 4TH card yet: the link under SHOW makes the card, merged, and the next tap fills it
+        chrome.tap("#results-reset-btn")
+        settle(0.4)
+        for horse in (19, 5, 3):
+            picker.tap_horse(horse)
+            settle(0.3)
+        _check("three horses with bets: no 4TH card, a link under SHOW all the same",
+               order(groups()) == [["win"], ["place"], ["show"]] and "show" in seams(), str(order(groups())))
+        chrome.tap(".seam button[data-after='show']")
+        settle(0.3)
+        gs = groups()
+        _check("the link under SHOW makes a 4TH card tied to it, empty and lit, CONFIRM RESULTS waiting for it",
+               order(gs) == [["win"], ["place"], ["show", "next:0"]] and not gs[2]["cells"][1]["filled"]
+               and chrome.eval("activeSlot()") == "next:0" and chrome.eval("getComputedStyle(document.getElementById('results-confirm-btn')).display") == "none",
+               f"{order(gs)} {chrome.eval('activeSlot()')}")
+        picker.tap_horse(1)
+        settle(0.3)
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
+        saved = rig.board.results()
+        _check("1 fills it and the record carries the tie: 3 and 1 dead heat for third", saved == {"win": 19, "place": 5, "show": 3, "next": [1], "ties": [[3, 1]]}, str(saved))
+        rig.post("/api/results/clear")
+        chrome.wait_for("!document.getElementById('loader').classList.contains('show')", timeout=15)
+        picker.open()
+        # the fit: 15 and 12 nobody bet, so a 4TH and a 5TH card ask for the next two finishers; WIN, PLACE and SHOW one card
+        chrome.tap("#results-reset-btn")
+        settle(0.4)
+        for horse in (15, 12, 19, 5, 3):
+            picker.tap_horse(horse)
+            settle(0.3)
+        chrome.tap(".seam button[data-after='win']")
+        settle(0.3)
+        chrome.tap(".seam button[data-after='place']")
+        settle(0.4)
+        gs, links = groups(), seams()
+        fit = json.loads(chrome.eval(FIT_JS))
+        _check("a three-way dead heat of 15 EMERGING MARKET (NO BETS), 12 CHIEF WALLABEE (NO BETS) and 19 GOLDEN TEMPO, 5 RIGHT TO PARTY 4TH, "
+               "3 GRAND MO THE FIRST 5TH: one card and two, every name whole, the links clear of them",
+               order(gs) == [["win", "place", "show"], ["next:0"], ["next:1"]] and not problems(gs) and not seam_problems(gs, links),
+               f"{order(gs)} {problems(gs)} {seam_problems(gs, links)}")
+        _check("1180 x 820 with all of it showing (the dead heat, the 4TH and 5TH cards, the note for the two, CONFIRM RESULTS): the modal does not "
+               "scroll, the column and the button are inside the screen",
+               fit["viewport"] == [1180, 820] and fit["scroll"][0] <= fit["scroll"][1] and fit["sidebar"][0] >= 0 and fit["sidebar"][1] <= 820
+               and 0 <= fit["button"][0] and fit["button"][1] <= 820
+               and fit["note"] == "#15, #12: no bets at the post. La Quiniela skips them; La Subasta still pays their owners.", str(fit))
+        chrome.tap("#results-confirm-btn")
+        chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
+        saved = rig.board.results()
+        _check("confirmed: the three-way dead heat is one tie in the record",
+               saved == {"win": 15, "place": 12, "show": 19, "next": [5, 3], "ties": [[15, 12, 19]]}, str(saved))
         _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
     finally:
         picker.close()
@@ -1574,8 +1734,8 @@ def _picker_cards(picker_check, requests, slow):
 
 
 def test_slot_cards_have_a_place_for_everything_in_a_browser():
-    """Joey, 2026-10-23: on the WIN / PLACE / SHOW / 4TH cards the DEAD HEAT and UNTIE buttons sat on top of the horse name,
-    the NO BETS badge and the tie line. Skipped where there is no Chrome."""
+    """Joey, 2026-10-23 and 2026-10-26: what a card shows and where, a dead heat as one card, the seam's link, the note, and the
+    whole column at 1180 x 820. Skipped where there is no Chrome."""
     picker_check = _picker_check()
     if not picker_check.available():
         _check("SET WINNERS card checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
@@ -1773,10 +1933,11 @@ def test_picker_is_a_state_machine_only_taps_move():
            and "if (resultsModalOpen()) {" in _js_function(js, "function connectResultsStream()"))
     _check("the confirm waits briefly for the LED calls in flight, then sets the results whatever they did",
            "await ledDrain(3000);" in js and "win: winHorse" in js and "cup: post" in js)
-    # the page: three tappable slots, each with its x, the note line, the warnings box over the confirm button
-    _check("three slots you can tap, each with an x, and the note and warning elements",
-           all(f'data-slot="{s}"' in html and f"chooseSlot('{s}')" in html and f"clearSlot('{s}')" in html for s in ("win", "place", "show"))
-           and 'id="results-pick-note"' in html and 'id="results-confirm-warnings"' in html)
+    # the page: the cards are made by one function, each tappable with its x; the note line, and over the button the note and the refusal
+    card = _js_function(js, "function slotCard(key)")
+    _check("a card per place, tappable, with its x, made by one function into #results-cards; the note line, the notes box and the refusal line are in the page",
+           "card.onclick = () => chooseSlot(key);" in card and "clearSlot(key)" in card and 'id="results-cards"' in html
+           and all(f'id="{i}"' in html for i in ("results-pick-note", "results-confirm-notes", "results-confirm-refusal")))
     _check("the active slot is lit, the slots' type is big, and taps are plain (touch-action: manipulation)",
            ".result-slot.is-active" in css and ".slot-clear" in css and ".winner-pick-tag" in css
            and css.count("touch-action: manipulation") >= 4)
@@ -1857,10 +2018,9 @@ def test_picker_marks_horses_nobody_bet():
     _check("every picker is marked from them by its horse: dimmed (no-bets) and tagged NO BETS",
            "const noBets = hadNoBets(horse);" in ui and "btn.classList.toggle('no-bets', noBets);" in ui
            and "noBets ? 'NO BETS' : ''" in ui and "none.className = 'winner-pick-nobets';" in js)
-    _check("a pick nobody bet is warned about over CONFIRM RESULTS, word for word: the real finish, La Quiniela skips it",
-           "`#${horse} ${horseDisplayName(horse)}: no bets at the post, so La Quiniela skips it `" in ui
-           and "'for the next finisher. La Subasta pays its owner all the same.'" in ui
-           and "warning.className = 'confirm-warning';" in ui and "warnings.appendChild(warning);" in ui)
+    _check("a pick nobody bet is said once over CONFIRM RESULTS, word for word: the real finish, La Quiniela skips it, La Subasta still pays",
+           "`${skipped.join(', ')}: no bets at the post. La Quiniela skips ${many ? 'them' : 'it'}; La Subasta still pays "
+           "${many ? 'their owners' : 'its owner'}.`" in ui and "getElementById('results-confirm-notes').textContent" in ui)
     _check("...and its slot card shows the tag", "if (hadNoBets(horseNum))" in _js_function(js, "function updateSlot(slot, horseNum)")
            and "none.className = 'slot-nobets';" in js)
     _check("picking it is allowed and CONFIRM RESULTS stays enabled: nothing refuses or disables on NO BETS",
@@ -1873,7 +2033,7 @@ def test_picker_marks_horses_nobody_bet():
            bool(tag) and all(s in tag.group(1) for s in ("background: #D32F2F;", "font-size: 14px;", "left: 6px;")))
     _check("the picker dimmed but not its tag, the slot card's tag, the warning, a modal that scrolls when taller than the screen",
            ".winner-pick-btn.no-bets .winner-pick-name" in css and ".winner-pick-btn.no-bets .winner-pick-nobets" in css
-           and ".slot-nobets {" in css and ".confirm-warning {" in css
+           and ".slot-nobets {" in css and ".confirm-notes {" in css
            and re.search(r"#results-modal\.active \{[^}]*overflow-y: auto;", css) is not None
            and "#results-modal.active .results-modal-content {\n    margin: auto;" in css.replace("\r\n", "\n"))
 
@@ -1891,24 +2051,23 @@ def test_confirm_step_lists_no_picks():
            not any(s in text for s in ("confirm-row", "confirm-summary") for text in (js, css, html)))
     section = html[html.index('id="results-confirm-section"'):]
     section = section[:section.index("</button>")]
-    _check("the confirm step holds the warnings box and CONFIRM RESULTS, nothing else",
-           re.findall(r'id="([^"]+)"', section) == ["results-confirm-section", "results-confirm-warnings", "results-confirm-btn"],
+    _check("the confirm step holds the note, the refusal line and CONFIRM RESULTS, nothing else",
+           re.findall(r'id="([^"]+)"', section) == ["results-confirm-section", "results-confirm-notes", "results-confirm-refusal", "results-confirm-btn"],
            str(re.findall(r'id="([^"]+)"', section)))
     ui = _js_function(js, "function updateResultsModalUI()")
-    _check("...which is filled with the warnings only", "getElementById('results-confirm-warnings')" in ui
-           and ui.count("appendChild(") == 1 and "warnings.appendChild(warning);" in ui)
-    _check("an empty warnings box takes no room; CONFIRM RESULTS sits one card gap under SHOW, no divider",
-           ".confirm-warnings:empty {\n    display: none;\n}" in css
-           and ".results-modal-named .confirm-section-sidebar {\n    margin-top: 0;\n    padding-top: 0;\n    border-top: 0;\n}" in css
-           and "margin-bottom: 14px;" in css[css.index(".confirm-warnings {"):][:200])
+    _check("...the note filled with its one sentence, the refusal line with pi5's reason, nothing built into them",
+           "getElementById('results-confirm-notes')" in ui and "getElementById('results-confirm-refusal')" in ui and "appendChild(" not in ui)
+    _check("an empty note or refusal line takes no room; CONFIRM RESULTS sits under the last card, no divider",
+           ".confirm-notes:empty,\n.confirm-refusal:empty {\n    display: none;\n}" in css
+           and ".results-modal-named .confirm-section-sidebar {\n    margin-top: 0;\n    padding-top: 0;\n    border-top: 0;\n}" in css)
     name_rule = re.search(r"\n\.slot-horse-name \{(.*?)\}", css, re.S).group(1)
-    warning_rule = re.search(r"\n\.confirm-warning \{(.*?)\}", css, re.S).group(1)
-    _check("a slot card's name and a warning line wrap only between words",
-           "overflow-wrap: normal;" in name_rule and "anywhere" not in name_rule and "overflow-wrap: normal;" in warning_rule
-           and "word-break" not in name_rule + warning_rule)
+    note_rule = re.search(r"\n\.confirm-notes \{(.*?)\}", css, re.S).group(1)
+    _check("a card's name and the note wrap only between words",
+           "overflow-wrap: normal;" in name_rule and "anywhere" not in name_rule and "overflow-wrap: normal;" in note_rule
+           and "word-break" not in name_rule + note_rule)
     fit = _js_function(js, "function fitSlotName(el)")
     _check("...and a word too wide for the card shrinks, a pixel at a time, never below 12 px",
-           "fitSlotName(name);" in _js_function(js, "function updateSlot(slot, horseNum)")
+           ".forEach(fitSlotName)" in _js_function(js, "function renderResultCards()")
            and "el.scrollWidth > room + 0.5" in fit and "el.parentElement.clientWidth" in fit and "size -= 1;" in fit
            and "const SLOT_NAME_MIN_PX = 12;" in js)
 
@@ -2764,7 +2923,7 @@ def _control_center_taps(picker_check, touch, requests, slow):
         _check(f"Control Center {mode}: SET WINNERS, a double tap on RESET sends its unlock once; a RESET after new picks unlocks again",
                reset_once == 1 and posts(t, "/api/cup/unlock") == 1
                and chrome.eval("JSON.stringify(resultsState)") == json.dumps({"chosen": None, "win": None, "place": None, "show": None,
-                                                                              "next": [], "tied": []}, separators=(",", ":")),
+                                                                              "next": [], "tied": [], "refusal": None}, separators=(",", ":")),
                str((reset_once, posts(t, "/api/cup/unlock"), chrome.eval("JSON.stringify(resultsState)"))))
         pick_three()
         chrome.wait_for("getComputedStyle(document.getElementById('results-confirm-section')).display !== 'none'", timeout=10)
@@ -3194,14 +3353,13 @@ def _picker_follows_the_field(picker_check, requests, slow):
         assert r.status_code == 200, r.get_json()
         t = time.monotonic()
         chrome.tap("#results-confirm-btn")
-        chrome.wait_for("document.getElementById('results-pick-note').innerText.includes('not in the field') && "
-                        "document.getElementById('results-pick-note').innerText.includes('was scratched')", timeout=8)
+        chrome.wait_for("document.getElementById('results-pick-note').innerText.includes('was scratched')", timeout=8)
         note = picker.note()
-        _check("CONFIRM RESULTS from a stale dialog: pi5 refuses (12 is not in the field), the dialog shows its line and then what "
-               "the field read again found, nothing saved, the picker open",
-               note == "place: horse 12 is not in the field. #12 TRACK PHANTOM was scratched: PLACE is empty, tap the horse that finished there."
-               and not rig.results_file.exists() and posts(t, "/api/results") == 1 and chrome.eval(modal_up) and rig.bridge.phase == 4,
-               repr(note))
+        _check("CONFIRM RESULTS from a stale dialog: pi5 refuses (12 is not in the field), nothing saved, the picker open; the field read "
+               "again takes 12 out of PLACE, which says so under the heading, and CONFIRM RESULTS is gone until PLACE is set again",
+               note == "#12 TRACK PHANTOM was scratched: PLACE is empty, tap the horse that finished there."
+               and not rig.results_file.exists() and posts(t, "/api/results") == 1 and chrome.eval(modal_up) and rig.bridge.phase == 4
+               and chrome.eval("getComputedStyle(document.getElementById('results-confirm-btn')).display") == "none", repr(note))
         wait_gone(12)
         settle(0.3)
         st = picker.state()

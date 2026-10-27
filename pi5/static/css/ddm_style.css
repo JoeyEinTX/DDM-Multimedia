@@ -2663,6 +2663,7 @@ a.drawer-link {
 .results-modal-content.results-modal-named {
     max-width: 1120px;
     width: calc(100vw - 48px);
+    padding: 16px 24px;
 }
 
 .saddle-cloth-grid.winner-pick-grid {
@@ -2759,12 +2760,11 @@ a.drawer-link {
     border-color: #B0BEC5;
 }
 
-/* The three slots beside the pickers: the saddle cloth, the name under it. */
+/* A card's horse: the saddle cloth, and beside it the name and the NO BETS badge. */
 .slot-value.slot-named {
     height: auto;
-    min-height: 65px;
-    flex-direction: column;
-    gap: 4px;
+    min-height: 56px;
+    gap: 10px;
 }
 
 .slot-horse-name {
@@ -2779,22 +2779,29 @@ a.drawer-link {
     overflow-wrap: normal;      /* only between words; a word too wide shrinks (fitSlotName) */
 }
 
-/* SET WINNERS: the slots are cards you can tap. The one the next horse tap
-   fills is lit in its own colour; each shows its horse's cloth, number and
-   name big enough to read at arm's length (an iPad, 1180 x 820); a filled one
-   has an x to empty it. A horse that is placed says which slot it is in. All
-   of it is plain clicks (touch-action: manipulation: no double-tap zoom, no
+/* SET WINNERS: the places are cards you can tap. The one the next horse tap
+   fills is lit in its own colour; each shows its horse's cloth with the name
+   and, when nobody bet the horse, the NO BETS badge beside it, big enough to
+   read at arm's length (an iPad, 1180 x 820); a filled card has an x at its top
+   corner to empty it. A dead heat is one card, its horses side by side. All of
+   it is plain clicks (touch-action: manipulation: no double-tap zoom, no
    waiting to see whether a second tap is coming). */
 .results-modal-named .results-sidebar {
     width: 270px;
     flex: 0 0 270px;
-    gap: 14px;
+    gap: 0;
+    padding: 8px 10px;
+}
+
+/* a card, or the places of a dead heat in one; the 14 px under it is the seam */
+.results-modal-named .result-group {
+    margin-bottom: 14px;
 }
 
 .results-modal-named .result-slot {
     --slot-colour: #666666;
     position: relative;
-    padding: 8px 10px 12px;
+    padding: 4px 10px 8px;
     border: 3px solid #3a3a3a;
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.03);
@@ -2808,74 +2815,41 @@ a.drawer-link {
 .results-modal-named .result-slot[data-slot="show"]  { --slot-colour: #CD7F32; }
 .results-modal-named .result-slot[data-slot^="next:"] { --slot-colour: #B0BEC5; }   /* 4TH, 5TH...: the next finishers */
 
+/* a dead heat: one card (the group's), the places' cards inside it show no outline of their own until one is lit */
+.results-modal-named .result-group.is-dead-heat {
+    padding: 0 8px 8px;
+    border: 3px solid #E0E0E0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.results-modal-named .is-dead-heat .result-slot {
+    padding: 4px 4px 6px;
+    border-color: transparent;
+    background: none;
+}
+
 .results-modal-named .result-slot.is-active {
     border-color: var(--slot-colour);
     box-shadow: 0 0 22px var(--slot-colour), inset 0 0 14px rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.09);
 }
 
-.results-modal-named .result-slot .slot-label {
-    margin-bottom: 4px;
-    font-size: 1.15em;
-    letter-spacing: 3px;
-}
-
-.results-modal-named .slot-value {
-    min-height: 74px;
-}
-
-.results-modal-named .slot-value:empty::before {
-    content: "\2014";
-    font-size: 2.2em;
-    color: #4a4a4a;
-}
-
-.results-modal-named .slot-saddle {
-    width: 80px;
-    height: 60px;
-    font-size: 2.4em;
-}
-
-.results-modal-named .slot-horse-name {
-    max-width: 240px;
-    font-size: 1.45em;
-    line-height: 1.12;
-    color: #ffffff;
-}
-
-.results-modal-named .slot-hint {
-    display: none;
-    margin-top: 6px;
-    text-align: center;
-    font-size: 0.85em;
-    font-weight: 800;
-    letter-spacing: 1.5px;
-    color: var(--slot-colour);
-}
-
-.results-modal-named .result-slot.is-active .slot-hint {
-    display: block;
-}
-
-/* The head of a card is one row: the slot's name on the left, then DEAD HEAT / UNTIE and the x, each its own
-   box, 44 px or more each way (the same as every other button the host presses). The tie line is a row of
-   its own under it, and the horse (cloth, name, NO BETS) under that: nothing sits on top of anything else. */
+/* the head of a card is one row: the place's name, and the x at the card's top corner, above the cloth (44 px each
+   way, the same as every other button the host presses) */
 .results-modal-named .slot-head {
     display: flex;
     align-items: center;
     gap: 6px;
-}
-
-/* room under the buttons, so a finger on one never lands on the cloth below it */
-.results-modal-named .result-slot.is-filled .slot-head {
     min-height: 44px;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .results-modal-named .slot-head .slot-label {
     flex: 1 1 0;
     min-width: 0;
     margin: 0;
+    font-size: 1.15em;
     letter-spacing: 2px;
     text-align: left;
 }
@@ -2902,45 +2876,168 @@ a.drawer-link {
     display: flex;
 }
 
-/* A dead heat: DEAD HEAT on a filled card ties the card after it to it; the tied card says so and joins the one above */
-.results-modal-named .slot-tie {
+.results-modal-named .slot-value:empty::before {
+    content: "\2014";
+    margin: 0 auto;
+    font-size: 2.2em;
+    color: #4a4a4a;
+}
+
+.results-modal-named .slot-saddle {
+    flex: 0 0 auto;
+    width: 64px;
+    height: 48px;
+    font-size: 2em;
+}
+
+.results-modal-named .slot-who {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.results-modal-named .slot-horse-name {
+    max-width: none;
+    font-size: 1.45em;
+    line-height: 1.12;
+    color: #ffffff;
+    text-align: left;
+}
+
+.results-modal-named .slot-hint {
     display: none;
+    margin-top: 4px;
+    text-align: center;
+    font-size: 0.85em;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--slot-colour);
+}
+
+.results-modal-named .result-slot.is-active .slot-hint {
+    display: block;
+}
+
+/* a dead heat's title (the places it covers) with its one UNTIE, over the horses in two columns (a third has the row
+   under them to itself), each cloth over its name */
+.results-modal-named .group-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+}
+
+.results-modal-named .group-title {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 0.82em;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    line-height: 1.25;
+    color: #E0E0E0;
+}
+
+.results-modal-named .group-title span {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.results-modal-named .group-untie {
     flex: 0 0 auto;
     min-width: 44px;
     min-height: 44px;
-    padding: 0 8px;
+    padding: 0 6px;
     border: 2px solid #666666;
     border-radius: 22px;
     background: #222222;
     color: #dddddd;
-    font-size: 0.72em;
+    font-size: 0.8em;
     font-weight: 800;
     letter-spacing: 0.5px;
     cursor: pointer;
     touch-action: manipulation;
 }
 
-.results-modal-named .result-slot.is-filled .slot-tie {
-    display: block;
+.results-modal-named .group-cells {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
 }
 
-.results-modal-named .result-slot.is-tied {
-    margin-top: -8px;
-    border-top-style: dashed;
-    border-top-color: #E0E0E0;
+.results-modal-named .group-cells > .result-slot:nth-child(3) {
+    grid-column: 1 / -1;
 }
 
-.results-modal-named .slot-tied-label {
-    display: block;
-    min-height: 1.2em;
+.results-modal-named .is-dead-heat .slot-head {
+    display: none;
+}
+
+.results-modal-named .is-dead-heat .slot-value {
+    flex-direction: column;
+    gap: 4px;
+}
+
+.results-modal-named .is-dead-heat .slot-saddle {
+    width: 52px;
+    height: 40px;
+    font-size: 1.7em;
+}
+
+.results-modal-named .is-dead-heat .slot-who {
+    flex: 0 0 auto;
+    width: 100%;
+    align-items: center;
+}
+
+.results-modal-named .is-dead-heat .slot-horse-name {
+    font-size: 1.05em;
+    text-align: center;
+}
+
+/* The link on the seam between two cards: a row of no height in the middle of the 14 px gap. Its pill is centred in the gap;
+   its 44 px tap area reaches 11 px into the card above (its padding) and 19 into the card below (the middle of its head
+   row, where nothing is): never the cloth, the name, a badge or a button. Under the last card the row takes the 15 px
+   so the tap area does not reach into what follows. */
+.results-modal-named .seam {
+    position: relative;
+    z-index: 2;
+    height: 0;
+}
+
+.results-modal-named .seam:last-child {
+    height: 15px;
+}
+
+.results-modal-named .seam button {
+    position: absolute;
+    top: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 44px;
+    height: 44px;
+    padding: 0 10px 8px;                   /* the text in the middle of the pill, not of the tap area */
+    border: 0;
+    background: transparent;
+    color: #E0E0E0;
     font-size: 0.72em;
     font-weight: 800;
     letter-spacing: 1px;
-    color: #E0E0E0;
+    white-space: nowrap;
+    cursor: pointer;
+    touch-action: manipulation;
 }
 
-.results-modal-named .slot-tied-label:empty {
-    display: none;
+.results-modal-named .seam button::before {
+    content: "";
+    position: absolute;
+    inset: 5px 0 13px;
+    z-index: -1;
+    border: 2px solid #666666;
+    border-radius: 13px;
+    background: #222222;
 }
 
 /* Which slot a placed horse is in, on its own button */
@@ -3012,19 +3109,6 @@ a.drawer-link {
     background: #D32F2F;
 }
 
-.confirm-warning {
-    padding: 7px 9px;
-    border: 2px solid #D32F2F;
-    border-radius: 6px;
-    background: rgba(211, 47, 47, 0.2);
-    color: #ffffff;
-    font-size: 0.95em;
-    font-weight: 700;
-    line-height: 1.25;
-    text-align: left;
-    overflow-wrap: normal;      /* wrapped only between words */
-}
-
 /* SET WINNERS taller than the screen (NO BETS warnings over CONFIRM RESULTS,
    a smaller iPad, Safari's bars): the modal scrolls instead of running off
    the top and the bottom out of reach, and stays centred while it fits. */
@@ -3054,25 +3138,52 @@ a.drawer-link {
     color: #ffb74d;
 }
 
-/* The confirm step: the slot cards above are the check (the picks are not
-   listed again), so CONFIRM RESULTS sits one card gap under SHOW, with no
-   divider, and a warning for a pick nobody bet goes between them; with no
-   warning the box takes no room. */
+/* The confirm step: the cards above are the check (the picks are not listed
+   again), so it sits one card gap under the last of them with no divider.
+   Over the button, when a pick was nobody's bet, one quiet note (the real
+   finish is recorded; La Quiniela skips the horse), and after a refusal pi5's
+   reason in the button's own type size, the button outlined in red as NOT SAVED.
+   With nothing to say each takes no room. */
 .results-modal-named .confirm-section-sidebar {
     margin-top: 0;
     padding-top: 0;
     border-top: 0;
 }
 
-.confirm-warnings {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 14px;
+.confirm-notes {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: #a8a8a8;
+    font-size: 0.85em;
+    line-height: 1.3;
+    text-align: left;
+    overflow-wrap: normal;      /* wrapped only between words */
 }
 
-.confirm-warnings:empty {
+.confirm-refusal {
+    margin: 0 0 8px;
+    color: #ff6b6b;
+    font-size: 1.1em;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: left;
+    overflow-wrap: normal;
+}
+
+.confirm-notes:empty,
+.confirm-refusal:empty {
     display: none;
+}
+
+.btn-confirm-sidebar.is-refused {
+    background: transparent;
+    outline: 3px solid #D32F2F;
+    outline-offset: -3px;
+    color: #ff6b6b;
+    box-shadow: none;
 }
 
 .results-modal-named .btn-confirm-sidebar {

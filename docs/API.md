@@ -367,7 +367,7 @@ three horses with bets to be named (`finishers_needed` in
 SET WINNERS dialog asks for them with a `4TH` card (a `5TH`...). `ties` names
 the dead heats: each a list of two or three horses consecutive in the finish
 (win, place, show, then next), no horse in two; the dialog enters one with
-DEAD HEAT on a slot card. La Subasta pays the owners of the real 1st, 2nd
+the DEAD HEAT link on the seam between two cards. La Subasta pays the owners of the real 1st, 2nd
 and 3rd from this record; La Quiniela's payout (`payout_for`, the model's
 `payout`) applies the skip and pools a dead heat's positions.
 

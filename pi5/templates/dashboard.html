@@ -252,46 +252,17 @@
                     </div>
                 </div>
                 
-                <!-- Sidebar with result slots: tap one to make it the slot the next horse fills (the lit one), the x empties it;
-                     DEAD HEAT on a filled card ties the card after it to it (the horses crossed together) -->
+                <!-- Sidebar: the places as cards, made by renderResultCards() (WIN, PLACE, SHOW, then a card per next finisher; a dead
+                     heat is one card). Tap a card to make it the one the next horse fills (the lit one), the x empties it; the
+                     DEAD HEAT link on the seam under a card ties the card after it to it, UNTIE on the merged card undoes it -->
                 <div class="results-sidebar">
-                    <div class="result-slot" data-slot="win" role="button" tabindex="0" onclick="chooseSlot('win')"
-                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('win'); }">
-                        <div class="slot-head">
-                            <span class="slot-label win">WIN</span>
-                            <button type="button" class="slot-tie" data-slot="win" onclick="event.stopPropagation(); tieAfter('win')">DEAD HEAT</button>
-                            <button type="button" class="slot-clear" data-slot="win" aria-label="Clear WIN" onclick="event.stopPropagation(); clearSlot('win')">&times;</button>
-                        </div>
-                        <div class="slot-tied-label"></div>
-                        <div class="slot-value" id="slot-win"></div>
-                        <span class="slot-hint"></span>
-                    </div>
-                    <div class="result-slot" data-slot="place" role="button" tabindex="0" onclick="chooseSlot('place')"
-                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('place'); }">
-                        <div class="slot-head">
-                            <span class="slot-label place">PLACE</span>
-                            <button type="button" class="slot-tie" data-slot="place" onclick="event.stopPropagation(); tieAfter('place')">DEAD HEAT</button>
-                            <button type="button" class="slot-clear" data-slot="place" aria-label="Clear PLACE" onclick="event.stopPropagation(); clearSlot('place')">&times;</button>
-                        </div>
-                        <div class="slot-tied-label"></div>
-                        <div class="slot-value" id="slot-place"></div>
-                        <span class="slot-hint"></span>
-                    </div>
-                    <div class="result-slot" data-slot="show" role="button" tabindex="0" onclick="chooseSlot('show')"
-                         onkeydown="if (event.target === this && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); chooseSlot('show'); }">
-                        <div class="slot-head">
-                            <span class="slot-label show">SHOW</span>
-                            <button type="button" class="slot-tie" data-slot="show" onclick="event.stopPropagation(); tieAfter('show')">DEAD HEAT</button>
-                            <button type="button" class="slot-clear" data-slot="show" aria-label="Clear SHOW" onclick="event.stopPropagation(); clearSlot('show')">&times;</button>
-                        </div>
-                        <div class="slot-tied-label"></div>
-                        <div class="slot-value" id="slot-show"></div>
-                        <span class="slot-hint"></span>
-                    </div>
+                    <div id="results-cards"></div>
 
-                    <!-- Final confirmation (shown when all 3 are set): the slot cards above are the check; here only a warning for a pick nobody bet, then the button -->
+                    <!-- Final confirmation (shown when WIN, PLACE and SHOW are set): the cards above are the check; here the note
+                         for picks nobody bet, pi5's reason when it refused, then the button -->
                     <div id="results-confirm-section" class="confirm-section-sidebar" style="display:none;">
-                        <div id="results-confirm-warnings" class="confirm-warnings"></div>
+                        <div id="results-confirm-notes" class="confirm-notes"></div>
+                        <div id="results-confirm-refusal" class="confirm-refusal" role="alert"></div>
                         <button id="results-confirm-btn" class="modal-btn btn-confirm-sidebar" onclick="resultsConfirm()">CONFIRM RESULTS</button>
                     </div>
                 </div>

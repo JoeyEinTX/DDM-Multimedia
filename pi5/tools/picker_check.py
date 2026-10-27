@@ -309,22 +309,21 @@ MARKS_JS = """JSON.stringify([...document.querySelectorAll('.winner-pick-btn')].
             dim: parseFloat(getComputedStyle(b.querySelector('.winner-pick-name')).opacity)};
 }))"""
 
-# What the picker says about a pick nobody bet: the warning lines over CONFIRM RESULTS, and the slot cards that
-# show the tag.
-WARNINGS_JS = """({
-    lines: [...document.querySelectorAll('#results-confirm-warnings .confirm-warning')].map((w) => w.innerText.trim()),
+# What the picker says about a pick nobody bet: the note over CONFIRM RESULTS, and the cards that show the badge.
+NOTES_JS = """({
+    note: ((document.getElementById('results-confirm-notes') || {}).innerText || '').trim(),
     slots: [...document.querySelectorAll('.result-slot')].filter((s) => s.querySelector('.slot-nobets')).map((s) => s.dataset.slot)
 })"""
 
-# The right column as laid out: the boxes of the modal, the three slot cards, the warning lines and CONFIRM RESULTS
-# (the page's CSS pixels), what the confirm section says, any old list of picks, and every word of a slot card's name
-# or a warning line that is broken across two lines.
+# The right column as laid out: the boxes of the modal, the cards (a dead heat is one), the note and CONFIRM RESULTS
+# (the page's CSS pixels), what the confirm section says, any old list of picks, and every word of a card's name or
+# the note that is broken across two lines.
 COLUMN_JS = r"""JSON.stringify((() => {
     const box = (el) => { if (!el) return null; const b = el.getBoundingClientRect();
                           return {top: b.top, bottom: b.bottom, left: b.left, right: b.right, height: b.height}; };
     const q = (s) => document.querySelector(s);
     const broken = [];
-    document.querySelectorAll('.slot-horse-name, .confirm-warning').forEach((el) => {
+    document.querySelectorAll('.slot-horse-name, .confirm-notes').forEach((el) => {
         const t = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null;
         if (!t) return;
         let i = 0;
@@ -338,10 +337,7 @@ COLUMN_JS = r"""JSON.stringify((() => {
     });
     const button = q('#results-confirm-btn');
     return {vh: innerHeight, modal: box(q('#results-modal .results-modal-content')), sidebar: box(q('.results-sidebar')),
-            win: box(q('.result-slot[data-slot="win"]')), place: box(q('.result-slot[data-slot="place"]')),
-            show: box(q('.result-slot[data-slot="show"]')),
-            nexts: [...document.querySelectorAll('.result-slot[data-slot^="next:"]')].map(box),
-            lines: [...document.querySelectorAll('#results-confirm-warnings .confirm-warning')].map(box),
+            groups: [...document.querySelectorAll('.result-group')].map(box), notes: box(q('.confirm-notes:not(:empty)')),
             button: box(button), enabled: !button.disabled,
             section: q('#results-confirm-section').innerText.replace(/\s+/g, ' ').trim(),
             rows: document.querySelectorAll('.confirm-row, .confirm-summary').length, broken: broken};
@@ -411,8 +407,8 @@ class Picker:
         """The horses the grid tags NO BETS (the tag shown, not just the class), in the grid's order."""
         return [m["horse"] for m in self.marks() if m["shown"]]
 
-    def warnings(self) -> dict:
-        return self.chrome.eval(WARNINGS_JS)
+    def notes(self) -> dict:
+        return self.chrome.eval(NOTES_JS)
 
     def note(self) -> str:
         return self.chrome.eval("(document.getElementById('results-pick-note') || {}).innerText || ''")
@@ -693,9 +689,10 @@ def no_figures(server: Server) -> None:
     server.rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
 
 
-def warning_for(horse: int, name: str) -> str:
-    return (f"#{horse} {name}: no bets at the post, so La Quiniela skips it for the next finisher. "
-            "La Subasta pays its owner all the same.")
+def note_for(horses: List[int]) -> str:
+    many = len(horses) > 1
+    return (f"{', '.join(f'#{h}' for h in horses)}: no bets at the post. La Quiniela skips {'them' if many else 'it'}; "
+            f"La Subasta still pays {'their owners' if many else 'its owner'}.")
 
 
 def s_unknown(c: Ctx) -> None:
@@ -710,8 +707,8 @@ def s_unknown(c: Ctx) -> None:
         c.p.tap_horse(n)
         time.sleep(0.2)
     c.check("  ... three picks as ever", c.picks(), (w, pl, sh))
-    c.check("  ... no slot card shows the tag, no warning over CONFIRM RESULTS, the note line is empty",
-            (c.p.warnings(), c.p.note()), ({"lines": [], "slots": []}, ""))
+    c.check("  ... no card shows the badge, no note over CONFIRM RESULTS, the note line is empty",
+            (c.p.notes(), c.p.note()), ({"note": "", "slots": []}, ""))
     # Figures at the post on the server that the page cannot read (pi5 not answering the model): the same
     figures_at_post(c.server)
     c.server.fail.add("/api/quiniela")
@@ -721,8 +718,8 @@ def s_unknown(c: Ctx) -> None:
         for n in (NO_CUP, pl, sh):
             c.p.tap_horse(n)
             time.sleep(0.2)
-        c.check("  ... the horse nobody bet is picked like any other, with no warning",
-                (c.picks(), c.p.warnings(), c.p.note()), ((NO_CUP, pl, sh), {"lines": [], "slots": []}, ""))
+        c.check("  ... the horse nobody bet is picked like any other, with no note",
+                (c.picks(), c.p.notes(), c.p.note()), ((NO_CUP, pl, sh), {"note": "", "slots": []}, ""))
         shown = c.p.chrome.eval("(() => { const n = document.getElementById('notification');"
                                 " return n.classList.contains('show') && n.classList.contains('error') ? n.textContent : ''; })()")
         c.check("  ... and no error notice", shown, "")
@@ -770,7 +767,7 @@ def s_marks_frozen(c: Ctx) -> None:
     c.p.tap_horse(second)                         # nobody bet 4: picked for PLACE all the same
     c.p.settle(c.slow * 2 + 0.3)
     c.check("a horse nobody bet can be picked: WIN 3, PLACE 4", c.picks(), (first, second, None))
-    c.check("  ... and its slot card shows the tag", c.p.warnings()["slots"], ["place"])
+    c.check("  ... and its card shows the badge", c.p.notes()["slots"], ["place"])
     no_figures(c.server)                          # betting reopened from another device: the figures at the post go
     c.add("the figures at the post dropped on the server", c.server.rig.model()["closing"] is None)
     c.p.chrome.eval("pollRaceMode(); loadQuinielaField(); followServerResults(); 1")           # the page's own refreshes, now
@@ -780,13 +777,12 @@ def s_marks_frozen(c: Ctx) -> None:
     time.sleep(0.3)
     c.check("  ... after a forced refresh and another device's results event: still exactly 4 and 7 tagged",
             c.p.marked(), list(NO_BETS))
-    c.check("  ... the picks and the slot card's tag as they were", (c.picks(), c.p.warnings()["slots"]),
+    c.check("  ... the picks and the card's badge as they were", (c.picks(), c.p.notes()["slots"]),
             ((first, second, None), ["place"]))
     c.p.tap_horse(third)
     c.p.settle(c.slow * 2 + 0.3)
     c.check("  ... the next tap fills SHOW, and the marks stay", (c.picks(), c.p.marked()), ((first, second, third), list(NO_BETS)))
-    c.check("  ... the warning over CONFIRM RESULTS names the horse nobody bet", c.p.warnings()["lines"],
-            [warning_for(second, "CATCHING FREEDOM")])
+    c.check("  ... the note over CONFIRM RESULTS names the horse nobody bet", c.p.notes()["note"], note_for([second]))
     c.fresh(0.0)                                  # closed (another device's reveal dismissed) and opened again
     c.check("opened again, with no figures at the post now: no marks", c.p.marked(), [])
     c.server.led_latency = 0.0
@@ -798,8 +794,8 @@ CONFIRM_SHOWN_JS = "getComputedStyle(document.getElementById('results-confirm-bt
 
 def s_nobets_confirm(c: Ctx) -> None:
     """The real finish with horses nobody bet: 7 (no cup) crossed 1st, 4 (an empty cup) 2nd, then SHOW. Their
-    slot cards show the tag, a 4TH and a 5TH card ask for the next finishers and CONFIRM RESULTS waits for
-    them; the warnings say La Quiniela skips the two; filled, pressing CONFIRM RESULTS records the finish with
+    cards show the badge, a 4TH and a 5TH card ask for the next finishers and CONFIRM RESULTS waits for
+    them; the note says La Quiniela skips the two; filled, pressing CONFIRM RESULTS records the finish with
     next [5, 14]."""
     sh = HORSES["show"]
     fourth, fifth = OTHERS[0], OTHERS[2]               # 5 and 14: cups with bets
@@ -810,13 +806,13 @@ def s_nobets_confirm(c: Ctx) -> None:
             c.p.tap_horse(n)
             time.sleep(0.25)
         c.check("7 (no cup) 1st, 4 (an empty cup) 2nd, then SHOW: the real finish, picked as it was", c.picks(), (NO_CUP, EMPTY_CUP, sh))
-        c.check("  ... the WIN and PLACE slot cards show the tag", c.p.warnings()["slots"], ["win", "place"])
+        c.check("  ... the WIN and PLACE cards show the badge", c.p.notes()["slots"], ["win", "place"])
         c.check("  ... two more cards, 4TH and 5TH, for the finishers La Quiniela moves on to", c.p.chrome.eval(CARDS_JS),
                 [["win", "WIN"], ["place", "PLACE"], ["show", "SHOW"], ["next:0", "4TH"], ["next:1", "5TH"]])
-        c.check("  ... CONFIRM RESULTS waits for them; the heading asks for the 4th; the lines for the two nobody bet are up already",
+        c.check("  ... CONFIRM RESULTS waits for them; the heading asks for the 4th; the note for the two nobody bet is up already",
                 (c.p.chrome.eval(CONFIRM_SHOWN_JS), c.p.chrome.eval("document.getElementById('results-modal-header').innerText"),
-                 len(c.p.warnings()["lines"])),
-                (False, "CHOOSE 4TH", 2))
+                 c.p.notes()["note"]),
+                (False, "CHOOSE 4TH", note_for([NO_CUP, EMPTY_CUP])))
         sub = c.p.chrome.eval("document.getElementById('results-modal-subtitle').innerText")
         c.add("  ... and the subtitle says why, naming the two", sub == "Tap the horse that finished 4th: La Quiniela skips #7 and #4 "
               "(no bets at the post).", repr(sub))
@@ -827,9 +823,8 @@ def s_nobets_confirm(c: Ctx) -> None:
         time.sleep(0.3)
         c.check("14 fills 5TH: three horses with bets are named, no more cards", (c.p.state()["next"], len(c.p.chrome.eval(CARDS_JS))),
                 ([fourth, fifth], 5))
-        seen = c.p.warnings()
-        c.check("  ... the warnings over CONFIRM RESULTS name the two nobody bet, word for word, in slot order", seen["lines"],
-                [warning_for(NO_CUP, "HONOR MARIE"), warning_for(EMPTY_CUP, "CATCHING FREEDOM")])
+        c.check("  ... the note over CONFIRM RESULTS names the two nobody bet, word for word, in slot order", c.p.notes()["note"],
+                note_for([NO_CUP, EMPTY_CUP]))
         button = c.p.chrome.eval("(() => { const b = document.getElementById('results-confirm-btn'); const r = b.getBoundingClientRect();"
                                  " return {disabled: b.disabled, on_screen: r.height > 0 && r.top >= 0 && r.bottom <= innerHeight}; })()")
         c.check("  ... CONFIRM RESULTS is enabled and on screen", button, {"disabled": False, "on_screen": True})
@@ -862,19 +857,19 @@ def s_nobets_confirm(c: Ctx) -> None:
 # The right column, all three slots filled, at the sizes it is seen at: Joey's report of 2026-10-05 (1554 x 1116: the
 # picks listed a second time over CONFIRM RESULTS, COMMANDMEN / T broken there, the column crowded), the iPad both
 # ways round and a short Safari view. The 2026 field's longest names on the horses picked, and the longest real name
-# in the horse data (GRAND MO THE FIRST) on a horse nobody bet, so it is in a warning line too; once more in a wide
-# font (a Pi's fallback sans is wider than Segoe UI).
+# in the horse data (GRAND MO THE FIRST) on a horse nobody bet, so it is in the note too; once more in a wide font (a
+# Pi's fallback sans is wider than Segoe UI).
 COLUMN_SIZES = ((1554, 1116), (1180, 820), (820, 1180), (1180, 740))
 COLUMN_NAMES = {4: "Grand Mo the First", 6: "Commandment", 7: "Danon Bourbon", 11: "Incredibolt",
                 12: "Chief Wallabee", 15: "Emerging Market"}
 COLUMN_FILLS = (((6, 15, 12), 0), ((7, 11, 6), 1), ((4, 7, 15), 2))      # the picks, and how many nobody bet
 COLUMN_WITH_BETS = (12, 11, 6, 15, 3, 5)      # horses with bets, for the next finishers' cards (one per pick nobody bet)
 WIDE_FONT_CSS = "body, body * { font-family: Verdana, 'DejaVu Sans', sans-serif !important; }"
-OVERSIZED_NAME = "Supercalifragilistic"                                   # one word, wider than a card at full size
+OVERSIZED_NAME = "Unquestionable"                                         # one word, wider than a card's name column at full size
 
 
 def s_column(c: Ctx) -> None:
-    """The slot cards are the check: no list of the picks over CONFIRM RESULTS; the cards, any warning lines and
+    """The cards are the check: no list of the picks over CONFIRM RESULTS; the cards, the note if there is one and
     CONFIRM RESULTS stacked in order, evenly, none over another and none past the modal; CONFIRM on screen and
     enabled; no name broken inside a word."""
     figures_at_post(c.server)                                     # 4's cup empty, 7 with no cup
@@ -895,19 +890,19 @@ def s_column(c: Ctx) -> None:
                 time.sleep(0.25)
             time.sleep(0.3)
             col = json.loads(c.p.chrome.eval(COLUMN_JS))
-            lines = c.p.warnings()["lines"]
+            note = c.p.notes()["note"]
             at = f"{width}x{height}, {nobets} nobody bet" + (", a wide font" if wide else "")
             c.check(f"[{at}] picks {picks} in WIN, PLACE, SHOW, the next finishers {after} in cards of their own; over CONFIRM RESULTS "
-                    "only the warnings, no list of the picks",
-                    (c.picks(), c.p.state()["next"], len(col["nexts"]), col["rows"], len(lines), col["section"]),
-                    (picks, after, nobets, 0, nobets, " ".join(lines + ["CONFIRM RESULTS"])))
-            cards = [col["win"], col["place"], col["show"]] + col["nexts"]
-            stack = cards + col["lines"] + [col["button"]]
+                    "only the note, no list of the picks",
+                    (c.picks(), c.p.state()["next"], len(col["groups"]), col["rows"], col["section"]),
+                    (picks, after, 3 + nobets, 0, " ".join(([note] if note else []) + ["CONFIRM RESULTS"])))
+            stack = col["groups"] + ([col["notes"]] if col["notes"] else []) + [col["button"]]
             gaps = [round(b["top"] - a["bottom"], 1) for a, b in zip(stack, stack[1:])]
-            n_cards = len(cards)
-            c.add(f"  ... stacked in order, none over another, the gaps even (14 px between cards, CONFIRM and the warnings)",
-                  all(g >= -0.5 for g in gaps) and all(abs(g - 14) <= 1 for g in gaps[:n_cards] + [gaps[-1]])
-                  and all(abs(g - 8) <= 1 for g in gaps[n_cards:-1]), f"gaps {gaps}")
+            n_cards = len(col["groups"])
+            c.add("  ... stacked in order, none over another, the gaps even (14 px between cards, 29 under the last where the seam's "
+                  "link ends, 12 between the note and CONFIRM)",
+                  all(g >= -0.5 for g in gaps) and all(abs(g - 14) <= 1 for g in gaps[:n_cards - 1]) and abs(gaps[n_cards - 1] - 29) <= 1
+                  and (not col["notes"] or abs(gaps[-1] - 12) <= 1), f"gaps {gaps}")
             m = col["modal"]
             c.add("  ... nothing past the modal's edge", all(b["left"] >= m["left"] - 0.5 and b["right"] <= m["right"] + 0.5
                                                             and b["top"] >= m["top"] - 0.5 and b["bottom"] <= m["bottom"] + 0.5
@@ -916,9 +911,9 @@ def s_column(c: Ctx) -> None:
             c.check("  ... CONFIRM RESULTS on screen and enabled", (b["top"] >= -0.5 and b["bottom"] <= col["vh"] + 0.5, col["enabled"]),
                     (True, True))
             if not nobets:
-                c.add("  ... and with no warning the whole column is on screen, WIN's top to CONFIRM's bottom",
-                      col["win"]["top"] >= -0.5 and b["bottom"] <= col["vh"] + 0.5, f"win {col['win']}, button {b}, vh {col['vh']}")
-            c.check("  ... no name broken inside a word, in a slot card or a warning line", col["broken"], [])
+                c.add("  ... and with no note the whole column is on screen, WIN's top to CONFIRM's bottom",
+                      col["groups"][0]["top"] >= -0.5 and b["bottom"] <= col["vh"] + 0.5, f"first {col['groups'][0]}, button {b}, vh {col['vh']}")
+            c.check("  ... no name broken inside a word, in a card or the note", col["broken"], [])
             if wide:
                 c.p.chrome.eval("document.getElementById('wide-font').remove(); 1")
         # A single word wider than a card (longer than any real name; the store takes up to 80 characters): it takes
@@ -1016,7 +1011,9 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("SET WINNERS", "horse buttons (the grid)", ".winner-pick-btn", True),
     ("SET WINNERS", "slot cards", ".result-slot", True),
     ("SET WINNERS", "slot clear x", ".slot-clear", True),
-    ("SET WINNERS", "slot DEAD HEAT / UNTIE", ".slot-tie", True),
+    ("SET WINNERS", "DEAD HEAT link on the seam", ".seam button", True),
+    ("SET WINNERS dead heat", "UNTIE", ".group-untie", False),
+    ("SET WINNERS dead heat", "the horses' cells", ".result-slot", True),
     ("SET WINNERS", "CONFIRM RESULTS", "#results-confirm-btn", False),
     ("SET WINNERS", "RESET", "#results-reset-btn", False),
     ("SET WINNERS", "CANCEL", "#results-cancel-btn", False),
@@ -1042,7 +1039,7 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "close time +15 / +30 / +60", "#closes button[data-min]", True),
     ("admin page", "close time Clear", "#closes-clear", False),
 ]
-WHERE = ("Control Center", "drawer", "SET WINNERS", "reveal", "ask first", "admin page before the gate", "admin page")
+WHERE = ("Control Center", "drawer", "SET WINNERS", "SET WINNERS dead heat", "reveal", "ask first", "admin page before the gate", "admin page")
 
 TAP_JS = r"""((sel, several, min) => {
   const els = (several ? [...document.querySelectorAll(sel)] : [document.querySelector(sel)])
@@ -1142,6 +1139,10 @@ def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
                                 timeout=10)
                 modal = chrome.eval(MODAL_JS)
                 rows += _measure(chrome, "SET WINNERS")
+                chrome.eval("tieAfter('win'); 1")                         # WIN and PLACE one card: its UNTIE and its two cells
+                chrome.wait_for("!!document.querySelector('.group-untie')", timeout=10)
+                time.sleep(0.2)
+                rows += _measure(chrome, "SET WINNERS dead heat")
                 chrome.eval("closeResultsModal(); 1")
                 chrome.wait_for("!document.getElementById('results-modal').classList.contains('active')", timeout=10)
                 time.sleep(0.3)
