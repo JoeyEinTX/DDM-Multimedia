@@ -70,6 +70,9 @@ cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
   - `DDM_WEATHER_API_KEY`: the WeatherAPI.com key, from the account at weatherapi.com.
     Empty: no weather on the dashboard or in the TV's crawl.
   - `DDM_ANTHROPIC_API_KEY`: only for the track's odds poller (appendix). Empty: no poller.
+  - `DDM_LS_ADMIN_PIN`: the host's PIN for La Subasta's admin page. Choose your own (the
+    template has `change-me`, which the installer warns about). Empty: the page and its routes
+    are off. The Control Center and `ADMIN` have no PIN.
   - The rest of the file is commented out: the defaults are right. pi5 says once at start
     which of these is missing (`journalctl -u ddm-pi5 -n 30`), and the installer below checks
     each one (a `WARN` line per empty one; nothing blocks).
@@ -488,6 +491,14 @@ Control Center's.
       `grep EVENT_YEAR ~/DDM-Multimedia/pi5/la_subasta/config.py`.
 - [ ] The wipe has run ("Before the party: start fresh"), so there are no guests, bids or owners
       from a rehearsal. `/la-subasta/admin` says `NOT_STARTED`, Bidders `0`, Pot `0 pesos`.
+- [ ] The host PIN is set. `/la-subasta/admin` on the iPad asks for it, once: the iPad then
+      remembers it for 30 days (a cookie, so a restart of pi5 does not ask again; clearing
+      Safari's website data does, and so does changing the PIN). A wrong PIN is refused and
+      nothing says how close it was; there is no lockout. A guest's phone has no way to open,
+      lock or settle the auction without it. Forgot it: it is in `pi5/.env` on DevPi
+      (`grep DDM_LS_ADMIN_PIN ~/DDM-Multimedia/pi5/.env`); to choose a new one, edit that line,
+      `sudo systemctl restart ddm-pi5`, and enter the new one on the iPad. The page says `No
+      host PIN is set` when the line is empty.
 - [ ] `/la-subasta/admin` → **Open auction**. The pill says `OPEN`; a phone on `/la-subasta`
       joins (name and emoji) and sees the field with no bids.
 
@@ -503,6 +514,12 @@ Control Center's.
 - [ ] Close to post time: **Final hour** (the phones go urgent), then **Lock auction**. The
       lock lists any horse nobody bid on and locks only on **Lock anyway**; buy them first if
       you can. Locked, every bidder's row says what they owe: **Mark paid** as they pay you.
+- [ ] A guest can take a bid back (their 10 seconds) only while bidding is open. After the lock
+      their phone is refused, and so is any other: the horse has an owner who owes the bid, and
+      only the host's void (`/api/admin/void`, no button yet) can change that, moving the horse
+      to the runner-up at their bid. A guest's phone proves who it is with a secret it was
+      given when it joined (not their name, which every list shows): a phone that lost it, or
+      from before the secret existed, lands on the join screen.
 - [ ] A same-day scratch during the auction is entered on `ADMIN` (La Quiniela), never here:
       the bids on that horse are voided (after the lock, the owner's purchase too, and a paid
       owner's row says `refund owed`). Undo on `ADMIN` puts it all back.
@@ -515,7 +532,8 @@ Control Center's.
       horse that crossed the line is paid, whether or not anyone bet it in La Quiniela.
 - [ ] A slot flagged `NO OWNER` (nobody bought that horse: the lock warned you): nobody is paid
       it until you name the horse that pays it instead, the next finisher, in the row's picker
-      → **Set**. The pick stays with that finisher.
+      → **Set**. The pick stays with that finisher. Only a `NO OWNER` slot has a picker: a slot
+      whose horse has an owner pays that owner, and the server refuses to point it elsewhere.
 - [ ] Wrong pick? Correct it in **SET WINNERS** (section 8), never here: the payouts follow the
       new record at the next refresh (the page reads every 4 s). While the result stands the
       field is frozen (no scratch, no undo); the dialog's **RESET** clears the result first.
@@ -632,6 +650,7 @@ the restart).
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
 | `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: `sudo systemctl restart ddm-pi5`, and `journalctl -u ddm-pi5 -n 50` says why it was down. Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
 | A reopening button on `DASH` answers `race state not set (This reopens betting: …)` in red, or `ADMIN` → Undo answers `Cup 9 holds 4 tokens bet on #22. …` | pi5 refused: the page did not ask first (it was out of date), or the replacement's cup holds bets that would move with it. Nothing changed | Reload `DASH` and tap again: it asks. For Undo: empty the cup (hand the tokens back), then Undo. |
+| `/la-subasta/admin` shows a PIN form, or says `No host PIN is set` | the iPad has no cookie for the PIN (first visit, website data cleared, the PIN changed in `pi5/.env`, 30 days), or `DDM_LS_ADMIN_PIN` is empty (pi5's log says `no host PIN` at start; the installer WARNs) | Enter the PIN. Forgot it, or empty: set `DDM_LS_ADMIN_PIN` in `pi5/.env`, `sudo systemctl restart ddm-pi5`, reload the page. |
 | `ADMIN` → Scratch or Undo answers `The results are in, so the field is frozen: …` | the results stand, and the field can't move under the payouts derived from them (La Subasta's) | Section 8: `DASH` → **SET WINNERS** → **RESET** → **Clear the result**, then the scratch, then the results again. |
 | **CONFIRM RESULTS** leaves the dialog open: the scratched horse's card is empty with a line under the heading, or the button is red and says **NOT SAVED** under `#7 (WIN) had no bets at the post: … enter the next finisher too (4th)` | pi5 refused the record: a horse scratched since the dialog opened (the grid has just refreshed), or a `4TH` finisher is needed | Tap again what the dialog asks for and confirm. The results are never guessed: a refusal saves nothing. |
 | No **DEAD HEAT** link between two cards, or the picks column runs past the bottom of the iPad | the link shows only under a filled card, and only where the dead heat would be two or three horses (a three-way one is full); the column is built by `renderResultCards()` in `ddm_control.js` into `#results-cards`, the grey note and the red **NOT SAVED** reason are `#results-confirm-notes` and `#results-confirm-refusal` over the button | Fill the card above the link first. Past the bottom: the iPad at 1180 x 820 landscape shows all of it; Safari's bars cost about 80 px, and the dialog then scrolls. |

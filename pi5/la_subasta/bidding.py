@@ -3,6 +3,10 @@
 # All validation is server-authoritative per spec § Bidding Mechanics.
 # Rejections return a BidError with a user-friendly `reason` string.
 
+import hashlib
+import hmac
+import math
+import secrets
 import time
 import sqlite3
 from dataclasses import dataclass
@@ -13,7 +17,7 @@ from la_subasta.config import (
     EMOJI_PALETTE, EVENT_YEAR, MIN_RAISE,
     BID_UNDO_WINDOW_SECONDS, MAX_HORSE,
 )
-from la_subasta.models import get_conn, write_txn
+from la_subasta.models import PUBLIC_BIDDER_COLUMNS, get_conn, write_txn
 from la_subasta.state_machine import is_biddable
 
 
@@ -28,6 +32,9 @@ class BidError(Exception):
         self.reason = reason
 
 
+CLOSED_FOR_BIDS = "Auction is not accepting bids right now"
+
+
 class UnknownBidder(BidError):
     """No bidder with that id this event year: a phone from another year, or
     one whose guest was wiped. The route answers 404, and the guest page sends
@@ -40,6 +47,10 @@ class UnknownBidder(BidError):
 # Bidders
 # -----------------------------------------------------------------------------
 
+def _hash_of(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
 def register_bidder(name: str, emoji: str,
                     event_year: int = EVENT_YEAR) -> dict:
     """
@@ -49,7 +60,10 @@ def register_bidder(name: str, emoji: str,
       - emoji is from the approved palette
       - name is non-empty
 
-    Returns the created bidder row as a dict.
+    Returns the created bidder as a dict, with the one thing that is not in
+    any list: `secret`, 32 random bytes the guest's phone keeps and sends to
+    bid or undo as this guest (Joey, 2026-10-28, review S1). The database keeps
+    only its hash.
     """
     name = (name or "").strip()
     emoji = (emoji or "").strip()
@@ -60,19 +74,32 @@ def register_bidder(name: str, emoji: str,
         raise BidError("Pick an emoji from the palette")
 
     identity = f"{name} {emoji}"
+    secret = secrets.token_urlsafe(32)
 
     try:
         with write_txn() as conn:
             cursor = conn.execute(
-                "INSERT INTO bidders (name, emoji, identity, event_year) "
-                "VALUES (?, ?, ?, ?)",
-                (name, emoji, identity, event_year),
+                "INSERT INTO bidders (name, emoji, identity, event_year, secret_hash) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, emoji, identity, event_year, _hash_of(secret)),
             )
             bidder_id = cursor.lastrowid
     except sqlite3.IntegrityError:
         raise BidError("That name + emoji combo is taken — pick another emoji")
 
-    return get_bidder(bidder_id, event_year)
+    return {**get_bidder(bidder_id, event_year), "secret": secret}
+
+
+def holds_secret(bidder_id: int, secret, event_year: int = EVENT_YEAR) -> bool:
+    """Whether `secret` is the one this event year's bidder was given at join,
+    compared with the hash in constant time. A bidder with no hash (a row from
+    before the secret) and anything that is not a string never match."""
+    row = get_conn().execute(
+        "SELECT secret_hash FROM bidders WHERE id = ? AND event_year = ?", (bidder_id, event_year),
+    ).fetchone()
+    if row is None or row["secret_hash"] is None or not isinstance(secret, str):
+        return False
+    return hmac.compare_digest(_hash_of(secret), row["secret_hash"])
 
 
 def get_bidder(bidder_id: int, event_year: int = EVENT_YEAR) -> Optional[dict]:
@@ -80,7 +107,7 @@ def get_bidder(bidder_id: int, event_year: int = EVENT_YEAR) -> Optional[dict]:
     another year is unknown: it can't bid, be marked paid or exempt, or show
     in the admin list, and so can never own a horse nobody charged it for."""
     row = get_conn().execute(
-        "SELECT * FROM bidders WHERE id = ? AND event_year = ?", (bidder_id, event_year),
+        f"SELECT {PUBLIC_BIDDER_COLUMNS} FROM bidders WHERE id = ? AND event_year = ?", (bidder_id, event_year),
     ).fetchone()
     return dict(row) if row else None
 
@@ -88,7 +115,7 @@ def get_bidder(bidder_id: int, event_year: int = EVENT_YEAR) -> Optional[dict]:
 def get_bidder_by_identity(identity: str,
                            event_year: int = EVENT_YEAR) -> Optional[dict]:
     row = get_conn().execute(
-        "SELECT * FROM bidders WHERE identity = ? AND event_year = ?",
+        f"SELECT {PUBLIC_BIDDER_COLUMNS} FROM bidders WHERE identity = ? AND event_year = ?",
         (identity, event_year),
     ).fetchone()
     return dict(row) if row else None
@@ -103,26 +130,25 @@ def identity_available(name: str, emoji: str,
     return get_bidder_by_identity(f"{name} {emoji}", event_year) is None
 
 
-def identity_known(bidder_id, name: str, emoji: str,
+def identity_known(bidder_id: int, name: str, emoji: str, secret,
                    event_year: int = EVENT_YEAR) -> bool:
-    """Is the identity a phone keeps (its bidder id, name and emoji) one of this
-    event year's bidders? The guest page asks at boot: a phone from another
-    year, or whose guest was wiped, is not, and joins again. The name and
-    emoji must match too, so an id that came to mean someone else (a database
-    started anew, its counter with it) is not taken for them."""
-    try:
-        bidder = get_bidder(int(bidder_id), event_year)
-    except (TypeError, ValueError):
-        return False
+    """Is the identity a phone keeps (its bidder id, name, emoji and secret) one
+    of this event year's bidders? The guest page asks at boot: a phone from
+    another year, or whose guest was wiped, or from before the secret, is not,
+    and joins again. The name and emoji must match too, so an id that came to
+    mean someone else (a database started anew, its counter with it) is not
+    taken for them."""
+    bidder = get_bidder(bidder_id, event_year)
     return (bidder is not None
-            and bidder["identity"] == f"{(name or '').strip()} {(emoji or '').strip()}")
+            and bidder["identity"] == f"{(name or '').strip()} {(emoji or '').strip()}"
+            and holds_secret(bidder_id, secret, event_year))
 
 
 def list_bidders(event_year: int = EVENT_YEAR) -> List[dict]:
     """All bidders registered for the event year, oldest first. Each row
     carries cap_exempt (the admin's exemption from the max-horses cap)."""
     rows = get_conn().execute(
-        "SELECT * FROM bidders WHERE event_year = ? ORDER BY created_at, id",
+        f"SELECT {PUBLIC_BIDDER_COLUMNS} FROM bidders WHERE event_year = ? ORDER BY created_at, id",
         (event_year,),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -269,7 +295,9 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
 
     try:
         amount = float(amount)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        raise BidError("Amount must be a number")
+    if not math.isfinite(amount):
         raise BidError("Amount must be a number")
 
     if amount < min_bid:
@@ -280,7 +308,7 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
         raise BidError("Bid must be a whole dollar amount")
 
     if not is_biddable(event_year):
-        raise BidError("Auction is not accepting bids right now")
+        raise BidError(CLOSED_FOR_BIDS)
 
     # ---- Serialized validation + insert ------------------------------------
     # The field is read again under the write lock, in write_txn's prepare
@@ -289,6 +317,11 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
     # (models.write_txn). A scratch recorded since the check above either
     # refuses this bid here or, applied after the bid commits under this same
     # lock (scratches.apply), voids it. A bid never outlives its horse.
+    # The auction's state is read again there too (Joey, 2026-10-28, review S3):
+    # the check above is only to turn a late bid away without queueing for the
+    # lock, and a bid that passed it just before the host locked would
+    # otherwise commit after ownership was frozen, on a horse whose owner it
+    # outbids.
     read = {}
 
     def read_field():
@@ -298,6 +331,8 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
         the_field = read["field"]
         if horse_id not in the_field:
             raise BidError(the_field.refusal(horse_id))
+        if not is_biddable(event_year):
+            raise BidError(CLOSED_FOR_BIDS)
 
         # Current high bid (re-queried inside txn)
         hb_row = conn.execute(
@@ -401,39 +436,44 @@ def place_bid(bidder_id: int, horse_id: int, amount: float,
 
 def undo_bid(bid_id: int, bidder_id: int) -> dict:
     """
-    Void a bid within BID_UNDO_WINDOW_SECONDS of placement.
+    Void a bid within BID_UNDO_WINDOW_SECONDS of placement, while the auction
+    is open.
 
-    Only the bidder who placed the bid can undo it. Auction state is
-    irrelevant — undo is allowed in any state as long as the window is open
-    (matches spec intent: fat-finger protection during live bidding).
+    Only the bidder who placed the bid can undo it, and only while bids are
+    accepted (fat-finger protection during live bidding). After the lock an
+    undo would leave the horse with an owner who owes nothing (Joey,
+    2026-10-28, review S2): only the host voids a bid then (void_bid), which
+    follows ownership. The state is read under the write lock, so an undo that
+    was on its way when the host locked is refused too.
 
     Returns a dict with the voided bid + restored leader info.
     """
-    conn = get_conn()
-    row = conn.execute(
-        """
-        SELECT id, bidder_id, horse_id, amount, bid_time, voided,
-               (strftime('%s','now') - strftime('%s', bid_time)) AS age_seconds
-          FROM bids
-         WHERE id = ?
-        """,
-        (bid_id,),
-    ).fetchone()
-
-    if row is None:
-        raise BidError("Bid not found")
-    if row["bidder_id"] != bidder_id:
-        raise BidError("You can only undo your own bids")
-    if row["voided"]:
-        raise BidError("Bid already voided")
-
-    age = row["age_seconds"]
-    if age is None or age > BID_UNDO_WINDOW_SECONDS:
-        raise BidError(
-            f"Undo window ({BID_UNDO_WINDOW_SECONDS}s) expired"
-        )
-
     with write_txn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, bidder_id, horse_id, amount, bid_time, voided,
+                   (strftime('%s','now') - strftime('%s', bid_time)) AS age_seconds
+              FROM bids
+             WHERE id = ?
+            """,
+            (bid_id,),
+        ).fetchone()
+
+        if row is None:
+            raise BidError("Bid not found")
+        if row["bidder_id"] != bidder_id:
+            raise BidError("You can only undo your own bids")
+        if row["voided"]:
+            raise BidError("Bid already voided")
+        if not is_biddable():
+            raise BidError("Bidding is closed: only the host can void a bid now")
+
+        age = row["age_seconds"]
+        if age is None or age > BID_UNDO_WINDOW_SECONDS:
+            raise BidError(
+                f"Undo window ({BID_UNDO_WINDOW_SECONDS}s) expired"
+            )
+
         conn.execute(
             "UPDATE bids SET voided = 1, voided_reason = 'undo' WHERE id = ?",
             (bid_id,),

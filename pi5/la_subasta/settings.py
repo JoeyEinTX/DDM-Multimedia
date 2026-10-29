@@ -8,7 +8,8 @@
 # Writes that target a LOCKED_WHEN_OPEN setting while the auction is in a
 # running state (anything other than NOT_STARTED) are rejected — Joey can't
 # change MAX_RAISE mid-auction and invalidate bids already accepted under
-# the old rule.
+# the old rule. A reset to defaults is such a write for every override it
+# would drop, and is refused the same way.
 
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -175,10 +176,12 @@ def get_all_settings() -> Dict[str, Dict[str, Any]]:
 # Writes
 # -----------------------------------------------------------------------------
 
-def _is_locked_right_now(key: str) -> bool:
-    if key not in config.LOCKED_WHEN_OPEN:
-        return False
-    return get_state() != AuctionState.NOT_STARTED
+def _refuse_if_locked(key: str) -> None:
+    if key in config.LOCKED_WHEN_OPEN and get_state() != AuctionState.NOT_STARTED:
+        raise SettingsError(
+            f"Cannot change {key} while auction state is {get_state().value}: "
+            f"it is set before the auction starts."
+        )
 
 
 def set_setting(key: str, value: Any,
@@ -192,13 +195,7 @@ def set_setting(key: str, value: Any,
       - the setting is locked and the auction is running
     """
     _known(key)
-
-    if _is_locked_right_now(key):
-        current_state = get_state().value
-        raise SettingsError(
-            f"Cannot change {key} while auction state is {current_state}. "
-            f"Lock the auction or reset to change."
-        )
+    _refuse_if_locked(key)
 
     coerced, canonical = _VALIDATORS[key](value)
 
@@ -255,16 +252,20 @@ def reset_to_defaults(changed_by: str = "admin") -> int:
     Wipe all overrides so every setting returns to its code default. Logs
     one audit entry per previously-overridden setting. Returns the number
     of settings that were reset.
-    """
-    conn = get_conn()
-    existing = conn.execute(
-        "SELECT setting_key, value FROM auction_overrides"
-    ).fetchall()
-    state_at_change = get_state().value
 
+    Raises SettingsError, as a set would, if the auction has started and one
+    of the overrides is a setting that is locked then: the payout split and
+    the bid rules do not change under bids already taken (Joey, 2026-10-28,
+    review S6; the gap review's S1 c). The state is read under the write lock.
+    """
     with write_txn() as conn:
+        existing = conn.execute(
+            "SELECT setting_key, value FROM auction_overrides"
+        ).fetchall()
+        state_at_change = get_state().value
         for r in existing:
             key = r["setting_key"]
+            _refuse_if_locked(key)
             conn.execute(
                 """
                 INSERT INTO settings_audit_log

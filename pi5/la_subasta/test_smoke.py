@@ -14,11 +14,13 @@
 #     field from its store (a real board on a memory-only store per test,
 #     driven through the LQ admin page's own routes)
 
+import hashlib
 import io
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import traceback
 
@@ -54,6 +56,8 @@ from la_subasta import field as ls_field  # noqa: E402
 from la_subasta import scratches as ls_scratches  # noqa: E402
 from la_quiniela import board as lq_board  # noqa: E402
 from la_quiniela.horses import HORSE_COUNT as LQ_HORSE_COUNT, HorseStore  # noqa: E402
+from flask.testing import FlaskClient  # noqa: E402
+from la_subasta import blueprint as ls_blueprint  # noqa: E402
 
 import logging  # noqa: E402
 # init_board() without a bridge says so at WARNING; La Subasta's tests never
@@ -103,6 +107,42 @@ def _run(name, fn):
 
 _LQ_TMP = tempfile.mkdtemp(prefix="la_subasta_lq_")
 
+TEST_PIN = "test-pin-2027"
+_SECRETS = {}                   # what each guest's phone holds: the secret register_bidder handed out, by bidder id
+_register_bidder = bidding.register_bidder
+
+
+def _joining(name, emoji, event_year=la_config.EVENT_YEAR):
+    bidder = _register_bidder(name, emoji, event_year)
+    _SECRETS[bidder["id"]] = bidder["secret"]
+    return bidder
+
+
+bidding.register_bidder = _joining          # the register route and the tests' direct joins both go through it
+
+
+class _Phone(FlaskClient):
+    """The host's iPad and a guest's phone in one client. It carries the PIN's cookie, and a bid, an undo or an identity
+    check names the secret its bidder was given at join, as the page does, unless the test puts a `secret` of its own in
+    the body (a wrong one, or None)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set_cookie(ls_blueprint.ADMIN_COOKIE, ls_blueprint.pin_cookie(TEST_PIN), path="/la-subasta")
+
+    def open(self, *args, **kwargs):
+        body = kwargs.get("json")
+        if (isinstance(body, dict) and "secret" not in body and args and isinstance(args[0], str)
+                and args[0].endswith(("/api/bid", "/api/bid/undo", "/api/check-identity"))):
+            who = body.get("bidder_id")
+            kwargs["json"] = {**body, "secret": _SECRETS.get(who) if isinstance(who, int) else None}
+        return super().open(*args, **kwargs)
+
+
+def _stranger(app):
+    """A phone with no PIN cookie and no secret of its own."""
+    return FlaskClient(app, app.response_class)
+
 
 def _make_app(store=None):
     """A Flask app with the la_subasta blueprint and La Quiniela's board
@@ -113,6 +153,8 @@ def _make_app(store=None):
     from flask import Flask
     app = Flask(__name__)
     app.config["TESTING"] = True
+    app.config["LS_ADMIN_PIN"] = TEST_PIN
+    app.test_client_class = _Phone
     lq_board.init_board(bridge=None, store=store, log_dir=os.path.join(_LQ_TMP, "logs"),
                         results_path=os.path.join(_LQ_TMP, "results.json"))
     ls_field.set_store_source(None)          # the board's store, as in the app
@@ -121,6 +163,12 @@ def _make_app(store=None):
     app.register_blueprint(la_subasta_bp)
     app.register_blueprint(lq_board.quiniela_board_bp)
     return app
+
+
+def _raw_bid(client, bidder, secret, horse, amount):
+    """A bid whose amount is raw JSON text (NaN and Infinity are not valid JSON; Python's parser takes them)."""
+    body = '{"bidder_id": %d, "horse_id": %d, "amount": %s, "secret": %s}' % (bidder["id"], horse, amount, json.dumps(secret))
+    return client.post("/la-subasta/api/bid", data=body, content_type="application/json")
 
 
 def _lq_names(client, text=None):
@@ -169,6 +217,7 @@ def _by_finish(ledger):
 
 
 def _reset():
+    _SECRETS.clear()
     reset_db_for_tests(_TMP_DB)
     # After reset, re-init blueprint wiring (DB connection changed)
     init_db(_TMP_DB)
@@ -549,6 +598,416 @@ def test_bid_undo():
            and "own bids" in resp.get_json().get("error", "").lower())
 
 
+# -----------------------------------------------------------------------------
+# Money integrity (Joey, 2026-10-28; the 2026-10-20 review's S1, S2, S3, S6 and S8)
+# -----------------------------------------------------------------------------
+
+def test_a_guest_is_a_number_and_a_secret():
+    """S1: a phone proves who it is with the secret the server issued at join, not with a number every list and every
+    broadcast shows. A bid and an undo carry it and get a 401 without the right one; the secret is kept as a hash and
+    is in no list and no broadcast; check-identity knows a phone only by its secret too; a guest row from before the
+    secret has none, so its phone is unknown and goes to the join screen."""
+    from la_subasta import notifications as nots
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    stranger = _stranger(app)
+    _lq_names(client)
+    ev = _Events()
+    nots.init_notifications(ev)
+    try:
+        transition(AuctionState.OPEN)
+        joined = [client.post("/la-subasta/api/register", json={"name": n, "emoji": e}) for n, e in (("Alice", "🌮"), ("Bob", "🐴"))]
+        (alice, alice_secret), (bob, bob_secret) = [(r.get_json()["bidder"], r.get_json()["secret"]) for r in joined]
+        hashes = {r["id"]: r["secret_hash"] for r in models.get_conn().execute("SELECT id, secret_hash FROM bidders").fetchall()}
+        _check("register hands out a secret beside the bidder (32 random bytes, a different one for each guest) and keeps only its hash",
+               all(r.status_code == 200 for r in joined) and len(alice_secret) >= 43 and alice_secret != bob_secret
+               and hashes[alice["id"]] == hashlib.sha256(alice_secret.encode()).hexdigest() and bob_secret not in hashes.values()
+               and "secret" not in alice and "secret_hash" not in alice, f"{alice} {hashes}")
+
+        def bid(who, secret, horse=1, amount=1):
+            body = {"bidder_id": who["id"], "horse_id": horse, "amount": amount}
+            if secret is not ...:
+                body["secret"] = secret
+            return stranger.post("/la-subasta/api/bid", json=body)
+
+        wrong = {"no secret": ..., "a wrong one": "x" * 43, "another guest's secret": bob_secret, "an empty secret": "",
+                 "a secret that is no string": 12345, "a list": [alice_secret]}
+        answers = {name: bid(alice, secret) for name, secret in wrong.items()}
+        _check("a bid with no secret, a wrong one, another guest's, an empty one or a non-string: 401, and nothing is stored",
+               all(r.status_code == 401 and r.get_json() == {"success": False, "error": ls_blueprint.NOT_YOUR_GUEST_NUMBER}
+                   for r in answers.values()) and bidding.count_bids() == 0, str({k: (r.status_code, r.get_json()) for k, r in answers.items()}))
+        r = bid({"id": 99999}, alice_secret)
+        _check("a guest number nobody has: 404 Unknown bidder, as before (the page goes to the join screen on either)",
+               r.status_code == 404 and r.get_json()["error"] == "Unknown bidder", f"{r.status_code} {r.get_json()}")
+        r = bid(alice, alice_secret)
+        bid_id = r.get_json()["bid"]["bid_id"]
+        _check("the right secret bids", r.status_code == 200 and bidding.count_bids() == 1, f"{r.status_code} {r.get_json()}")
+
+        def undo(who, secret, bid_id=bid_id):
+            body = {"bid_id": bid_id, "bidder_id": who["id"]}
+            if secret is not ...:
+                body["secret"] = secret
+            return stranger.post("/la-subasta/api/bid/undo", json=body)
+
+        answers = {name: undo(alice, secret) for name, secret in wrong.items()}
+        _check("an undo with no secret, a wrong one or another guest's: 401, and the bid stands",
+               all(r.status_code == 401 for r in answers.values()) and bidding.current_high_bid(1) is not None,
+               str({k: r.status_code for k, r in answers.items()}))
+        r = undo(bob, bob_secret)
+        _check("Bob, with his own number and secret, cannot undo Alice's bid: 400, the bid stands",
+               r.status_code == 400 and "own bids" in r.get_json()["error"] and bidding.current_high_bid(1) is not None, f"{r.status_code} {r.get_json()}")
+
+        def check(who, secret):
+            body = {"bidder_id": who["id"], "name": who["name"], "emoji": who["emoji"]}
+            if secret is not ...:
+                body["secret"] = secret
+            return stranger.post("/la-subasta/api/check-identity", json=body).get_json()
+
+        _check("check-identity: known with the right secret, not without, not with another's or a wrong one or a non-string",
+               check(alice, alice_secret)["known"] is True
+               and [check(alice, s)["known"] for s in (..., "x" * 43, bob_secret, "", 5, [1])] == [False] * 6)
+
+        # Nowhere a phone or the host's page can read it: the lists, the broadcasts, the replies
+        r = bid(bob, bob_secret, horse=2)
+        listed = {
+            "/api/bidders": client.get("/la-subasta/api/bidders").get_data(as_text=True),
+            "/api/horses": client.get("/la-subasta/api/horses").get_data(as_text=True),
+            "/api/state": client.get("/la-subasta/api/state").get_data(as_text=True),
+            "a portfolio": client.get(f"/la-subasta/api/bidders/{alice['id']}/portfolio").get_data(as_text=True),
+            "the bid's reply": r.get_data(as_text=True),
+            "a check-identity reply": json.dumps(check(alice, alice_secret)),
+            "the admin payouts": client.get("/la-subasta/api/admin/payouts").get_data(as_text=True),
+            "the broadcasts": json.dumps([(name, payload) for name, payload in ev.events], default=str, ensure_ascii=False),
+        }
+        hidden = (alice_secret, bob_secret, *hashes.values(), "secret_hash")
+        leaks = [name for name, text in listed.items() if any(s in text for s in hidden)]
+        _check("the secret and its hash are in no list, no reply and no broadcast", r.status_code == 200 and leaks == [], str(leaks))
+
+        # A guest row from before the secret: no hash, so unknown
+        models.get_conn().execute("UPDATE bidders SET secret_hash = NULL WHERE id = ?", (bob["id"],))
+        r = bid(bob, bob_secret, horse=3)
+        _check("a guest row with no secret (from before it): its bids are 401 whatever it sends, and check-identity does not know it",
+               r.status_code == 401 and check(bob, bob_secret)["known"] is False and check(bob, ...)["known"] is False,
+               f"{r.status_code} {check(bob, bob_secret)}")
+    finally:
+        _done_with_events()
+
+
+def test_the_host_pages_need_the_pin():
+    """S1: /la-subasta/admin and every /api/admin/* take the host's PIN (DDM_LS_ADMIN_PIN in pi5/.env, handed to the app as
+    config LS_ADMIN_PIN). Without it the page is a PIN form and the API a 401; a wrong PIN is refused with the same line
+    whatever it was; the right one sets a cookie that is a keyed hash of the PIN, HttpOnly, SameSite Strict, good for 30 days
+    and gone when the PIN changes; no PIN set at all is a 503, never an open door; the guests' routes are not touched."""
+    _reset()
+    app = _make_app()
+    host = app.test_client()
+    stranger = _stranger(app)
+    admin = [r for r in app.url_map.iter_rules() if r.rule == "/la-subasta/admin" or r.rule.startswith("/la-subasta/api/admin/")]
+    calls = [(r.rule, m) for r in admin for m in sorted(r.methods - {"HEAD", "OPTIONS"})]
+    _check("the host's routes: the page and every /api/admin/* route, a dozen at least", len(calls) >= 13 and ("/la-subasta/admin", "GET") in calls,
+           str(calls))
+
+    def knock(client, path, method):
+        return client.open(path, method=method, json={} if method == "POST" else None)
+
+    refused = {(p, m): knock(stranger, p, m) for p, m in calls}
+    _check("with no cookie each of them is refused with a 401 and nothing is done (an empty body would have failed with a 400 or 409 otherwise)",
+           all(r.status_code == 401 for r in refused.values()), str({k: r.status_code for k, r in refused.items() if r.status_code != 401}))
+    html = refused[("/la-subasta/admin", "GET")].get_data(as_text=True)
+    _check("...the page is the PIN form and none of the admin page", 'id="ls-pin-form"' in html and "ls-admin-controls" not in html
+           and "text/html" in refused[("/la-subasta/admin", "GET")].content_type)
+    _check("...and no auction state moved: still NOT_STARTED, no bidder, no override", get_state() == AuctionState.NOT_STARTED
+           and bidding.count_bidders() == 0)
+
+    for pin in ("", "x", TEST_PIN[:-1], TEST_PIN + "x", TEST_PIN.upper(), 12345, None, ["a"]):
+        r = stranger.post("/la-subasta/admin/login", json={"pin": pin})
+        _check(f"a wrong PIN ({pin!r}): 401, one line whatever it was, no cookie", r.status_code == 401
+               and r.get_json() == {"success": False, "error": "Wrong PIN"} and "Set-Cookie" not in r.headers, f"{r.status_code} {r.get_json()}")
+    r = stranger.post("/la-subasta/admin/login", data="not json", content_type="application/json")
+    _check("a login with no usable body: 401 too", r.status_code == 401)
+
+    r = stranger.post("/la-subasta/admin/login", json={"pin": TEST_PIN})
+    cookie = r.headers.get("Set-Cookie", "")
+    _check("the right PIN: 200, and a cookie that holds a keyed hash and not the PIN, HttpOnly, SameSite Strict, 30 days, the page's path",
+           r.status_code == 200 and r.get_json() == {"success": True} and f"{ls_blueprint.ADMIN_COOKIE}={ls_blueprint.pin_cookie(TEST_PIN)}" in cookie
+           and TEST_PIN not in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=2592000" in cookie
+           and "Path=/la-subasta" in cookie, cookie)
+    r = stranger.get("/la-subasta/admin")
+    _check("...which is all the admin page then asks: the page, and a route", r.status_code == 200 and "ls-admin-controls" in r.get_data(as_text=True)
+           and stranger.get("/la-subasta/api/admin/payouts").status_code == 200)
+    stranger.set_cookie(ls_blueprint.ADMIN_COOKIE, "0" * 64, path="/la-subasta")
+    _check("a cookie that is not the PIN's hash: refused again", stranger.get("/la-subasta/api/admin/payouts").status_code == 401)
+    host.get("/la-subasta/api/admin/payouts")
+    app.config["LS_ADMIN_PIN"] = "another-pin"
+    _check("the PIN changed in pi5/.env: every cookie from the old one stops working, the iPad asks again",
+           host.get("/la-subasta/api/admin/payouts").status_code == 401 and host.get("/la-subasta/admin").status_code == 401)
+    app.config["LS_ADMIN_PIN"] = ""
+    r = host.get("/la-subasta/api/admin/payouts")
+    r2 = stranger.post("/la-subasta/admin/login", json={"pin": ""})
+    r3 = host.get("/la-subasta/admin")
+    _check("no PIN set: the host pages are off (503, and it says where to set it), and an empty PIN is no way in",
+           r.status_code == r2.status_code == r3.status_code == 503 and "DDM_LS_ADMIN_PIN" in r.get_json()["error"], f"{r.status_code} {r2.status_code} {r3.status_code}")
+    app.config["LS_ADMIN_PIN"] = TEST_PIN
+    open_to_all = {p: stranger.get(p).status_code for p in ("/la-subasta/", "/la-subasta/api/state", "/la-subasta/api/horses",
+                                                            "/la-subasta/api/bidders", "/la-subasta/api/settings",
+                                                            "/la-subasta/static/js/admin.js",
+                                                            "/la-subasta/static/js/guest.js", "/la-subasta/static/css/la-subasta-admin.css")}
+    _check("the guests' pages, lists and files stay open to everyone", all(code == 200 for code in open_to_all.values()), str(open_to_all))
+    r = stranger.post("/la-subasta/api/register", json={"name": "Dave K", "emoji": "🌮"})
+    _check("...and a guest can still join", r.status_code == 200 and r.get_json()["secret"])
+    js = _static(host, "/la-subasta/static/js/admin.js")
+    _check("admin.js reloads the page, which asks for the PIN, when a route answers 401", "status === 401" in js and "location.reload()" in js)
+
+
+def _post_on_a_thread(app, got, path, body):
+    """A request on a thread of its own, the reply in got["r"]. The thread's sqlite handle is released at its end, as
+    the other threaded tests do: left to the garbage collector it keeps the file open on Windows."""
+    try:
+        got["r"] = app.test_client().post(path, json=body)
+    finally:
+        models.close_conn()
+
+
+def test_after_the_lock_only_the_host_voids_a_bid():
+    """S2: an undo is a guest's way out of a fat-fingered bid while bidding is open. After the lock it would leave the
+    horse with an owner who owes nothing, so only the host voids a bid then, through the admin route, which follows
+    ownership: the horse goes to the runner-up at their bid, or is unowned with none."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        alice_bid = _bid(client, alice, 1, 3)
+        bob_bid = _bid(client, bob, 1, 4)
+        client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        _check("locked: Bob owns #1 at 4", (_ownership(1) or {}).get("bidder_id") == bob["id"] and _ownership(1)["winning_bid"] == 4)
+        r = client.post("/la-subasta/api/bid/undo", json={"bid_id": bob_bid, "bidder_id": bob["id"]})
+        _check("Bob's undo seconds after the lock: refused (400), the bid stands, Bob still owns it and owes it",
+               r.status_code == 400 and r.get_json()["error"] == "Bidding is closed: only the host can void a bid now"
+               and [b["voided"] for b in _bids_on(1)] == [0, 0] and (_ownership(1) or {}).get("bidder_id") == bob["id"]
+               and bidding.bidder_portfolio(bob["id"])["total"] == 4, f"{r.status_code} {r.get_json()}")
+        _set_winners(1, 2, 3)
+        _check("...and a result that names #1 pays Bob its WIN", _by_finish(_ledger(client))["win"]["bidder_id"] == bob["id"])
+        r = client.post("/la-subasta/api/admin/void", json={"bid_id": bob_bid, "reason": "fat finger"})
+        _check("the host's void after the lock: 200, and the ownership follows the bids: Alice, at her 3",
+               r.status_code == 200 and (_ownership(1) or {}).get("bidder_id") == alice["id"] and _ownership(1)["winning_bid"] == 3
+               and bidding.bidder_portfolio(bob["id"])["total"] == 0 and _by_finish(_ledger(client))["win"]["bidder_id"] == alice["id"],
+               f"{r.status_code} {r.get_json()} {_ownership(1)}")
+        r = client.post("/la-subasta/api/admin/void", json={"bid_id": alice_bid, "reason": "no second bidder"})
+        _check("...and with no second bidder the horse has no owner (the lock warned about it), as before",
+               r.status_code == 200 and r.get_json()["unsold"] is True and _ownership(1) is None, f"{r.get_json()}")
+    finally:
+        _done_with_events()
+
+    # An undo in flight at the lock: past its checks, held up on its way to the write lock, the lock lands first
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 2, 3)
+        bob_bid = _bid(client, bob, 2, 4)
+        got = {}
+        entered, release = threading.Event(), threading.Event()
+        real = bidding.write_txn
+
+        def held_up(*args, **kwargs):
+            entered.set()
+            release.wait(10)
+            return real(*args, **kwargs)
+
+        bidding.write_txn = held_up
+        t = threading.Thread(target=_post_on_a_thread, args=(app, got, "/la-subasta/api/bid/undo",
+                                                              {"bid_id": bob_bid, "bidder_id": bob["id"]}))
+        try:
+            t.start()
+            entered.wait(5)
+            client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        finally:
+            bidding.write_txn = real
+            release.set()
+            t.join(10)
+        _check("an undo that passed its checks before the lock and reached the database after it is refused too: the bid and Bob's ownership stand",
+               got["r"].status_code == 400 and bidding.current_high_bid(2)["bidder_id"] == bob["id"]
+               and (_ownership(2) or {}).get("bidder_id") == bob["id"], f"{got['r'].status_code} {got['r'].get_json()}")
+    finally:
+        _done_with_events()
+
+
+def test_a_bid_in_flight_at_the_lock_is_refused():
+    """S3: bidding.py checked that the auction was open before taking the write lock and never inside it, so a bid past
+    its checks and held up on its way to the database was accepted after the lock had frozen ownership: the high bid and the
+    owner disagreed, and the pot was wrong. The state is read again under the lock now, as the field is. Deterministic here:
+    the bid is held at the door of the write lock until the lock has landed."""
+    app, client, ev, (alice, bob, carol) = _scratch_rig()
+    try:
+        _bid(client, alice, 1, 1)
+        got = {}
+        entered, release = threading.Event(), threading.Event()
+        real = bidding.write_txn
+
+        def held_up(*args, **kwargs):
+            entered.set()
+            release.wait(10)
+            return real(*args, **kwargs)
+
+        bidding.write_txn = held_up
+        t = threading.Thread(target=_post_on_a_thread, args=(app, got, "/la-subasta/api/bid",
+                                                              {"bidder_id": bob["id"], "horse_id": 1, "amount": 2}))
+        try:
+            t.start()
+            entered.wait(5)
+            r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        finally:
+            bidding.write_txn = real
+            release.set()
+            t.join(10)
+        _check("the lock lands while Bob's bid is on its way", r.status_code == 200 and get_state() == AuctionState.LOCKED)
+        high = bidding.current_high_bid(1)
+        _check("Bob's bid reaches the database after the lock and is refused (400, not accepting bids); Alice's 1 is the high bid, and her ownership agrees",
+               got["r"].status_code == 400 and "not accepting bids" in got["r"].get_json()["error"]
+               and high["bidder_id"] == alice["id"] and high["amount"] == 1
+               and (_ownership(1) or {}).get("bidder_id") == alice["id"] and _ownership(1)["winning_bid"] == 1
+               and [b["bidder_id"] for b in _bids_on(1)] == [alice["id"]], f"{got['r'].status_code} {got['r'].get_json()} {high} {_ownership(1)}")
+    finally:
+        _done_with_events()
+
+
+def test_bids_racing_the_lock_never_disagree_with_ownership():
+    """S3's stress test, kept (the review's reproduction: ownership disagreed with the high bid on 7 to 12 horses in 5 of
+    10 trials under 24 threads): two dozen guests bid on every horse as fast as they can while the host locks; once it has,
+    every horse's owner is its high bidder at its high bid, and nothing is owned that has no bid."""
+    from la_subasta import notifications as nots
+    bad, placed = [], 0
+    for trial in range(4):
+        _reset()
+        app = _make_app()
+        client = app.test_client()
+        _lq_names(client)
+        nots.init_notifications(_Events())
+        transition(AuctionState.OPEN)
+        guests = [bidding.register_bidder(f"Guest {n}", "🌮") for n in range(24)]
+        stop, counts = threading.Event(), []
+
+        def bidder(guest, seed):
+            n = 0
+            horse = seed
+            try:
+                while not stop.is_set():
+                    horse = horse % 20 + 1
+                    high = bidding.current_high_bid(horse)
+                    try:
+                        bidding.place_bid(guest["id"], horse, (high["amount"] if high else 0) + 1)
+                        n += 1
+                    except bidding.BidError:
+                        pass
+            finally:
+                counts.append(n)
+                models.close_conn()
+
+        threads = [threading.Thread(target=bidder, args=(g, i)) for i, g in enumerate(guests)]
+        for t in threads:
+            t.start()
+        time.sleep(0.4)
+        r = client.post("/la-subasta/api/admin/lock", json={"confirm": True})
+        stop.set()
+        for t in threads:
+            t.join(15)
+        placed += sum(counts)
+        for horse in range(1, 21):
+            high, own = bidding.current_high_bid(horse), _ownership(horse)
+            if (high is None) != (own is None) or (high and (own["bidder_id"], own["winning_bid"]) != (high["bidder_id"], high["amount"])):
+                bad.append((trial, horse, high and (high["bidder_id"], high["amount"]), own and (own["bidder_id"], own["winning_bid"])))
+        _check(f"trial {trial + 1}: the lock landed", r.status_code == 200 and get_state() == AuctionState.LOCKED, f"{r.status_code}")
+    _check(f"{placed} bids from 24 threads across four locks: every horse's owner is its high bidder at its high bid", bad == [] and placed > 200,
+           f"{len(bad)} disagree, first {bad[:3]}, placed {placed}")
+
+
+def test_settings_reset_follows_the_lock():
+    """S6 (the gap review's S1 c, B8): a reset to defaults changed the payout split and the bid rules in an auction that was
+    running, which a set refuses. It is refused the same way (409) while any setting it would change is locked; with
+    the auction not started, or with only the always-editable settings overridden, it works."""
+    for state in (AuctionState.OPEN, AuctionState.FINAL_HOUR, AuctionState.LOCKED):
+        _reset()
+        app = _make_app()
+        client = app.test_client()
+        settings.set_setting("PAYOUT_PRESET", "70/20/10")
+        settings.set_setting("HOUSE_FUND_LABEL", "Custom")
+        transition(state, force=True)
+        audited = len(settings.get_audit_log(limit=100))
+        r = client.post("/la-subasta/api/admin/settings/reset", json={})
+        _check(f"reset in {state.value}: 409, 'Cannot change ...', nothing reset, nothing audited",
+               r.status_code == 409 and r.get_json()["error"].startswith("Cannot change ")
+               and settings.get_setting("PAYOUT_PRESET") == "70/20/10" and settings.get_setting("HOUSE_FUND_LABEL") == "Custom"
+               and len(settings.get_audit_log(limit=100)) == audited, f"{r.status_code} {r.get_json()}")
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    settings.set_setting("HOUSE_FUND_LABEL", "Custom")
+    transition(AuctionState.OPEN)
+    r = client.post("/la-subasta/api/admin/settings/reset", json={})
+    _check("running, with only an always-editable setting overridden: the reset goes through (a set of it would too)",
+           r.status_code == 200 and r.get_json()["reset_count"] == 1 and settings.get_setting("HOUSE_FUND_LABEL") == "DDM 2027 Build Fund")
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    settings.set_setting("PAYOUT_PRESET", "70/20/10")
+    r = client.post("/la-subasta/api/admin/settings/reset", json={})
+    _check("not started: it goes through", r.status_code == 200 and settings.get_setting("PAYOUT_PRESET") == "60/25/15")
+
+
+def test_bad_numbers_are_400s():
+    """S8: an amount of NaN or Infinity, a number too big for the database, a guest or bid number that is no number: a 400 that
+    says so, never a 500, on every route that takes one."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    _lq_names(client)
+    transition(AuctionState.OPEN)
+    alice = bidding.register_bidder("Alice", "🌮")
+    alice_secret = alice["secret"]
+    huge = 10 ** 30
+    for label, amount in (("NaN", "NaN"), ("Infinity", "Infinity"), ("-Infinity", "-Infinity"), ('"nan"', '"nan"'), ('"inf"', '"inf"'),
+                          ("1e999", "1e999"), ("10**400", "1" + "0" * 400), ("a list", "[1]"), ("an object", "{}"), ("null", "null")):
+        r = _raw_bid(client, alice, alice_secret, 1, amount)
+        _check(f"a bid of {label}: 400 'Amount must be a number'", r.status_code == 400 and r.get_json()["error"] == "Amount must be a number"
+               and bidding.count_bids() == 0, f"{r.status_code} {r.get_json()}")
+    bid_id = client.post("/la-subasta/api/bid", json={"bidder_id": alice["id"], "horse_id": 1, "amount": 1}).get_json()["bid"]["bid_id"]
+    posts = [("/la-subasta/api/bid", {"bidder_id": huge, "horse_id": 1, "amount": 1}),
+             ("/la-subasta/api/bid", {"bidder_id": alice["id"], "horse_id": huge, "amount": 1}),
+             ("/la-subasta/api/bid", {"bidder_id": float("inf"), "horse_id": 1, "amount": 1}),
+             ("/la-subasta/api/bid", {"bidder_id": "x", "horse_id": 1, "amount": 1}),
+             ("/la-subasta/api/bid/undo", {"bid_id": huge, "bidder_id": alice["id"]}),
+             ("/la-subasta/api/bid/undo", {"bid_id": bid_id, "bidder_id": huge}),
+             ("/la-subasta/api/admin/void", {"bid_id": huge}),
+             ("/la-subasta/api/admin/paid", {"bidder_id": huge}),
+             ("/la-subasta/api/admin/cap-exempt", {"bidder_id": huge, "exempt": True}),
+             ("/la-subasta/api/admin/payout-slot", {"finish": "win", "horse_id": huge}),
+             ("/la-subasta/api/admin/payout-slot", {"finish": "win", "horse_id": float("nan")})]
+    codes = {}
+    for path, body in posts:
+        if "secret" not in body and path.endswith(("/api/bid", "/api/bid/undo")):
+            body = {**body, "secret": alice_secret}
+        r = client.post(path, json=body)
+        codes[(path[len("/la-subasta/api/"):], str(body)[:60])] = r.status_code
+    _check("a number too big for the database, or no number, in a bid, an undo, a void, a paid mark, an exemption or a slot: 400 each",
+           set(codes.values()) == {400}, str({k: v for k, v in codes.items() if v != 400}))
+    r = client.post("/la-subasta/api/check-identity", json={"bidder_id": huge, "name": "Alice", "emoji": "🌮", "secret": alice_secret})
+    _check("check-identity with a number too big: known false, not a 500", r.status_code == 200 and r.get_json()["known"] is False, f"{r.status_code}")
+    _check("a portfolio for a number too big to be anyone's: 404", client.get(f"/la-subasta/api/bidders/{huge}/portfolio").status_code == 404)
+    _check("none of it stored or changed anything", bidding.count_bids() == 1 and bidding.get_bidder(alice["id"])["paid"] == 0)
+
+
+def test_a_guest_named_the_house_keeps_their_row():
+    """S8: a guest named The House with the hat was deleted at the next start (the cleanup of the sentinel row the House had
+    until 2026-10-01 took them for it). Nothing cleans up after the House any more."""
+    _reset()
+    app = _make_app()
+    client = app.test_client()
+    r = client.post("/la-subasta/api/register", json={"name": "The House", "emoji": "🎩"})
+    secret = r.get_json()["secret"]
+    init_db(_TMP_DB)                                            # pi5 restarts
+    init_db(_TMP_DB)
+    row = bidding.get_bidder_by_identity("The House 🎩")
+    _check("The House 🎩 joins, pi5 restarts twice: the guest is still there, with their secret",
+           r.status_code == 200 and row is not None and bidding.holds_secret(row["id"], secret), str(row))
+
+
 def test_payouts():
     """The payouts come from SET WINNERS (gap review M5, OD4): the result the
     Control Center records is read through La Quiniela's board
@@ -721,12 +1180,14 @@ def test_unowned_win_is_a_flagged_slot():
         _check("nothing is unowned now, and the reply carries the ledger as it stands",
                body["unowned"] == [] and body["payouts"][0]["pays_horse_id"] == 4, str(body))
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 4})
-        _check("any slot can be set: skipping one finisher moves the next up",
-               r.status_code == 200 and r.get_json()["slot"]["bidder_id"] == carol["id"])
+        by = _by_finish(_ledger(client))
+        _check("a slot whose finisher has an owner cannot be pointed at another horse (S1): 409, and PLACE still pays Alice",
+               r.status_code == 409 and r.get_json()["error"] == "PLACE is #1's: it has an owner, so it pays them. Only a slot nobody owns can be pointed at another horse"
+               and by["place"]["pays_horse_id"] is None and by["place"]["bidder_id"] == alice["id"], f"{r.status_code} {r.get_json()} {by['place']}")
         r = client.post("/la-subasta/api/admin/payout-slot", json={"finish": "place", "horse_id": 1})
         slot = r.get_json()["slot"]
-        _check("naming the finisher's own horse puts the slot back as the result has it",
-               slot["pays_horse_id"] is None and slot["bidder_id"] == alice["id"], f"got {slot}")
+        _check("naming the finisher's own horse is the slot as the result has it, with or without an owner's pick before",
+               r.status_code == 200 and slot["pays_horse_id"] is None and slot["bidder_id"] == alice["id"], f"got {slot}")
 
         # The pick is tied to the finisher it was made for
         _set_winners(1, 3, 2)                          # a correction: 1 won after all, 3 was second
@@ -1355,14 +1816,16 @@ def test_settings_api_endpoints():
     app = _make_app()
     client = app.test_client()
 
-    # GET /api/admin/settings
-    r = client.get("/la-subasta/api/admin/settings")
+    # GET /api/settings: the guest page's, open to everyone
+    r = _stranger(app).get("/la-subasta/api/settings")
     data = r.get_json()
-    _check("GET /api/admin/settings returns 200", r.status_code == 200)
-    _check("GET /api/admin/settings has 7 keys",
+    _check("GET /api/settings returns 200 to a phone with no PIN", r.status_code == 200)
+    _check("GET /api/settings has 7 keys",
            len(data["settings"]) == 7)
-    _check("GET /api/admin/settings includes state field",
+    _check("GET /api/settings includes state field",
            data.get("state") == "NOT_STARTED")
+    _check("the old admin route for it is gone (setting them is POST /api/admin/settings)",
+           client.get("/la-subasta/api/admin/settings").status_code == 405)
 
     # POST /api/admin/settings (valid)
     r = client.post("/la-subasta/api/admin/settings",
@@ -1404,7 +1867,7 @@ def test_settings_api_endpoints():
            r.status_code == 200 and data.get("success"))
     _check("reset_count >= 1", data.get("reset_count") >= 1)
     # Verify HOUSE_FUND_LABEL back to default
-    r = client.get("/la-subasta/api/admin/settings")
+    r = client.get("/la-subasta/api/settings")
     vals = r.get_json()["settings"]
     _check("HOUSE_FUND_LABEL restored to default after reset",
            vals["HOUSE_FUND_LABEL"]["value"] == "DDM 2027 Build Fund"
@@ -2692,13 +3155,14 @@ def test_ownership_migration():
                 pass
 
 
-def test_house_and_payouts_migration():
-    """A database from before: the House's sentinel bidder row goes (a House
-    row that somehow has a bid is left alone); the old payouts table, La
-    Subasta's own results store, is dropped and payout_slots made (M5: the
-    ledger is derived from SET WINNERS' result); an auction left in
-    RACE_COMPLETE or SETTLED reads as LOCKED (the two states are gone:
-    settled is LOCKED with a result); bidders gains cap_exempt."""
+def test_payouts_migration():
+    """A database from before: the old payouts table, La Subasta's own results
+    store, is dropped and payout_slots made (M5: the ledger is derived from SET
+    WINNERS' result); an auction left in RACE_COMPLETE or SETTLED reads as
+    LOCKED (the two states are gone: settled is LOCKED with a result); bidders
+    gains cap_exempt and the guests' secret. (The House's row, which a database
+    from before 2026-10-01 had, is not cleaned up any more: every box has been
+    restarted since, and a guest named so lost their row at the next start.)"""
     import sqlite3
     path = tempfile.mktemp(prefix="la_subasta_old_house_", suffix=".db")
     conn = sqlite3.connect(path)
@@ -2709,8 +3173,7 @@ def test_house_and_payouts_migration():
             created_at TEXT NOT NULL DEFAULT (datetime('now')), paid INTEGER NOT NULL DEFAULT 0,
             paid_at TEXT, paid_amount REAL, event_year INTEGER NOT NULL);
         INSERT INTO bidders (id, name, emoji, identity, event_year)
-            VALUES (1, 'The House', '\U0001F3A9', 'The House \U0001F3A9', 2026),
-                   (2, 'Alice', '\U0001F32E', 'Alice \U0001F32E', 2026);
+            VALUES (2, 'Alice', '\U0001F32E', 'Alice \U0001F32E', 2026);
         CREATE TABLE payouts (
             id INTEGER PRIMARY KEY AUTOINCREMENT, bidder_id INTEGER NOT NULL REFERENCES bidders(id),
             horse_id INTEGER NOT NULL,
@@ -2733,10 +3196,9 @@ def test_house_and_payouts_migration():
         tables = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         _check("the old payouts table is dropped and payout_slots is there",
                "payouts" not in tables and "payout_slots" in tables, str(sorted(tables)))
-        _check("the House's bidder row is gone and Alice stays",
-               [r["identity"] for r in c.execute("SELECT identity FROM bidders").fetchall()] == ["Alice \U0001F32E"])
-        _check("bidders gained cap_exempt, 0 for Alice",
-               c.execute("SELECT cap_exempt FROM bidders").fetchone()["cap_exempt"] == 0)
+        _check("Alice stays, and bidders gained cap_exempt (0) and the secret's hash (none: a phone from before is unknown)",
+               [(r["identity"], r["cap_exempt"], r["secret_hash"]) for r in c.execute("SELECT identity, cap_exempt, secret_hash FROM bidders").fetchall()]
+               == [("Alice \U0001F32E", 0, None)])
         states = {r["event_year"]: r["state"] for r in c.execute("SELECT event_year, state FROM auction_state").fetchall()}
         _check("SETTLED and RACE_COMPLETE read as LOCKED, the pots kept",
                states == {2026: "LOCKED", 2025: "LOCKED"}
@@ -2746,24 +3208,6 @@ def test_house_and_payouts_migration():
         _check("the migration is idempotent",
                {r["event_year"]: r["state"] for r in c.execute("SELECT event_year, state FROM auction_state").fetchall()} == states
                and "payouts" not in {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()})
-
-        # A House row that has a bid is not removed
-        path2 = tempfile.mktemp(prefix="la_subasta_old_house2_", suffix=".db")
-        try:
-            c2 = init_db(path2)
-            c2.execute("INSERT INTO bidders (id, name, emoji, identity, event_year) "
-                       "VALUES (1, 'The House', '\U0001F3A9', 'The House \U0001F3A9', 2026)")
-            c2.execute("INSERT INTO bids (bidder_id, horse_id, amount, event_year) VALUES (1, 3, 1, 2026)")
-            c2 = init_db(path2)
-            _check("a House row that somehow has a bid is left alone",
-                   c2.execute("SELECT COUNT(*) AS c FROM bidders").fetchone()["c"] == 1)
-        finally:
-            init_db(_TMP_DB)
-            for suffix in ("", "-wal", "-shm"):
-                try:
-                    os.remove(path2 + suffix)
-                except OSError:
-                    pass
     finally:
         init_db(_TMP_DB)
         for suffix in ("", "-wal", "-shm"):
@@ -2830,8 +3274,8 @@ def test_bidders_unique_per_year_migration():
         _check("bidders is rebuilt: unique on (identity, event_year), no longer on identity alone",
                unique_indexes(c) == [("identity", "event_year")], f"got {unique_indexes(c)}")
         after = [tuple(r) for r in c.execute("SELECT * FROM bidders ORDER BY id").fetchall()]
-        _check("every row kept as it was, with its id (paid, paid_amount, cap_exempt too)",
-               after == before, f"got {after}")
+        _check("every row kept as it was, with its id (paid, paid_amount, cap_exempt too), and no secret: those phones are unknown",
+               after == [row + (None,) for row in before], f"got {after}")
         _check("the column list is the same, in the same order",
                [r["name"] for r in c.execute("PRAGMA table_info(bidders)").fetchall()] == list(models._BIDDER_ALL_COLUMNS))
         _check("the id counter is kept (12, above every id left)", counter(c) == 12, f"got {counter(c)}")
@@ -2966,9 +3410,10 @@ def test_guest_page_rejoins_in_chrome():
         chrome.call("Network.enable")
         chrome.call("Network.setBlockedURLs", urls=["*socket.io*"])     # no live updates: nothing here needs them
 
-        def kept(bidder):
+        def kept(bidder, secret=True):
+            """What a phone keeps: the guest number, name, emoji and (S1) the secret it was given at join."""
             return {"bidder_id": bidder["id"], "name": bidder["name"], "emoji": bidder["emoji"],
-                    "identity": bidder["identity"]}
+                    "identity": bidder["identity"], **({"secret": bidder["secret"]} if secret else {})}
 
         def load(identity, query="", left=None):
             """The page as a phone opens it, onboarded, keeping `identity` (and `left`, other keys an old
@@ -3017,17 +3462,34 @@ def test_guest_page_rejoins_in_chrome():
         _check("...the form still holds the name and emoji joined with, Enter ready",
                chrome.eval("document.getElementById('ls-name-input').value === 'Old Timer'"
                            " && !document.getElementById('ls-submit-btn').disabled"))
+        transition(AuctionState.OPEN)                 # the host opens the auction again
         chrome.tap("#ls-submit-btn")
         view = chrome.wait_for(in_app)
         _check("one tap and the guest is in again",
                view["badge"] == "Old Timer 🎺" and bidding.get_bidder((stored() or {}).get("bidder_id")) is not None,
                f"{view} {stored()}")
+        again = stored() or {}
+        _check("...with a secret of its own, which the phone keeps beside the number", len(again.get("secret", "")) >= 43
+               and bidding.holds_secret(again.get("bidder_id"), again.get("secret")), str(again))
+        chrome.wait_for("(() => { const b = document.querySelector(%s); return !!b && !b.disabled; })()" % json.dumps(bid_button))
+        chrome.tap(bid_button)
+        end = time.monotonic() + 5
+        while bidding.current_high_bid(1) is None and time.monotonic() < end:
+            time.sleep(0.05)
+        _check("...and the page's bid carries it: the bid stands, the guest's own",
+               bidding.current_high_bid(1) is not None and bidding.current_high_bid(1)["bidder_id"] == again["bidder_id"],
+               str(bidding.current_high_bid(1)))
 
         alice = bidding.register_bidder("Alice", "🌮")
         view = load(kept(alice))
         _check("this year's identity: straight in, no join screen, the badge is Alice",
                view["app"] and not view["join"] and view["badge"] == "Alice 🌮", str(view))
         _check("...and the phone keeps it", stored() == kept(alice), str(stored()))
+        view = load(kept(alice, secret=False))
+        _check("a phone from before the secret (the number and the name, no secret): the join screen with the welcome-back line, forgotten",
+               view["join"] and view["again"] and not view["app"] and view["line"] == line and stored() is None, f"{view} {stored()}")
+        view = load({**kept(alice), "secret": "a-fake-secret"})
+        _check("a wrong secret: the same", view["join"] and view["again"] and not view["app"] and stored() is None, f"{view} {stored()}")
 
         carol = bidding.register_bidder("Carol", "🍹")
         fail.add("/la-subasta/api/check-identity")
@@ -3035,6 +3497,17 @@ def test_guest_page_rejoins_in_chrome():
         _check("the check gets no answer (503): in with what the phone kept, nothing forgotten",
                view["app"] and not view["join"] and view["badge"] == "Carol 🍹" and stored() == kept(carol), str(view))
         fail.clear()
+        dave = bidding.register_bidder("Dave", "🍀")
+        load(kept(dave))
+        with models.write_txn() as conn:              # Dave's secret stops being his: the server will not take it
+            conn.execute("UPDATE bidders SET secret_hash = NULL WHERE id = ?", (dave["id"],))
+        other_bid = '.ls-horse-card[data-horse-id="2"] .ls-bid-btn[data-delta="1"]'
+        chrome.wait_for("(() => { const b = document.querySelector(%s); return !!b && !b.disabled; })()" % json.dumps(other_bid))
+        chrome.tap(other_bid)
+        view = chrome.wait_for("(() => { const v = %s; return v.join ? v : null; })()" % _GUEST_VIEW_JS)
+        _check("a bid answered 401 (the secret is not that guest's) lands on the join screen with the line, the guest forgotten, nothing on a card",
+               view["again"] and not view["app"] and view["line"] == line and view["errors"] == [] and stored() is None
+               and bidding.current_high_bid(2) is None, f"{view} {stored()}")
 
         dev = ("({panel: document.querySelectorAll('[id^=ls-dev], [data-dev-action], .ls-dev').length,"
                " keys: Object.keys(localStorage).sort()})")
@@ -3112,7 +3585,8 @@ def test_horse_lists_run_in_program_number_order():
     if not picker_check.available():
         _check("guest page order check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
         return
-    alice = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "\U0001f32e"}).get_json()["bidder"]
+    joined = client.post("/la-subasta/api/register", json={"name": "Alice", "emoji": "\U0001f32e"}).get_json()
+    alice = joined["bidder"]
     httpd = _serve(app, set())
     base = f"http://127.0.0.1:{httpd.server_port}/la-subasta/"
     chrome = picker_check.Chrome(touch=True, size=(390, 844))
@@ -3121,7 +3595,8 @@ def test_horse_lists_run_in_program_number_order():
         chrome.call("Network.setBlockedURLs", urls=["*socket.io*"])
         chrome.call("Page.navigate", url=base + "api/state")
         chrome.wait_for("document.readyState === 'complete'", timeout=20)
-        identity = {"bidder_id": alice["id"], "name": alice["name"], "emoji": alice["emoji"], "identity": alice["identity"]}
+        identity = {"bidder_id": alice["id"], "name": alice["name"], "emoji": alice["emoji"], "identity": alice["identity"],
+                    "secret": joined["secret"]}
         chrome.eval("localStorage.clear(); localStorage.setItem('la_subasta_onboarded', 'true'); "
                     f"localStorage.setItem('la_subasta_identity', {json.dumps(json.dumps(identity))}); true")
         chrome.call("Page.navigate", url=base)
@@ -3321,8 +3796,8 @@ def test_no_test_tools_on_guest_pages():
     css = _static(client, "/la-subasta/static/css/la-subasta-mobile.css")
     _check("guest.js reads no ?dev and keeps no dev flag",
            "get('dev')" not in js and "la_subasta_dev_mode" not in js and "setupDevPanel" not in js)
-    _check("guest.js calls no admin route but the settings it reads",
-           js.count("/api/admin/") == 1 and "settings: '/la-subasta/api/admin/settings'," in js
+    _check("guest.js calls no admin route (the settings it reads are /api/settings, open to everyone: the admin routes take the host's PIN)",
+           js.count("/api/admin/") == 0 and "settings: '/la-subasta/api/settings'," in js
            and all(f"'{a}'" not in js for a in ("start", "lock", "results", "transition")))
     _check("the stylesheet has no dev panel styles", ".ls-dev" not in css)
     rules = {rule.rule for rule in app.url_map.iter_rules()}
@@ -3608,7 +4083,7 @@ def test_initial_horse_load_after_registration():
 
     threads = [
         threading.Thread(target=_get, args=("settings",
-                                            "/la-subasta/api/admin/settings")),
+                                            "/la-subasta/api/settings")),
         threading.Thread(target=_get, args=("horses", "/la-subasta/api/horses")),
         threading.Thread(target=_get, args=("state", "/la-subasta/api/state")),
     ]
@@ -3638,7 +4113,7 @@ def test_initial_horse_load_after_registration():
            not missing, f"missing keys: {missing}")
 
     # The other two reads feed button-enabled state — they must not 500 either.
-    _check("boot: /api/admin/settings returns 200",
+    _check("boot: /api/settings returns 200",
            results.get("settings", (None,))[0] == 200,
            f"status was {results.get('settings', (None,))[0]}")
     _check("boot: /api/state returns 200",
@@ -3829,6 +4304,8 @@ def test_existing_dashboard_still_loads():
 
     # Verify routes registered
     rules = {rule.rule for rule in main.app.url_map.iter_rules()}
+    _check("the host's PIN reaches the app from pi5/.env (config LS_ADMIN_PIN)",
+           main.app.config.get("LS_ADMIN_PIN") == main._config.LS_ADMIN_PIN, str(main.app.config.get("LS_ADMIN_PIN")))
     _check("dashboard / route registered", "/" in rules)
     _check("dashboard /spectator route registered", "/spectator" in rules)
     _check("/la-subasta/api/state route registered",
@@ -3858,6 +4335,16 @@ def main():
          test_another_years_bidder_is_unknown)
     _run("bid validation", test_bid_validation)
     _run("bid undo (10s window)", test_bid_undo)
+    _run("identity — a guest is a number and a secret: bids, undos and check-identity need it; it is in no list or broadcast (S1)",
+         test_a_guest_is_a_number_and_a_secret)
+    _run("host — /la-subasta/admin and /api/admin/* take the PIN; no PIN set is off, not open (S1)", test_the_host_pages_need_the_pin)
+    _run("lock — after it only the host voids a bid, and a void follows ownership (S2)", test_after_the_lock_only_the_host_voids_a_bid)
+    _run("lock — a bid in flight at the lock is refused (S3)", test_a_bid_in_flight_at_the_lock_is_refused)
+    _run("lock — 24 threads bidding as the host locks: ownership agrees with the high bids (S3's stress test)",
+         test_bids_racing_the_lock_never_disagree_with_ownership)
+    _run("settings — a reset follows the lock the way a set does (S6)", test_settings_reset_follows_the_lock)
+    _run("bad numbers — NaN, Infinity, numbers too big for the database: 400, never 500 (S8)", test_bad_numbers_are_400s)
+    _run("a guest named The House keeps their row at the next start (S8)", test_a_guest_named_the_house_keeps_their_row)
     _run("payouts — from SET WINNERS, through the board: whole pesos, a correction follows, Reset betting clears (M5)", test_payouts)
     _run("paid out — the mark, tied to the finisher; paid on an earlier result until unmarked", test_paid_out_marks)
     _run("results — La Subasta's own entry and store are gone (M5)", test_results_entry_is_gone)
@@ -3912,7 +4399,7 @@ def main():
     _run("scratch — a failed push is retried, nothing voided twice", test_failed_scratch_push_is_retried)
     _run("paid — a second tap keeps the refund owed", test_paid_twice_keeps_the_refund)
     _run("scratch — old ownership table migrated", test_ownership_migration)
-    _run("migration — the House's row, the old payouts table, RACE_COMPLETE / SETTLED", test_house_and_payouts_migration)
+    _run("migration — the old payouts table, RACE_COMPLETE / SETTLED, the guests' secret column", test_payouts_migration)
     _run("migration — bidders unique per year; ids, foreign keys and the counter kept",
          test_bidders_unique_per_year_migration)
     _run("identity — a phone rejoins: last year's, this year's, a wipe, no answer (Chrome)",

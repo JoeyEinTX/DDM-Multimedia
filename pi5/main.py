@@ -43,6 +43,7 @@ import page_rev
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = _config.FLASK_SECRET_KEY   # DDM_FLASK_SECRET_KEY in pi5/.env, or a random one per start
+app.config['LS_ADMIN_PIN'] = _config.LS_ADMIN_PIN     # DDM_LS_ADMIN_PIN in pi5/.env: La Subasta's admin page and routes; empty = they are off
 
 # Initialize Socket.IO
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -1177,6 +1178,8 @@ if __name__ == '__main__':
         print("  ESP32 Target:  none: no LED controller set (DDM_ESP32_IP in pi5/.env), the LEDs are off")
     if not WEATHER_API_KEY:
         print("  Weather:       no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off")
+    if not _config.LS_ADMIN_PIN:
+        print("  La Subasta:    no host PIN (DDM_LS_ADMIN_PIN in pi5/.env): its admin page and routes are off")
 
     if tote:
         print(f"  Tote Board:    {tote.ip}:{tote.port}")

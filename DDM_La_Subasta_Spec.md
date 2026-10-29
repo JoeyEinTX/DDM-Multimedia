@@ -45,7 +45,7 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 1. Joey opens admin view on iPad, hits **"Start Auction"**
 2. The horses are La Quiniela's field as it stands: the names and scratches entered on the LQ admin page during Derby week (see **Horses: from La Quiniela's store**)
 3. Auction goes live at 9:00 AM (configurable)
-4. QR code placards around the house point guests to `http://ddm.local/la-subasta` (or the Pi's IP)
+4. QR code placards around the house point guests to `http://joeydevpi.local:5000/la-subasta` (or the Pi's IP)
 
 ### Party Day (Guests)
 
@@ -53,7 +53,7 @@ This is a **new feature** integrated into the existing Pi 5 Flask dashboard — 
 2. **First-visit identity:** enters first name + last initial ("Dave K"), picks a festive emoji from a themed grid (🌮🐴🌶️🎺💃🎲🍹🌵🎸⭐)
 3. Name+emoji combo must be unique within the event year (duplicate = "pick another emoji"); free again the next year
 4. Optional: tap "Enable alerts" for browser push notifications on outbid events
-5. Stored in browser `localStorage` — return visits go straight in when this year's auction knows the identity, else back to the join screen (see **Identity System**)
+5. Stored in browser `localStorage`, with the secret the server issued at join — return visits go straight in when this year's auction knows the identity, else back to the join screen (see **Identity System**)
 6. Guest browses the field, bids on horses they want (min $1, max $5 raise, max 3 horses owned)
 7. When outbid, gets push notification (if opted in) + in-app banner if app open
 8. Spectator TV shows rotating leaderboard, hot horses, biggest spenders, recent bid activity
@@ -212,8 +212,9 @@ auction_state (
   🌮 🐴 🌶️ 🎺 💃 🎲 🍹 🌵 🎸 ⭐ 🎩 🍀 🏇 🌶️ 🥭 🪅
 - **Uniqueness enforcement:** "Dave K 🌮" is a unique ID within an event year (`UNIQUE(identity, event_year)`). If taken, user prompted to pick different emoji. The next year the same name and emoji are free again.
 - **Identity belongs to one event year.** The year is `EVENT_YEAR` in `pi5/la_subasta/config.py` (2027), changed by a commit once a year, never at runtime. Every lookup reads only that year's rows: a bidder id from another year is unknown everywhere (it can't bid, isn't listed, paid, exempted or given a portfolio, so it never owns a horse nobody charged it for).
-- **Persistence:** Stored in browser `localStorage`. On a return visit the page asks `/api/check-identity` with the kept id, name and emoji first: known this year, straight in without re-entry; not known (a phone from another year, or whose guest was wiped), the kept identity is forgotten and the join screen shows with one line, "Welcome back. Join again for this year's auction." A bid answered 404 (`Unknown bidder`, a wipe while the page was open) does the same, so there is always a way back to the join screen. No answer to the check (Wi-Fi, pi5 restarting): in with what the phone kept, and a bid's answer settles it.
-- **No password / login.** If someone else picks up their phone, they're that person. Accept this tradeoff for zero-friction UX.
+- **Persistence:** Stored in browser `localStorage`. On a return visit the page asks `/api/check-identity` with the kept id, name, emoji and secret first: known this year (the secret is the one issued at join), straight in without re-entry; not known (a phone from another year, from before the secret, or whose guest was wiped), the kept identity is forgotten and the join screen shows with one line, "Welcome back. Join again for this year's auction." A bid answered 404 (`Unknown bidder`, a wipe while the page was open) or 401 (the secret is not that guest's) does the same, so there is always a way back to the join screen. No answer to the check (Wi-Fi, pi5 restarting): in with what the phone kept, and a bid's answer settles it.
+- **A guest is a number and a secret** (Joey, 2026-10-28, review S1). The guest number is in every list and every broadcast, so it proves nothing by itself: `register` also returns `secret`, 32 random bytes the server makes at join, which the phone keeps beside the number and sends with every bid and undo (and the identity check). The database keeps only its SHA-256 (`bidders.secret_hash`), compared in constant time; the secret is in no list, reply or broadcast. A bid or undo without the right one is a 401 and does nothing. A guest from before the secret has none, so its phone is unknown and joins again as a new guest. There is still no password for a guest to type; a phone that is picked up is still that person.
+- **The host's pages take a PIN.** `/la-subasta/admin` and every `/la-subasta/api/admin/*` route open, lock and settle the auction and mark who paid, and the guests are on the same Wi-Fi, so they take the PIN in `pi5/.env` (`DDM_LS_ADMIN_PIN`, `LS_ADMIN_PIN` in `pi5/config.py`). The admin page is a PIN form until it is entered; the right PIN sets a cookie (a keyed hash of the PIN, HttpOnly, 30 days, `Path=/la-subasta`), so the iPad is not asked again, a restart of pi5 does not log it out, and a changed PIN does. A wrong PIN is refused with one line and nothing else; there is no lockout. With no PIN set the host pages answer 503 (off, never open). The guests' routes, the lists and the files stay open. The LQ admin page and the Control Center have no PIN.
 
 ### Bid Rules
 
@@ -225,7 +226,7 @@ auction_state (
 | Maximum horses per bidder | 3, unless the admin marks a bidder exempt | Spreads ownership across crowd; the host is exempt so he can pick up the horses nobody bid on |
 | Bid close | Hard stop at T-15 before Derby post | No snipe extensions |
 | Tiebreaker | Earliest timestamp wins | Standard |
-| Bid retraction | 10-second undo window | Fat-finger protection |
+| Bid retraction | 10-second undo window, while bidding is open | Fat-finger protection. After the lock only the host voids a bid (see **Welch / Void Policy**) |
 | Scratched horse | Bid refunded, horse removed | Standard; entered on the LQ admin page (see **Scratches**) |
 
 ### Enforcement Logic (server-side validation)
@@ -263,6 +264,8 @@ If a guest refuses to pay or bids in bad faith:
 2. System automatically re-awards horse to **2nd highest bidder at their bid amount**; after the lock the horse's `ownership` row follows the bids, so the new owner owes that amount and the voided bidder owes nothing
 3. If no 2nd bid exists, the horse is **unsold**, not the House's: before the lock it is back on the list with no bid (the lock warns about it); after the lock it has no owner, and if it finishes in the money its payout slot is left for the admin to name (see **Payouts**)
 4. Audit trail preserved in `voided_reason` column
+
+A guest's own **Undo** is for a fat-fingered bid while bidding is open (OPEN or FINAL_HOUR). After the lock it is refused (`Bidding is closed: only the host can void a bid now`): it would leave the horse owned by someone who owes nothing. Only the host's void works then, and it follows the ownership as above (Joey, 2026-10-28, review S2). Both read the auction's state under the write lock, as a bid does (review S3), so one that was on its way when the host locked is refused too.
 
 ---
 
@@ -348,7 +351,7 @@ Total pot = 11 pesos
 There is **no House**. No payout ever goes to a House or to the DDM build fund, and no horse is held by anyone "at $0". A horse nobody bids on is simply **unsold**:
 
 - **Before the lock the admin is warned.** Joey encourages a bid on every horse, but one nobody bid on would reach the lock unsold. `POST /api/admin/lock` answers `409 {"unsold": [3, 12]}` (the horses in the field with no bid) and does nothing until the body says `{"confirm": true}`; the admin page lists them and has a confirm button. In practice the host buys them first, at the minimum bid. He is the one bidder the admin marks exempt from the max-three cap (**No cap** on his row, `POST /api/admin/cap-exempt`), so he can pick up the stragglers.
-- **A paying horse with no owner at settlement** (WIN, PLACE or SHOW; the warning should make it impossible, but a void after the lock, or a replacement that entered after it, can still cause it) is **skipped, and the next finisher pays**: La Quiniela's rule for an empty cup in the money. Settlement does not wait for it. The slot comes back with no bidder and flagged `unowned` (`GET /api/admin/payouts`, the ledger's NO OWNER flag), and nobody is paid it until the admin names the horse that pays it: `POST /api/admin/payout-slot {finish, horse_id}`, a picker of in-field horses in the ledger. Any slot can be set, because skipping one finisher moves the next up into it; the horse must be in the field and have an owner. There is no automatic award. The pick is kept against the finisher it was made for (`payout_slots`): a correction in SET WINNERS that changes the slot's horse sets it aside, one that changes it back brings it back.
+- **A paying horse with no owner at settlement** (WIN, PLACE or SHOW; the warning should make it impossible, but a void after the lock, or a replacement that entered after it, can still cause it) is **skipped, and the next finisher pays**: La Quiniela's rule for an empty cup in the money. Settlement does not wait for it. The slot comes back with no bidder and flagged `unowned` (`GET /api/admin/payouts`, the ledger's NO OWNER flag), and nobody is paid it until the admin names the horse that pays it: `POST /api/admin/payout-slot {finish, horse_id}`, a picker of in-field horses in the ledger. Only a slot whose finisher has no owner can be set (Joey, 2026-10-28, review S1: a slot that has an owner pays them, and naming another horse would send a paid-for horse's money to someone else; naming the finisher itself puts a slot back as the result has it); the horse named must be in the field and have an owner. There is no automatic award. The pick is kept against the finisher it was made for (`payout_slots`): a correction in SET WINNERS that changes the slot's horse sets it aside, one that changes it back brings it back.
 
 ### The paid-out mark
 
@@ -580,15 +583,16 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/la_subasta/` | GET | Guest view |
-| `/la_subasta/admin` | GET | Admin view (iPad) |
+| `/la_subasta/admin` | GET | Admin view (iPad); the PIN form until the host's PIN is entered (`POST /la_subasta/admin/login {pin}`: 200 and the cookie, or 401 `Wrong PIN`). Every `/la_subasta/api/admin/*` route below takes the same PIN (401 without it, 503 with none set) |
 | `/la_subasta/spectator` | GET | Spectator TV view |
 | `/la_subasta/api/state` | GET | Current auction state, pot, countdown |
 | `/la_subasta/api/horses` | GET | La Quiniela's field by program number, with current high bids |
 | `/la_subasta/api/bidders` | GET | All bidders with totals (admin-only) |
-| `/la_subasta/api/bid` | POST | Place a bid `{horse_id, amount, bidder_id}`; `404 Unknown bidder` for an id this year's auction doesn't know (checked first) |
-| `/la_subasta/api/bid/undo` | POST | Undo most recent bid (10-sec window) |
-| `/la_subasta/api/register` | POST | Create bidder `{name, emoji}` |
-| `/la_subasta/api/check-identity` | POST | `{name, emoji}`: `available`, no bidder this year has them; with the phone's `bidder_id`, also `known`, it is this year's bidder with that name and emoji (the guest page asks at boot) |
+| `/la_subasta/api/settings` | GET | The settings as they stand (the guest page reads its bid limits here); setting them is `POST /api/admin/settings` (admin) |
+| `/la_subasta/api/bid` | POST | Place a bid `{horse_id, amount, bidder_id, secret}`; `404 Unknown bidder` for an id this year's auction doesn't know (checked first), `401` for a secret that is not that guest's, `400` for an amount or number that is not a number |
+| `/la_subasta/api/bid/undo` | POST | Undo a bid `{bid_id, bidder_id, secret}` (10-sec window, while bidding is open) |
+| `/la_subasta/api/register` | POST | Create bidder `{name, emoji}`; the reply carries the bidder and, once, its `secret` |
+| `/la_subasta/api/check-identity` | POST | `{name, emoji}`: `available`, no bidder this year has them; with the phone's `bidder_id` and `secret`, also `known`, it is this year's bidder with that name and emoji and the secret is theirs (the guest page asks at boot) |
 | `/la_subasta/api/push/subscribe` | POST | Register browser push endpoint |
 | `/la_subasta/api/admin/start` | POST | Start auction (admin) |
 | `/la_subasta/api/admin/lock` | POST | Lock the auction (admin); `409 {unsold: [...]}` while a horse in the field has no bid, unless the body is `{confirm: true}` |
@@ -596,7 +600,7 @@ This reuses the existing `RESULTS:FINALIZE` animation pattern — minimal new fi
 | `/la_subasta/api/admin/paid` | POST | Mark bidder paid `{bidder_id}` (admin) |
 | `/la_subasta/api/admin/cap-exempt` | POST | Exempt a bidder from the max-horses cap, or take it off `{bidder_id, exempt}` (admin) |
 | `/la_subasta/api/admin/payouts` | GET | The payout ledger, derived from SET WINNERS' result: `results`, `total_pot`, `amounts`, the rows (`unowned`, `paid`), `paid_on_old_result` (admin) |
-| `/la_subasta/api/admin/payout-slot` | POST | Name the horse that pays a slot with no owner `{finish, horse_id}` (admin) |
+| `/la_subasta/api/admin/payout-slot` | POST | Name the horse that pays a slot whose finisher has no owner `{finish, horse_id}`; 409 for a slot that has one (admin) |
 | `/la_subasta/api/admin/payout-paid` | POST | The paid-out mark `{finish, paid}`; `horse_id` to unmark one paid on an earlier result (admin) |
 | `/la_subasta/api/admin/testing` | POST | Toggle sandbox mode (admin) |
 | `/la_subasta/api/admin/export` | GET | Export all data as JSON/CSV |
@@ -880,7 +884,7 @@ Most config values in `config.py` are set-and-forget. However, **7 specific sett
 
 Once `auction_state == OPEN` (or any state past OPEN), **certain settings cannot change** because doing so would retroactively invalidate guest portfolios or bidding strategy. These settings are **greyed out in the UI** with a tooltip:
 
-> 🔒 *Locked while auction is OPEN. Lock the auction or reset to change.*
+> 🔒 *Locked once the auction has started: set it before it opens.* A reset to defaults is refused (409) the same way while any setting it would change is locked (review S6).
 
 **Locked-when-open settings:**
 - Max horses per bidder (would invalidate existing portfolios — e.g., changing from 3 → 2 leaves someone "over-quota")
@@ -988,6 +992,7 @@ These remain code-only (rare to change, edit the file directly if needed):
 | 1.3 | October 2026 | **Horses from La Quiniela's store**: names, program numbers 1–24 and the field as it stands; the mock racing service no longer feeds La Subasta. **Scratches** entered on the LQ admin page and applied by the auction's own rule; La Subasta's own scratch endpoint and `horse_state` are gone |
 | 1.4 | October 2026 | **No House**: no payout ever goes to the House or a build fund. An unsold horse is bought before the lock (the lock warns, and the admin can exempt the host from the max-three cap); a paying horse with no owner is skipped and the admin names the next finisher in the payout ledger. **Undo restores everything**: a scratch's bids and, after the lock, its ownership come back with the horse. A void after the lock moves the ownership with the bids |
 | 1.5 | October 2026 | **Results from SET WINNERS** (gap review M5, OD4): La Subasta's own results entry, route and `payouts` table are gone; the ledger is derived from the Control Center's record (the real 1st, 2nd and 3rd) and the ownership whenever it is read, in whole pesos with La Quiniela's rounding (OD5). A correction follows, Reset betting clears. The auction's states end at LOCKED. **The paid-out mark** per slot, tied to the finisher; a mark the result moved away from is listed as paid on an earlier result until unmarked. The field is frozen while a result stands |
+| 1.6 | October 2026 | **Money integrity** (the 2026-10-20 code review): a guest is a number and a secret issued at join (S1); the admin page and `/api/admin/*` take the host's PIN from `pi5/.env`; a payout slot with an owner pays them; after the lock only the host voids a bid (S2); the auction's state is read under the write lock (S3); a settings reset follows the lock (S6); NaN, Infinity and huge numbers are 400s, and a guest named The House keeps their row (S8) |
 
 ---
 

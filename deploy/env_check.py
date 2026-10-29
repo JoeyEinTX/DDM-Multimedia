@@ -76,6 +76,15 @@ def check(repo):
     else:
         say("warn", "DDM_ANTHROPIC_API_KEY is empty: the track's odds poller can't run (optional; set it in pi5/.env)")
 
+    pin = getattr(c, "LS_ADMIN_PIN", "")
+    if not pin:
+        say("warn", "DDM_LS_ADMIN_PIN is empty: La Subasta's admin page and routes are off (set a PIN in pi5/.env)")
+    elif pin == "change-me":
+        say("warn", "DDM_LS_ADMIN_PIN is still the example, change-me: anyone who has read the repo knows it "
+                    "(set your own in pi5/.env)")
+    else:
+        say("ok", "La Subasta's host PIN is set")
+
     # The dev routes it switched on went in 59e3b14, La Subasta's test tools with gap review M4: a line
     # left for it reads as if they were on. (pi5/config.py put pi5/.env into the environment.)
     if os.environ.get("DDM_LQ_DEV_ENDPOINTS") is not None:

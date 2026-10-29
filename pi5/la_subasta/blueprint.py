@@ -2,12 +2,15 @@
 #
 # URL prefix: /la-subasta (hyphen, per spec § Naming & Branding Conventions)
 # The guest page (/) and the admin page (/admin) are templates; the spectator
-# view is still a placeholder; everything under /api is JSON.
+# view is still a placeholder; everything under /api is JSON. The admin page
+# and every /api/admin route are the host's, behind a PIN (below).
 
+import hashlib
+import hmac
 import logging
 import time
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request
 
 from la_subasta import bidding, field, notifications, payouts, scratches, settings
 from la_subasta.bidding import BidError, UnknownBidder
@@ -29,6 +32,74 @@ la_subasta_bp = Blueprint(
     # static_url_path is relative to url_prefix — giving "/la-subasta/static"
     static_url_path="/static",
 )
+
+
+# -----------------------------------------------------------------------------
+# The host's PIN
+# -----------------------------------------------------------------------------
+#
+# The admin page and every /api/admin route open, lock and settle the auction and
+# mark who paid, and the guests' phones are on the same network. They take the
+# PIN in pi5/.env (DDM_LS_ADMIN_PIN, handed to the app as config LS_ADMIN_PIN;
+# Joey, 2026-10-28, review S1). The page asks for it once: the right PIN sets a
+# cookie that holds a keyed hash of it, so the iPad is not asked again for 30
+# days, a restart of pi5 does not log it out and a changed PIN does. With no PIN
+# set the host pages are off, never open.
+
+ADMIN_COOKIE = "ls_host"
+ADMIN_COOKIE_MAX_AGE = 30 * 24 * 3600
+HOST_PAGE = "/la-subasta/admin"
+HOST_LOGIN = HOST_PAGE + "/login"
+HOST_API = "/la-subasta/api/admin/"
+SQLITE_INT_MAX = 2 ** 63 - 1
+
+
+def pin_cookie(pin: str) -> str:
+    return hmac.new(pin.encode("utf-8"), b"ddm la subasta host", hashlib.sha256).hexdigest()
+
+
+def _same(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _no_pin():
+    if request.url_rule.rule == HOST_PAGE:
+        return render_template("admin_pin.html", pin_unset=True), 503
+    return _err("No host PIN is set: put DDM_LS_ADMIN_PIN=... in pi5/.env and restart pi5", 503)
+
+
+@la_subasta_bp.before_request
+def _the_host_pages_need_the_pin():
+    rule = request.url_rule.rule if request.url_rule else ""
+    if rule == HOST_LOGIN or not (rule == HOST_PAGE or rule.startswith(HOST_API)):
+        return None
+    pin = current_app.config.get("LS_ADMIN_PIN") or ""
+    if not pin:
+        return _no_pin()
+    if _same(request.cookies.get(ADMIN_COOKIE, ""), pin_cookie(pin)):
+        return None
+    if rule == HOST_PAGE:
+        return render_template("admin_pin.html", pin_unset=False), 401
+    return _err("The host's PIN is needed: open the admin page and enter it", 401)
+
+
+@la_subasta_bp.route("/admin/login", methods=["POST"])
+def admin_login():
+    """Body JSON: {"pin"}. 200 and the cookie for the right PIN; 401 "Wrong
+    PIN" for anything else, the same line whatever was sent (it says nothing
+    about how close it was, and there is no lockout: the PIN is behind the
+    house's Wi-Fi); 503 with no PIN set."""
+    pin = current_app.config.get("LS_ADMIN_PIN") or ""
+    if not pin:
+        return _no_pin()
+    data = request.get_json(silent=True)
+    given = data.get("pin") if isinstance(data, dict) else None
+    if not isinstance(given, str) or not _same(given, pin):
+        return _err("Wrong PIN", 401)
+    response = jsonify({"success": True})
+    response.set_cookie(ADMIN_COOKIE, pin_cookie(pin), max_age=ADMIN_COOKIE_MAX_AGE,
+                        httponly=True, samesite="Strict", path=la_subasta_bp.url_prefix)
+    return response
 
 
 # -----------------------------------------------------------------------------
@@ -98,6 +169,31 @@ def _bid_err(exc: BidError, status: int = 400):
     return jsonify({"success": False, "error": exc.reason}), status
 
 
+NOT_YOUR_GUEST_NUMBER = "This phone is not that guest's: join again"
+
+
+def _int_arg(data: dict, key: str):
+    """data[key] as an int the database can hold, or None: no number, NaN,
+    Infinity, or one too big for sqlite (a 400 for the route, never a 500)."""
+    try:
+        number = int(data.get(key))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if abs(number) <= SQLITE_INT_MAX else None
+
+
+def _not_this_guest(bidder_id: int, data: dict):
+    """None when the body's "secret" is the one bidder_id was given at join;
+    else the refusal. A guest number nobody has is a 404, which sends the guest
+    page to the join screen (a database wiped since the page opened), and a
+    secret that is not theirs a 401 (the page goes there too, guest.js)."""
+    if bidding.get_bidder(bidder_id) is None:
+        return _bid_err(UnknownBidder(), status=404)
+    if not bidding.holds_secret(bidder_id, data.get("secret")):
+        return _err(NOT_YOUR_GUEST_NUMBER, status=401)
+    return None
+
+
 # -----------------------------------------------------------------------------
 # Page routes
 # -----------------------------------------------------------------------------
@@ -122,7 +218,8 @@ def admin_view():
     unsold-horse warning), the bidders (paid, and the cap exemption) and the
     payout ledger, derived from SET WINNERS' result (the picker for an
     unowned slot, the paid-out marks). A small page over the /api/admin
-    routes; the fuller iPad view of the spec (Phase 3) is still to come."""
+    routes; the fuller iPad view of the spec (Phase 3) is still to come. The
+    PIN form until the host has entered the PIN (above)."""
     return render_template("admin.html")
 
 
@@ -207,21 +304,23 @@ def api_register():
         )
     except BidError as exc:
         return _bid_err(exc, status=409)
-    return jsonify({"success": True, "bidder": bidder})
+    secret = bidder.pop("secret")
+    return jsonify({"success": True, "bidder": bidder, "secret": secret})
 
 
 @la_subasta_bp.route("/api/check-identity", methods=["POST"])
 def api_check_identity():
-    """Body JSON: {"name", "emoji"}, and the phone's "bidder_id" when it has
-    one. available: no bidder this event year has that name and emoji (what
-    register would accept). known, when a bidder_id is sent: it is this
-    year's bidder with that name and emoji. The guest page asks at boot; a
-    phone that is not known joins again."""
+    """Body JSON: {"name", "emoji"}, and the phone's "bidder_id" and "secret"
+    when it has them. available: no bidder this event year has that name and
+    emoji (what register would accept). known, when a bidder_id is sent: it is
+    this year's bidder with that name and emoji, and the secret is theirs. The
+    guest page asks at boot; a phone that is not known joins again."""
     data = request.get_json(silent=True) or {}
     name, emoji = data.get("name", ""), data.get("emoji", "")
     out = {"success": True, "available": bidding.identity_available(name, emoji)}
     if "bidder_id" in data:
-        out["known"] = bidding.identity_known(data["bidder_id"], name, emoji)
+        bidder_id = _int_arg(data, "bidder_id")
+        out["known"] = bidder_id is not None and bidding.identity_known(bidder_id, name, emoji, data.get("secret"))
     return jsonify(out)
 
 
@@ -236,7 +335,7 @@ def api_bidders():
     return jsonify({"success": True, "bidders": bidders})
 
 
-@la_subasta_bp.route("/api/bidders/<int:bidder_id>/portfolio", methods=["GET"])
+@la_subasta_bp.route(f"/api/bidders/<int(max={SQLITE_INT_MAX}):bidder_id>/portfolio", methods=["GET"])
 def api_bidder_portfolio(bidder_id: int):
     if bidding.get_bidder(bidder_id) is None:
         return _bid_err(UnknownBidder(), status=404)
@@ -251,18 +350,15 @@ def api_bidder_portfolio(bidder_id: int):
 @la_subasta_bp.route("/api/bid", methods=["POST"])
 def api_bid():
     data = request.get_json(silent=True) or {}
-    try:
-        bidder_id = int(data.get("bidder_id"))
-        horse_id = int(data.get("horse_id"))
-    except (TypeError, ValueError):
+    bidder_id, horse_id = _int_arg(data, "bidder_id"), _int_arg(data, "horse_id")
+    if bidder_id is None or horse_id is None:
         return _err("bidder_id and horse_id must be integers")
+    refused = _not_this_guest(bidder_id, data)
+    if refused:
+        return refused
 
     try:
         placed = bidding.place_bid(bidder_id, horse_id, data.get("amount"))
-    except UnknownBidder as exc:
-        # Not this year's bidder: 404, which sends the guest page back to
-        # the join screen (guest.js).
-        return _bid_err(exc, status=404)
     except BidError as exc:
         return _bid_err(exc)
 
@@ -303,11 +399,12 @@ def api_bid():
 @la_subasta_bp.route("/api/bid/undo", methods=["POST"])
 def api_bid_undo():
     data = request.get_json(silent=True) or {}
-    try:
-        bid_id = int(data.get("bid_id"))
-        bidder_id = int(data.get("bidder_id"))
-    except (TypeError, ValueError):
+    bid_id, bidder_id = _int_arg(data, "bid_id"), _int_arg(data, "bidder_id")
+    if bid_id is None or bidder_id is None:
         return _err("bid_id and bidder_id must be integers")
+    refused = _not_this_guest(bidder_id, data)
+    if refused:
+        return refused
 
     try:
         result = bidding.undo_bid(bid_id, bidder_id)
@@ -385,9 +482,8 @@ def api_admin_lock():
 @la_subasta_bp.route("/api/admin/void", methods=["POST"])
 def api_admin_void():
     data = request.get_json(silent=True) or {}
-    try:
-        bid_id = int(data.get("bid_id"))
-    except (TypeError, ValueError):
+    bid_id = _int_arg(data, "bid_id")
+    if bid_id is None:
         return _err("bid_id must be an integer")
     try:
         result = bidding.void_bid(bid_id, data.get("reason", ""))
@@ -401,9 +497,8 @@ def api_admin_void():
 @la_subasta_bp.route("/api/admin/paid", methods=["POST"])
 def api_admin_paid():
     data = request.get_json(silent=True) or {}
-    try:
-        bidder_id = int(data.get("bidder_id"))
-    except (TypeError, ValueError):
+    bidder_id = _int_arg(data, "bidder_id")
+    if bidder_id is None:
         return _err("bidder_id must be an integer")
 
     bidder = bidding.get_bidder(bidder_id)
@@ -446,13 +541,14 @@ def api_admin_payout_slot():
     """Name the horse that pays a slot: the safety net for a paying horse with
     no owner (La Quiniela's rule for an empty cup: the next finisher takes the
     place). Body JSON: {"finish": "win" | "place" | "show", "horse_id": 4},
-    a horse in the field that has an owner. 409 before a result is in, or if
+    a horse in the field that has an owner. 409 before a result is in, for a
+    slot whose finisher has an owner (it pays them; naming the finisher itself
+    is always allowed and puts the slot back as the result has it), or if
     that horse has no owner either. Replies with the slot's row and the
     ledger."""
     data = request.get_json(silent=True) or {}
-    try:
-        horse_id = int(data.get("horse_id"))
-    except (TypeError, ValueError):
+    horse_id = _int_arg(data, "horse_id")
+    if horse_id is None:
         return _err("horse_id must be an integer")
     try:
         slot = payouts.set_slot_horse(data.get("finish"), horse_id)
@@ -486,9 +582,8 @@ def api_admin_cap_exempt():
     (the host, who buys the horses nobody else bid on). Body JSON:
     {"bidder_id": 3, "exempt": true}. The cap still applies to everyone else."""
     data = request.get_json(silent=True) or {}
-    try:
-        bidder_id = int(data.get("bidder_id"))
-    except (TypeError, ValueError):
+    bidder_id = _int_arg(data, "bidder_id")
+    if bidder_id is None:
         return _err("bidder_id must be an integer")
     exempt = data.get("exempt")
     if not isinstance(exempt, bool):
@@ -505,8 +600,11 @@ def api_admin_cap_exempt():
 # Admin-tunable settings (Phase 1.5)
 # -----------------------------------------------------------------------------
 
-@la_subasta_bp.route("/api/admin/settings", methods=["GET"])
-def api_admin_settings_get():
+@la_subasta_bp.route("/api/settings", methods=["GET"])
+def api_settings():
+    """The settings as they stand (value, default, overridden or not) and the
+    auction's state. Open to everyone: the guest page reads the bid limits from
+    it. Setting them is the host's (POST /api/admin/settings)."""
     return jsonify({
         "success": True,
         "settings": settings.get_all_settings(),
@@ -544,9 +642,12 @@ def api_admin_settings_set():
 def api_admin_settings_reset():
     data = request.get_json(silent=True) or {}
     before = settings.get_all_settings()
-    count = settings.reset_to_defaults(
-        changed_by=data.get("changed_by", "admin"),
-    )
+    try:
+        count = settings.reset_to_defaults(
+            changed_by=data.get("changed_by", "admin"),
+        )
+    except SettingsError as exc:
+        return jsonify({"success": False, "error": exc.reason}), 409
     # Broadcast one settings_changed per setting that actually changed, so
     # every connected client can refresh its cache.
     for key, info in before.items():

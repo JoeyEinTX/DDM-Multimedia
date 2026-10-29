@@ -2,10 +2,13 @@
    La Subasta — Guest JS (Phase 2A)
 
    Responsibilities:
-     - Identity modal on first visit; persist to localStorage. A kept
-       identity is checked with the server at boot, and a bid answered 404
-       (the server doesn't know it) goes back to the join screen with one
-       line: a phone from another year, or whose guest was wiped, joins again
+     - Identity modal on first visit; persist to localStorage: the guest
+       number and the secret the server issued at join, which a bid carries
+       to prove it is theirs. A kept identity is checked with the server at
+       boot, and a bid answered 404 or 401 (the server doesn't know it, or
+       the secret is not theirs) goes back to the join screen with one line:
+       a phone from another year, from before the secret, or whose guest was
+       wiped, joins again
      - Render horse list from /la-subasta/api/horses
      - Place bids with +1 / +3 / +5 / custom; disable out-of-range buttons
      - Live updates via SocketIO (bid_placed, horse_scratched, field_changed,
@@ -26,7 +29,7 @@
         register: '/la-subasta/api/register',
         checkIdentity: '/la-subasta/api/check-identity',
         bid:      '/la-subasta/api/bid',
-        settings: '/la-subasta/api/admin/settings',
+        settings: '/la-subasta/api/settings',
     };
 
     const IDENTITY_KEY   = 'la_subasta_identity';
@@ -42,7 +45,7 @@
 
     // Runtime state
     const state = {
-        identity: null,          // { bidder_id, name, emoji, identity }
+        identity: null,          // { bidder_id, name, emoji, identity, secret }
         horses:   {},            // keyed by horse_id
         socket:   null,
         settings: {              // cached — refreshed on settings_changed
@@ -161,8 +164,9 @@
     }
 
     // The join screen. again: this year's auction doesn't know the identity
-    // the phone kept (a phone from another year, or whose guest was wiped),
-    // so it is forgotten and the guest joins again, told why in one line.
+    // the phone kept (a phone from another year or from before the secret, or
+    // whose guest was wiped), so it is forgotten and the guest joins again,
+    // told why in one line.
     // The app behind is hidden and a bid dialog left open is closed.
     function showJoin(again) {
         if (again) {
@@ -224,6 +228,7 @@
                     name: bidder.name,
                     emoji: bidder.emoji,
                     identity: bidder.identity,
+                    secret: resp.data.secret,
                 };
                 storeIdentity(state.identity);
                 modal.hidden = true;
@@ -619,6 +624,7 @@
 
         const resp = await postJSON(API.bid, {
             bidder_id: state.identity.bidder_id,
+            secret:    state.identity.secret,
             horse_id:  horseId,
             amount:    amount,
         });
@@ -626,8 +632,9 @@
         if (btn) btn.classList.remove('ls-loading');
 
         // This year's auction doesn't know the guest (wiped since the page
-        // was opened): back to the join screen, never a dead "Unknown bidder".
-        if (resp.status === 404) {
+        // was opened), or the secret is not theirs: back to the join screen,
+        // never a dead "Unknown bidder".
+        if (resp.status === 404 || resp.status === 401) {
             showJoin(true);
             return false;
         }
@@ -1022,9 +1029,9 @@
     }
 
     // A kept identity is checked with the server first. Not known (a phone
-    // from another year, or whose guest was wiped): the join screen, with
-    // the line. No answer (the Wi-Fi, pi5 restarting): in with what the phone
-    // kept; a bid's 404 settles it (placeBid).
+    // from another year or from before the secret, or whose guest was wiped):
+    // the join screen, with the line. No answer (the Wi-Fi, pi5 restarting):
+    // in with what the phone kept; a bid's 404 or 401 settles it (placeBid).
     async function proceedToIdentityFlow() {
         const stored = loadStoredIdentity();
         if (!stored) {
@@ -1033,6 +1040,7 @@
         }
         const resp = await postJSON(API.checkIdentity, {
             bidder_id: stored.bidder_id,
+            secret: stored.secret,
             name: stored.name,
             emoji: stored.emoji,
         });

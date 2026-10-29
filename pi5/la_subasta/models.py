@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS payout_slots (
 # bidders: identity (name + emoji) is unique within an event year, so "Dave K
 # 🌮" can join again the next year. cap_exempt: the admin marked this bidder
 # (the host, who picks up the horses nobody bid on) as free of the max-horses
-# cap (bidding.set_cap_exempt). The column list, shared by SCHEMA_SQL and the
+# cap (bidding.set_cap_exempt). secret_hash: the SHA-256 of the secret the
+# guest's phone was given at join (bidding.register_bidder), which it sends to
+# bid or undo as that guest; NULL for a guest from before it, whose phone is
+# unknown and joins again. The column list, shared by SCHEMA_SQL and the
 # rebuild of an older table whose identity was unique across every year
 # (_migrate).
 _BIDDERS_COLUMNS_SQL = """(
@@ -64,6 +67,7 @@ _BIDDERS_COLUMNS_SQL = """(
     paid_amount  REAL,
     event_year   INTEGER NOT NULL,
     cap_exempt   INTEGER NOT NULL DEFAULT 0,
+    secret_hash  TEXT,
     UNIQUE(identity, event_year)
 )"""
 
@@ -214,7 +218,6 @@ def init_db(path: str = None) -> sqlite3.Connection:
     conn = _open_for_thread(path)
     _migrate(conn)
     conn.executescript(SCHEMA_SQL)
-    _drop_legacy_house(conn)
     return conn
 
 
@@ -226,12 +229,16 @@ _OWNERSHIP_VOID_COLUMNS = (
 
 _BIDDER_COLUMNS = (
     ("cap_exempt", "INTEGER NOT NULL DEFAULT 0"),
+    ("secret_hash", "TEXT"),
 )
 
 _BIDDER_ALL_COLUMNS = (
     "id", "name", "emoji", "identity", "push_endpoint", "created_at", "paid", "paid_at",
-    "paid_amount", "event_year", "cap_exempt",
+    "paid_amount", "event_year", "cap_exempt", "secret_hash",
 )
+
+# What every list, reply and broadcast may show of a guest: all but the secret's hash.
+PUBLIC_BIDDER_COLUMNS = ", ".join(c for c in _BIDDER_ALL_COLUMNS if c != "secret_hash")
 
 
 def _add_missing_columns(conn: sqlite3.Connection, table: str, columns) -> None:
@@ -294,7 +301,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     held only a copy of a result entered twice.
 
     - ownership gains the void columns (a scratch after the lock);
-    - bidders gains cap_exempt (the admin's exemption from the max-horses cap);
+    - bidders gains cap_exempt (the admin's exemption from the max-horses cap)
+      and secret_hash (a guest's proof of who it is);
     - payouts, La Subasta's own results store until 2026-10-20 (gap review
       M5), is dropped: the ledger is derived from SET WINNERS' result now
       (payouts.py), and payout_slots, which the schema makes, holds what the
@@ -312,30 +320,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS payouts")
     if conn.execute("PRAGMA table_info(auction_state)").fetchall():
         conn.execute("UPDATE auction_state SET state = 'LOCKED' WHERE state IN ('RACE_COMPLETE', 'SETTLED')")
-
-
-# The House is gone (payouts.py: no payout ever goes to it). A database from
-# before has its sentinel bidder row; this is the identity it was made with.
-_LEGACY_HOUSE_IDENTITY = "The House \U0001F3A9"
-
-
-def _drop_legacy_house(conn: sqlite3.Connection) -> None:
-    """Remove the House's sentinel bidder row from a database that has one. A
-    row that somehow has bids or an ownership is left alone."""
-    row = conn.execute(
-        "SELECT id FROM bidders WHERE identity = ?", (_LEGACY_HOUSE_IDENTITY,),
-    ).fetchone()
-    if row is None:
-        return
-    house = row["id"]
-    busy = conn.execute(
-        "SELECT (SELECT COUNT(*) FROM bids WHERE bidder_id = ?) "
-        "     + (SELECT COUNT(*) FROM ownership WHERE bidder_id = ?) AS n",
-        (house, house),
-    ).fetchone()["n"]
-    if busy:
-        return
-    conn.execute("DELETE FROM bidders WHERE id = ?", (house,))
 
 
 def get_conn() -> sqlite3.Connection:

@@ -46,6 +46,7 @@ from la_quiniela import test_smoke as S  # noqa: E402  (repoints the DB before t
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela  # noqa: E402
 from la_quiniela.board import get_board, init_board  # noqa: E402
+from la_subasta import blueprint as ls_blueprint  # noqa: E402
 from la_quiniela.test_smoke import FakeClock, MAC_A, MAC_B, _fresh_bridge, telem  # noqa: E402
 from communication.esp32_client import ESP32Client  # noqa: E402
 from communication.sender import Unreachable  # noqa: E402
@@ -107,6 +108,9 @@ def tmpdir():
     return Path(d)
 
 
+RIG_PIN = "rig-host-pin"            # the host's PIN for La Subasta's admin routes; every rig's client is the host's iPad
+
+
 class Rig:
     """main's app over a fresh bridge and board; the hardware stubbed."""
 
@@ -142,7 +146,9 @@ class Rig:
         main.esp32.exchange = exchange
         main.tote = None                # tote_send() does nothing
         main.app.config["TESTING"] = True
+        main.app.config["LS_ADMIN_PIN"] = RIG_PIN
         self.client = main.app.test_client()
+        self.client.set_cookie(ls_blueprint.ADMIN_COOKIE, ls_blueprint.pin_cookie(RIG_PIN), path="/la-subasta")
 
     def post(self, path, body=None, **kw):
         return self.client.post(path, json=body, **kw) if body is not None else self.client.post(path, **kw)
@@ -835,11 +841,13 @@ def test_la_subasta_pays_on_set_winners():
     c = rig.client
     r = c.post("/la-subasta/api/admin/start")
     assert r.status_code == 200, r.get_json()
-    guests = {name: c.post("/la-subasta/api/register", json={"name": name, "emoji": emoji}).get_json()["bidder"]
+    joined = {name: c.post("/la-subasta/api/register", json={"name": name, "emoji": emoji}).get_json()
               for name, emoji in (("Alice", "🌮"), ("Bob", "🐴"))}
+    guests = {name: j["bidder"] for name, j in joined.items()}
 
     def bid(who, horse, amount):
-        r = c.post("/la-subasta/api/bid", json={"bidder_id": guests[who]["id"], "horse_id": horse, "amount": amount})
+        r = c.post("/la-subasta/api/bid", json={"bidder_id": guests[who]["id"], "secret": joined[who]["secret"],
+                                                "horse_id": horse, "amount": amount})
         assert r.status_code == 200, r.get_json()
 
     bid("Alice", 19, 4)

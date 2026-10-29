@@ -18,6 +18,11 @@
 //     as paid on an earlier result, until it is unmarked.
 //
 // Names are what guests typed: every piece of text goes in with textContent.
+//
+// The page and these routes are the host's, behind the PIN in pi5/.env
+// (la_subasta/blueprint.py). The PIN form is the page itself until it has
+// been entered; a route that answers 401 later (the PIN changed) reloads the
+// page, which asks again.
 
 (function () {
     'use strict';
@@ -42,11 +47,16 @@
     // Requests
     // ---------------------------------------------------------------------
 
+    function askForThePin(resp) {
+        if (resp.status === 401) location.reload();
+        return resp;
+    }
+
     async function getJSON(url) {
         try {
             const resp = await fetch(url, { credentials: 'same-origin' });
             const data = await resp.json().catch(function () { return {}; });
-            return { ok: resp.ok, status: resp.status, data: data };
+            return askForThePin({ ok: resp.ok, status: resp.status, data: data });
         } catch (err) {
             return { ok: false, status: 0, data: {}, networkError: true };
         }
@@ -61,7 +71,7 @@
                 body: JSON.stringify(body || {}),
             });
             const data = await resp.json().catch(function () { return {}; });
-            return { ok: resp.ok, status: resp.status, data: data };
+            return askForThePin({ ok: resp.ok, status: resp.status, data: data });
         } catch (err) {
             return { ok: false, status: 0, data: {}, networkError: true };
         }

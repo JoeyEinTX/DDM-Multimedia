@@ -26,7 +26,8 @@
 #     start and try again every 3 s).
 # A warning only: no pi5/.env, or a setting the night needs empty in it (the gateway's port
 # DDM_LQ_SERIAL_PORT, the LED controller DDM_ESP32_IP, the weather key DDM_WEATHER_API_KEY,
-# the odds poller's DDM_ANTHROPIC_API_KEY: each feature is off without it); the gateway's
+# the odds poller's DDM_ANTHROPIC_API_KEY, La Subasta's host PIN DDM_LS_ADMIN_PIN, also when
+# it is still the example: each feature is off without it); the gateway's
 # port not there now (pi5 retries every 5 s until it appears); a local edit of the tracked
 # pi5/config.py (pi5/tools/env_from_config.py moves it into pi5/.env); DDM_* settings that
 # live in this shell only. Secrets are never printed: only whether they are set.

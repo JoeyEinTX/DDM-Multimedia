@@ -78,6 +78,7 @@ WEATHER_API_KEY = _env('WEATHER_API_KEY', '')        # WeatherAPI.com; empty = n
 ANTHROPIC_API_KEY = (_env('ANTHROPIC_API_KEY', '')   # the track's odds poller (la_quiniela/odds.py); empty = it can't run
                      or os.environ.get('ANTHROPIC_API_KEY', ''))
 FLASK_SECRET_KEY = _env('FLASK_SECRET_KEY', '') or _secrets.token_hex(24)   # Flask's own; empty = a new random one each start (nothing keeps a session)
+LS_ADMIN_PIN = _env('LS_ADMIN_PIN', '')              # the host's PIN for La Subasta's admin page and /api/admin routes (la_subasta/blueprint.py); empty = they are off
 
 # ---------------------------------------------------------------------------
 # DevPi's own settings: what only one box knows. The defaults work on any dev

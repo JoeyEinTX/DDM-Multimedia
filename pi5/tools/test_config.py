@@ -100,6 +100,7 @@ def test_defaults_with_no_env():
     _check("no .env: no LED controller (ESP32_IP empty), port 5005", v["ESP32_IP"] == "" and v["ESP32_PORT"] == 5005)
     _check("no .env: no tote board (TOTE_IP empty, TOTE_ENABLED false)", v["TOTE_IP"] == "" and v["TOTE_ENABLED"] is False)
     _check("no .env: the bridge idles (LQ_SERIAL_PORT empty)", v["LQ_SERIAL_PORT"] == "")
+    _check("no .env: no host PIN (LS_ADMIN_PIN empty): La Subasta's admin page is off", v["LS_ADMIN_PIN"] == "")
     _check("no .env: pi5 on 0.0.0.0:5000, the weather for Dallas,TX",
            v["FLASK_HOST"] == "0.0.0.0" and v["FLASK_PORT"] == 5000 and v["WEATHER_LOCATION"] == "Dallas,TX")
     v2, _ = config_values()
@@ -112,12 +113,13 @@ def test_defaults_with_no_env():
 
 
 def test_env_file_lands_by_name():
-    key, odds, flask_key = fake_secret(31), fake_secret(40), fake_secret(32)
+    key, odds, flask_key, pin = fake_secret(31), fake_secret(40), fake_secret(32), fake_secret(8)
     env_text = "\r\n".join([
         "# a comment",
         f"DDM_WEATHER_API_KEY={key}",
         f"export DDM_ANTHROPIC_API_KEY=\"{odds}\"",
         f"DDM_FLASK_SECRET_KEY='{flask_key}'",
+        f"DDM_LS_ADMIN_PIN={pin}",
         "DDM_LQ_SERIAL_PORT=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
         "DDM_ESP32_IP=10.0.0.42   # the mantle",
         "DDM_ESP32_PORT=5006",
@@ -132,14 +134,14 @@ def test_env_file_lands_by_name():
         "", ""])
     v, _ = config_values(env_text)
     expect = {
-        "WEATHER_API_KEY": key, "ANTHROPIC_API_KEY": odds, "FLASK_SECRET_KEY": flask_key,
+        "WEATHER_API_KEY": key, "ANTHROPIC_API_KEY": odds, "FLASK_SECRET_KEY": flask_key, "LS_ADMIN_PIN": pin,
         "LQ_SERIAL_PORT": "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
         "ESP32_IP": "10.0.0.42", "ESP32_PORT": 5006, "TOTE_IP": "10.0.0.124", "TOTE_PORT": 81, "TOTE_ENABLED": True,
         "FLASK_HOST": "127.0.0.1", "FLASK_PORT": 5050, "WEATHER_LOCATION": "Louisville,KY",
         "LQ_SERIAL_BAUD": 57600, "LQ_BRIDGE_ENABLED": False, "LQ_CUP_OFFLINE_S": 9,
     }
     for name, want in expect.items():
-        shown = "<secret>" if name in ("WEATHER_API_KEY", "ANTHROPIC_API_KEY", "FLASK_SECRET_KEY") else repr(want)
+        shown = "<secret>" if name in ("WEATHER_API_KEY", "ANTHROPIC_API_KEY", "FLASK_SECRET_KEY", "LS_ADMIN_PIN") else repr(want)
         _check(f".env: DDM_{name} lands in config.{name} ({shown})", v.get(name) == want and type(v.get(name)) is type(want))
     v, _ = config_values("DDM_TOTE_IP=10.0.0.124\nDDM_TOTE_ENABLED=0\n")
     _check(".env: DDM_TOTE_ENABLED=0 turns a set tote board off", v["TOTE_IP"] == "10.0.0.124" and v["TOTE_ENABLED"] is False)
@@ -214,6 +216,8 @@ def test_main_starts_with_no_env():
         _check("one line: no LED controller, the LEDs are off", stdout.count("no LED controller set (DDM_ESP32_IP") == 1, stdout[-800:])
         _check("one line: no weather key, the board's weather line is off",
                stdout.count("no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off") == 1, stdout[-800:])
+        _check("one line: no host PIN, La Subasta's admin page and routes are off",
+               stdout.count("no host PIN (DDM_LS_ADMIN_PIN in pi5/.env): its admin page and routes are off") == 1, stdout[-800:])
         _check("the bridge idles: LQ_SERIAL_PORT is empty", "La Quiniela bridge idle: LQ_SERIAL_PORT is empty" in stdout + stderr,
                (stdout + stderr)[-800:])
         _check("no LED controller is tried: no unreachable line, no probe", "LED wall unreachable" not in stdout)

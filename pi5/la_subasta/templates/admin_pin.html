@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a1f1a">
+    <title>La Subasta admin</title>
+    <link rel="stylesheet" href="{{ url_for('la_subasta.static', filename='css/la-subasta-admin.css') }}">
+</head>
+<body>
+
+<!-- What /la-subasta/admin shows until the host has entered the PIN (the
+     blueprint's "The host's PIN"): the form, or, with no PIN set on pi5, where
+     to set one. The right PIN sets a cookie for 30 days and reloads the page. -->
+
+<main class="adm-main adm-pin">
+    <section class="adm-card">
+        <h1>La Subasta admin</h1>
+{% if pin_unset %}
+        <p class="adm-status err">No host PIN is set. Put <code>DDM_LS_ADMIN_PIN=&hellip;</code> in
+           <code>pi5/.env</code> and restart pi5.</p>
+{% else %}
+        <form id="ls-pin-form">
+            <label for="ls-pin">Host PIN</label>
+            <input id="ls-pin" type="password" autocomplete="current-password" required>
+            <button type="submit">Enter</button>
+            <div id="ls-pin-status" class="adm-status err" role="alert"></div>
+        </form>
+        <script>
+            document.getElementById('ls-pin-form').addEventListener('submit', async function (e) {
+                e.preventDefault();
+                const status = document.getElementById('ls-pin-status');
+                status.textContent = '';
+                try {
+                    const resp = await fetch('/la-subasta/admin/login', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: document.getElementById('ls-pin').value }),
+                    });
+                    if (resp.ok) { location.reload(); return; }
+                    const data = await resp.json().catch(function () { return {}; });
+                    status.textContent = data.error || 'Could not enter';
+                } catch (err) {
+                    status.textContent = 'Could not reach pi5';
+                }
+            });
+        </script>
+{% endif %}
+    </section>
+</main>
+</body>
+</html>

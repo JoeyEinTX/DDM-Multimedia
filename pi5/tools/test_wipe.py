@@ -42,7 +42,8 @@ except (AttributeError, io.UnsupportedOperation):
 PI5_SRC = Path(__file__).resolve().parent.parent
 KEEP = "--keep" in sys.argv
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("DDM_")}
-ENV.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
+WIPE_PIN = "wipe-test-pin"                # the scratch pi5's host PIN, for the La Subasta admin routes the comparison reads
+ENV.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", DDM_LS_ADMIN_PIN=WIPE_PIN)
 
 SCRATCH_CONFIG = """
 # test_wipe.py: a scratch pi5 on loopback, its own port, nothing external
@@ -299,6 +300,7 @@ class Pi5:
         self.root = root
         self.port = _PORTS[root]
         self.log = root.parent / f"pi5-{time.time_ns()}.log"
+        self.cookie = None
 
     def __enter__(self):
         self.out = open(self.log, "wb")
@@ -310,14 +312,21 @@ class Pi5:
                 raise RuntimeError("pi5 exited: " + self.log.read_text(encoding="utf-8", errors="replace")[-2000:])
             try:
                 self.get("/api/quiniela")
-                return self
+                break
             except OSError:
                 time.sleep(0.2)
-        raise RuntimeError("pi5 did not come up")
+        else:
+            raise RuntimeError("pi5 did not come up")
+        login = urllib.request.Request(f"http://127.0.0.1:{self.port}/la-subasta/admin/login", method="POST",
+                                       data=json.dumps({"pin": WIPE_PIN}).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(login, timeout=5) as r:
+            self.cookie = r.headers["Set-Cookie"].split(";")[0]
+        return self
 
     def get(self, path):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", headers={"Cookie": self.cookie} if self.cookie else {})
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=5) as r:
+            with urllib.request.urlopen(request, timeout=5) as r:
                 return r.status, json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", "replace")
@@ -570,7 +579,7 @@ def test_pi5_starts_fresh_after_the_wipe():
     paths = ["/api/quiniela", "/api/quiniela/horses", "/api/quiniela/race", "/api/quiniela/field",
              "/api/results", "/api/race", "/api/spectator/state", "/la-subasta/api/state",
              "/la-subasta/api/horses", "/la-subasta/api/bidders", "/la-subasta/api/admin/payouts",
-             "/la-subasta/api/admin/settings", "/la-subasta/api/admin/settings/audit"]
+             "/la-subasta/api/settings", "/la-subasta/api/admin/settings/audit"]
     volatile = {"now", "updated", "updated_at", "last_updated", "timestamp", "server_time", "time"}
 
     def clean(x):

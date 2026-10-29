@@ -266,19 +266,20 @@ def ledger(event_year: int = EVENT_YEAR) -> dict:
 def set_slot_horse(finish: str, horse_id: int,
                    event_year: int = EVENT_YEAR) -> dict:
     """
-    The admin names the horse that pays a slot: the next finisher, when the
-    horse that finished there has no owner (La Quiniela's rule for an empty
-    cup in the money). The slot is then paid to that horse's owner, for the
-    amount it already has. Naming the horse that finished there puts the slot
-    back as the result has it. Any slot can be set, because skipping one
-    finisher moves the next up into it (and the one after into the next).
+    The admin names the horse that pays a slot whose finisher has no owner:
+    the next finisher (La Quiniela's rule for an empty cup in the money). The
+    slot is then paid to that horse's owner, for the amount it already has.
+    Naming the horse that finished there puts the slot back as the result has
+    it. A slot whose finisher has an owner pays them and is not pointed at
+    another horse (Joey, 2026-10-28, review S1): that would send a paid-for
+    horse's payout to someone else. The owners are read under the write lock.
     The pick is kept against the finisher the result names now, so a
     correction that changes the slot's horse sets it aside.
 
     The horse must be in the field and have an owner. PayoutError, with the
     status the route answers with, when it cannot be done: 400 for a bad
-    finish or horse, 409 when no result is in yet or the horse has no owner
-    either. Returns the slot's ledger row.
+    finish or horse, 409 when no result is in yet, the finisher has an owner
+    or the horse has no owner either. Returns the slot's ledger row.
     """
     if finish not in FINISHES:
         raise PayoutError("finish must be win, place or show")
@@ -298,6 +299,10 @@ def set_slot_horse(finish: str, horse_id: int,
         the_field = read["field"]
         if horse_id not in the_field:
             raise PayoutError(the_field.refusal(horse_id))
+        if horse_id != finisher and get_owner(finisher, event_year) is not None:
+            raise PayoutError(
+                f"{finish.upper()} is #{finisher}'s: it has an owner, so it pays them. "
+                f"Only a slot nobody owns can be pointed at another horse", status=409)
         owner = get_owner(horse_id, event_year)
         if owner is None:
             raise PayoutError(
