@@ -65,7 +65,7 @@ quiniela._started = True
 
 import server  # noqa: E402
 
-from flask import Flask, jsonify, request  # noqa: E402
+from flask import Flask, request  # noqa: E402
 from werkzeug.serving import make_server  # noqa: E402
 
 from quiniela import BoardRelay, Pi5Link, sse_events  # noqa: E402
@@ -198,19 +198,13 @@ def refused() -> urllib.error.URLError:
     return urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
 
 
-def http_error(code: int, body: Any) -> urllib.error.HTTPError:
-    raw = json.dumps(body).encode("utf-8") if not isinstance(body, bytes) else body
-    return urllib.error.HTTPError(BASE + "/api/quiniela/cmd", code, "nope", {}, io.BytesIO(raw))
-
-
 class ScriptedOpener:
     """opener(request, timeout): per path, a list of outcomes (a FakeResponse
     to return or an exception to raise); the last outcome repeats forever."""
 
     def __init__(self, **scripts: List[Any]) -> None:
         self.scripts = {"/api/quiniela/stream": scripts.pop("stream", [refused()]),
-                        "/api/quiniela": scripts.pop("poll", [refused()]),
-                        "/api/quiniela/cmd": scripts.pop("cmd", [refused()])}
+                        "/api/quiniela": scripts.pop("poll", [refused()])}
         self.calls: List[Any] = []       # (path, timeout, request)
 
     def __call__(self, req: Any, timeout: float) -> Any:
@@ -643,61 +637,8 @@ class RunLoopTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Pi5Link.forward_cmd
+# Pi5Link.stop()
 # ---------------------------------------------------------------------------
-class ForwardCmdTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.rec = Recorder()
-
-    def _link(self, opener: Any) -> Pi5Link:
-        return Pi5Link(on_model=self.rec.on_model, on_alive=self.rec.on_alive, base_url=BASE, opener=opener)
-
-    def test_200_is_relayed_with_the_body_as_received(self) -> None:
-        opener = ScriptedOpener(cmd=[json_response({"ok": True, "echo": "state 1"})])
-        link = self._link(opener)
-        self.assertEqual(link.forward_cmd({"cmd": "state 1"}), (200, {"ok": True, "echo": "state 1"}))
-        path, timeout, req = opener.calls[0]
-        self.assertEqual(path, "/api/quiniela/cmd")
-        self.assertEqual(timeout, quiniela.FETCH_TIMEOUT_S)
-        self.assertEqual(req.get_method(), "POST")
-        self.assertEqual(json.loads(req.data.decode("utf-8")), {"cmd": "state 1"})
-        self.assertEqual(req.get_header("Content-type"), "application/json")
-        # Not a dict (no body, a list): pi5 gets {} and decides.
-        link.forward_cmd(None)
-        link.forward_cmd(["state 1"])
-        self.assertEqual([json.loads(c[2].data) for c in opener.calls[1:]], [{}, {}])
-
-    def test_http_error_with_json_body_is_relayed(self) -> None:
-        opener = ScriptedOpener(cmd=[http_error(400, {"ok": False, "error": "empty command"}),
-                                     http_error(503, {"ok": False, "error": "gateway not connected"}),
-                                     http_error(500, b"<html>boom</html>")])
-        link = self._link(opener)
-        self.assertEqual(link.forward_cmd({"cmd": ""}), (400, {"ok": False, "error": "empty command"}))
-        self.assertEqual(link.forward_cmd({"cmd": "state 1"}),
-                         (503, {"ok": False, "error": "gateway not connected"}))
-        status, payload = link.forward_cmd({"cmd": "state 1"})
-        self.assertEqual(status, 500)
-        self.assertIs(payload["ok"], False)
-        self.assertIn("non-JSON reply", payload["error"])
-
-    def test_unreachable_is_503_and_non_json_2xx_is_502(self) -> None:
-        opener = ScriptedOpener(cmd=[refused(), TimeoutError("timed out"), FakeResponse(body=b"<html>"),
-                                     FakeResponse(body=b"[1, 2]", status=201)])
-        link = self._link(opener)
-        status, payload = link.forward_cmd({"cmd": "state 1"})
-        self.assertEqual(status, 503)
-        self.assertIs(payload["ok"], False)
-        self.assertTrue(payload["error"].startswith("pi5 not reachable: "), payload)
-        self.assertIn("refused", payload["error"])
-        status, payload = link.forward_cmd({"cmd": "state 1"})
-        self.assertEqual(status, 503)
-        self.assertIn("timed out", payload["error"])
-        # A 2xx without a JSON object is a bad gateway, never a 200 saying ok:false.
-        status, payload = link.forward_cmd({"cmd": "state 1"})
-        self.assertEqual(status, 502)
-        self.assertEqual(payload, {"ok": False, "error": "non-JSON reply from pi5 (HTTP 200)"})
-        status, payload = link.forward_cmd({"cmd": "state 1"})
-        self.assertEqual((status, payload), (502, {"ok": False, "error": "non-JSON reply from pi5 (HTTP 201)"}))
 
 
 class StopTests(unittest.TestCase):
@@ -768,22 +709,6 @@ class RouteCase(unittest.TestCase):
         quiniela.board, quiniela.link, quiniela.SSE_HEARTBEAT_S = self._saved
 
 
-def fake_pi5_app() -> Flask:
-    """Just pi5's cmd route: 400 for an empty / missing cmd, else an echo."""
-    logging.getLogger("werkzeug").setLevel(logging.ERROR)     # no access log in the test output
-    app = Flask("test_fake_pi5")
-
-    @app.route("/api/quiniela/cmd", methods=["POST"])
-    def cmd():
-        body = request.get_json(silent=True)
-        c = body.get("cmd") if isinstance(body, dict) else None
-        if not isinstance(c, str) or not c.strip():
-            return jsonify({"ok": False, "error": "empty command"}), 400
-        return jsonify({"ok": True, "echo": c.strip()})
-
-    return app
-
-
 class ApiTests(RouteCase):
     def test_import_started_nothing(self) -> None:
         self.assertTrue(quiniela._started)
@@ -809,29 +734,15 @@ class ApiTests(RouteCase):
         self.assertEqual(m["board_states"], [1, 2, 3, 4, 5])
         self.assertEqual(m["leader"], 7)
 
-    def test_cmd_is_relayed_to_pi5_and_503_when_it_is_gone(self) -> None:
-        srv = make_server("127.0.0.1", 0, fake_pi5_app(), threaded=True)
-        thread = threading.Thread(target=srv.serve_forever, daemon=True)
-        thread.start()
-        quiniela.link = Pi5Link(on_model=self.board.apply_model, on_alive=self.board.touch,
-                                base_url=f"http://127.0.0.1:{srv.server_port}")
-        try:
-            resp = self.client.post("/api/quiniela/cmd", json={"cmd": "  state 1 "})
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.get_json(), {"ok": True, "echo": "state 1"})
-            for bad in ({"cmd": ""}, {"nope": 1}, None):
-                resp = self.client.post("/api/quiniela/cmd", json=bad)
-                self.assertEqual(resp.status_code, 400, bad)
-                self.assertEqual(resp.get_json(), {"ok": False, "error": "empty command"})
-        finally:
-            srv.shutdown()
-            srv.server_close()
-            thread.join(2.0)
-        resp = self.client.post("/api/quiniela/cmd", json={"cmd": "state 1"})
-        self.assertEqual(resp.status_code, 503)
-        body = resp.get_json()
-        self.assertIs(body["ok"], False)
-        self.assertTrue(body["error"].startswith("pi5 not reachable: "), body)
+    def test_no_phone_can_change_the_race_state_through_this_port(self) -> None:
+        """Joey, 2026-10-28 (review Q3): the guests are pointed at 5001, so a relay of pi5's /api/quiniela/cmd let any
+        phone reopen betting in the middle of the draw. The route and the link's forward_cmd are gone; the model and
+        the stream are all the splash relays."""
+        for path in ("/api/quiniela/cmd", "/api/quiniela/mode", "/api/quiniela/reset"):
+            for body in ({"cmd": "state 1"}, {"mode": "WELCOME"}, None):
+                self.assertIn(self.client.post(path, json=body).status_code, (404, 405), (path, body))
+        self.assertFalse(hasattr(Pi5Link, "forward_cmd"))
+        self.assertEqual(sorted(r.rule for r in server.app.url_map.iter_rules() if "POST" in r.methods and r.rule.startswith("/api/quiniela")), [])
 
     def test_the_tv_pages_are_named_for_what_they_show(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 302)

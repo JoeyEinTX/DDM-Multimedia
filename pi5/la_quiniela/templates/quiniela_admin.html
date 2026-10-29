@@ -280,11 +280,20 @@
   // Reset betting: back to PRE-RACE with the names and scratches kept (the cups
   // keep their numbers, which are theirs); the results are cleared, the counts
   // now in the cups are the baseline, and the reply says what the pot reads. Only before the race (0) or
-  // after it (6): in 1-5 pi5 refuses it and its reason shows here, so the page asks nothing first then.
+  // after it (6): in 1-5 pi5 refuses it and its reason shows here, so the page asks nothing first then. It is
+  // the one way, besides a reopen the host confirms on the Control Center, to drop the figures at the post and
+  // the hand count (Joey, 2026-10-28), so the question names them.
+  function resetClears() {
+    var gone = ["the results"];
+    if (model && model.pot_scale != null) { gone.push("the figures at the post (pot " + money(model.pot_scale) + ")"); }
+    if (model && model.pot_counted != null) { gone.push("the hand count (" + money(model.pot_counted) + ")"); }
+    gone.push("the ticker", "the closing time");
+    return gone.slice(0, -1).join(", ") + " and " + gone[gone.length - 1];
+  }
   $("reset-betting").onclick = function () {
     var racing = !!model && model.race_state >= 1 && model.race_state <= 5;
-    if (!racing && !confirm("Reset betting?\n\nBack to PRE-RACE; the ticker and the closing time are cleared and the " +
-                 "tokens now in the cups become the starting point. Cups, horses, names and scratches are kept.")) { return; }
+    if (!racing && !confirm("Reset betting?\n\nBack to PRE-RACE. This clears " + resetClears() + ". The tokens now in the cups " +
+                 "become the starting point. Cups, horses, names and scratches are kept.")) { return; }
     say("reset-status", "resetting…");
     holding([$("reset-betting")], api("POST", "/api/quiniela/reset").then(function (r) {
       if (!r.ok) { say("reset-status", r.body.error || ("error " + r.status), "err"); return; }

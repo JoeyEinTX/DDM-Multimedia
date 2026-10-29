@@ -600,7 +600,9 @@ is not in the field.
    stays; `lq_scratch_names` keeps what the scratch did, and a record from
    before that table leaves the name), bumps `names_rev`, and keeps a small
    record of the undo in `lq_renum_undo` (`now` 22, `was` 9, `undone_at`).
-   **Undo works at any time**: the pair back, `[22, 9]`, goes in the line
+   **Undo works at any time** (a replacement's, from 60 MIN to WINNER, once its cup is
+   empty: with tokens in it the route answers 409 `Cup 9 holds 4 tokens bet on #22. Hand
+   them back and empty the cup, then Undo.` and nothing moves): the pair back, `[22, 9]`, goes in the line
    whenever a cup reports 22, with no time limit, so the cup that became 22
    goes back to 9 whether the undo came 0.3 s after the scratch (before the
    cup had even followed it) or an hour later, and a cup that was off during
@@ -829,9 +831,15 @@ betting closed, and **pi5 holds them**, not the page: the model's `closing`.
   PRE_RACE, 1 BETTING_OPEN or 2 FINAL_CALL (the dashboard's WELCOME,
   STANDBY, 60 MIN, 30 MIN, FINAL CALL; Joey, 2026-10-13: going back to FINAL
   CALL after the post reopens betting, so a late bet is counted at the next
-  close, which takes fresh figures). From 3–5 the dashboard asks first,
-  naming the figures and the hand count it would clear (`at_post` in `GET
-  /api/quiniela/mode`); a curl does not. Logged as `{"closing": null}`, the
+  close, which takes fresh figures). Only with the host's yes (Joey,
+  2026-10-28): `set_race_state` refuses such a state while they are held
+  unless the request says `reopen: true` (`ReopenRefused`: a 409 on `POST
+  /api/quiniela/mode` and `/cmd` that names the figures and the count), so a
+  stale page or a curl cannot drop them. From 3 to 6 (AFTER PARTY too) the
+  dashboard asks first, naming what it would clear (`at_post` in `GET
+  /api/quiniela/mode`), and sends `reopen: true` only after the yes; the admin
+  page's Reset betting, the other way out, asks and names them as well.
+  Logged as `{"closing": null}`, the
   record marked `"betting": "reopened"` with `"dropped"` (below). TEST,
   the dashboard's LED test, sets no race state and drops nothing.
 
@@ -871,8 +879,8 @@ It is what makes the crawl's `FINAL RESULTS HAND COUNTED` true.
 - **In the model** ("The model", below): `closing.pot` and `closing.prizes`,
   which the TV paints from the post on, are the count's, and `closing` keeps
   its five keys. The model's own `pot` and `prizes` are the count's from the
-  post to the end (3 to 6). In FINAL CALL (2) the figures and the count are
-  held but betting is open again, so they are the live ones. Three keys are
+  post to the end (3 to 6). In FINAL CALL (2) betting is open again and the
+  figures and the count are gone (OD1), so they are the live ones. Three keys are
   new: `pot_scale` (the scale pot frozen at the post), `pot_counted` (the
   count, an int, or `null`) and `hand_counted` (whether the model's pot and
   prizes are the count's, which is what puts the tag on the board). Clear
@@ -904,11 +912,10 @@ its appendix. Top to bottom:
   the page's 5 s refresh, and `cannot reach pi5` (or pi5's error) instead
   when the model cannot be read, never the last state; under it a link to
   the Control Center (`/`), where the state is changed, its mode buttons
-  running the LEDs with it (build-order item 5 took off the page's seven
-  state buttons, which set the state alone); the figures, Pot /
+  running the LEDs with it; the figures, Pot /
   WIN / PLACE / SHOW / Bets, big enough to read at arm's length (Bets is the
   tokens in the pot; tokens in scratched cups are counted beside the label);
-  **Reset betting** behind a `confirm()`, calling `POST /api/quiniela/reset`
+  **Reset betting** behind a `confirm()` that names what it clears (the results, the figures at the post and the hand count while they are held), calling `POST /api/quiniela/reset`
   and reporting `Reset. Pot $N (M tokens still in the cup(s) of horse(s) ...)
   · K cups online` (only in 0 or 6: in 1–5 pi5 answers 409 and the page,
   asking nothing first, shows its reason in red); and **Horses**, one row per horse 1..24 from the model
@@ -1122,13 +1129,13 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | --- | --- |
 | `GET /api/quiniela` | The model JSON below, `Cache-Control: no-store`, and `X-Page-Rev` (as every pi5 response): the revision of pi5's pages ("Admin page", the page left open across an update). |
 | `GET /api/quiniela/stream` | Server-sent events, `text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `Connection: keep-alive`. The first chunk is `data: <model>\n\n`; every published model follows as another `data:` chunk; after 5 s of silence a `: heartbeat` comment plus `event: ping\ndata: {"ts":<unix>}\n\n`. Each subscriber has a 32-deep queue and the oldest model is dropped when it is full. |
-| `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`; see below. |
+| `POST /api/quiniela/cmd` | Body `{"cmd": "state 1"}`, and `"reopen": true` to confirm a state 0-2 while the figures at the post are held (a 409 without it); see below. |
 | `GET /api/quiniela/mode` | The one race state and the dashboard mode that set it: `{"ok": true, "state": 1, "state_name": "BETTING_OPEN", "mode": "BETTING_60", "label": "60 MIN", "source": "dashboard", "at_post": null, "modes": {...the table...}}`, `Cache-Control: no-store`. `at_post` is `{"pot": <the scale pot at the post>, "pot_counted": <the hand count or null>}` while figures at the post are held: what the dashboard's reopen confirm names. `mode` and `label` are null when the state was set directly (`source` `"cmd"`: the admin page or `state N`; `"reset"`: Reset betting) or not since pi5 started (`source` null). |
-| `POST /api/quiniela/mode` | `{"mode": "BETTING_60"}`: a dashboard mode; the race state is the table's. `{"ok": true, "mode": "BETTING_60", "state": 1, "state_name": "BETTING_OPEN", "source": "dashboard", "rev": R, "gateway_online": bool}`. 400 `unknown mode ...; one of ...`, 503 `bridge not initialised`. Sets the race state only: the LEDs are the button's own request. |
+| `POST /api/quiniela/mode` | `{"mode": "BETTING_60"}`: a dashboard mode; the race state is the table's. A mode that reopens betting (60 MIN, 30 MIN, FINAL CALL, WELCOME, STANDBY) while the figures at the post are held is a 409 naming what it would clear (`This reopens betting: the figures at the post (pot $86) and the hand count ($80) would be cleared. Send "reopen": true to confirm.`), unless the body also says `"reopen": true`; the dashboard sends it only after the host confirms. `{"ok": true, "mode": "BETTING_60", "state": 1, "state_name": "BETTING_OPEN", "source": "dashboard", "rev": R, "gateway_online": bool}`. 400 `unknown mode ...; one of ...`, 503 `bridge not initialised`. Sets the race state only: the LEDs are the button's own request. |
 | `GET /api/quiniela/horses` | `{"1": {"name": "Encino"}, ..., "24": {"name": ""}}`, names **as typed** (the model upper-cases them). |
 | `PUT /api/quiniela/horses` | Body `{"text": "1. Dornoch\n2. Sierra Leone\n...\n22. Ocelli"}` (up to 24 lines) or the GET shape (`name` required per entry; a `replaced` key, the 726d4c2 shape, is ignored). Only the horses given are touched. 400 with the parse message. Returns `{"ok": true, "names_rev": N, "horses": {...}}`. Text rules: one name per line in program order (lines 21..24 are the also-eligibles); a leading `7.` / `#7` / `7)` / `7:` / `22.` names that horse instead, a bare `7` clears it, a blank line leaves it alone; a bare `7 Name` (number, space, name) is a prefix only when every non-blank line is numbered, so in a plain list `8 Belles` is a name. |
 | `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape); 409 `The results are in, so the field is frozen: ...` while a result stands (either kind, and `unscratch`). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "refund": false, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. From AT THE GATE on (race states 3 to 6, `POST_HELD_STATES`) the field is set and a scratch has no replacement (Joey, 2026-10-23): a replacement is refused, 409 `The field is set at the gate: from AT THE GATE on a scratch has no replacement, and the tokens in its cup are refunded in cash. Scratch it with no replacement.`, and a scratch with no replacement answers `"refund": true`. Both work without a bridge (recorded, `cup` null, `rev` null). |
-| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the undo is kept (`lq_renum_undo`): the pair `[22, 9]` goes down whenever a cup reports 22, with no time limit, until the cups have settled on 9 ("Renumber pairs: derived and acknowledged", above): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
+| `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the undo is kept (`lq_renum_undo`): the pair `[22, 9]` goes down whenever a cup reports 22, with no time limit, until the cups have settled on 9 ("Renumber pairs: derived and acknowledged", above): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first; 409 `Cup 9 holds 4 tokens bet on #22. Hand them back and empty the cup, then Undo.` from 60 MIN to WINNER while 22's cup holds tokens: they are bets on 22 and would go with the cup to 9 (`BETS_STAND_STATES`; Joey, 2026-10-28)); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order (the SET WINNERS page sorts them by horse for its grid): the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
 | `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
 | `PUT /api/quiniela/counted_pot` | The host's hand count of the cash box: `{"amount": 152}` sets it (whole dollars, 0 to 10000; again overwrites), `{"amount": null}` clears it. `{"ok": true, "pot_counted": 152, "pot_scale": 154.0, "pot": 152.0, "prizes": {"win": 91, "place": 38, "show": 23}, "hand_counted": true, "race_state": 3, "saved": true}`. 400 `the count must be a whole number of dollars, 0 to 10000 ...` for anything else (a float, a string, a bool, a negative, over the ceiling) or a body with no `amount`; 409 when the race is not in 3, 4 or 5 (in 6 a saved count is read-only) or there are no figures at the post yet. See "The counted pot". |
@@ -1324,7 +1331,7 @@ the store and the results file as follows:
   "horses": {"1": {"tokens"}, ... "24": ...}, "at"}`, or `null` while there
   are none: taken the first time the race state is 3 (or 4 or 5 when 3 was
   skipped), held through the race, the draw and a restart, dropped by Reset
-  betting and by 0 or 1 ("The figures at the post", above). The TV reads
+  betting and by 0, 1 or 2 ("The figures at the post", above). The TV reads
   them in 3, 4 and 5; the live `total_tokens` and tokens keep following the
   cups, and so do `pot` and `prizes` until a hand count is entered, which
   makes `closing`'s pot and prizes (and, from the post to the end, the
@@ -1333,8 +1340,8 @@ the store and the results file as follows:
   taken, whatever a count says), or `null` while there are no figures at
   the post.
 - `pot_counted`: the host's hand count in whole dollars, or `null` (none
-  entered, or no figures at the post). It is held with the figures, so it
-  is still set in FINAL CALL (2), where `hand_counted` is false.
+  entered, or no figures at the post). It is held with the figures, so
+  FINAL CALL (2), which drops them (OD1), drops it too.
 - `hand_counted`: whether the model's `pot` and `prizes` are the count's: a
   count is held and the race is in 3, 4, 5 or 6. It is what puts the `HAND
   COUNTED` tag on the TV's pot, and the only one of the three keys the TV
@@ -1440,7 +1447,7 @@ protocol v2 only one command has a meaning here:
 
 | Command | Does | Answer |
 | --- | --- | --- |
-| `state N` (0..6) | `set_race_state(N)`, the path a dashboard mode takes (above): the state, with the scratched bits, renumber pairs and results as pi5 has them | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
+| `state N` (0..6) | `set_race_state(N)`, the path a dashboard mode takes (above), with the same 409 for 0-2 while the figures are held unless the body says `"reopen": true`: the state, with the scratched bits, renumber pairs and results as pi5 has them | `{"ok":true,"rev":R,"phase":N,"gateway_online":bool}` |
 | `demo` | refused, 400 | `demo is not routed through pi5: the bridge speaks the JSON line protocol, and every state line turns demo off` |
 | `json` | refused, 400 | `json is not routed through pi5: the bridge already reads the gateway's protocol, and the up state line is the gateway's report, not a command` |
 

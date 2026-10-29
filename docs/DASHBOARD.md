@@ -104,15 +104,18 @@ and FINISH 4, SET WINNERS (once confirmed) and HEARTBEAT 5, RESET 6.
   race state, the figures at the post and the hand count stay as they are (it used to set
   PRE-RACE and drop them; pi5 now refuses `TEST` as a mode, so a page from before cannot
   either).
-- **Reopening betting asks first.** At AT THE POST, RUNNING or WINNER (3-5), WELCOME,
+- **Reopening betting asks first.** While pi5 holds the figures at the post (3-6: AFTER
+  PARTY too, after a RESET), WELCOME,
   STANDBY, 60 MIN, 30 MIN and FINAL CALL would reopen betting. The tap reads the state from
   pi5 (`GET /api/quiniela/mode`, whose `at_post` carries the scale pot and the hand count at
   the post) and shows the in-page confirm before anything is sent: `This reopens betting.
   The figures at the post (pot $86) and the hand count ($80) will be cleared.` with
-  **Reopen betting** and **Cancel**. Cancel sends nothing; Reopen betting sends the mode and
-  the LEDs once. pi5 clears the figures and the count when the state arrives (FINAL CALL
-  after the post included), and the next AT THE GATE takes new ones. In 0-2, and in 6, the
-  buttons send at once. AT THE GATE, THEY'RE OFF!, CHAOS, FINISH and HEARTBEAT never ask.
+  **Reopen betting** and **Cancel**. Cancel sends nothing; Reopen betting sends the mode, with
+  `reopen: true`, and the LEDs once. pi5 clears the figures and the count when the state
+  arrives (FINAL CALL after the post included), and the next AT THE GATE takes new ones; it
+  refuses the same state without `reopen` (409), so a page that did not ask cannot. With
+  nothing held (0-2) the buttons send at once. AT THE GATE, THEY'RE OFF!, CHAOS, FINISH and
+  HEARTBEAT never ask.
   With the results set the race-phase buttons stay disabled.
 - **AUTO / MANUAL** (the switch above the panels). Race night is MANUAL. AUTO is the mock
   racing service's demo (`/api/racing/*`): a timer walks its own race states and drives the
@@ -512,8 +515,8 @@ own feed.
 
 ### 6. Ask First (the in-page confirm)
 
-**Trigger:** a tap that would lose something: a reopening button at AT THE POST, RUNNING or
-WINNER, or AUTO switched on then (`askFirst()` in `ddm_control.js`)
+**Trigger:** a tap that would lose something: a reopening button while the figures at the post
+are held (3-6), or AUTO switched on in 3-5 (`askFirst()` in `ddm_control.js`)
 
 **Layout:**
 ```
@@ -534,7 +537,8 @@ WINNER, or AUTO switched on then (`askFirst()` in `ddm_control.js`)
   lands on it and not on the button under it; a double tap on Reopen betting sends once
 - While it is up no other mode button takes a tap
 - Tests: `la_quiniela/test_dashboard.py` (`test_race_night_guards_in_a_browser`: every
-  reopening button in 3, 4 and 5 and in 0-2, TEST at the post, a re-close, AUTO), and the
+  reopening button in 3, 4, 5 and 6 and in 0-2, a stale page refused by pi5, TEST at the post, a
+  re-close, AUTO), and the
   two buttons in `tap_checks` (44 px each way)
 
 ---

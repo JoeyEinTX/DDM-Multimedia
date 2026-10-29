@@ -58,7 +58,6 @@ The systemd service is `ddm-splash`, installed with pi5's `ddm-pi5` by
 | `GET /api/slide/<id>` | Returns a single slide as an HTML fragment (debugging / Phase 2 hook) |
 | `GET /api/quiniela` | La Quiniela betting model as JSON, relayed from pi5 (see [La Quiniela live board](#la-quiniela-live-board)) |
 | `GET /api/quiniela/stream` | The same model as Server-Sent Events, on every change |
-| `POST /api/quiniela/cmd` | Forwards the body to pi5's `/api/quiniela/cmd` and relays its answer |
 
 ### How the slideshow renders
 
@@ -201,8 +200,8 @@ gateway ──USB──> pi5 dashboard (:5000)              ──HTTP──> sp
                  owns the port; roster + telemetry              quiniela.Pi5Link follows
                  -> betting model                               pi5's stream (polls while
                  GET  /api/quiniela                             it is down) and re-serves
-                 GET  /api/quiniela/stream   (SSE)              the same three routes to
-                 POST /api/quiniela/cmd                         the TV pages (/board, /slides)
+                 GET  /api/quiniela/stream   (SSE)              the first two routes to
+                 POST /api/quiniela/cmd (pi5 only)              the TV pages (/board, /slides)
 ```
 
 Nothing here is required for the slideshow: with pi5 unreachable the link
@@ -254,7 +253,10 @@ unchanged (it runs `server.py`, which reads the port from `config.py`).
 | --- | --- |
 | `GET /api/quiniela` | The betting model as last received from pi5 |
 | `GET /api/quiniela/stream` | Server-Sent Events: the full model on every change (the same bytes pi5's stream carries) |
-| `POST /api/quiniela/cmd` | The JSON body is forwarded to pi5's `/api/quiniela/cmd`; pi5 validates the command and its status and answer are relayed unchanged |
+
+The splash only reads. It has no route that changes the race state: the guests are pointed at this port, and a relay of
+pi5's `/api/quiniela/cmd` here would have let any phone reopen betting in the middle of the draw (removed 2026-10-28).
+The race state is set on pi5 (its Control Center; `POST localhost:5000/api/quiniela/cmd` for a test or a curl).
 
 The betting model, as `/api/quiniela` returns it and the stream carries it.
 pi5 builds it; the splash serves it untouched apart from `link_ok`:
@@ -420,25 +422,22 @@ curl -s localhost:5001/api/quiniela | python3 -m json.tool
 # page listens for "ping" and shows NO LINK after 10 s without one.
 curl -sN localhost:5001/api/quiniela/stream
 
-curl -s -X POST localhost:5001/api/quiniela/cmd \
+# The race state is pi5's, on pi5's own port (this service has no such route):
+curl -s -X POST localhost:5000/api/quiniela/cmd \
      -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
-# pi5's answer, relayed as is:
 #   200 {"ok": true, "gateway_online": true, ...}      applied and sent to the gateway
 #   200 {"ok": true, "gateway_online": false, ...}     applied, gateway offline (pi5 re-sends on the next hello)
 #   400 {"ok": false, "error": "..."}                  pi5 rejected the command
+#   409 {"ok": false, "error": "This reopens betting: ..."}  state 0-2 while the figures at the post are held;
+#                                                      add "reopen": true to the body to confirm
 #   503 {"ok": false, "error": "bridge not initialised"} pi5 has no bridge
-# and from the splash itself:
-#   503 {"ok": false, "error": "pi5 not reachable: ..."}
-#   502 {"ok": false, "error": "non-JSON reply from pi5 (HTTP 200)"}  a 2xx that is not a JSON object
-# (a non-JSON error page, such as Flask's HTML 404 or 500, keeps its status
-#  with that same JSON shape; pi5's own route always answers JSON)
 ```
 
 Commands (pi5 validates). Since protocol v2 only one does anything:
 
 | `cmd` | Meaning |
 | --- | --- |
-| `state N` | Race state 0..6 (0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING, 5 WINNER, 6 AFTER_PARTY): what a dashboard mode button or the admin page's state buttons set |
+| `state N` | Race state 0..6 (0 PRE_RACE, 1 BETTING_OPEN, 2 FINAL_CALL, 3 AT_THE_POST, 4 RUNNING, 5 WINNER, 6 AFTER_PARTY): what a dashboard mode button sets |
 | `demo`, `json ...` | Rejected by pi5 (400): its bridge never forwards them to the gateway |
 
 The first word must be one of `state demo json`, one line, at most 200
@@ -1140,14 +1139,14 @@ curl -s localhost:5000/api/quiniela | python3 -c "import json,sys; m=json.load(s
 # the splash relays it: same two values
 curl -s localhost:5001/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
 # a cup set to horse 7 on its own screen (hold -> HORSE -> 7 -> SET), then betting opens: the TV shows the board
-curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
+curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 # drop a token into that cup: horse 7 ticks to 1 on the TV
 # WINNER: the board stays, OFFICIAL RESULTS COMING
-curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
+curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
 # the results, as the dashboard's SET WINNERS saves them (pi5's route, not relayed): the results screen
 curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":7,"place":1,"show":2}'
 # AFTER_PARTY: the board yields to the playlist
-curl -s -X POST localhost:5001/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'
+curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'
 ```
 
 Unit tests, no port and no network beyond loopback needed:

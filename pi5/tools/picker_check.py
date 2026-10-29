@@ -676,7 +676,7 @@ def figures_at_post(server: Server) -> dict:
     rig.client.put("/api/quiniela/horses", json={"text": D.NAMES_TEXT})
     if not rig.model()["horses"][str(now)]["in_field"]:
         rig.post("/api/quiniela/scratch", {"horse": was, "replacement": {"number": now, "name": "Ocelli"}})
-    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
     for horse in [n for n in range(1, 21) if n not in (was, NO_CUP)] + [now]:
         count = 0 if horse == EMPTY_CUP else (bets if horse == now else 1 + horse % 4)
         rig.bridge.handle_raw_line(telem("A0:B7:65:77:00:%02X" % horse, horse=horse, count=count))
@@ -686,7 +686,7 @@ def figures_at_post(server: Server) -> dict:
 
 def no_figures(server: Server) -> None:
     """Betting open, so no figures at the post: they are taken at AT THE GATE and dropped when betting reopens."""
-    server.rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    server.rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
 
 
 def note_for(horses: List[int]) -> str:
@@ -1161,7 +1161,7 @@ def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
                 chrome.wait_for("!document.getElementById('ask-modal').classList.contains('active')", timeout=10)
                 # the admin page before the gate: a Scratches row still has its number list and its name field (the
                 # run at the size before this one left the race at the gate: betting open again)
-                rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+                rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
                 chrome.call("Page.navigate", url=server.url + "quiniela/admin")
                 chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#scratch-list select')", timeout=20)
                 time.sleep(0.3)

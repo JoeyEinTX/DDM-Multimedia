@@ -43,7 +43,7 @@ from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.betting import (  # noqa: E402
     DEFAULTS, MAX_EVENTS, MODE_LABELS, MODE_STATES, SSE_QUEUE_SIZE, RENUM_LATE_S, RENUM_RECENT_S, RENUM_SETTLE_S, BettingBoard, clean_weather, clear_results,
     load_board_settings,
-    finish_groups, payout_for, prizes_for, read_record, read_results, round_half_up, sse_events, validate_cmd,
+    finish_groups, payout_for, prizes_for, read_record, read_results, round_half_up, sse_events, validate_cmd, ReopenRefused,
 )
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import LqBridge  # noqa: E402
@@ -2165,7 +2165,16 @@ def test_routes_scratch_and_unscratch():
     m = client.get("/api/quiniela").get_json()
     _check("a bet in the cup after the renumber is a bet on 22", m["events"][0] == {"horse": 22, "delta": 1, "ts": wall.t}
            and m["horses"]["22"]["tokens"] == 13 and m["pot"] == 18.0, str(m["events"]))
-    events_before = m["events"]
+    # Undo is refused while 22's cup holds bets (Joey, 2026-10-28): they would go with the cup to 9. The tokens handed
+    # back and the cup emptied, it goes through.
+    r = client.post("/api/quiniela/unscratch", json={"horse": 9})
+    _check("Undo 9 with 13 tokens bet on 22: refused with the line for the row, nothing moved",
+           r.status_code == 409 and r.get_json() == {"ok": False, "error": "Cup 9 holds 13 tokens bet on #22. Hand them back and empty the cup, then Undo."}
+           and HorseStore(b.db).scratches() == {9: 22} and b.renum == [], r.get_data(as_text=True))
+    wall.advance(1)
+    b.handle_raw_line(telem(MAC_A, horse=22, count=0))          # the tokens handed back, the cup emptied
+    get_board().refresh()
+    events_before = client.get("/api/quiniela").get_json()["events"]
     # Undo.
     wall.advance(1)
     port.written.clear()
@@ -2179,15 +2188,15 @@ def test_routes_scratch_and_unscratch():
     _check("...and the undo is held, in the store and on the database", get_board().undo_renums() == [(22, 9)]
            and set(HorseStore(b.db).undone_renums()) == {22})
     clk.advance(1.0)
-    b.handle_raw_line(telem(MAC_A, horse=9, count=13))          # the cup went back
+    b.handle_raw_line(telem(MAC_A, horse=9, count=0))           # the cup went back
     get_board().refresh()
     m = client.get("/api/quiniela").get_json()
-    _check("9 back on its cup with the 13 tokens, in the field", m["horses"]["9"]["cup"] == MAC_A and m["horses"]["9"]["tokens"] == 13
+    _check("9 back on its cup, empty, in the field", m["horses"]["9"]["cup"] == MAC_A and m["horses"]["9"]["tokens"] == 0
            and m["horses"]["9"]["in_field"] is True and m["horses"]["9"]["replaced"] is None, str(m["horses"]["9"]))
     _check("22 out of the field, no cup, no tokens, its name still stored",
            m["horses"]["22"]["in_field"] is False and m["horses"]["22"]["cup"] is None and m["horses"]["22"]["tokens"] == 0
            and m["horses"]["22"]["name"] == "OCELLI" and client.get("/api/quiniela/horses").get_json()["22"] == {"name": "Ocelli"})
-    _check("no events from the undo, pot still 18, no scratches", m["events"] == events_before and m["pot"] == 18.0 and m["scratches"] == [],
+    _check("no events from the undo, pot still 5, no scratches", m["events"] == events_before and m["pot"] == 5.0 and m["scratches"] == [],
            str(m["events"]))
     _check("the undo pair left the line once the cup reported 9", b.renum == [] and port.lines()[-1] == state_line(6, 1), str(port.lines()))
     acks = [json.loads(r["detail"]) for r in b.db.query("SELECT detail FROM events WHERE type = 'renum_ack' ORDER BY id")]
@@ -2196,13 +2205,18 @@ def test_routes_scratch_and_unscratch():
            and acks[1]["delay_s"] == 1.0, str(acks))
     _check("the undo is held until the cup has settled on 9", get_board().undo_renums() == [(22, 9)])
     clk.advance(RENUM_SETTLE_S + 1)
-    b.handle_raw_line(telem(MAC_A, horse=9, count=13))
+    b.handle_raw_line(telem(MAC_A, horse=9, count=0))
     get_board().refresh()
     _check("...settled once a report of 9 comes more than RENUM_SETTLE_S after the undo: dropped, from the database too",
            get_board().undo_renums() == [] and HorseStore(b.db).undone_renums() == {} and b.renum == [])
     r = client.post("/api/quiniela/unscratch", json={"horse": 9})
     _check("neither kind applies -> 400", r.status_code == 400 and r.get_json() == {"ok": False, "error": "horse 9 is not scratched"})
-    # The no-replacement kind: recorded in pi5 (was 9, now None) and the bit goes down. A repeat is a 400.
+    # The no-replacement kind: recorded in pi5 (was 9, now None) and the bit goes down. A repeat is a 400. Its cup keeps the 13
+    # tokens bet on 9 itself (they leave the pot and come back with the undo: no other horse is involved).
+    wall.advance(1)
+    b.handle_raw_line(telem(MAC_A, horse=9, count=13))
+    get_board().refresh()
+    events_before = client.get("/api/quiniela").get_json()["events"]
     port.written.clear()
     r = client.post("/api/quiniela/scratch", json={"horse": 9})
     got = r.get_json()
@@ -3125,7 +3139,7 @@ def test_closing_figures():
     br.handle_raw_line(telem(MAC_C, horse=7, count=0))
     board.set_mode("FINISH")
     _check("a cup emptied during the race changes nothing there", board.model()["closing"] == c and board.model()["pot"] == 15.0)
-    board.set_mode("BETTING_30")
+    board.set_mode("BETTING_30", reopen=True)
     _check("60/30 MIN again (state 1) drops them, on disk too", board.model()["closing"] is None and HorseStore(br.db).closing is None)
     board.set_mode("CHAOS")
     _check("RUNNING straight from there takes them again", board.model()["closing"] is not None
@@ -3140,7 +3154,7 @@ def test_closing_figures():
     board.store.set_closing = refuse
     with capture_logs(LOGGER) as cap:
         board.set_mode("AT_THE_GATE")
-        board.set_mode("BETTING_60")
+        board.set_mode("BETTING_60", reopen=True)
         board.set_mode("AT_THE_GATE")
     _check("a database error: the model still carries them, one WARNING",
            board.model()["closing"] is not None and board.model()["race_state"] == 3
@@ -3571,7 +3585,7 @@ def test_counted_pot_route_and_restart():
     board2.set_mode("AT_THE_GATE")
     _check("the held figures are not taken again at a later post (3 after 6), so neither is the count",
            board2.model()["pot_counted"] == 154)
-    board2.set_mode("BETTING_30")
+    board2.set_mode("BETTING_30", reopen=True)
     _check("state 1 clears it, on disk too", board2.model()["pot_counted"] is None and board2.model()["closing"] is None
            and HorseStore(b2.db).closing is None)
     board2.set_mode("AT_THE_GATE")
@@ -3720,7 +3734,7 @@ def test_reopen_takes_fresh_figures():
     m = board.model()
     _check("AT THE GATE pressed again while at the post: a no-op, nothing taken again (the late token is not in it)",
            m["pot_scale"] == 86.0 and m["closing"]["horses"]["12"] == {"tokens": 1} and m["pot_counted"] == 80, str(m["closing"]["horses"]["12"]))
-    client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL"})
+    client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL", "reopen": True})       # the host's yes (Joey, 2026-10-28)
     m = board.model()
     _check("FINAL CALL after the post reopens betting: the figures at the post and the count are cleared, the pot is live",
            (m["race_state"], m["closing"], m["pot_counted"], m["pot_scale"], m["hand_counted"]) == (2, None, None, None, False)
@@ -3742,6 +3756,149 @@ def test_reopen_takes_fresh_figures():
                      ("reopened", {"pot": 86.0, "pot_counted": 80, "total_tokens": 86}, None),
                      ("closed", None, {"pot": 96.0, "prizes": {"win": 58, "place": 24, "show": 14}, "total_tokens": 96})],
            str(marks))
+
+
+def test_reopening_needs_the_hosts_yes():
+    """Joey, 2026-10-28 (review Q1): the figures at the post and the hand count are dropped only by Reset betting or a
+    reopen the host confirmed. A state 0, 1 or 2 (a mode that reopens betting, or `state N`) while they are held is a 409
+    that names what it would clear, in 3, 4, 5 and 6 alike, and nothing moves; the body's `reopen: true`, which the
+    dashboard sends only after the host says Reopen betting, lets it through. With nothing held, or going to 3-6, no
+    flag is needed."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    board = get_board()
+    client.post("/api/quiniela/mode", json={"mode": "BETTING_60"})
+    others = [n for n in range(1, 21) if n not in (12, 18)]
+    counts = {12: 1, 18: 0, **{n: (5 if i < 13 else 4) for i, n in enumerate(others)}}
+    for n, count in counts.items():
+        b.handle_raw_line(telem(mac_of(n), horse=n, count=count))
+    board.refresh()
+    note = ('This reopens betting: the figures at the post (pot $86) and the hand count ($80) would be cleared. '
+            'Send "reopen": true to confirm.')
+    reopeners = (("WELCOME", 0), ("STANDBY", 0), ("BETTING_60", 1), ("BETTING_30", 1), ("FINAL_CALL", 2))
+
+    def at_the_post(state):
+        client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+        client.put("/api/quiniela/counted_pot", json={"amount": 80})
+        client.post("/api/quiniela/cmd", json={"cmd": f"state {state}"})
+        board.refresh()
+        assert board.model()["race_state"] == state and board.model()["pot_counted"] == 80, state
+
+    refused = {}
+    for state in (3, 4, 5, 6):
+        client.post("/api/quiniela/mode", json={"mode": "BETTING_60", "reopen": True})
+        at_the_post(state)
+        for mode, target in reopeners:
+            before = (b.phase, b.state_rev, len(port.lines()), board.model()["closing"], board.model()["pot_counted"])
+            r = client.post("/api/quiniela/mode", json={"mode": mode})
+            board.refresh()
+            after = (b.phase, b.state_rev, len(port.lines()), board.model()["closing"], board.model()["pot_counted"])
+            refused[(state, mode)] = (r.status_code, r.get_json(), before == after)
+        before = (b.phase, b.state_rev)
+        for target in (0, 1, 2):
+            r = client.post("/api/quiniela/cmd", json={"cmd": f"state {target}"})
+            refused[(state, f"state {target}")] = (r.status_code, r.get_json(), before == (b.phase, b.state_rev))
+    _check("a reopening mode or state 0-2 with the figures held, in each of 3-6: 409, the note naming the pot and the count, "
+           "and nothing moved (no state line, the figures and the count kept)",
+           len(refused) == 4 * 8 and all(code == 409 and body == {"ok": False, "error": note} and still
+                                         for code, body, still in refused.values()), str({k: v for k, v in refused.items() if v[0] != 409})[:600])
+    _check("...the page and curl alike: a reopen that is not literally true is refused too",
+           [client.post("/api/quiniela/mode", json={"mode": "WELCOME", "reopen": v}).status_code
+            for v in ("true", 1, "yes", None, [True])] == [409] * 5 and b.phase == 6)
+    r = client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    _check("a mode that does not reopen betting needs no flag: AT THE GATE from 6", r.status_code == 200 and r.get_json()["state"] == 3, r.get_data(as_text=True))
+    r = client.post("/api/quiniela/cmd", json={"cmd": "state 5"})
+    _check("...nor does `state 5`", r.status_code == 200 and b.phase == 5)
+    client.post("/api/quiniela/cmd", json={"cmd": "state 6"})
+    r = client.post("/api/quiniela/mode", json={"mode": "WELCOME", "reopen": True})
+    m = board.model()
+    _check("reopen: true from 6: WELCOME goes, and the figures and the count are cleared",
+           r.status_code == 200 and (m["race_state"], m["closing"], m["pot_counted"], m["pot_scale"]) == (0, None, None, None), r.get_data(as_text=True))
+    r = client.post("/api/quiniela/mode", json={"mode": "FINAL_CALL"})
+    _check("with nothing held (the figures are gone) a reopening mode needs no flag", r.status_code == 200 and b.phase == 2, r.get_data(as_text=True))
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    r = client.post("/api/quiniela/cmd", json={"cmd": "state 1", "reopen": True})
+    _check("`state 1` with reopen: true goes too, and drops the figures", r.status_code == 200 and b.phase == 1 and board.model()["closing"] is None)
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    client.post("/api/quiniela/cmd", json={"cmd": "state 6"})
+    board.refresh()
+    r = client.post("/api/quiniela/reset")
+    _check("Reset betting is the other way out: it needs no flag and clears them", r.status_code == 200 and board.model()["closing"] is None
+           and board.model()["race_state"] == 0, r.get_data(as_text=True))
+    # The board's own call, for what is not a route (the simulator's in-process operator)
+    client.post("/api/quiniela/mode", json={"mode": "AT_THE_GATE"})
+    for call in (lambda: board.set_race_state(1), lambda: board.set_mode("WELCOME")):
+        try:
+            call()
+            _check("set_race_state / set_mode raise ReopenRefused while the figures are held", False)
+        except ReopenRefused as exc:
+            _check("set_race_state / set_mode raise ReopenRefused while the figures are held, the note in the message",
+                   str(exc).startswith("This reopens betting: the figures at the post (pot $"))
+    board.set_race_state(1, reopen=True)
+    _check("...and `reopen=True` lets it through", b.phase == 1 and board.model()["closing"] is None)
+
+
+def test_undo_of_a_replacement_is_refused_while_its_cup_holds_bets():
+    """Joey, 2026-10-28 (review Q2): once betting is open tokens never move to another horse. At 60 MIN, scratch 9 for 22
+    (the cup is emptied and the tokens handed back), guests bet on #22, and Undo 9 would renumber the cup to 9 with those
+    tokens. From 60 MIN to WINNER an Undo of a replacement is a 409 with the line on the row while 22's cup holds any,
+    and nothing moves; with the cup empty it goes through as ever. A no-replacement scratch's Undo is not touched."""
+    b, port, sio, clk = _fresh_bridge()
+    b._open_port()
+    client = _make_board_app(b).test_client()
+    client.put("/api/quiniela/horses", json={"text": FIELD_24_TEXT})
+    board = get_board()
+    for n in range(1, 21):
+        b.handle_raw_line(telem(mac_of(n), horse=n, count=0))
+    client.post("/api/quiniela/mode", json={"mode": "BETTING_60"})
+    r = client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+    _check("setup: at 60 MIN, 9 scratched for 22", r.status_code == 200 and r.get_json()["rebet"] is True, r.get_data(as_text=True))
+
+    def bets(count):                                          # the cup that was 9 reports 22 with `count` tokens
+        b.handle_raw_line(telem(mac_of(9), horse=22, count=count))
+        board.refresh()
+
+    def undo():
+        return client.post("/api/quiniela/unscratch", json={"horse": 9})
+
+    bets(4)
+    before = (board.store.scratches(), list(b.renum), b.phase, b.state_rev)
+    r = undo()
+    _check("Undo 9 with 4 tokens on #22: 409, the line for the row, word for word",
+           r.status_code == 409 and r.get_json() == {"ok": False, "error": "Cup 9 holds 4 tokens bet on #22. Hand them back and empty the cup, then Undo."},
+           r.get_data(as_text=True))
+    _check("...nothing moved: the record, the renumber pairs, the state", before == (board.store.scratches(), list(b.renum), b.phase, b.state_rev)
+           and board.store.scratches() == {9: 22}, str(board.store.scratches()))
+    bets(1)
+    r = undo()
+    _check("one token reads 1 token", r.status_code == 409 and r.get_json()["error"].startswith("Cup 9 holds 1 token bet on #22."), r.get_data(as_text=True))
+    for state in (2, 3, 4, 5):
+        client.post("/api/quiniela/cmd", json={"cmd": f"state {state}", "reopen": True})
+        r = undo()
+        _check(f"refused in race state {state} too", r.status_code == 409 and board.store.scratches() == {9: 22}, r.get_data(as_text=True))
+    client.post("/api/quiniela/cmd", json={"cmd": "state 1", "reopen": True})
+    bets(0)
+    r = undo()
+    _check("the cup emptied: Undo goes through, the pair going back down", r.status_code == 200 and r.get_json()["renum"] == [22, 9]
+           and board.store.scratches() == {} and (22, 9) in b.renum, r.get_data(as_text=True))
+    b.handle_raw_line(telem(mac_of(9), horse=9, count=0))            # the cup followed the pair back
+    # Outside 60 MIN to WINNER the tokens are not bets: PRE-RACE and AFTER PARTY.
+    for state in (0, 6):
+        client.post("/api/quiniela/cmd", json={"cmd": "state 1", "reopen": True})
+        client.post("/api/quiniela/scratch", json={"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}})
+        client.post("/api/quiniela/cmd", json={"cmd": f"state {state}", "reopen": True})
+        bets(3)
+        r = undo()
+        _check(f"race state {state}: tokens in the cup do not stop the Undo", r.status_code == 200 and board.store.scratches() == {}, r.get_data(as_text=True))
+        b.handle_raw_line(telem(mac_of(9), horse=9, count=0))        # the cup followed the pair back
+    # A no-replacement scratch and a chain are as they were
+    client.post("/api/quiniela/cmd", json={"cmd": "state 1", "reopen": True})
+    b.handle_raw_line(telem(mac_of(9), horse=9, count=6))
+    board.refresh()
+    client.post("/api/quiniela/scratch", json={"horse": 9})
+    r = undo()
+    _check("a no-replacement scratch's Undo is not touched by it: its tokens are the horse's own", r.status_code == 200 and r.get_json()["kind"] == "gateway", r.get_data(as_text=True))
 
 
 def test_reset_betting_route():
@@ -3956,7 +4113,7 @@ def test_modes_set_the_race_state():
     for mode in order:
         state = EXPECTED_MODE_STATES[mode]
         port.written.clear()
-        r = client.post("/api/quiniela/mode", json={"mode": mode})
+        r = client.post("/api/quiniela/mode", json={"mode": mode, "reopen": True})      # the walk goes back to 0-2 with figures held
         body = r.get_json()
         rev += 1
         _check(f"mode {mode} -> state {state} {names[state]}",
@@ -3970,7 +4127,7 @@ def test_modes_set_the_race_state():
                and (info["state"], info["mode"], info["label"], info["source"]) == (state, mode, MODE_LABELS[mode], "dashboard"),
                str(info))
     # 60 MIN then 30 MIN: two modes, one state. No line, no new rev; the mode is the newer one.
-    client.post("/api/quiniela/mode", json={"mode": "BETTING_60"})
+    client.post("/api/quiniela/mode", json={"mode": "BETTING_60", "reopen": True})
     rev = b.state_rev
     port.written.clear()
     r = client.post("/api/quiniela/mode", json={"mode": "betting_30"})
@@ -3990,7 +4147,7 @@ def test_modes_set_the_race_state():
     info = client.get("/api/quiniela/mode").get_json()
     _check("the dashboard's AT THE GATE on top of it: the same state, no line, the mode named",
            r.get_json()["rev"] == rev + 1 and (info["state"], info["mode"], info["source"]) == (3, "AT_THE_GATE", "dashboard"))
-    client.post("/api/quiniela/cmd", json={"cmd": "state 1"})
+    client.post("/api/quiniela/cmd", json={"cmd": "state 1", "reopen": True})
     info = client.get("/api/quiniela/mode").get_json()
     _check("a mode is only named while it explains the state", (info["state"], info["mode"]) == (1, None))
     html = client.get("/quiniela/admin").get_data(as_text=True)
@@ -4437,6 +4594,8 @@ def main():
     _run("counted pot — PUT /api/quiniela/counted_pot, a restart, Clear, Reset betting", test_counted_pot_route_and_restart)
     _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
     _run("payout — GET /quiniela/admin", test_admin_page)
+    _run("closing — dropped only by Reset betting or a reopen the host confirmed, in 3-6 alike (Joey, 2026-10-28)", test_reopening_needs_the_hosts_yes)
+    _run("scratch — Undo of a replacement is refused while its cup holds bets (Joey, 2026-10-28)", test_undo_of_a_replacement_is_refused_while_its_cup_holds_bets)
     _run("reset — POST /api/quiniela/reset", test_reset_betting_route)
     _run("v2 — the removed routes are gone; a conflict and a horse-0 cup on a real bridge", test_removed_routes_and_conflict_on_a_real_bridge)
     _run("settings — the payout keys", test_settings_new_keys)

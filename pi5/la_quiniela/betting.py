@@ -125,7 +125,9 @@ CMD_WHITELIST = frozenset({"state", "demo", "json"})
 # back from AT THE POST to FINAL CALL drops the figures and the hand count,
 # and the next AT THE GATE takes fresh ones (it used to keep the first
 # close's, so bets made in the second FINAL CALL were never counted).
-# AFTER_PARTY leaves them as they are.
+# AFTER_PARTY leaves them as they are. They are dropped only by Reset betting
+# or by a reopen the host confirmed (Joey, 2026-10-28): set_race_state refuses
+# a state in REOPEN_STATES while they are held unless it is told `reopen`.
 CLOSED_STATES = frozenset({int(P.Phase.AT_THE_POST), int(P.Phase.RUNNING), int(P.Phase.WINNER)})
 REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
 # Betting is open from 60 MIN (BETTING_OPEN) until the figures are taken at the
@@ -137,6 +139,9 @@ REOPEN_STATES = frozenset({int(P.Phase.PRE_RACE), int(P.Phase.BETTING_OPEN), int
 # carries it as betting_open and per scratch as rebet and refund; the admin
 # page and the TV read those.
 BETTING_OPEN_STATES = frozenset({int(P.Phase.BETTING_OPEN), int(P.Phase.FINAL_CALL)})
+# From 60 MIN to WINNER the tokens in a cup are bets on its horse: they stay with it (a cup renumbered under them
+# would carry them to another horse), so Undo of a replacement is refused while its cup holds any.
+BETS_STAND_STATES = frozenset(range(int(P.Phase.BETTING_OPEN), int(P.Phase.WINNER) + 1))
 
 
 def betting_open(race_state: Any) -> bool:
@@ -778,6 +783,22 @@ def counted_pot_arg(value: Any) -> int:
     if not 0 <= value <= COUNTED_POT_MAX:
         raise ValueError("%d dollars is outside 0 to %d" % (value, COUNTED_POT_MAX))
     return value
+
+
+class ReopenRefused(Exception):
+    """A state that reopens betting while the figures at the post are held,
+    asked for without the host's yes (set_race_state). The message names what
+    it would clear."""
+
+
+def reopen_note(closing: Dict[str, Any]) -> str:
+    """What reopening betting would clear, for ReopenRefused: the figures at
+    the post and the hand count, as the dashboard's own question names them."""
+    count = _stored_count(closing)
+    return ("This reopens betting: the figures at the post (pot $%d)%s would be cleared. "
+            "Send \"reopen\": true to confirm."
+            % (round(float(closing.get("pot") or 0)),
+               " and the hand count ($%d)" % count if count is not None else ""))
 
 
 def _stored_count(closing: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -1809,24 +1830,32 @@ class BettingBoard:
         return True
 
     # -- the one race state ------------------------------------------------------
-    def set_race_state(self, state: Any, mode: Optional[str] = None, source: str = "cmd") -> Dict[str, Any]:
+    def set_race_state(self, state: Any, mode: Optional[str] = None, source: str = "cmd",
+                       reopen: bool = False) -> Dict[str, Any]:
         """The one path every race-state change takes: a dashboard mode
-        (set_mode()), the admin page's seven buttons and `state N` on POST
-        /api/quiniela/cmd. The shared value is the bridge's phase (persisted,
-        and carried by the rev the gateway acknowledges); `mode` is the
-        dashboard mode that set it, None when it was set directly.
+        (set_mode()) and `state N` on POST /api/quiniela/cmd. The shared
+        value is the bridge's phase (persisted, and carried by the rev the
+        gateway acknowledges); `mode` is the dashboard mode that set it, None
+        when it was set directly.
 
         One state line goes down with the new state and whatever else the
         line should carry at this moment (scratched bits, renumber pairs,
         the results), so a cup never shows WINNER a moment before it knows
-        who won. Raises ValueError for a state outside 0..6 and RuntimeError
-        without a bridge. Returns {"rev", "state", "state_name", "mode",
-        "source", "gateway_online"}."""
+        who won. A state that reopens betting (REOPEN_STATES) while the
+        figures at the post are held would drop them and the hand count:
+        ReopenRefused unless `reopen` says the host confirmed it, so a stale
+        page or a curl cannot. Raises ValueError for a state outside 0..6 and
+        RuntimeError without a bridge. Returns {"rev", "state", "state_name",
+        "mode", "source", "gateway_online"}."""
         bridge = self.bridge
         if bridge is None:
             raise RuntimeError("bridge not initialised")
         phase = P.validate_phase(state)
         with self._refresh_lock:
+            with self._lock:
+                held = self._closing
+            if phase in REOPEN_STATES and held is not None and not reopen:
+                raise ReopenRefused(reopen_note(held))
             scratched, pairs, results = self.desired_state(bridge.get_snapshot())
             rev = bridge.set_state(phase=phase, scratched=scratched, renum=pairs, results=results)
             with self._lock:
@@ -1837,13 +1866,13 @@ class BettingBoard:
         return {"rev": rev, "state": phase, "state_name": race_state_name(phase), "mode": mode,
                 "source": source, "gateway_online": bool(link.get("gateway_online", False))}
 
-    def set_mode(self, mode: Any, source: str = "dashboard") -> Dict[str, Any]:
+    def set_mode(self, mode: Any, source: str = "dashboard", reopen: bool = False) -> Dict[str, Any]:
         """A dashboard mode: the race state it means (MODE_STATES), through
         set_race_state(). ValueError for a name that is not a mode."""
         key = str(mode).strip().upper() if isinstance(mode, str) else ""
         if key not in MODE_STATES:
             raise ValueError("unknown mode %r; one of %s" % (mode, " ".join(MODE_STATES)))
-        return self.set_race_state(MODE_STATES[key], mode=key, source=source)
+        return self.set_race_state(MODE_STATES[key], mode=key, source=source, reopen=reopen)
 
     def race_state_now(self) -> int:
         """The race state as the bridge holds it now (the model's without a

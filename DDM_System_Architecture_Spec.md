@@ -286,9 +286,11 @@ There is no roster line. A v1 `roster` line is ignored.
   reaches 3 AT_THE_POST (or 4 or 5 if 3 was skipped), saved, and held through the race, the
   draw and any restart. They are dropped by Reset betting and by any state that reopens
   betting: 0, 1, or 2 (FINAL CALL after the post reopens betting, and the next AT THE GATE
-  takes fresh figures; AT THE GATE pressed again at the post takes nothing new). The
-  dashboard asks first before a button reopens betting from 3–5, naming the figures and the
-  hand count it clears. The betting log marks each close (`"betting": "closed"`) and each
+  takes fresh figures; AT THE GATE pressed again at the post takes nothing new), and only
+  with the host's yes: `set_race_state` refuses such a state while they are held unless the
+  request says `reopen` (a 409 naming the figures and the hand count; [DECIDED 2026-10-28]).
+  The dashboard asks first before a button reopens betting from 3–6 (AFTER PARTY too),
+  naming the figures and the hand count it clears, and sends `reopen` only after the yes. The betting log marks each close (`"betting": "closed"`) and each
   reopen (`"betting": "reopened"`, with what it dropped). The TV shows them in states 3–5.
   [DECIDED 2026-10-13, BUILT]
 - **Counted pot: the payout comes from the hand count.** [DECIDED 2026-09-29, BUILT]

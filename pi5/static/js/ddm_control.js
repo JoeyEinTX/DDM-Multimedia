@@ -497,12 +497,12 @@ function flashButton(buttonElement) {
 // only crawl.)
 let raceModeInfo = null;   // {state, state_name, mode, label, source} as pi5 last reported it
 
-async function setRaceMode(mode) {
+async function setRaceMode(mode, confirmed = {}) {
     try {
         const response = await fetch('/api/quiniela/mode', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: mode })
+            body: JSON.stringify({ mode: mode, ...confirmed })
         });
         const data = await response.json();
         if (data && data.ok) {
@@ -765,8 +765,8 @@ function sendingRaceState(raceSet) {
 // Ask first (Joey, 2026-10-13)
 // =====================================================================
 // A tap that would lose something asks in the page before anything is sent: a button that reopens betting
-// from AT THE POST to WINNER (the figures at the post and the hand count would be cleared), and AUTO switched
-// on in those states. askFirst() shows the question and resolves true for its first button, false for
+// while pi5 holds the figures at the post (AT THE POST to AFTER PARTY: the figures and the hand count would be
+// cleared), and AUTO switched on from AT THE POST to WINNER. askFirst() shows the question and resolves true for its first button, false for
 // Cancel. An answer keeps the dialog up, its buttons off, for ASK_HOLD_MS, so the second tap of a double tap
 // lands on the dialog, not on whatever is under it once it has gone; a question asked meanwhile is a Cancel.
 // No browser confirm(): it is OK'd without reading, and a Home Screen page shows it oddly.
@@ -819,19 +819,21 @@ function reopenText(atPost) {
         + (count !== null && count !== undefined ? ` and the hand count (${dollars(count)}) will be cleared.` : ' will be cleared.');
 }
 
-// Whether a tap on `mode` may go (OD1, OD2): at once unless it reopens betting while pi5 is at AT THE POST,
-// RUNNING or WINNER, read as the tap is made; then only on Reopen betting. pi5 clears the figures at the post
-// and the hand count when the state arrives, and the next AT THE GATE takes fresh ones.
+// What a tap on `mode` sends along (OD1, OD2; Joey, 2026-10-28, review Q1): nothing, at once, unless it reopens
+// betting while pi5 holds the figures at the post (any state from AT THE POST to AFTER PARTY, read as the tap is
+// made); then only on Reopen betting, which sends {reopen: true}, or null for Cancel. pi5 clears the figures at the
+// post and the hand count when the state arrives, and refuses it without that yes, so a page that did not ask
+// cannot; the next AT THE GATE takes fresh figures.
 async function reopenAllowed(mode) {
-    if (!mayReopen(mode)) return true;
+    if (!mayReopen(mode)) return {};
     const info = await freshRaceMode();
     const target = raceModes ? raceModes[mode] : undefined;
-    const state = info ? info.state : null;
-    if (typeof target !== 'number' || target >= AT_THE_POST || !(state >= AT_THE_POST && state <= WINNER)) return true;
-    return askFirst('Reopen betting?', reopenText(info.at_post), 'Reopen betting');
+    if (typeof target !== 'number' || target >= AT_THE_POST || !(info && info.at_post)) return {};
+    return (await askFirst('Reopen betting?', reopenText(info.at_post), 'Reopen betting')) ? { reopen: true } : null;
 }
 
-// A mode button's tap asks first when it must; meanwhile no other mode button takes a tap.
+// A mode button's tap asks first when it must (a promise of what to send, null on Cancel); meanwhile no other
+// mode button takes a tap.
 function askedFirst(mode) {
     const asked = reopenAllowed(mode);
     sendingRaceState(asked);
@@ -901,7 +903,8 @@ async function animate(animName, buttonElement) {
     // A mode that would reopen betting from AT THE POST or later asks first; Cancel sends nothing and leaves
     // the page as it was. (Toggling an animation off sends no race state: nothing to ask.)
     const mode = modeOf(buttonElement);
-    if (mode && !isToggleOff && !(await askedFirst(mode))) return;
+    const asked = mode && !isToggleOff ? await askedFirst(mode) : {};
+    if (!asked) return;
 
     // Clear all highlights before sending new animation
     clearAllActiveButtons();
@@ -931,7 +934,7 @@ async function animate(animName, buttonElement) {
     // Start new toggle animation. A mode button also names its mode to pi5 (one race state). The LEDs are not
     // waited for: pi5 hands the animation to the wall's worker and answers at once, and what the wall is doing
     // is the pill's, top left
-    const raceSet = mode ? setRaceMode(mode) : null;
+    const raceSet = mode ? setRaceMode(mode, asked) : null;
     if (raceSet) sendingRaceState(raceSet);
     try {
         await fetch(`/api/animation/${animName}`, { method: 'POST' });
@@ -954,8 +957,9 @@ async function sendStandby() {
 
 async function standby() {
     if (raceControlMode === 'auto') return;          // its button is held in AUTO and says so
-    if (!(await askedFirst('STANDBY'))) return;      // from AT THE POST or later: asks first
-    const raceSet = setRaceMode('STANDBY');
+    const asked = await askedFirst('STANDBY');       // with the figures at the post held: asks first
+    if (!asked) return;
+    const raceSet = setRaceMode('STANDBY', asked);
     sendingRaceState(raceSet);
     try {
         // Turn off all LEDs

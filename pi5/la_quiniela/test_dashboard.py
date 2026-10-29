@@ -325,10 +325,10 @@ def test_buttons_carry_their_mode():
            str(set(MODE_STATES) ^ {m for m, _, _ in found}))
     js = rig.client.get("/static/js/ddm_control.js").get_data(as_text=True)
     _check("a mode button names its mode to pi5 before the LEDs answer",
-           "const raceSet = mode ? setRaceMode(mode) : null;" in js and "'/api/quiniela/mode'" in js
-           and js.index("const raceSet = mode ? setRaceMode(mode) : null;") < js.index("showNotification(withRaceState(`Animation: ${animName}`, race), 'success');"))
+           "const raceSet = mode ? setRaceMode(mode, asked) : null;" in js and "'/api/quiniela/mode'" in js
+           and js.index("const raceSet = mode ? setRaceMode(mode, asked) : null;") < js.index("showNotification(withRaceState(`Animation: ${animName}`, race), 'success');"))
     _check("Standby names its mode; TEST names none (an LED test only, Joey 2026-10-13)",
-           "const raceSet = setRaceMode('STANDBY');" in js and "setRaceMode('TEST')" not in js
+           "const raceSet = setRaceMode('STANDBY', asked);" in js and "setRaceMode('TEST')" not in js
            and "setRaceMode" not in _js_function(js, "function openTestModal()")
            and "/api/quiniela/mode" not in _js_function(js, "function openTestModal()"))
     _check("pi5 refuses TEST as a mode: 400, the race state where it was",
@@ -337,6 +337,12 @@ def test_buttons_carry_their_mode():
            and "BETTING_60: 1" not in js)
     _check("the race state is read back every 5 s, and fresh as a tap that could reopen betting is made",
            "setInterval(pollRaceMode, 5000);" in js and "const info = await freshRaceMode();" in _js_function(js, "async function reopenAllowed(mode)"))
+    _check("the host's yes is what carries `reopen`: only Reopen betting sends it, a Cancel sends nothing, and the page asks whenever "
+           "pi5 holds the figures (at_post), not by state",
+           "? { reopen: true } : null" in _js_function(js, "async function reopenAllowed(mode)")
+           and "info.at_post" in _js_function(js, "async function reopenAllowed(mode)")
+           and "body: JSON.stringify({ mode: mode, ...confirmed })" in js
+           and re.findall(r"reopen: true", re.sub(r"//[^\n]*", "", js)) == ["reopen: true"])
 
 
 def test_dashboard_modes_move_la_quiniela():
@@ -361,7 +367,7 @@ def test_dashboard_modes_move_la_quiniela():
                  "AT_THE_GATE", "CHAOS", "FINAL_CALL", "FINISH", "HEARTBEAT_COOLDOWN"):
         route, command = led_routes[mode]
         rig.led.clear()
-        r_mode = rig.post("/api/quiniela/mode", {"mode": mode})
+        r_mode = rig.post("/api/quiniela/mode", {"mode": mode, "reopen": True})        # the walk goes back to 2 from 4
         r_led = rig.post(route)
         _check(f"{mode}: the LEDs get {command} as before, La Quiniela state {MODE_STATES[mode]}",
                r_led.status_code == 200 and r_led.get_json()["success"] is True and wait_for(lambda: rig.led == [command], 2.0)
@@ -425,8 +431,8 @@ def test_results_and_reset_are_modes():
     _check("the board keeps the TV in WINNER and hands it back in AFTER_PARTY",
            rig.model()["board_states"] == [1, 2, 3, 4, 5] and rig.model()["race_state"] == 6)
     _check("the LEDs went off as they always did on a reset", wait_for(lambda: "LED:ALL_OFF" in rig.led, 2.0))
-    # The next race: WELCOME is PRE_RACE again
-    rig.post("/api/quiniela/mode", {"mode": "WELCOME"})
+    # The next race: WELCOME is PRE_RACE again (the host's yes: the figures at the post are still held after RESET)
+    rig.post("/api/quiniela/mode", {"mode": "WELCOME", "reopen": True})
     _check("WELCOME after the reset: PRE_RACE", rig.bridge.phase == 0)
     # Without a board the results are refused: test_results_refused_while_the_field_cannot_be_read
 
@@ -585,8 +591,9 @@ FROZEN_LINE = ("The results are in, so the field is frozen: clear them in SET WI
 
 def _cups_at_post(rig, counts):
     """Cups reporting the given {horse: tokens} with betting open, then AT THE GATE takes the figures at the
-    post from them; a horse not in `counts` has no cup, so no bets. Ends in RUNNING."""
-    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    post from them; a horse not in `counts` has no cup, so no bets. Ends in RUNNING. Any figures from before go
+    (betting starts over)."""
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
     for horse, count in counts.items():
         rig.bridge.handle_raw_line(telem("A0:B7:65:55:00:%02X" % horse, horse=horse, count=count))
     rig.board.refresh()
@@ -1774,7 +1781,7 @@ def _admin_after_the_post(picker_check, requests, slow):
         return chrome.eval("(() => { const el = document.querySelector('" + row(9) + "[data-rowstatus]'); return el ? el.innerText.trim() : ''; })()")
 
     def wait_state(n):
-        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}"})
+        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}", "reopen": True})
         chrome.wait_for(f"document.getElementById('state-now').textContent.trim().startsWith('{n} ')", timeout=12)
         settle(0.3)
 
@@ -1824,6 +1831,52 @@ def _admin_after_the_post(picker_check, requests, slow):
     finally:
         chrome.close()
         server.close()
+
+
+def _reset_confirm(picker_check, requests, slow):
+    """The admin page's Reset betting asks before it clears, and says what: the results, the figures at the post and the
+    hand count while they are held (Joey, 2026-10-28, review Q1); with nothing held it names neither."""
+    rig = Rig()
+    rig.client.put("/api/quiniela/horses", json={"text": NAMES_TEXT})
+    _cups_at_post(rig, {n: 5 for n in range(1, 18)})                              # 85 tokens: pot $85 at the post
+    rig.client.put("/api/quiniela/counted_pot", json={"amount": 80})
+    rig.post("/api/quiniela/cmd", {"cmd": "state 6"})
+    server = picker_check.Server(rig)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && document.getElementById('state-now').textContent.trim().startsWith('6 ')", timeout=20)
+        chrome.eval("window.__confirms = []; window.confirm = (m) => { window.__confirms.push(m); return false; }; 1")
+        chrome.tap("#reset-betting")
+        time.sleep(0.5)
+        asked = chrome.eval("window.__confirms")
+        _check("AFTER PARTY with the figures and a count held: Reset betting asks, naming the results, the figures at the post and the hand count",
+               len(asked) == 1 and "This clears the results, the figures at the post (pot $85), the hand count ($80), the ticker and the closing time."
+               in asked[0], str(asked))
+        _check("...and Cancel clears nothing", rig.model()["closing"] is not None and rig.model()["pot_counted"] == 80 and rig.bridge.phase == 6)
+        chrome.eval("window.confirm = (m) => { window.__confirms.push(m); return true; }; 1")
+        chrome.tap("#reset-betting")
+        chrome.wait_for("document.getElementById('state-now').textContent.trim().startsWith('0 ')", timeout=15)
+        _check("OK clears them: PRE-RACE, no figures, no count", rig.model()["closing"] is None and rig.model()["pot_counted"] is None)
+        chrome.eval("window.__confirms = []; 1")
+        chrome.tap("#reset-betting")
+        time.sleep(0.5)
+        asked = chrome.eval("window.__confirms")
+        _check("with nothing held it names no figures and no count",
+               len(asked) == 1 and "This clears the results, the ticker and the closing time." in asked[0], str(asked))
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        chrome.close()
+        server.close()
+
+
+def test_reset_betting_names_what_it_clears_in_a_browser():
+    """Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("Reset betting confirm checks skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    _with_counted_requests(lambda requests, slow: _reset_confirm(picker_check, requests, slow))
 
 
 def test_admin_scratch_after_the_post_in_a_browser():
@@ -1983,7 +2036,9 @@ def test_bets_at_the_post_for_the_picker():
     m = rig.model()
     _check("a token dropped after the post: the live count moves, the figures at the post do not",
            m["horses"]["4"]["tokens"] == 2 and m["closing"]["horses"]["4"]["tokens"] == 0)
-    rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    r = rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})
+    _check("betting reopened without the host's yes: refused, the figures at the post stay", r.status_code == 409 and rig.model()["closing"] is not None)
+    rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
     _check("betting reopened: the figures at the post are gone", rig.model()["closing"] is None)
 
 
@@ -2452,7 +2507,7 @@ def _admin_scratch_check(picker_check, touch, requests, slow):
         return step() or ""
 
     def state(n):                                    # the race state, once the page's 5 s refresh has read it
-        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}"})
+        rig.post("/api/quiniela/cmd", {"cmd": f"state {n}", "reopen": True})
         chrome.wait_for(f"document.getElementById('state-now').textContent.trim().startsWith('{n} ')", timeout=12)
 
     try:
@@ -2852,7 +2907,7 @@ def _control_center_taps(picker_check, touch, requests, slow):
         # While a race state is on its way no mode button takes a tap; once pi5 has answered, another mode goes.
         # (From PRE-RACE: 60 MIN in WINNER, where the walk above ended, would ask first, gap review OD2.)
         settle(2.2)
-        rig.post("/api/quiniela/mode", {"mode": "WELCOME"})
+        rig.post("/api/quiniela/mode", {"mode": "WELCOME", "reopen": True})
         slow[("POST", "/api/quiniela/mode")] = 3.0
         t = time.monotonic()
         chrome.tap(button("BETTING_60"))
@@ -3019,14 +3074,14 @@ def _race_night_guards(picker_check, touch, requests, slow, full):
             rig.bridge.handle_raw_line(telem(GUARD_MAC % n, horse=n, count=count))
         rig.board.refresh()
 
-    def race_at(state, count=None):                  # pi5 in `state`; from 3 on with figures at the post (pot $86)
-        rig.post("/api/quiniela/mode", {"mode": "BETTING_60"})                  # any figures from before go
+    def race_at(state, count=None):                  # pi5 in `state`; from 3 on (6 included) with figures at the post (pot $86)
+        rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})  # any figures from before go
         cups()
         if state >= 3:
             rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
             if count is not None:
                 rig.client.put("/api/quiniela/counted_pot", json={"amount": count})
-            rig.post("/api/quiniela/mode", {"mode": {3: "AT_THE_GATE", 4: "GATES_BURST", 5: "HEARTBEAT_COOLDOWN"}[state]})
+            rig.post("/api/quiniela/mode", {"mode": {3: "AT_THE_GATE", 4: "GATES_BURST", 5: "HEARTBEAT_COOLDOWN", 6: "RESET"}[state]})
         else:
             rig.post("/api/quiniela/mode", {"mode": {0: "WELCOME", 1: "BETTING_60", 2: "FINAL_CALL"}[state]})
         m = rig.model()
@@ -3069,9 +3124,9 @@ def _race_night_guards(picker_check, touch, requests, slow, full):
                and (m["race_state"], m["pot_scale"], m["pot_counted"], m["closing"]["horses"]["12"]) == (3, 86.0, 80, {"tokens": 1}),
                str((posts(t, "/api/quiniela/mode"), posts(t, "/api/command"), m["race_state"], m["pot_scale"], m["pot_counted"])))
 
-        # Each reopening button in 3, 4 and 5: the confirm with the real figures; Cancel sends nothing; Reopen betting, a
-        # double tap, sends once, and the figures and the count are cleared.
-        cases = [(m, s) for s in (3, 4, 5) for m, _ in REOPENERS] if full else [("FINAL_CALL", 3), ("BETTING_60", 4), ("WELCOME", 5)]
+        # Each reopening button in 3, 4, 5 and 6 (AFTER PARTY after a RESET: Joey, 2026-10-28, review Q1): the confirm with the
+        # real figures; Cancel sends nothing; Reopen betting, a double tap, sends once, and the figures and the count are cleared.
+        cases = [(m, s) for s in (3, 4, 5, 6) for m, _ in REOPENERS] if full else [("FINAL_CALL", 3), ("BETTING_60", 4), ("WELCOME", 5), ("STANDBY", 6)]
         led_of = dict(REOPENERS)
         out = {}
         for m, s in cases:
@@ -3102,8 +3157,25 @@ def _race_night_guards(picker_check, touch, requests, slow, full):
                            and cancelled == (0, s, 86.0, count, False) and went == (1, 1, 2, MODE_STATES[m], None, None, 1),
                            str((asked, cancelled, went)))
         bad = {k: v[1] for k, v in out.items() if not v[0]}
-        _check(f"guards {mode}: {len(out)} reopening taps in states 3-5: the confirm names the real figures, Cancel sends nothing, "
+        _check(f"guards {mode}: {len(out)} reopening taps in states 3-6: the confirm names the real figures, Cancel sends nothing, "
                "Reopen betting (a double tap) sends once and clears the figures and the count", not bad, str(bad)[:900])
+
+        # A stale page: its fresh read says nothing is held, pi5 is RUNNING with the figures and a count. The tap goes with no
+        # question and no `reopen`; pi5 refuses it, nothing is cleared, and the page says why.
+        race_at(4, 80)
+        ready()
+        chrome.eval("window.__realFresh = freshRaceMode; freshRaceMode = async () => ({state: 2, state_name: 'FINAL_CALL', at_post: null}); 1")
+        t = time.monotonic()
+        chrome.tap(button("WELCOME"))
+        wait_posts(t, ("/api/quiniela/mode",), 5.0)
+        settle(0.8)
+        mm = rig.model()
+        said = chrome.eval("document.getElementById('notification').textContent")
+        chrome.eval("freshRaceMode = window.__realFresh; 1")
+        _check(f"guards {mode}: a stale page that did not ask is refused by pi5: no question, the figures and the count stay, "
+               "the page says what it would have cleared",
+               chrome.eval("window.__asks") == 0 and (mm["race_state"], mm["pot_scale"], mm["pot_counted"]) == (4, 86.0, 80)
+               and "race state not set (This reopens betting: the figures at the post (pot $86) and the hand count ($80)" in said, said)
 
         # In 0-2 the same buttons send at once: no question.
         cases = [(m, s) for s in (0, 1, 2) for m, _ in REOPENERS] if full else [("STANDBY", 2), ("BETTING_30", 0)]
@@ -3759,6 +3831,8 @@ def main_():
          test_slot_cards_have_a_place_for_everything_in_a_browser)
     _run("scratch after the post — no replacement, only the ticked box, the tokens refunded; the admin lists in order, in a browser",
          test_admin_scratch_after_the_post_in_a_browser)
+    _run("Reset betting — the admin page's question names the results, the figures at the post and the hand count, in a browser",
+         test_reset_betting_names_what_it_clears_in_a_browser)
     _run("race-night guard — TEST, the reopen confirm, B1, CONFIRM RESULTS's message, AUTO, in a browser", test_race_night_guards_in_a_browser)
     _run("SET WINNERS — the picker follows a scratch while open; a stale dialog cannot save it; RESET clears a saved result, in a browser",
          test_picker_follows_the_field_in_a_browser)

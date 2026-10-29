@@ -4,14 +4,14 @@ to the TV.
 
 The cup gateway (firmware/quiniela/ddm_gateway) plugs into DevPi, where pi5's
 bridge (pi5/la_quiniela/bridge.py) owns the USB port, keeps the betting model
-and serves it as GET /api/quiniela, GET /api/quiniela/stream (SSE) and
-POST /api/quiniela/cmd. This module mirrors that model so the board on the
-TV keeps talking to its own origin:
+and serves it as GET /api/quiniela and GET /api/quiniela/stream (SSE).
+This module mirrors that model so the board on the TV keeps talking to its
+own origin. It only reads: the race state is changed on pi5 (its Control
+Center), never through this port, which the guests are pointed at:
 
   * Pi5Link     — a daemon thread that follows pi5's SSE stream and, while
                   the stream is down, polls GET /api/quiniela once a second;
-                  reconnects forever with backoff. forward_cmd() relays a
-                  POST /api/quiniela/cmd body to pi5 and returns its answer.
+                  reconnects forever with backoff.
   * BoardRelay  — holds the last model received from pi5, flips its link_ok
                   to false when pi5 has not been heard for LINK_TIMEOUT_S,
                   and fans every change out to SSE subscribers.
@@ -432,36 +432,6 @@ class Pi5Link:
         self._call(self._on_alive)
         self._call(self._on_model, obj)
 
-    def forward_cmd(self, body: Any, timeout: float = FETCH_TIMEOUT_S) -> Tuple[int, Dict[str, Any]]:
-        """POST body (as received; {} when it is not a dict) to pi5's
-        /api/quiniela/cmd and return (status, payload). pi5 validates the
-        command; a JSON-object answer comes back unchanged, status included.
-        pi5 unreachable -> (503, {"ok": false, "error": "pi5 not reachable: ..."});
-        a non-JSON body -> {"ok": false, "error": "non-JSON reply ..."} with
-        pi5's status, or 502 when that status was a 2xx (see _json_reply)."""
-        payload = body if isinstance(body, dict) else {}
-        req = urllib.request.Request(
-            self.base_url + "/api/quiniela/cmd",
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-        try:
-            with self._opener(req, timeout) as resp:
-                status = int(getattr(resp, "status", 200) or 200)
-                raw = resp.read()
-        except urllib.error.HTTPError as exc:
-            try:
-                raw = exc.read()
-            except Exception:  # noqa: BLE001
-                raw = b""
-            finally:
-                exc.close()
-            return _json_reply(raw, exc.code)
-        except _NET_ERRORS as exc:
-            return 503, {"ok": False, "error": f"pi5 not reachable: {_reason(exc)}"}
-        return _json_reply(raw, status)
-
     # -- thread --------------------------------------------------------------
     def _default_sleeper(self, seconds: float) -> None:
         self._stop.wait(seconds)
@@ -554,22 +524,6 @@ class Pi5Link:
         self._call(self._on_alive)
         self._call(self._on_model, obj)
         return True
-
-
-def _json_reply(raw: Any, status: int) -> Tuple[int, Dict[str, Any]]:
-    """(status, body) to relay: pi5's reply as received when it is a JSON
-    object; otherwise a JSON error naming what it was. A non-JSON error page
-    (Flask's HTML 404/405/500) keeps its status; a non-JSON 2xx becomes 502,
-    because "ok" is the contract and a 200 must never say ok:false."""
-    try:
-        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
-        obj = json.loads(text)
-    except (ValueError, UnicodeDecodeError):
-        obj = None
-    if isinstance(obj, dict):
-        return status, obj
-    error = {"ok": False, "error": f"non-JSON reply from pi5 (HTTP {status})"}
-    return (502 if 200 <= status < 300 else status), error
 
 
 def _shutdown_socket(resp: Any) -> None:

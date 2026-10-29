@@ -642,7 +642,7 @@ pi5 would lose it.
   the post yet. In 6 AFTER_PARTY a saved count stays and is read-only
 
 **Side Effects:**
-- The count is stored inside the figures at the post, so Reset betting and a state of 0 or 1
+- The count is stored inside the figures at the post, so Reset betting and a state of 0, 1 or 2
   clear it with them, and a restart of pi5 keeps it
 - The model is pushed to the event stream at once (the TV does not wait for a poll)
 

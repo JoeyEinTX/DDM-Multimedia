@@ -9,7 +9,6 @@ Routes:
     GET /api/slide/<id>      → returns the rendered HTML fragment for one slide
     GET /api/quiniela        → La Quiniela betting model, relayed from pi5 (tokens per horse, pot, link state)
     GET /api/quiniela/stream → the same model as Server-Sent Events, on every change
-    POST /api/quiniela/cmd   → forwards the body to pi5's /api/quiniela/cmd and relays its answer
 
 Phase 2 will add a /upload endpoint and a back-channel into the Pi 5 dashboard.
 The structure here keeps content loading and playlist building isolated so a
@@ -551,16 +550,6 @@ def api_quiniela_stream():
             "Connection": "keep-alive",
         },
     )
-
-
-@app.route("/api/quiniela/cmd", methods=["POST"])
-def api_quiniela_cmd():
-    """Forward the JSON body (e.g. {"cmd": "state 1"}) to pi5's
-    /api/quiniela/cmd and relay its status and answer unchanged: pi5
-    validates the command (single source of truth). pi5 unreachable ->
-    503 {"ok": false, "error": "pi5 not reachable: ..."}."""
-    status, payload = quiniela.link.forward_cmd(request.get_json(silent=True))
-    return jsonify(payload), status
 
 
 @app.context_processor

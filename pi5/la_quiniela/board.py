@@ -44,8 +44,8 @@ from flask import Blueprint, Response, jsonify, render_template, request
 from la_quiniela import protocol as P
 from la_quiniela import racetime
 from la_quiniela.betting import (
-    COUNTED_POT_MAX, MODE_STATES, BettingBoard, betting_open, CountRefused, load_board_settings, scratch_refunds, sse_events,
-    validate_cmd,
+    BETS_STAND_STATES, COUNTED_POT_MAX, MODE_STATES, BettingBoard, betting_open, CountRefused, ReopenRefused,
+    load_board_settings, scratch_refunds, sse_events, validate_cmd,
 )
 from la_quiniela.horses import FIELD_SIZE, HORSE_COUNT, NAME_MAX_LEN, horse_at, in_field, parse_names_text
 
@@ -264,7 +264,11 @@ def api_quiniela_cmd():
     a text line to the port: the bridge's revision model is the source of
     truth); demo and json have no equivalent here and are refused. The v1
     horse, scratch and roster commands no longer exist: a cup's number is
-    set on the cup, scratches go through POST /api/quiniela/scratch."""
+    set on the cup, scratches go through POST /api/quiniela/scratch.
+
+    A state 0, 1 or 2 while the figures at the post are held is a 409 that
+    names what it would clear, unless the body also says "reopen": true
+    (set_race_state)."""
     body = request.get_json(silent=True)
     cmd = body.get("cmd") if isinstance(body, dict) else None
     text, error = validate_cmd(cmd)
@@ -287,7 +291,9 @@ def api_quiniela_cmd():
     # truth and re-sends on the next hello / status. The response's
     # gateway_online tells the caller which of the two happened.
     try:
-        done = board.set_race_state(args[0], source="cmd")
+        done = board.set_race_state(args[0], source="cmd", reopen=body.get("reopen") is True)
+    except ReopenRefused as exc:
+        return _bad(str(exc), 409)
     except ValueError as exc:
         return _bad(str(exc))
     return jsonify({"ok": True, "rev": done["rev"], "phase": args[0], "gateway_online": done["gateway_online"]})
@@ -313,8 +319,12 @@ def api_quiniela_mode_set():
     the one the table gives (betting.MODE_STATES), set through the same
     path as `state N`; the reply is {"ok": true, "mode", "state",
     "state_name", "source": "dashboard", "rev", "gateway_online"}. 400 for a
-    name that is not a mode, 503 without a bridge. Nothing here touches the
-    LEDs: the dashboard's button does that, as it always did."""
+    name that is not a mode, 503 without a bridge, 409 for a mode that
+    reopens betting (60 MIN, 30 MIN, FINAL CALL, WELCOME, STANDBY) while the
+    figures at the post are held, naming what it would clear, unless the body
+    also says "reopen": true: the dashboard sends it only after the host
+    confirms. Nothing here touches the LEDs: the dashboard's button does that,
+    as it always did."""
     body = request.get_json(silent=True)
     mode = body.get("mode") if isinstance(body, dict) else None
     if not isinstance(mode, str) or mode.strip().upper() not in MODE_STATES:
@@ -323,7 +333,9 @@ def api_quiniela_mode_set():
     if board.bridge is None:
         return _bad("bridge not initialised", 503)
     try:
-        done = board.set_mode(mode)
+        done = board.set_mode(mode, reopen=body.get("reopen") is True)
+    except ReopenRefused as exc:
+        return _bad(str(exc), 409)
     except ValueError as exc:
         return _bad(str(exc))
     return jsonify({"ok": True, **done})
@@ -577,6 +589,10 @@ def api_quiniela_unscratch():
     undone last record first: while 22 -> 23 stands, undoing 9 is a 400
     "horse 9: undo 22 first" (the cup is 23, so nothing could go back to 9,
     and 22 would be left out of the field with no record to bring it back).
+    From 60 MIN to WINNER (BETS_STAND_STATES) the tokens in 22's cup are bets
+    on 22 and would go with the cup to 9: while it holds any, a 409 "Cup 9
+    holds 4 tokens bet on #22. Hand them back and empty the cup, then Undo."
+    and nothing moves (Joey, 2026-10-28, review Q2).
     Else the no-replacement record goes and its bit leaves the state line;
     400 "horse 9 is not scratched" when neither applies."""
     body = request.get_json(silent=True)
@@ -590,6 +606,11 @@ def api_quiniela_unscratch():
     if now is not None:
         if board.store.replacement_of(now) is not None:
             return _bad(f"horse {horse}: undo {now} first")
+        board.refresh()                                    # the cups' latest counts
+        held = board.model()["horses"][str(now)]["tokens"]
+        if held and board.race_state_now() in BETS_STAND_STATES:
+            return _bad(f"Cup {horse} holds {held} token{'' if held == 1 else 's'} bet on #{now}. "
+                        "Hand them back and empty the cup, then Undo.", 409)
         snap, on_cups, _ = _field_view(board)
         board.queue_undo_renum(now, horse)
         board.store.unscratch_replace(horse)
@@ -619,7 +640,7 @@ def api_quiniela_counted_pot():
     scales read them. 400 for an amount that is not a whole number of
     dollars in range; 409 when the race is not in AT THE POST, RUNNING or
     WINNER (3-5) or there are no figures at the post yet. The count is kept
-    in the figures-at-the-post record, so Reset betting and a state of 0 or 1
+    in the figures-at-the-post record, so Reset betting and a state of 0, 1 or 2
     clear it with them and a restart of pi5 keeps it. The model is pushed at
     once. Reply {"ok": true, "pot_counted", "pot_scale", "pot", "prizes",
     "hand_counted", "race_state", "saved"}."""
@@ -774,8 +795,8 @@ def api_quiniela_odds_stop():
 
 @quiniela_board_bp.route("/quiniela/admin", methods=["GET"])
 def quiniela_admin_page():
-    """The phone page: the Race section (state buttons, the figures, Reset
-    betting, the Horses list), then the race's name and post time, names,
+    """The phone page: the Race section (the race state read-only, the
+    figures, Reset betting, the Horses list), then the race's name and post time, names,
     scratches and the closing time. It carries pi5's page revision and
     reloads itself, when idle, once a model read says pi5 serves another
     (page_rev.py, static/js/page_rev.js)."""
