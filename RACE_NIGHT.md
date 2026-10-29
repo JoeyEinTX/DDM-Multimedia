@@ -766,6 +766,16 @@ once. A pull that changed `deploy/tv_box/`: run `~/DDM-Multimedia/deploy/tv_box.
 joey@ddm-tv.local` too.
 `git status` should be clean; `pi5/.env` doesn't show (it is git-ignored).
 
+A pull that changed `pi5/la_quiniela/` (the bridge, the board) or the cup simulator: run its
+tests too, when DevPi is idle (not during the party):
+```bash
+cd ~/DDM-Multimedia/pi5 && python3 -m la_quiniela.test_simulator
+```
+It puts the real bridge and a betting board against the simulator over a pty, in one process,
+with a temporary database, no gateway port and no port 5000, so **`ddm-pi5` keeps running**:
+there is nothing to stop first. About four minutes; every line starts `[OK]` and the last
+says `0 failed`. A line starting `[XX]` is the one that broke.
+
 **Once, on a box that still has a local edit of `pi5/config.py`** (`git status` lists it;
 DevPi did, with the gateway's port and the LED controller's address in it): stash the edit,
 pull, move its values from the stash into `pi5/.env`, and the tree is clean for good. No

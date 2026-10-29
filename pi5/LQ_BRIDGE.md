@@ -194,7 +194,9 @@ link means the gateway reports DevPi's rev.
 claimed and when it was last seen, across restarts. It is what lets the
 admin page tell `● offline` (seen before, silent now) from `○ no cup` (never
 heard) and it decides nothing: a cup that is still talking is back in the
-picture within one packet. `forget_cups(prefix)` / `POST /api/lq/cups/forget`
+picture within one packet. At start every cached cup is offline, in the
+snapshot and in its row (`online = 0`), so a cup that never reports again does
+not stay `online` in the table. `forget_cups(prefix)` / `POST /api/lq/cups/forget`
 drops entries (one MAC, a prefix, or all), in memory and in the table, with
 a `cups_forgotten` event; the only reason to do so is a cup that went home
 and would otherwise sit on the page as offline.

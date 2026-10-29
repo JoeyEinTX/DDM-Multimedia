@@ -320,8 +320,12 @@ class LqBridge:
 
     def _load_cups(self) -> None:
         """Seed the live table from the lq_cups rows so a snapshot right after
-        a restart shows the last known cups and their horses, all offline."""
+        a restart shows the last known cups and their horses, all offline. The
+        rows say so too: a cup that was online when pi5 stopped is not known
+        to be now, and one that never reports again must not stay online there."""
         for row in self.db.load_cups():
+            if row["online"]:
+                self.db.set_cup_online(row["mac"], False)
             live = CupLive(mac=row["mac"])
             live.horse = P.parse_horse(row["horse"])
             live.count = row["last_count"]

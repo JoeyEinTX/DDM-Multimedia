@@ -470,8 +470,8 @@ class Simulator:
         if scenario is not None:
             self._print_expectations()
             if check is not None:
-                ok = self.check(check, tolerance)
-                self.result = ok and not self.failures
+                self.check(check, tolerance)
+                self.result = not self.failures
                 self.out("PASS" if self.result else "FAIL")
                 return 0 if self.result else 1
             self.result = not self.failures
@@ -647,7 +647,8 @@ class Simulator:
 
     def check(self, fetch: Callable[[], dict], tolerance: Optional[int] = None) -> bool:
         """Poll DevPi's snapshot until it matches or settle_s runs out; print
-        one line per mismatch."""
+        one line per mismatch, each one also a failure of the run (so the
+        result says what did not match)."""
         tol = (0 if self.ideal else 1) if tolerance is None else tolerance
         deadline = self.clock.now() + self.settle_s
         problems: List[str] = ["no snapshot yet"]
@@ -663,6 +664,7 @@ class Simulator:
             self.clock.sleep(0.5)
         for p in problems:
             self.out("MISMATCH: " + p)
+            self.failures.append(p)
         return not problems
 
 

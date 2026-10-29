@@ -288,5 +288,6 @@ def cup_swap(ctx):
     ctx.note("the spare is horse 7 now; the dead cup's tokens move over")
     ctx.move_tokens_to_spare(7, spare)
     yield ctx.wait(4, min_real=4)
-    yield from _betting(ctx, rng, 8, favourites=[7])
+    yield from _betting(ctx, rng, 8, favourites=[11], skip=[7])     # cup 7 is dead for good: horse 7's bets go in the spare
+    ctx.drop(21, 3)
     yield ctx.wait(3)

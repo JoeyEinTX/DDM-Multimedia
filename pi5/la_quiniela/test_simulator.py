@@ -661,6 +661,38 @@ def test_operator_retry():
     _check("the party still reached AFTER_PARTY", sim.gw.phase == int(Phase.AFTER_PARTY))
 
 
+def test_a_final_check_that_does_not_match_is_a_failure():
+    """The end-of-run comparison with DevPi's snapshot printed its MISMATCH lines and failed the run, but left
+    sim.failures empty, so a caller (the end-to-end tests) could only say FAIL. Each mismatch is a failure now."""
+    sim = Simulator(link=None, seed=1, ideal=True, quiet=True, clock=VirtualClock(), out=lambda s: None, settle_s=1)
+    sim.operator = LocalOperator(sim)
+    rc = sim.run(scenario="normal", check=lambda: {"cups": [], "link": {"in_sync": False}})
+    _check("a snapshot with no cups in it: the run fails", rc == 1 and sim.result is False)
+    _check("...and says what did not match, and only that: every cup missing, the link out of sync",
+           len(sim.failures) == 21 and sum("missing from the snapshot" in f for f in sim.failures) == 20
+           and any("in_sync is False" in f for f in sim.failures), "; ".join(sim.failures)[:300])
+
+
+def test_a_restart_marks_the_cached_cups_offline_in_the_table():
+    """lq_cups keeps each cup's last state between runs. A cup that was online when pi5 stopped was left online in its
+    row for good if it never reported again (a cup that no longer exists); the bridge says offline at start, in the
+    snapshot and now in the rows too."""
+    from la_quiniela.bridge import LqBridge
+    from la_quiniela.models import LqDb
+    _fresh_db()
+    db = LqDb(_TMP_DB)
+    db.init_schema()
+    db.upsert_cup(cup_mac(1), 1, "2026-09-26T00:00:00Z", -60, -58, 3, 812345, True)
+    db.upsert_cup("02:DD:4D:00:00:63", 7, "2026-09-26T00:00:00Z", -60, -58, 9, 812345, True)
+    db.close()
+    bridge = LqBridge(settings={"LQ_SERIAL_PORT": "", **BRIDGE_CFG}, db_path=_TMP_DB, console=_quiet_console)
+    rows = {r["mac"]: r["online"] for r in bridge.db.load_cups()}
+    bridge.close()
+    _fresh_db()
+    _check("both cached cups are offline in their rows after a start, and nothing else about them changed",
+           rows == {cup_mac(1): 0, "02:DD:4D:00:00:63": 0}, str(rows))
+
+
 # -----------------------------------------------------------------------------
 # End to end: the real bridge over a real pty
 # -----------------------------------------------------------------------------
@@ -823,7 +855,8 @@ def test_e2e_scratch_renumber():
            c9["horse"] == 9 and c9["online"] and c9["count"] == sim.tokens_in(9), str(c9))
     _check("scratch-renumber: the record is gone and the undo pair left the state line once the cup reported 9",
            board.store.scratches() == {} and bridge.renum == [] and board.undo_renums() == [], str((bridge.renum, board.undo_renums())))
-    _check("scratch-renumber: horse 22's name was stored by the scratch", board.store.horses().get(22, {}).get("name") == "Ocelli")
+    _check("scratch-renumber: the name the scratch gave horse 22 went with the Undo (b59382a: Undo puts the names back as they were)",
+           not board.store.horses().get(22, {}).get("name"), str(board.store.horses().get(22)))
     _check("scratch-renumber: cup_horse events for 22 and back to 9, no cup_offline",
            events.count("cup_horse") >= 22 and "cup_offline" not in events, str(events.count("cup_horse")))
     print("      elapsed %.1f s" % elapsed)
@@ -1243,6 +1276,8 @@ def main():
     _run("scale model", test_scale_model)
     _run("scenarios in memory (fake DevPi)", test_in_memory_scenarios)
     _run("a refused operator request is retried", test_operator_retry)
+    _run("a final check that does not match is a failure", test_a_final_check_that_does_not_match_is_a_failure)
+    _run("a restart marks the cached cups offline in the table", test_a_restart_marks_the_cached_cups_offline_in_the_table)
     if HAVE_PTY:
         for name, fn in E2E:
             _run(name, fn)

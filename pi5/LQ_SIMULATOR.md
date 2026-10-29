@@ -229,6 +229,7 @@ python -m la_quiniela.test_simulator
 ```
 
 This runs the simulator against the real bridge and a real betting board
-inside one process, with no app and no hardware, and takes about a minute.
-The end-to-end part needs a Linux pty, so on a Windows PC it reports those
-tests as skipped and runs the rest.
+inside one process, with no app and no hardware (a temporary database, no
+serial port, no port 5000: `ddm-pi5` can keep running), and takes about four
+minutes. The end-to-end part needs a Linux pty, so on a Windows PC it reports
+those tests as skipped and runs the rest.
