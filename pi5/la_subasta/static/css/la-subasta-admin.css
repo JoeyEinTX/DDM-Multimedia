@@ -96,22 +96,6 @@ select { padding: 0 8px; max-width: 100%; }
 .adm-status.ok { color: #7bd88f; }
 .adm-status.err { color: #ff8a8a; font-weight: 600; }
 
-/* The PIN form (admin_pin.html): one card, one field. */
-.adm-pin { max-width: 420px; }
-.adm-pin input {
-    display: block;
-    width: 100%;
-    min-height: 44px;
-    margin: 6px 0 12px;
-    padding: 0 12px;
-    font: inherit;
-    color: var(--adm-fg);
-    background: #24483c;
-    border: 1px solid var(--adm-line);
-    border-radius: 10px;
-}
-.adm-pin button { width: 100%; }
-
 .adm-list { display: block; }
 .adm-empty { color: var(--adm-dim); padding: 4px 0; }
 

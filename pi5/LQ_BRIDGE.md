@@ -1153,14 +1153,18 @@ These operator routes refresh the model synchronously before answering, so a
 `on_change` also wakes the board thread). Errors are `{"ok": false, "error":
 ...}`.
 
+Every route here that changes something takes the host PIN (`DDM_HOST_PIN`, `pi5/host_pin.py`): log in once,
+`curl -s -c ~/.ddm -X POST localhost:5000/host/login -H 'Content-Type: application/json' -d '{"pin":"YOURPIN"}'`,
+and send the cookie (`-b ~/.ddm`). The GETs need nothing, and neither does the splash that follows the stream.
+
 ```
-curl -X PUT  localhost:5000/api/quiniela/horses    -H 'Content-Type: application/json' -d '{"text": "1. Dornoch\n2. Sierra Leone\n9. Encino\n22. Ocelli"}'
-curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}'
-curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9}'
-curl -X POST localhost:5000/api/quiniela/unscratch -H 'Content-Type: application/json' -d '{"horse": 9}'
-curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": 152}'
-curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": null}'
-curl -X POST localhost:5000/api/quiniela/reset
+curl -b ~/.ddm -X PUT  localhost:5000/api/quiniela/horses    -H 'Content-Type: application/json' -d '{"text": "1. Dornoch\n2. Sierra Leone\n9. Encino\n22. Ocelli"}'
+curl -b ~/.ddm -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}'
+curl -b ~/.ddm -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9}'
+curl -b ~/.ddm -X POST localhost:5000/api/quiniela/unscratch -H 'Content-Type: application/json' -d '{"horse": 9}'
+curl -b ~/.ddm -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": 152}'
+curl -b ~/.ddm -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": null}'
+curl -b ~/.ddm -X POST localhost:5000/api/quiniela/reset
 ```
 
 They are deliberately not under `la_quiniela_bp`, whose `after_request`

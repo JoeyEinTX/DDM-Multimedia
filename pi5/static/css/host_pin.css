@@ -1,0 +1,15 @@
+/* The PIN form every host page shows until the PIN is entered (templates/host_pin.html). */
+:root { --bg: #14140f; --card: #1f1f18; --line: #3a3a2e; --fg: #f3efe2; --dim: #b9b39f;
+        --gold: #ffd700; --green: #228b22; --rose: #dc143c; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px; background: var(--bg); color: var(--fg);
+       font: 17px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 420px; margin: 40px auto 0; background: var(--card); border: 1px solid var(--line);
+       border-radius: 12px; padding: 14px; }
+h1 { font-size: 22px; margin: 4px 0 12px; color: var(--gold); letter-spacing: .04em; }
+label { display: block; color: var(--dim); font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
+input { display: block; width: 100%; min-height: 48px; margin: 6px 0 12px; padding: 10px; font: inherit; color: var(--fg);
+        background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+button { width: 100%; min-height: 48px; font: inherit; font-weight: 600; border-radius: 10px; border: 1px solid var(--green);
+         background: var(--green); color: var(--fg); cursor: pointer; touch-action: manipulation; }
+.err { min-height: 1.3em; margin-top: 8px; color: var(--rose); font-weight: 600; }

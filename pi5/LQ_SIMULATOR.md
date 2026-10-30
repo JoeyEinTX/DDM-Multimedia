@@ -43,6 +43,9 @@ You need two terminal windows.
    python -m la_quiniela.simulator --scenario normal --ideal --devpi http://localhost:5000 --check http://localhost:5000
    ```
 
+   `--devpi` drives pi5's betting routes, which are the host's: it logs in with
+   `DDM_HOST_PIN` from `pi5/.env` (on the box that has it), or `--pin PIN`.
+
    It prints the fake serial port it created and the exact command for
    window 2. Leave it running.
 

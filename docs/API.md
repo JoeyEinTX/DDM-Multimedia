@@ -775,6 +775,12 @@ WEATHER_CACHE_MINUTES = 15
 
 ## Testing with curl
 
+Everything that changes something takes the host PIN (`DDM_HOST_PIN` in `pi5/.env`, `pi5/host_pin.py`);
+reads need nothing. Log in once, and send the cookie with `-b ~/.ddm` (the examples below do):
+```bash
+curl -s -c ~/.ddm -X POST localhost:5000/host/login -H 'Content-Type: application/json' -d '{"pin":"YOURPIN"}'
+```
+
 ### Ping ESP32
 ```bash
 curl http://localhost:5000/api/ping
@@ -782,31 +788,31 @@ curl http://localhost:5000/api/ping
 
 ### Turn on all LEDs
 ```bash
-curl -X POST http://localhost:5000/api/led/all_on
+curl -b ~/.ddm -X POST http://localhost:5000/api/led/all_on
 ```
 
 ### Set brightness
 ```bash
-curl -X POST http://localhost:5000/api/led/brightness \
+curl -b ~/.ddm -X POST http://localhost:5000/api/led/brightness \
   -H "Content-Type: application/json" \
   -d '{"brightness": 50}'
 ```
 
 ### Set cup color
 ```bash
-curl -X POST http://localhost:5000/api/led/cup \
+curl -b ~/.ddm -X POST http://localhost:5000/api/led/cup \
   -H "Content-Type: application/json" \
   -d '{"cup": 5, "color": "FFD700"}'
 ```
 
 ### Start animation
 ```bash
-curl -X POST http://localhost:5000/api/animation/CHAOS
+curl -b ~/.ddm -X POST http://localhost:5000/api/animation/CHAOS
 ```
 
 ### Set results
 ```bash
-curl -X POST http://localhost:5000/api/results \
+curl -b ~/.ddm -X POST http://localhost:5000/api/results \
   -H "Content-Type: application/json" \
   -d '{"win": 5, "place": 12, "show": 8}'
 ```

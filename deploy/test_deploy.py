@@ -568,12 +568,12 @@ def test_env_check():
     port_file.write_text("", encoding="utf-8")
     key, odds, pin = "0f" * 15 + "a", "b4" * 20, "host-pin-7261"
     full = {"DDM_LQ_SERIAL_PORT": str(port_file), "DDM_ESP32_IP": "10.0.0.42",
-            "DDM_WEATHER_API_KEY": key, "DDM_ANTHROPIC_API_KEY": odds, "DDM_LS_ADMIN_PIN": pin, "DDM_FLASK_PORT": "5050"}
+            "DDM_WEATHER_API_KEY": key, "DDM_ANTHROPIC_API_KEY": odds, "DDM_HOST_PIN": pin, "DDM_FLASK_PORT": "5050"}
 
     out, raw = env_checks(root)
     _check("no pi5/.env: a WARN that says to copy the example", any("no pi5/.env" in t for t in out.get("warn", [])), raw)
     for what in ("DDM_LQ_SERIAL_PORT is empty", "DDM_ESP32_IP is empty", "DDM_WEATHER_API_KEY is empty",
-                 "DDM_ANTHROPIC_API_KEY is empty", "DDM_LS_ADMIN_PIN is empty"):
+                 "DDM_ANTHROPIC_API_KEY is empty", "DDM_HOST_PIN is empty"):
         _check(f"no pi5/.env: WARN {what}", any(what in t for t in out.get("warn", [])), raw)
     _check("no pi5/.env: only ok, warn and the port; nothing that blocks", set(out) <= {"ok", "warn", "port"}, raw)
     _check("no pi5/.env: pi5's port 5000", out.get("port") == ["5000"], raw)
@@ -582,7 +582,7 @@ def test_env_check():
     out, raw = env_checks(root)
     _check("a full pi5/.env: no WARN", not out.get("warn"), raw)
     for what in ("pi5/.env is there", f"the gateway's port is there: {port_file}", "the LED controller: 10.0.0.42",
-                 "the weather key is set", "the odds poller's key is set", "La Subasta's host PIN is set"):
+                 "the weather key is set", "the odds poller's key is set", "the host PIN is set"):
         _check(f"a full pi5/.env: ok {what}", what in out.get("ok", []), raw)
     _check("a full pi5/.env: the port from DDM_FLASK_PORT", out.get("port") == ["5050"], raw)
     _check("the secrets are never shown", key not in raw and odds not in raw and pin not in raw)
@@ -598,17 +598,22 @@ def test_env_check():
     for name, warning in (("DDM_LQ_SERIAL_PORT", "DDM_LQ_SERIAL_PORT is empty"), ("DDM_ESP32_IP", "DDM_ESP32_IP is empty"),
                           ("DDM_WEATHER_API_KEY", "DDM_WEATHER_API_KEY is empty"),
                           ("DDM_ANTHROPIC_API_KEY", "DDM_ANTHROPIC_API_KEY is empty"),
-                          ("DDM_LS_ADMIN_PIN", "DDM_LS_ADMIN_PIN is empty")):
+                          ("DDM_HOST_PIN", "DDM_HOST_PIN is empty")):
         (root / "pi5/.env").write_text("".join(f"{k}={'' if k == name else v}\n" for k, v in full.items()),
                                        encoding="utf-8")
         out, raw = env_checks(root)
         _check(f"{name} empty: that one WARN, and only it", [w for w in out.get("warn", [])] and
                all(warning in w for w in out["warn"]) and len(out["warn"]) == 1, raw)
-    (root / "pi5/.env").write_text("".join(f"{k}={'change-me' if k == 'DDM_LS_ADMIN_PIN' else v}\n" for k, v in full.items()),
+    (root / "pi5/.env").write_text("".join(f"{k}={'change-me' if k == 'DDM_HOST_PIN' else v}\n" for k, v in full.items()),
                                    encoding="utf-8")
     out, raw = env_checks(root)
     _check("the PIN left as the example, change-me: that one WARN, and only it",
-           len(out.get("warn", [])) == 1 and "DDM_LS_ADMIN_PIN is still the example" in out["warn"][0], raw)
+           len(out.get("warn", [])) == 1 and "DDM_HOST_PIN is still the example" in out["warn"][0], raw)
+    (root / "pi5/.env").write_text("".join(f"{k}={v}\n" for k, v in full.items()) + "DDM_LS_ADMIN_PIN=old-pin\n", encoding="utf-8")
+    out, raw = env_checks(root)
+    _check("the old name, DDM_LS_ADMIN_PIN, left in pi5/.env beside the PIN: one WARN, it does nothing, rename the line",
+           out.get("warn") == ["DDM_LS_ADMIN_PIN is set: it does nothing now, the one host PIN is DDM_HOST_PIN; rename its line in pi5/.env"]
+           and "old-pin" not in raw, raw)
     (root / "pi5/.env").write_text(f"DDM_LQ_SERIAL_PORT={root / 'not-plugged-in'}\n", encoding="utf-8")
     out, raw = env_checks(root)
     _check("the gateway's port set but not there: a WARN (pi5 opens it when it appears)",

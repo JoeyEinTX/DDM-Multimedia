@@ -3,14 +3,12 @@
 # URL prefix: /la-subasta (hyphen, per spec § Naming & Branding Conventions)
 # The guest page (/) and the admin page (/admin) are templates; the spectator
 # view is still a placeholder; everything under /api is JSON. The admin page
-# and every /api/admin route are the host's, behind a PIN (below).
+# and every /api/admin route are the host's, behind the PIN (pi5/host_pin.py).
 
-import hashlib
-import hmac
 import logging
 import time
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request
 
 from la_subasta import bidding, field, notifications, payouts, scratches, settings
 from la_subasta.bidding import BidError, UnknownBidder
@@ -34,72 +32,7 @@ la_subasta_bp = Blueprint(
 )
 
 
-# -----------------------------------------------------------------------------
-# The host's PIN
-# -----------------------------------------------------------------------------
-#
-# The admin page and every /api/admin route open, lock and settle the auction and
-# mark who paid, and the guests' phones are on the same network. They take the
-# PIN in pi5/.env (DDM_LS_ADMIN_PIN, handed to the app as config LS_ADMIN_PIN;
-# Joey, 2026-10-28, review S1). The page asks for it once: the right PIN sets a
-# cookie that holds a keyed hash of it, so the iPad is not asked again for 30
-# days, a restart of pi5 does not log it out and a changed PIN does. With no PIN
-# set the host pages are off, never open.
-
-ADMIN_COOKIE = "ls_host"
-ADMIN_COOKIE_MAX_AGE = 30 * 24 * 3600
-HOST_PAGE = "/la-subasta/admin"
-HOST_LOGIN = HOST_PAGE + "/login"
-HOST_API = "/la-subasta/api/admin/"
-SQLITE_INT_MAX = 2 ** 63 - 1
-
-
-def pin_cookie(pin: str) -> str:
-    return hmac.new(pin.encode("utf-8"), b"ddm la subasta host", hashlib.sha256).hexdigest()
-
-
-def _same(a: str, b: str) -> bool:
-    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
-
-
-def _no_pin():
-    if request.url_rule.rule == HOST_PAGE:
-        return render_template("admin_pin.html", pin_unset=True), 503
-    return _err("No host PIN is set: put DDM_LS_ADMIN_PIN=... in pi5/.env and restart pi5", 503)
-
-
-@la_subasta_bp.before_request
-def _the_host_pages_need_the_pin():
-    rule = request.url_rule.rule if request.url_rule else ""
-    if rule == HOST_LOGIN or not (rule == HOST_PAGE or rule.startswith(HOST_API)):
-        return None
-    pin = current_app.config.get("LS_ADMIN_PIN") or ""
-    if not pin:
-        return _no_pin()
-    if _same(request.cookies.get(ADMIN_COOKIE, ""), pin_cookie(pin)):
-        return None
-    if rule == HOST_PAGE:
-        return render_template("admin_pin.html", pin_unset=False), 401
-    return _err("The host's PIN is needed: open the admin page and enter it", 401)
-
-
-@la_subasta_bp.route("/admin/login", methods=["POST"])
-def admin_login():
-    """Body JSON: {"pin"}. 200 and the cookie for the right PIN; 401 "Wrong
-    PIN" for anything else, the same line whatever was sent (it says nothing
-    about how close it was, and there is no lockout: the PIN is behind the
-    house's Wi-Fi); 503 with no PIN set."""
-    pin = current_app.config.get("LS_ADMIN_PIN") or ""
-    if not pin:
-        return _no_pin()
-    data = request.get_json(silent=True)
-    given = data.get("pin") if isinstance(data, dict) else None
-    if not isinstance(given, str) or not _same(given, pin):
-        return _err("Wrong PIN", 401)
-    response = jsonify({"success": True})
-    response.set_cookie(ADMIN_COOKIE, pin_cookie(pin), max_age=ADMIN_COOKIE_MAX_AGE,
-                        httponly=True, samesite="Strict", path=la_subasta_bp.url_prefix)
-    return response
+SQLITE_INT_MAX = 2 ** 63 - 1           # a bigger number cannot be anyone's row (_int_arg, the portfolio route)
 
 
 # -----------------------------------------------------------------------------
@@ -219,7 +152,7 @@ def admin_view():
     payout ledger, derived from SET WINNERS' result (the picker for an
     unowned slot, the paid-out marks). A small page over the /api/admin
     routes; the fuller iPad view of the spec (Phase 3) is still to come. The
-    PIN form until the host has entered the PIN (above)."""
+    PIN form until the host has entered the PIN (host_pin.py)."""
     return render_template("admin.html")
 
 

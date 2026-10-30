@@ -56,17 +56,21 @@ class VirtualClock:
 # -----------------------------------------------------------------------------
 
 class HttpOperator:
-    """Drives DevPi through the betting board's routes (no flag needed)."""
+    """Drives DevPi through the betting board's routes (no flag needed). They are the
+    host's: with the host PIN it logs in first and keeps the cookie (pi5/host_pin.py)."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, pin: str = ""):
         self.base = base_url.rstrip("/")
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+        if pin:
+            self._post("/host/login", {"pin": pin})
 
     def _post(self, path: str, body: Optional[dict]) -> dict:
         data = json.dumps(body).encode() if body is not None else b"{}"
         req = urllib.request.Request(self.base + path, data=data,
                                      headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with self.opener.open(req, timeout=10) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             raise RuntimeError("%s -> HTTP %d: %s" % (path, exc.code, exc.read().decode(errors="replace")[:200]))

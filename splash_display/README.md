@@ -420,8 +420,10 @@ curl -s localhost:5001/api/quiniela | python3 -m json.tool
 # page listens for "ping" and shows NO LINK after 10 s without one.
 curl -sN localhost:5001/api/quiniela/stream
 
-# The race state is pi5's, on pi5's own port (this service has no such route):
-curl -s -X POST localhost:5000/api/quiniela/cmd \
+# The race state is pi5's, on pi5's own port (this service has no such route), and the host's:
+# it takes the host PIN (log in once: curl -s -c ~/.ddm -X POST localhost:5000/host/login
+#   -H 'Content-Type: application/json' -d '{"pin":"YOURPIN"}').
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/cmd \
      -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 #   200 {"ok": true, "gateway_online": true, ...}      applied and sent to the gateway
 #   200 {"ok": true, "gateway_online": false, ...}     applied, gateway offline (pi5 re-sends on the next hello)
@@ -1136,14 +1138,14 @@ curl -s localhost:5000/api/quiniela | python3 -c "import json,sys; m=json.load(s
 # the splash relays it: same two values
 curl -s localhost:5001/api/quiniela | python3 -c "import json,sys; m=json.load(sys.stdin); print(m['link_ok'], m['race_state_name'])"
 # a cup set to horse 7 on its own screen (hold -> HORSE -> 7 -> SET), then betting opens: the TV shows the board
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 1"}'
 # drop a token into that cup: horse 7 ticks to 1 on the TV
 # WINNER: the board stays, OFFICIAL RESULTS COMING
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 5"}'
 # the results, as the dashboard's SET WINNERS saves them (pi5's route, not relayed): the results screen
-curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":7,"place":1,"show":2}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":7,"place":1,"show":2}'
 # AFTER_PARTY: the board yields to the playlist
-curl -s -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/cmd -H 'Content-Type: application/json' -d '{"cmd":"state 6"}'
 ```
 
 Unit tests, no port and no network beyond loopback needed:

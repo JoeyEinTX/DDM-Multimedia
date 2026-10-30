@@ -472,9 +472,8 @@ There is no roster line. A v1 `roster` line is ignored.
   identity check carry them, and a bid without the right ones is a 401, because the number is
   in every list and proves nothing alone. A phone that keeps landing on the join screen has no
   secret (it joined before 2026-10-28) or lost its storage.
-- **The host's PIN.** [BUILT 2026-10-28] `/la-subasta/admin` and every `/la-subasta/api/admin/*`
-  route take `DDM_LS_ADMIN_PIN` from `pi5/.env` (the iPad enters it once and holds a cookie, 30
-  days); with none set they answer 503. First thing to check: `no host PIN` in pi5's start log.
+- **The host's PIN.** `/la-subasta/admin` and every `/la-subasta/api/admin/*` route take the host PIN
+  (section 10).
 - Guest pages are on pi5 at `/la-subasta`, port 5000.
 
 ---
@@ -561,9 +560,13 @@ Rules for either:
   pi5's own feed).
 - **Two different resets.** RESET on the dashboard ends a race. Reset betting on the admin
   page prepares the next one. The runbook says which to use when.
-- **No PIN**, except for La Subasta's admin page (section 8, 2026-10-28). [DECIDED 2026-09-29]
-  The dashboard, the admin page and La Subasta's guest pages share one server on port 5000. A
-  guest who trims the La Subasta address lands on the dashboard. Accepted as unlikely.
+- **One host PIN.** [BUILT 2026-10-30; it replaces the 2026-09-29 decision of no PIN, which
+  held until the 2026-10-28 review listed what a guest's phone, pointed at port 5000, could
+  call] The Control Center, the LQ admin page, La Subasta's admin page and every request that
+  changes something take `DDM_HOST_PIN` from `pi5/.env` (`pi5/host_pin.py`; the iPad enters it
+  once and holds a cookie, 30 days). Reads, La Subasta's four guest routes, the TV and the
+  splash (which only read) need nothing; with none set the host pages and writes answer 503.
+  First thing to check: `Host PIN: none` in pi5's start log.
 
 ---
 
@@ -628,7 +631,7 @@ Rules for either:
 
 Resolved since v0.9: cup counting (the cup counts; the settled weight decides), odds on
 the board (none; bets only), LED sub-phases (the mode table), display transport (HTTP and
-an event stream), La Subasta migration (yes, section 8), admin PIN (no; La Subasta's takes one since 2026-10-28), cups showing
+an event stream), La Subasta migration (yes, section 8), admin PIN (no; one host PIN since 2026-10-30, section 10), cups showing
 CLOSED (no), scale drift across a power cycle (−5 counts; the saved zero is enough),
 same-day scratch wording (`· RE-BET YOUR TOKENS`).
 

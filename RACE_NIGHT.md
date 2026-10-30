@@ -70,9 +70,11 @@ cd ~/DDM-Multimedia && cp pi5/.env.example pi5/.env && nano pi5/.env
   - `DDM_WEATHER_API_KEY`: the WeatherAPI.com key, from the account at weatherapi.com.
     Empty: no weather on the dashboard or in the TV's crawl.
   - `DDM_ANTHROPIC_API_KEY`: only for the track's odds poller (appendix). Empty: no poller.
-  - `DDM_LS_ADMIN_PIN`: the host's PIN for La Subasta's admin page. Choose your own (the
-    template has `change-me`, which the installer warns about). Empty: the page and its routes
-    are off. The Control Center and `ADMIN` have no PIN.
+  - `DDM_HOST_PIN`: the host's PIN, one for the Control Center, `ADMIN`, La Subasta's admin
+    page and every request that changes something (a guest's phone is on the same Wi-Fi and
+    can reach port 5000; it was `DDM_LS_ADMIN_PIN` until 2026-10-30: rename that line). Choose
+    your own (the template has `change-me`, which the installer warns about). Empty: those
+    pages and writes are off, `DASH` included.
   - The rest of the file is commented out: the defaults are right. pi5 says once at start
     which of these is missing (`journalctl -u ddm-pi5 -n 30`), and the installer below checks
     each one (a `WARN` line per empty one; nothing blocks).
@@ -490,14 +492,15 @@ Control Center's.
       `grep EVENT_YEAR ~/DDM-Multimedia/pi5/la_subasta/config.py`.
 - [ ] The wipe has run ("Before the party: start fresh"), so there are no guests, bids or owners
       from a rehearsal. `/la-subasta/admin` says `NOT_STARTED`, Bidders `0`, Pot `0 pesos`.
-- [ ] The host PIN is set. `/la-subasta/admin` on the iPad asks for it, once: the iPad then
-      remembers it for 30 days (a cookie, so a restart of pi5 does not ask again; clearing
-      Safari's website data does, and so does changing the PIN). A wrong PIN is refused and
-      nothing says how close it was; there is no lockout. A guest's phone has no way to open,
-      lock or settle the auction without it. Forgot it: it is in `pi5/.env` on DevPi
-      (`grep DDM_LS_ADMIN_PIN ~/DDM-Multimedia/pi5/.env`); to choose a new one, edit that line,
-      `sudo systemctl restart ddm-pi5`, and enter the new one on the iPad. The page says `No
-      host PIN is set` when the line is empty.
+- [ ] The host PIN is set. `DASH`, `ADMIN` and `/la-subasta/admin` on the iPad ask for it,
+      once: the iPad then remembers it for 30 days (a cookie, so a restart of pi5 does not ask
+      again; clearing Safari's website data does, and so does changing the PIN). A wrong PIN is
+      refused and nothing says how close it was; there is no lockout. A guest's phone has no
+      way to open, lock or settle the auction, change the race or the pot, or touch the LEDs
+      without it; the TV, the board and what the pages read stay open. Forgot it: it is in
+      `pi5/.env` on DevPi (`grep DDM_HOST_PIN ~/DDM-Multimedia/pi5/.env`); to choose a new
+      one, edit that line, `sudo systemctl restart ddm-pi5`, and enter the new one on the
+      iPad. The page says `No host PIN is set` when the line is empty.
 - [ ] `/la-subasta/admin` → **Open auction**. The pill says `OPEN`; a phone on `/la-subasta`
       joins (name and emoji) and sees the field with no bids.
 
@@ -649,7 +652,7 @@ the restart).
 | A cup died | it's gone for good | Spare cup: power it, hold the screen, `HORSE` → the dead cup's number → `SET`, set it down in that post; empty the dead cup's tokens into it. The page shows that horse `● online` again; the dead cup just stops being heard. |
 | `DASH` or `ADMIN` doesn't load | pi5 down, or the iPad isn't on the house Wi-Fi | On DevPi: `curl -s localhost:5000/api/quiniela` answers? No: `sudo systemctl restart ddm-pi5`, and `journalctl -u ddm-pi5 -n 50` says why it was down. Yes: the iPad. Meanwhile, the appendix (the race state: "If `DASH` is down"). |
 | A reopening button on `DASH` answers `race state not set (This reopens betting: …)` in red, or `ADMIN` → Undo answers `Cup 9 holds 4 tokens bet on #22. …` | pi5 refused: the page did not ask first (it was out of date), or the replacement's cup holds bets that would move with it. Nothing changed | Reload `DASH` and tap again: it asks. For Undo: empty the cup (hand the tokens back), then Undo. |
-| `/la-subasta/admin` shows a PIN form, or says `No host PIN is set` | the iPad has no cookie for the PIN (first visit, website data cleared, the PIN changed in `pi5/.env`, 30 days), or `DDM_LS_ADMIN_PIN` is empty (pi5's log says `no host PIN` at start; the installer WARNs) | Enter the PIN. Forgot it, or empty: set `DDM_LS_ADMIN_PIN` in `pi5/.env`, `sudo systemctl restart ddm-pi5`, reload the page. |
+| `DASH`, `ADMIN` or `/la-subasta/admin` shows a PIN form, or says `No host PIN is set`; or a button answers `The host's PIN is needed` | the iPad has no cookie for the PIN (first visit, website data cleared, the PIN changed in `pi5/.env`, 30 days), or `DDM_HOST_PIN` is empty (pi5's log says `Host PIN: none` at start; the installer WARNs) | Enter the PIN. Forgot it, or empty: set `DDM_HOST_PIN` in `pi5/.env`, `sudo systemctl restart ddm-pi5`, reload the page. |
 | `ADMIN` → Scratch or Undo answers `The results are in, so the field is frozen: …` | the results stand, and the field can't move under the payouts derived from them (La Subasta's) | Section 8: `DASH` → **SET WINNERS** → **RESET** → **Clear the result**, then the scratch, then the results again. |
 | **CONFIRM RESULTS** leaves the dialog open: the scratched horse's card is empty with a line under the heading, or the button is red and says **NOT SAVED** under `#7 (WIN) had no bets at the post: … enter the next finisher too (4th)` | pi5 refused the record: a horse scratched since the dialog opened (the grid has just refreshed), or a `4TH` finisher is needed | Tap again what the dialog asks for and confirm. The results are never guessed: a refusal saves nothing. |
 | No **DEAD HEAT** link between two cards, or the picks column runs past the bottom of the iPad | the link shows only under a filled card, and only where the dead heat would be two or three horses (a three-way one is full); the column is built by `renderResultCards()` in `ddm_control.js` into `#results-cards`, the grey note and the red **NOT SAVED** reason are `#results-confirm-notes` and `#results-confirm-refusal` over the button | Fill the card above the link first. Past the bottom: the iPad at 1180 x 820 landscape shows all of it; Safari's bars cost about 80 px, and the dialog then scrolls. |
@@ -670,7 +673,11 @@ the restart).
 
 ## Appendix — if the page is down
 
-The same actions as curls, typed on DevPi.
+The same actions as curls, typed on DevPi. They change things, so they take the host PIN like
+the pages do: log in once (it writes the cookie the other curls send with `-b`):
+```bash
+curl -s -c ~/.ddm -X POST localhost:5000/host/login -H 'Content-Type: application/json' -d '{"pin":"YOURPIN"}'
+```
 
 ### If `DASH` is down
 
@@ -679,7 +686,7 @@ A `DASH` button does two things, and so do these. The race state, by the button'
 THEY'RE OFF!, `CHAOS`, `FINISH`, `HEARTBEAT_COOLDOWN`), on the route the button itself
 uses: the cups and the TV follow, `ADMIN` shows it, and it does nothing to the LEDs:
 ```bash
-curl -s -X POST localhost:5000/api/quiniela/mode -H 'Content-Type: application/json' -d '{"mode":"AT_THE_GATE"}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/mode -H 'Content-Type: application/json' -d '{"mode":"AT_THE_GATE"}'
 ```
 The curl does not ask first, and it cannot reopen betting by accident: from AT THE POST to
 AFTER PARTY, `WELCOME`, `STANDBY`, `BETTING_60`, `BETTING_30` and `FINAL_CALL` answer 409 and
@@ -689,11 +696,11 @@ sets no race state.)
 The LEDs, the button's other half (the same name; skip it if the LED controller is the
 trouble):
 ```bash
-curl -s -X POST localhost:5000/api/animation/AT_THE_GATE
+curl -s -b ~/.ddm -X POST localhost:5000/api/animation/AT_THE_GATE
 ```
 **RESET** (AFTER PARTY: clears the results, LEDs off, the TV back to the slideshow):
 ```bash
-curl -s -X POST localhost:5000/api/results/clear
+curl -s -b ~/.ddm -X POST localhost:5000/api/results/clear
 ```
 **SET WINNERS** is the results curl below. `{"cmd":"state 3"}` on `/api/quiniela/cmd` sets a
 state by its number alone (the simulator and the tests use it); prefer the mode.
@@ -708,12 +715,12 @@ curl -s localhost:5000/api/quiniela/mode
 
 The results, what `DASH` → SET WINNERS → CONFIRM RESULTS does (horse numbers, all three, three different horses in the field, or a 400 that says which and nothing saved; it sets WINNER, and the TV flips to the results board; the reply's `leds` is the LED wall's health as last known (`online`, `unreachable`, `unknown`, `off`), the results are saved either way, and `race_error` says why when La Quiniela did not go to WINNER):
 ```bash
-curl -s -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":19,"place":1,"show":22}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/results -H 'Content-Type: application/json' -d '{"win":19,"place":1,"show":22}'
 ```
 
 Reset betting (cups, horses, names and scratches are kept; the reply names any cups with tokens still in them; only in PRE-RACE or AFTER PARTY, a 409 that says so in 1–5):
 ```bash
-curl -s -X POST localhost:5000/api/quiniela/reset
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/reset
 ```
 
 The figures (what the page shows; `at the post` is what the TV shows from AT THE GATE on):
@@ -723,7 +730,7 @@ curl -s localhost:5000/api/quiniela | python3 -c "import sys,json;d=json.load(sy
 
 The hand count, what `ADMIN` → Race → Counted pot → Save count does (whole dollars; AT THE POST, RUNNING or WINNER only; `{"amount":null}` clears it):
 ```bash
-curl -s -X PUT localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount":152}'
+curl -s -b ~/.ddm -X PUT localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount":152}'
 ```
 
 The cups pi5 hears (MAC, the horse each says it is, online, count):
@@ -738,13 +745,13 @@ curl -s localhost:5001/api/quiniela | python3 -c "import sys,json;d=json.load(sy
 
 The race's name and post time, what `ADMIN` → Race info → Save does (date and time on a Central clock; both `""` clear the post time):
 ```bash
-curl -s -X PUT localhost:5000/api/quiniela/race -H 'Content-Type: application/json' -d '{"name":"Kentucky Derby","date":"2027-05-01","time":"17:57"}'
+curl -s -b ~/.ddm -X PUT localhost:5000/api/quiniela/race -H 'Content-Type: application/json' -d '{"name":"Kentucky Derby","date":"2027-05-01","time":"17:57"}'
 ```
 
 The track's odds for the roster slide (optional; La Quiniela pays no odds). Fetched every 5 minutes while this runs (needs `DDM_ANTHROPIC_API_KEY` in `pi5/.env` and internet), or typed from the program:
 ```bash
-curl -s -X POST localhost:5000/api/quiniela/odds/start
-curl -s -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/json' -d '{"odds":{"1":"5-2","2":"8-1","21":"30-1"}}'
+curl -s -b ~/.ddm -X POST localhost:5000/api/quiniela/odds/start
+curl -s -b ~/.ddm -X PUT localhost:5000/api/quiniela/odds -H 'Content-Type: application/json' -d '{"odds":{"1":"5-2","2":"8-1","21":"30-1"}}'
 ```
 
 ---

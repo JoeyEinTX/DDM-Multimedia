@@ -43,7 +43,7 @@ PI5_SRC = Path(__file__).resolve().parent.parent
 KEEP = "--keep" in sys.argv
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("DDM_")}
 WIPE_PIN = "wipe-test-pin"                # the scratch pi5's host PIN, for the La Subasta admin routes the comparison reads
-ENV.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", DDM_LS_ADMIN_PIN=WIPE_PIN)
+ENV.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", DDM_HOST_PIN=WIPE_PIN)
 
 SCRATCH_CONFIG = """
 # test_wipe.py: a scratch pi5 on loopback, its own port, nothing external
@@ -317,7 +317,7 @@ class Pi5:
                 time.sleep(0.2)
         else:
             raise RuntimeError("pi5 did not come up")
-        login = urllib.request.Request(f"http://127.0.0.1:{self.port}/la-subasta/admin/login", method="POST",
+        login = urllib.request.Request(f"http://127.0.0.1:{self.port}/host/login", method="POST",
                                        data=json.dumps({"pin": WIPE_PIN}).encode(), headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(login, timeout=5) as r:
             self.cookie = r.headers["Set-Cookie"].split(";")[0]

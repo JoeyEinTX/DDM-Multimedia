@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#14140f">
+<title>DDM host</title>
+<link rel="stylesheet" href="{{ static_url('css/host_pin.css') if static_url is defined else url_for('static', filename='css/host_pin.css') }}">
+</head>
+<body>
+<!-- What a host page shows until the host has entered the PIN (host_pin.py): the form, or, with no PIN
+     set on pi5, where to set one. The right PIN sets a cookie for 30 days and reloads the page. -->
+<main>
+  <h1>DDM &middot; HOST</h1>
+{% if pin_unset %}
+  <p class="err">No host PIN is set. Put <code>DDM_HOST_PIN=&hellip;</code> in <code>pi5/.env</code> and restart pi5.</p>
+{% else %}
+  <form id="pin-form">
+    <label for="pin">Host PIN</label>
+    <input id="pin" type="password" autocomplete="current-password" required>
+    <button type="submit">Enter</button>
+    <div id="pin-status" class="err" role="alert"></div>
+  </form>
+  <script>
+    document.getElementById('pin-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const status = document.getElementById('pin-status');
+      status.textContent = '';
+      try {
+        const resp = await fetch('/host/login', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: document.getElementById('pin').value }),
+        });
+        if (resp.ok) { location.reload(); return; }
+        const data = await resp.json().catch(function () { return {}; });
+        status.textContent = data.error || 'Could not enter';
+      } catch (err) {
+        status.textContent = 'Could not reach pi5';
+      }
+    });
+  </script>
+{% endif %}
+</main>
+</body>
+</html>

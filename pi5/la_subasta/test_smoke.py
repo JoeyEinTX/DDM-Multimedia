@@ -58,6 +58,7 @@ from la_quiniela import board as lq_board  # noqa: E402
 from la_quiniela.horses import HORSE_COUNT as LQ_HORSE_COUNT, HorseStore  # noqa: E402
 from flask.testing import FlaskClient  # noqa: E402
 from la_subasta import blueprint as ls_blueprint  # noqa: E402
+from host_pin import HOST_COOKIE, host_pin_bp, pin_cookie  # noqa: E402
 
 import logging  # noqa: E402
 # init_board() without a bridge says so at WARNING; La Subasta's tests never
@@ -128,7 +129,7 @@ class _Phone(FlaskClient):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.set_cookie(ls_blueprint.ADMIN_COOKIE, ls_blueprint.pin_cookie(TEST_PIN), path="/la-subasta")
+        self.set_cookie(HOST_COOKIE, pin_cookie(TEST_PIN), path="/")
 
     def open(self, *args, **kwargs):
         body = kwargs.get("json")
@@ -153,7 +154,8 @@ def _make_app(store=None):
     from flask import Flask
     app = Flask(__name__)
     app.config["TESTING"] = True
-    app.config["LS_ADMIN_PIN"] = TEST_PIN
+    app.config["HOST_PIN"] = TEST_PIN
+    app.register_blueprint(host_pin_bp)
     app.test_client_class = _Phone
     lq_board.init_board(bridge=None, store=store, log_dir=os.path.join(_LQ_TMP, "logs"),
                         results_path=os.path.join(_LQ_TMP, "results.json"))
@@ -695,10 +697,10 @@ def test_a_guest_is_a_number_and_a_secret():
 
 
 def test_the_host_pages_need_the_pin():
-    """S1: /la-subasta/admin and every /api/admin/* take the host's PIN (DDM_LS_ADMIN_PIN in pi5/.env, handed to the app as
-    config LS_ADMIN_PIN). Without it the page is a PIN form and the API a 401; a wrong PIN is refused with the same line
-    whatever it was; the right one sets a cookie that is a keyed hash of the PIN, HttpOnly, SameSite Strict, good for 30 days
-    and gone when the PIN changes; no PIN set at all is a 503, never an open door; the guests' routes are not touched."""
+    """S1: /la-subasta/admin and every /api/admin/* take the host's PIN (pi5/host_pin.py, one PIN for every host page
+    since 2026-10-30; the PIN, its cookie and every other write are tested whole in la_quiniela/test_dashboard.py). Without
+    the cookie the page is the PIN form and the API a 401; with no PIN set a 503, never an open door; the guests' routes
+    are not touched."""
     _reset()
     app = _make_app()
     host = app.test_client()
@@ -715,49 +717,29 @@ def test_the_host_pages_need_the_pin():
     _check("with no cookie each of them is refused with a 401 and nothing is done (an empty body would have failed with a 400 or 409 otherwise)",
            all(r.status_code == 401 for r in refused.values()), str({k: r.status_code for k, r in refused.items() if r.status_code != 401}))
     html = refused[("/la-subasta/admin", "GET")].get_data(as_text=True)
-    _check("...the page is the PIN form and none of the admin page", 'id="ls-pin-form"' in html and "ls-admin-controls" not in html
+    _check("...the page is the PIN form and none of the admin page", 'id="pin-form"' in html and "ls-admin-controls" not in html
            and "text/html" in refused[("/la-subasta/admin", "GET")].content_type)
     _check("...and no auction state moved: still NOT_STARTED, no bidder, no override", get_state() == AuctionState.NOT_STARTED
            and bidding.count_bidders() == 0)
-
-    for pin in ("", "x", TEST_PIN[:-1], TEST_PIN + "x", TEST_PIN.upper(), 12345, None, ["a"]):
-        r = stranger.post("/la-subasta/admin/login", json={"pin": pin})
-        _check(f"a wrong PIN ({pin!r}): 401, one line whatever it was, no cookie", r.status_code == 401
-               and r.get_json() == {"success": False, "error": "Wrong PIN"} and "Set-Cookie" not in r.headers, f"{r.status_code} {r.get_json()}")
-    r = stranger.post("/la-subasta/admin/login", data="not json", content_type="application/json")
-    _check("a login with no usable body: 401 too", r.status_code == 401)
-
-    r = stranger.post("/la-subasta/admin/login", json={"pin": TEST_PIN})
-    cookie = r.headers.get("Set-Cookie", "")
-    _check("the right PIN: 200, and a cookie that holds a keyed hash and not the PIN, HttpOnly, SameSite Strict, 30 days, the page's path",
-           r.status_code == 200 and r.get_json() == {"success": True} and f"{ls_blueprint.ADMIN_COOKIE}={ls_blueprint.pin_cookie(TEST_PIN)}" in cookie
-           and TEST_PIN not in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=2592000" in cookie
-           and "Path=/la-subasta" in cookie, cookie)
-    r = stranger.get("/la-subasta/admin")
-    _check("...which is all the admin page then asks: the page, and a route", r.status_code == 200 and "ls-admin-controls" in r.get_data(as_text=True)
-           and stranger.get("/la-subasta/api/admin/payouts").status_code == 200)
-    stranger.set_cookie(ls_blueprint.ADMIN_COOKIE, "0" * 64, path="/la-subasta")
-    _check("a cookie that is not the PIN's hash: refused again", stranger.get("/la-subasta/api/admin/payouts").status_code == 401)
-    host.get("/la-subasta/api/admin/payouts")
-    app.config["LS_ADMIN_PIN"] = "another-pin"
-    _check("the PIN changed in pi5/.env: every cookie from the old one stops working, the iPad asks again",
-           host.get("/la-subasta/api/admin/payouts").status_code == 401 and host.get("/la-subasta/admin").status_code == 401)
-    app.config["LS_ADMIN_PIN"] = ""
+    page = host.get("/la-subasta/admin")
+    _check("with the cookie the page is the admin page, and it takes host_pin.js (a PIN that stops working sends it back to the form)",
+           page.status_code == 200 and "ls-admin-controls" in page.get_data(as_text=True)
+           and "/static/js/host_pin.js" in page.get_data(as_text=True) and host.get("/la-subasta/api/admin/payouts").status_code == 200)
+    app.config["HOST_PIN"] = ""
     r = host.get("/la-subasta/api/admin/payouts")
-    r2 = stranger.post("/la-subasta/admin/login", json={"pin": ""})
-    r3 = host.get("/la-subasta/admin")
-    _check("no PIN set: the host pages are off (503, and it says where to set it), and an empty PIN is no way in",
-           r.status_code == r2.status_code == r3.status_code == 503 and "DDM_LS_ADMIN_PIN" in r.get_json()["error"], f"{r.status_code} {r2.status_code} {r3.status_code}")
-    app.config["LS_ADMIN_PIN"] = TEST_PIN
+    r2 = host.get("/la-subasta/admin")
+    _check("no PIN set: the host pages are off (503, and it says where to set it), whatever cookie comes",
+           r.status_code == r2.status_code == 503 and "DDM_HOST_PIN" in r.get_json()["error"], f"{r.status_code} {r2.status_code}")
+    app.config["HOST_PIN"] = TEST_PIN
     open_to_all = {p: stranger.get(p).status_code for p in ("/la-subasta/", "/la-subasta/api/state", "/la-subasta/api/horses",
                                                             "/la-subasta/api/bidders", "/la-subasta/api/settings",
                                                             "/la-subasta/static/js/admin.js",
                                                             "/la-subasta/static/js/guest.js", "/la-subasta/static/css/la-subasta-admin.css")}
     _check("the guests' pages, lists and files stay open to everyone", all(code == 200 for code in open_to_all.values()), str(open_to_all))
-    r = stranger.post("/la-subasta/api/register", json={"name": "Dave K", "emoji": "🌮"})
+    r = stranger.post("/la-subasta/api/register", json={"name": "Dave K", "emoji": "\U0001F32E"})
     _check("...and a guest can still join", r.status_code == 200 and r.get_json()["secret"])
-    js = _static(host, "/la-subasta/static/js/admin.js")
-    _check("admin.js reloads the page, which asks for the PIN, when a route answers 401", "status === 401" in js and "location.reload()" in js)
+    _check("admin.js no longer carries a PIN mechanism of its own (host_pin.js does it for every host page)",
+           "askForThePin" not in _static(host, "/la-subasta/static/js/admin.js"))
 
 
 def _post_on_a_thread(app, got, path, body):
@@ -4304,8 +4286,8 @@ def test_existing_dashboard_still_loads():
 
     # Verify routes registered
     rules = {rule.rule for rule in main.app.url_map.iter_rules()}
-    _check("the host's PIN reaches the app from pi5/.env (config LS_ADMIN_PIN)",
-           main.app.config.get("LS_ADMIN_PIN") == main._config.LS_ADMIN_PIN, str(main.app.config.get("LS_ADMIN_PIN")))
+    _check("the host's PIN reaches the app from pi5/.env (config HOST_PIN), and its login route is there",
+           main.app.config.get("HOST_PIN") == main._config.HOST_PIN and "/host/login" in rules, str(main.app.config.get("HOST_PIN")))
     _check("dashboard / route registered", "/" in rules)
     _check("dashboard /spectator route registered", "/spectator" in rules)
     _check("/la-subasta/api/state route registered",

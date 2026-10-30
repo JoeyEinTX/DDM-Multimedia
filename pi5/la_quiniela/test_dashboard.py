@@ -46,7 +46,7 @@ from la_quiniela import test_smoke as S  # noqa: E402  (repoints the DB before t
 from la_quiniela import protocol as P  # noqa: E402
 from la_quiniela.blueprint import get_bridge, init_la_quiniela  # noqa: E402
 from la_quiniela.board import get_board, init_board  # noqa: E402
-from la_subasta import blueprint as ls_blueprint  # noqa: E402
+from host_pin import GUEST_WRITES, HOST_COOKIE, LOGIN, pin_cookie  # noqa: E402
 from la_quiniela.test_smoke import FakeClock, MAC_A, MAC_B, _fresh_bridge, telem  # noqa: E402
 from communication.esp32_client import ESP32Client  # noqa: E402
 from communication.sender import Unreachable  # noqa: E402
@@ -108,7 +108,7 @@ def tmpdir():
     return Path(d)
 
 
-RIG_PIN = "rig-host-pin"            # the host's PIN for La Subasta's admin routes; every rig's client is the host's iPad
+RIG_PIN = "rig-host-pin"            # the host's PIN (pi5/host_pin.py); every rig's client is the host's iPad
 
 
 class Rig:
@@ -146,9 +146,10 @@ class Rig:
         main.esp32.exchange = exchange
         main.tote = None                # tote_send() does nothing
         main.app.config["TESTING"] = True
-        main.app.config["LS_ADMIN_PIN"] = RIG_PIN
+        main.app.config["HOST_PIN"] = RIG_PIN
         self.client = main.app.test_client()
-        self.client.set_cookie(ls_blueprint.ADMIN_COOKIE, ls_blueprint.pin_cookie(RIG_PIN), path="/la-subasta")
+        for host in ("localhost", "joeydevpi.local", "10.0.0.37"):      # the hosts the page tests open the Control Center on
+            self.client.set_cookie(HOST_COOKIE, pin_cookie(RIG_PIN), domain=host, path="/")
 
     def post(self, path, body=None, **kw):
         return self.client.post(path, json=body, **kw) if body is not None else self.client.post(path, **kw)
@@ -906,6 +907,159 @@ def test_la_subasta_pays_on_set_winners():
     led = ledger()
     _check("Reset betting (in AFTER PARTY) clears the result and with it the payouts",
            r.status_code == 200 and led["results"] is None and led["payouts"] == [] and led["paid_on_old_result"] == [], str(led))
+
+
+def test_the_host_pin_guards_the_pages_and_every_write():
+    """One PIN for every host page and every host write on pi5 (Joey, 2026-10-30; pi5/host_pin.py). Port 5000 is where
+    every guest's phone is pointed, so without the cookie: the Control Center, the LQ admin page and La Subasta's admin
+    page are the PIN form, and every route that changes something is a 401 and does nothing, except the four a guest's
+    phone makes. Reads stay open, and the splash's and the TV's own (the model and its stream, the spectator pages)
+    with them. The right PIN sets a cookie that holds a keyed hash of it, 30 days, HttpOnly; no PIN set is a 503."""
+    from la_quiniela.sim.runner import HttpOperator
+    from werkzeug.serving import make_server
+    rig = Rig()
+    host = rig.client
+    stranger = main.app.test_client(use_cookies=False)
+    unsafe = [(rule, method) for rule in main.app.url_map.iter_rules()
+              for method in sorted(rule.methods - {"GET", "HEAD", "OPTIONS"}) if rule.rule not in GUEST_WRITES + (LOGIN,)]
+    named = [("POST", "/api/results"), ("POST", "/api/results/clear"), ("POST", "/api/quiniela/reset"), ("POST", "/api/quiniela/mode"),
+             ("POST", "/api/quiniela/cmd"), ("PUT", "/api/quiniela/counted_pot"), ("POST", "/api/quiniela/scratch"),
+             ("POST", "/api/quiniela/unscratch"), ("PUT", "/api/quiniela/horses"), ("POST", "/api/esp32/config"),
+             ("POST", "/api/animations/assignments"), ("POST", "/api/racing/mode")]
+    _check("the writes the 2026-10-28 review listed are all routes of the app",
+           all((path, method) in {(rule.rule, m) for rule, m in unsafe} for method, path in named), str(named))
+    refused = {}
+    for rule, method in unsafe:
+        url = rule.build({a: 1 for a in rule.arguments}, append_unknown=False)[1]          # /api/animation/<name>
+        r = stranger.open(url, method=method, json={})
+        refused[(method, rule.rule)] = (r.status_code, r.get_json(silent=True))
+    _check(f"{len(unsafe)} routes that change something, none of them a guest's or the login: each a 401 with no cookie, the same line, and does nothing",
+           all(code == 401 and body == {"success": False, "error": "The host's PIN is needed: open the Control Center and enter it"}
+               for code, body in refused.values()), str({k: v for k, v in refused.items() if v[0] != 401})[:400])
+    allowed = {}
+    for method, path in named:
+        r = host.open(path, method=method, json={})
+        allowed[(method, path)] = r.status_code
+    _check("...and each of the twelve the review listed gets past the guard with the cookie (400, 409 or 200: its own answer)",
+           all(code not in (401, 503) for code in allowed.values()), str(allowed))
+    guests = {path: stranger.post(path, json={}).status_code for path in GUEST_WRITES}
+    _check("the four a guest's phone makes are not the host's: answered for what they lack (a 400), never for a PIN",
+           all(code not in (401, 503) for code in guests.values()) and len(guests) == 4, str(guests))
+    reads = ("/api/quiniela", "/api/quiniela/mode", "/api/quiniela/field", "/api/quiniela/horses", "/api/quiniela/race", "/api/results",
+             "/api/race", "/api/status", "/api/params", "/api/lq/snapshot", "/spectator", "/guest/spectator", "/la-subasta/",
+             "/la-subasta/api/state", "/la-subasta/api/horses", "/la-subasta/api/settings")
+    codes = {path: stranger.get(path).status_code for path in reads}
+    _check("reads stay open to everyone: the model and what the pages poll, the spectator pages, La Subasta's lists",
+           all(code == 200 for code in codes.values()), str({k: v for k, v in codes.items() if v != 200}))
+    admin_reads = sorted(rule.rule for rule in main.app.url_map.iter_rules()
+                         if "GET" in rule.methods and rule.rule.startswith("/la-subasta/api/admin/"))
+    _check("...except La Subasta's /api/admin reads (the payouts, the settings audit: guests and money): the PIN, like its writes",
+           len(admin_reads) == 2 and all(stranger.get(path).status_code == 401 and host.get(path).status_code not in (401, 503)
+                                         for path in admin_reads), str(admin_reads))
+    stream = stranger.get("/api/quiniela/stream", buffered=False)
+    _check("...and the model's stream, which the splash follows for the TV (it only reads)",
+           stream.status_code == 200 and stream.mimetype == "text/event-stream", f"{stream.status_code} {stream.mimetype}")
+    stream.close()
+    pages = {path: stranger.get(path) for path in ("/", "/quiniela/admin", "/la-subasta/admin")}
+    _check("the three host pages without the cookie are the PIN form, and none of the page",
+           all(r.status_code == 401 and r.mimetype == "text/html" and 'id="pin-form"' in r.get_data(as_text=True)
+               for r in pages.values()) and "ddm_control.js" not in pages["/"].get_data(as_text=True)
+           and 'id="race"' not in pages["/quiniela/admin"].get_data(as_text=True), str({k: v.status_code for k, v in pages.items()}))
+    with_cookie = {path: host.get(path).get_data(as_text=True) for path in pages}
+    _check("...with it they are the pages, each with host_pin.js first (a PIN that stops working sends the page back to the form)",
+           all(html.index("/static/js/host_pin.js") < html.index("/static/js/page_rev.js") if "page_rev.js" in html else "/static/js/host_pin.js" in html
+               for html in with_cookie.values()) and "ddm_control.js" in with_cookie["/"], str({k: len(v) for k, v in with_cookie.items()}))
+    _check("the guest's pages do not take it (a 401 there is a secret that is not theirs)",
+           "host_pin.js" not in stranger.get("/la-subasta/").get_data(as_text=True)
+           and "host_pin.js" not in stranger.get("/guest/spectator").get_data(as_text=True))
+    # The login: one line for every wrong PIN, the cookie for the right one
+    for pin in ("", "x", RIG_PIN[:-1], RIG_PIN + "x", RIG_PIN.upper(), 12345, None, ["a"]):
+        r = stranger.post("/host/login", json={"pin": pin})
+        _check(f"a wrong PIN ({pin!r}): 401, one line whatever it was, no cookie", r.status_code == 401
+               and r.get_json() == {"success": False, "error": "Wrong PIN"} and "Set-Cookie" not in r.headers, f"{r.status_code} {r.get_json()}")
+    r = stranger.post("/host/login", data="not json", content_type="application/json")
+    _check("a login with no usable body: 401 too", r.status_code == 401)
+    r = stranger.post("/host/login", json={"pin": RIG_PIN})
+    cookie = r.headers.get("Set-Cookie", "")
+    _check("the right PIN: 200 and a cookie that holds a keyed hash and not the PIN, HttpOnly, SameSite Strict, 30 days, for every page",
+           r.status_code == 200 and r.get_json() == {"success": True} and f"{HOST_COOKIE}={pin_cookie(RIG_PIN)}" in cookie
+           and RIG_PIN not in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Max-Age=2592000" in cookie
+           and "Path=/;" in cookie, cookie)
+    jar = main.app.test_client()
+    jar.post("/host/login", json={"pin": RIG_PIN})
+    _check("...which is all a page or a write then asks: the Control Center and a write through the same client",
+           jar.get("/").status_code == 200 and jar.post("/api/quiniela/counted_pot", json={"amount": 5}).status_code not in (401, 503))
+    jar.set_cookie(HOST_COOKIE, "0" * 64, path="/")
+    _check("a cookie that is not the PIN's hash: refused again", jar.get("/").status_code == 401 and jar.post("/api/results/clear").status_code == 401)
+    main.app.config["HOST_PIN"] = "another-pin"
+    _check("the PIN changed in pi5/.env: every cookie from the old one stops working, the iPad asks again",
+           host.get("/").status_code == 401 and host.post("/api/results/clear").status_code == 401)
+    main.app.config["HOST_PIN"] = ""
+    r, r2, r3 = host.post("/api/results/clear"), stranger.post("/host/login", json={"pin": ""}), host.get("/quiniela/admin")
+    _check("no PIN set: the host pages and writes are off (503, and it says where to set it), an empty PIN is no way in, nothing is open",
+           r.status_code == r2.status_code == r3.status_code == 503 and "DDM_HOST_PIN" in r.get_json()["error"]
+           and "DDM_HOST_PIN" in r3.get_data(as_text=True) and stranger.get("/api/quiniela").status_code == 200,
+           f"{r.status_code} {r2.status_code} {r3.status_code}")
+    main.app.config["HOST_PIN"] = RIG_PIN
+    # The simulator's HTTP operator (python -m la_quiniela.simulator --devpi) writes through the board's routes: it logs in
+    httpd = make_server("127.0.0.1", 0, main.app, threaded=True)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{httpd.server_port}"
+    try:
+        HttpOperator(url, RIG_PIN).state(1)
+        _check("the simulator's operator, given the PIN, logs in and sets a race state through the real routes", rig.board.race_state_now() == 1)
+        try:
+            HttpOperator(url).state(2)
+            _check("the simulator's operator with no PIN is refused", False)
+        except RuntimeError as exc:
+            _check("the simulator's operator with no PIN is refused: HTTP 401, the state unmoved", "HTTP 401" in str(exc) and rig.board.race_state_now() == 1, str(exc))
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_the_pin_form_in_a_browser():
+    """An iPad with no cookie opens a host page on the PIN form: a wrong PIN says Wrong PIN and nothing else, the right one
+    shows the page itself (and it stays shown on a reload: the cookie), and when the PIN is changed in pi5/.env the page
+    that is open goes back to the form on its next write. In headless Chrome with touch. Skipped where there is no Chrome."""
+    picker_check = _picker_check()
+    if not picker_check.available():
+        _check("PIN form browser check skipped (no Chrome or Chromium: DDM_CHROME; or no simple_websocket)", True)
+        return
+    rig = Rig()
+    server = picker_check.Server(rig, host=False)
+    chrome = picker_check.Chrome(touch=True, size=(1366, 1024))
+    try:
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete' && !!document.getElementById('pin-form')", timeout=20)       # its style: the taps land by it
+        _check("LQ Admin opened with no cookie is the PIN form: no race section, no page",
+               chrome.eval("!document.getElementById('race')") is True)
+        chrome.tap("#pin")
+        chrome.call("Input.insertText", text="nope")
+        chrome.tap("#pin-form button")
+        chrome.wait_for("document.getElementById('pin-status').textContent !== ''", timeout=10)
+        _check("a wrong PIN says Wrong PIN, nothing else, and the form stays",
+               chrome.eval("document.getElementById('pin-status').textContent") == "Wrong PIN"
+               and chrome.eval("!!document.getElementById('pin-form') && !document.getElementById('race')") is True)
+        chrome.eval("document.getElementById('pin').value = ''; 1")
+        chrome.tap("#pin")
+        chrome.call("Input.insertText", text=RIG_PIN)
+        chrome.tap("#pin-form button")
+        chrome.wait_for("!!document.getElementById('race') && !document.getElementById('pin-form')", timeout=15)
+        _check("the right PIN: the page itself, in the same tab", True)
+        chrome.call("Page.navigate", url=server.url + "quiniela/admin")
+        chrome.wait_for("document.readyState === 'complete'", timeout=20)
+        _check("a reload does not ask again (the cookie)", chrome.eval("!!document.getElementById('race') && !document.getElementById('pin-form')") is True)
+        main.app.config["HOST_PIN"] = "another-pin"
+        chrome.eval("fetch('/api/results/clear', {method: 'POST'}); 1")
+        chrome.wait_for("!!document.getElementById('pin-form')", timeout=15)
+        _check("the PIN changed: the open page's next write is a 401 and the page goes back to the form (host_pin.js)", True)
+        _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
+    finally:
+        main.app.config["HOST_PIN"] = RIG_PIN
+        chrome.close()
+        server.close()
 
 
 def test_picker_records_the_real_finish():
@@ -3804,6 +3958,9 @@ def main_():
          test_payout_on_the_pages_source)
     _run("La Subasta — pays the owners of the real 1st, 2nd and 3rd from SET WINNERS' record; a correction, RESET, Reset betting",
          test_la_subasta_pays_on_set_winners)
+    _run("the host PIN — every host page and every write, reads and the guests' routes open, the cookie, the simulator's login",
+         test_the_host_pin_guards_the_pages_and_every_write)
+    _run("the host PIN — the form in a browser: wrong, right, a reload, the PIN changed under an open page", test_the_pin_form_in_a_browser)
     _run("the wall — a state change never waits on it: the real client against a socket nothing answers on",
          test_state_change_never_waits_on_the_wall)
     _run("the wall — the race goes on without it: AUTO on its timers", test_race_goes_on_without_the_wall)

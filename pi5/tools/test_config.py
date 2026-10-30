@@ -100,7 +100,7 @@ def test_defaults_with_no_env():
     _check("no .env: no LED controller (ESP32_IP empty), port 5005", v["ESP32_IP"] == "" and v["ESP32_PORT"] == 5005)
     _check("no .env: no tote board (TOTE_IP empty, TOTE_ENABLED false)", v["TOTE_IP"] == "" and v["TOTE_ENABLED"] is False)
     _check("no .env: the bridge idles (LQ_SERIAL_PORT empty)", v["LQ_SERIAL_PORT"] == "")
-    _check("no .env: no host PIN (LS_ADMIN_PIN empty): La Subasta's admin page is off", v["LS_ADMIN_PIN"] == "")
+    _check("no .env: no host PIN (HOST_PIN empty): the host pages and every write are off", v["HOST_PIN"] == "")
     _check("no .env: pi5 on 0.0.0.0:5000, the weather for Dallas,TX",
            v["FLASK_HOST"] == "0.0.0.0" and v["FLASK_PORT"] == 5000 and v["WEATHER_LOCATION"] == "Dallas,TX")
     v2, _ = config_values()
@@ -119,7 +119,7 @@ def test_env_file_lands_by_name():
         f"DDM_WEATHER_API_KEY={key}",
         f"export DDM_ANTHROPIC_API_KEY=\"{odds}\"",
         f"DDM_FLASK_SECRET_KEY='{flask_key}'",
-        f"DDM_LS_ADMIN_PIN={pin}",
+        f"DDM_HOST_PIN={pin}",
         "DDM_LQ_SERIAL_PORT=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
         "DDM_ESP32_IP=10.0.0.42   # the mantle",
         "DDM_ESP32_PORT=5006",
@@ -134,14 +134,14 @@ def test_env_file_lands_by_name():
         "", ""])
     v, _ = config_values(env_text)
     expect = {
-        "WEATHER_API_KEY": key, "ANTHROPIC_API_KEY": odds, "FLASK_SECRET_KEY": flask_key, "LS_ADMIN_PIN": pin,
+        "WEATHER_API_KEY": key, "ANTHROPIC_API_KEY": odds, "FLASK_SECRET_KEY": flask_key, "HOST_PIN": pin,
         "LQ_SERIAL_PORT": "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
         "ESP32_IP": "10.0.0.42", "ESP32_PORT": 5006, "TOTE_IP": "10.0.0.124", "TOTE_PORT": 81, "TOTE_ENABLED": True,
         "FLASK_HOST": "127.0.0.1", "FLASK_PORT": 5050, "WEATHER_LOCATION": "Louisville,KY",
         "LQ_SERIAL_BAUD": 57600, "LQ_BRIDGE_ENABLED": False, "LQ_CUP_OFFLINE_S": 9,
     }
     for name, want in expect.items():
-        shown = "<secret>" if name in ("WEATHER_API_KEY", "ANTHROPIC_API_KEY", "FLASK_SECRET_KEY", "LS_ADMIN_PIN") else repr(want)
+        shown = "<secret>" if name in ("WEATHER_API_KEY", "ANTHROPIC_API_KEY", "FLASK_SECRET_KEY", "HOST_PIN") else repr(want)
         _check(f".env: DDM_{name} lands in config.{name} ({shown})", v.get(name) == want and type(v.get(name)) is type(want))
     v, _ = config_values("DDM_TOTE_IP=10.0.0.124\nDDM_TOTE_ENABLED=0\n")
     _check(".env: DDM_TOTE_ENABLED=0 turns a set tote board off", v["TOTE_IP"] == "10.0.0.124" and v["TOTE_ENABLED"] is False)
@@ -184,8 +184,9 @@ def free_port():
 
 def test_main_starts_with_no_env():
     """The real main.py on a scratch copy with no .env (only its own port set):
-    one line says the LEDs are off, one that the weather is off, the bridge idles;
-    the device panel's LED address goes into pi5/.env, never config.py."""
+    one line says the LEDs are off, one that the weather is off, one that there is no host
+    PIN and a write is a 503; the bridge idles. Then with the PIN in pi5/.env: a write needs
+    the cookie, and the device panel's LED address goes into pi5/.env, never config.py."""
     root = scratch("ddm_main_") / "pi5"
     shutil.copytree(PI5, root, ignore=shutil.ignore_patterns("data", "__pycache__", ".env", "animation_params.json",
                                                             "*.db", "*.db-wal", "*.db-shm"))
@@ -195,10 +196,11 @@ def test_main_starts_with_no_env():
     config_before = (root / "config.py").read_bytes()
     env = dict(ENV, DDM_FLASK_HOST="127.0.0.1", DDM_FLASK_PORT=str(port))
     env.pop("INVOCATION_ID", None)
-    out_path, err_path = root.parent / "out.txt", root.parent / "err.txt"
-    with open(out_path, "wb") as out, open(err_path, "wb") as err:
-        proc = subprocess.Popen([sys.executable, "main.py"], cwd=root, env=env, stdout=out, stderr=err)
-    try:
+
+    def start(label):
+        out_path, err_path = root.parent / (label + "-out.txt"), root.parent / (label + "-err.txt")
+        with open(out_path, "wb") as out, open(err_path, "wb") as err:
+            proc = subprocess.Popen([sys.executable, "main.py"], cwd=root, env=env, stdout=out, stderr=err)
         up = False
         for _ in range(240):
             try:
@@ -209,6 +211,19 @@ def test_main_starts_with_no_env():
                 if proc.poll() is not None:
                     break
                 time.sleep(0.25)
+        return proc, up, out_path, err_path
+
+    def write(path, body, cookie=None):
+        headers = {"Content-Type": "application/json", **({"Cookie": cookie} if cookie else {})}
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body).encode(), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read()), r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read()), e.headers
+
+    proc, up, out_path, err_path = start("nopin")
+    try:
         _check("main.py with no .env starts and serves", up, err_path.read_text(encoding="utf-8", errors="replace")[-600:])
         time.sleep(1.0)
         stdout = out_path.read_text(encoding="utf-8", errors="replace")
@@ -216,25 +231,42 @@ def test_main_starts_with_no_env():
         _check("one line: no LED controller, the LEDs are off", stdout.count("no LED controller set (DDM_ESP32_IP") == 1, stdout[-800:])
         _check("one line: no weather key, the board's weather line is off",
                stdout.count("no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off") == 1, stdout[-800:])
-        _check("one line: no host PIN, La Subasta's admin page and routes are off",
-               stdout.count("no host PIN (DDM_LS_ADMIN_PIN in pi5/.env): its admin page and routes are off") == 1, stdout[-800:])
+        _check("one line: no host PIN, the host pages and every write are off",
+               stdout.count("none (DDM_HOST_PIN in pi5/.env): the Control Center, LQ Admin, La Subasta's admin page and every write are off") == 1,
+               stdout[-800:])
         _check("the bridge idles: LQ_SERIAL_PORT is empty", "La Quiniela bridge idle: LQ_SERIAL_PORT is empty" in stdout + stderr,
                (stdout + stderr)[-800:])
         _check("no LED controller is tried: no unreachable line, no probe", "LED wall unreachable" not in stdout)
         _check("no tote board", "Tote Board:    none (DDM_TOTE_IP in pi5/.env)" in stdout)
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/esp32/config", method="POST",
-                                     data=json.dumps({"ip": "127.0.0.9"}).encode(), headers={"Content-Type": "application/json"})
-        answer = json.loads(urllib.request.urlopen(req, timeout=30).read())
-        env_text = (root / ".env").read_text(encoding="utf-8") if (root / ".env").exists() else ""
-        _check("the device panel's address: persisted, into pi5/.env as DDM_ESP32_IP",
-               answer.get("persisted") is True and "DDM_ESP32_IP=127.0.0.9" in env_text.splitlines(), str(answer) + env_text)
+        status, body, _ = write("/api/esp32/config", {"ip": "127.0.0.9"})
+        _check("with no PIN a write is a 503 that says where to set one, and nothing is written (no pi5/.env made)",
+               status == 503 and "DDM_HOST_PIN" in body["error"] and not (root / ".env").exists(), f"{status} {body}")
+    finally:
+        proc.kill()
+        proc.wait(10)
+
+    # The PIN in pi5/.env, as DevPi has it: the Control Center's writes take it; the device panel's address goes into the same file
+    pin = fake_secret(8)
+    (root / ".env").write_text(f"DDM_HOST_PIN={pin}\n", encoding="utf-8")
+    proc, up, out_path, err_path = start("pin")
+    try:
+        _check("main.py with the host PIN in pi5/.env starts and serves", up, err_path.read_text(encoding="utf-8", errors="replace")[-600:])
+        status, body, _ = write("/api/esp32/config", {"ip": "127.0.0.9"})
+        _check("the device panel's write with no cookie is a 401 and writes nothing",
+               status == 401 and "DDM_ESP32_IP" not in (root / ".env").read_text(encoding="utf-8"), f"{status} {body}")
+        status, body, headers = write("/host/login", {"pin": pin})
+        cookie = headers.get("Set-Cookie", "").split(";")[0]
+        _check("the PIN from pi5/.env logs in", status == 200 and cookie.startswith("ddm_host="), f"{status} {body}")
+        _, answer, _ = write("/api/esp32/config", {"ip": "127.0.0.9"}, cookie)
+        env_text = (root / ".env").read_text(encoding="utf-8")
+        _check("the device panel's address: persisted, into pi5/.env as DDM_ESP32_IP, beside the PIN",
+               answer.get("persisted") is True and "DDM_ESP32_IP=127.0.0.9" in env_text.splitlines()
+               and f"DDM_HOST_PIN={pin}" in env_text.splitlines(), str(answer) + env_text.replace(pin, "<pin>"))
         _check("and pi5/config.py is untouched", (root / "config.py").read_bytes() == config_before)
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/esp32/config", method="POST",
-                                     data=json.dumps({"ip": "127.0.0.10"}).encode(), headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=30).read()
+        write("/api/esp32/config", {"ip": "127.0.0.10"}, cookie)
         lines = (root / ".env").read_text(encoding="utf-8").splitlines()
         _check("a second address replaces the line, one DDM_ESP32_IP line left",
-               [ln for ln in lines if ln.startswith("DDM_ESP32_IP=")] == ["DDM_ESP32_IP=127.0.0.10"], str(lines))
+               [ln for ln in lines if ln.startswith("DDM_ESP32_IP=")] == ["DDM_ESP32_IP=127.0.0.10"], str(lines).replace(pin, "<pin>"))
     finally:
         proc.kill()
         proc.wait(10)

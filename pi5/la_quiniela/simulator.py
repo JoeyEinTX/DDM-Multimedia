@@ -20,6 +20,7 @@ _PI5_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PI5_DIR not in sys.path:
     sys.path.insert(0, _PI5_DIR)
 
+from config import HOST_PIN  # noqa: E402
 from la_quiniela.sim.link import DEFAULT_LINK, PtyLink  # noqa: E402
 from la_quiniela.sim.runner import HttpOperator, Simulator, http_snapshot  # noqa: E402
 from la_quiniela.sim.scenarios import DESCRIPTIONS  # noqa: E402
@@ -36,6 +37,8 @@ def main(argv=None) -> int:
     ap.add_argument("--auto-demo", action="store_true", help="emulate a DDM_AUTO_DEMO 1 bench build")
     ap.add_argument("--link", default=DEFAULT_LINK, metavar="PATH", help="stable symlink to the port (default %(default)s)")
     ap.add_argument("--devpi", metavar="URL", help="drive operator steps through DevPi's betting-board routes, e.g. http://localhost:5000")
+    ap.add_argument("--pin", default=HOST_PIN, metavar="PIN",
+                    help="the host PIN for --devpi's routes (default: DDM_HOST_PIN from pi5/.env)")
     ap.add_argument("--check", metavar="URL", help="at the end, compare DevPi's /api/lq/snapshot with the expectation and print PASS or FAIL")
     ap.add_argument("--operator-timeout", type=float, default=120.0, metavar="S", help="fail an operator step after this long (default 120)")
     ap.add_argument("--settle", type=float, default=12.0, metavar="S", help="how long --check waits for DevPi to catch up (default 12)")
@@ -62,7 +65,7 @@ def main(argv=None) -> int:
     print("start the app with: DDM_LQ_SERIAL_PORT=%s python main.py" % args.link, flush=True)
     sim = Simulator(link=link, seed=args.seed, ideal=args.ideal, auto_demo=args.auto_demo,
                     speed=args.speed, quiet=args.quiet, wire=args.wire,
-                    operator=HttpOperator(args.devpi) if args.devpi else None,
+                    operator=HttpOperator(args.devpi, args.pin) if args.devpi else None,
                     operator_timeout=args.operator_timeout, settle_s=args.settle)
     try:
         return sim.run(scenario=args.scenario, stdin_commands=not args.no_stdin,
@@ -77,7 +80,7 @@ def main(argv=None) -> int:
                 print("--forget-after needs --devpi; DevPi was not told anything", flush=True)
             else:
                 try:
-                    n = HttpOperator(args.devpi).forget_cups()
+                    n = HttpOperator(args.devpi, args.pin).forget_cups()
                     print("DevPi dropped %d pretend cup(s) from its cache" % n, flush=True)
                 except Exception as exc:
                     print("could not reach DevPi (%s); it drops the pretend cups by itself the "

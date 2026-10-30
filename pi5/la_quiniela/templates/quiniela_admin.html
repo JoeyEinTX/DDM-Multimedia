@@ -11,6 +11,7 @@
 <title>La Quiniela admin</title>
 <!-- The revision of pi5's pages this one was served with; every reply says the one pi5 serves now (X-Page-Rev) -->
 <meta name="ddm-page-rev" content="{{ page_rev or '' }}">
+<script src="{{ static_url('js/host_pin.js') if static_url is defined else url_for('static', filename='js/host_pin.js') }}"></script>
 <script src="{{ static_url('js/page_rev.js') if static_url is defined else url_for('static', filename='js/page_rev.js') }}"></script>
 <link rel="stylesheet" href="{{ static_url('css/quiniela_admin.css') if static_url is defined else url_for('static', filename='css/quiniela_admin.css') }}">
 </head>

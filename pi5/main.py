@@ -39,11 +39,12 @@ from la_quiniela.board import field_by_post, migrate_race_setup
 from la_quiniela.odds import init_odds
 import config as _config
 import page_rev
+from host_pin import host_pin_bp
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = _config.FLASK_SECRET_KEY   # DDM_FLASK_SECRET_KEY in pi5/.env, or a random one per start
-app.config['LS_ADMIN_PIN'] = _config.LS_ADMIN_PIN     # DDM_LS_ADMIN_PIN in pi5/.env: La Subasta's admin page and routes; empty = they are off
+app.config['HOST_PIN'] = _config.HOST_PIN             # DDM_HOST_PIN in pi5/.env: every host page and write (host_pin.py); empty = they are off
 
 # Initialize Socket.IO
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -1114,6 +1115,7 @@ def feed_weather_to_board(stop_event=None):
 # Initialize Racing Data Service and register blueprint
 # ---------------------------------------------------------------------------
 racing_service = init_racing_service(socketio=socketio, use_mock=True, esp32_client=esp32)
+app.register_blueprint(host_pin_bp)
 app.register_blueprint(racing_bp)
 app.register_blueprint(guest_ui)
 print("Racing data service initialised (mock mode)")
@@ -1178,8 +1180,8 @@ if __name__ == '__main__':
         print("  ESP32 Target:  none: no LED controller set (DDM_ESP32_IP in pi5/.env), the LEDs are off")
     if not WEATHER_API_KEY:
         print("  Weather:       no weather key (DDM_WEATHER_API_KEY in pi5/.env): the board's weather line is off")
-    if not _config.LS_ADMIN_PIN:
-        print("  La Subasta:    no host PIN (DDM_LS_ADMIN_PIN in pi5/.env): its admin page and routes are off")
+    if not _config.HOST_PIN:
+        print("  Host PIN:      none (DDM_HOST_PIN in pi5/.env): the Control Center, LQ Admin, La Subasta's admin page and every write are off")
 
     if tote:
         print(f"  Tote Board:    {tote.ip}:{tote.port}")

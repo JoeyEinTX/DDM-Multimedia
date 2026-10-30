@@ -105,10 +105,13 @@ class Server:
     """main.app (a Rig's: the temp database, the board, the LED client stubbed) on a
     loopback port. `led_latency` is how long every LED command takes to answer, in
     seconds, `led_timeout` whether it then fails instead (the wall off), and `led_log`
-    every command it answered, with the time it arrived and the time it was answered."""
+    every command it answered, with the time it arrived and the time it was answered.
+    The browser is the host's iPad: every request carries the host PIN's cookie (host_pin.py)
+    unless `host` is False, for the PIN form's own test."""
 
-    def __init__(self, rig: Any, js: Optional[str] = None) -> None:
+    def __init__(self, rig: Any, js: Optional[str] = None, host: bool = True) -> None:
         import main                                       # the Rig has imported it, stubbed
+        from host_pin import HOST_COOKIE, pin_cookie
         from werkzeug.serving import make_server
         self.main = main
         self.rig = rig
@@ -121,8 +124,11 @@ class Server:
         main.WEATHER_API_KEY = ""                          # nothing here may call WeatherAPI (the page no longer asks)
         main.esp32.exchange = self._exchange              # the wall's worker calls it; a request never waits on it
         override = Path(js).read_bytes() if js else None
+        cookie = f"{HOST_COOKIE}={pin_cookie(main.app.config['HOST_PIN'])}"
 
         def app(environ, start_response):
+            if host:
+                environ["HTTP_COOKIE"] = "; ".join(filter(None, [environ.get("HTTP_COOKIE"), cookie]))
             if override is not None and environ.get("PATH_INFO") == "/static/js/ddm_control.js":
                 start_response("200 OK", [("Content-Type", "application/javascript"),
                                           ("Content-Length", str(len(override))), ("Cache-Control", "no-store")])
