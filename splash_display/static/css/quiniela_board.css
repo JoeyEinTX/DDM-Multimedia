@@ -109,7 +109,7 @@
 .qb .qb-band--bottom { bottom: 0; }
 
 /* ---------------------------------------------------------------------
-   Header: logo | POT + prizes | banner + CLOSES IN
+   Header: logo | POT + prizes | banner
    Laid out for the TV (16:9). On a narrower board (an iPad's 4:3) the JS
    keeps this layout at the width it needs and scales it down as one piece
    to the frame (fitHeader), about the middle of its left edge; at 16:9 it
@@ -285,26 +285,6 @@
 @keyframes qbBannerPulse {
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.45; }
-}
-
-/* CLOSES IN 14:22, under the banner. Hidden (not removed, so the banner
-   keeps its place) when the model has no closes_at or betting is closed. */
-.qb-closes {
-    margin-top: 6px;
-    font-size: 32px;
-    letter-spacing: 3px;
-    color: var(--qb-gold);
-    white-space: nowrap;
-    visibility: hidden;
-}
-.qb-closes.is-visible { visibility: visible; }
-
-.qb-closes-time {
-    margin-left: 12px;
-    font-size: 42px;
-    font-weight: normal;
-    font-variant-numeric: tabular-nums;
-    color: #fff;
 }
 
 /* ---------------------------------------------------------------------

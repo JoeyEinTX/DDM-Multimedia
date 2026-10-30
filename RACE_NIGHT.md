@@ -6,7 +6,7 @@ as two tabs (section 2):
 - `DASH`, the Control Center at `http://joeydevpi.local:5000/`. Its buttons run the LEDs
   **and** the race: it is the one place the race state changes.
 - `ADMIN`, the page at `http://joeydevpi.local:5000/quiniela/admin`: names, scratches,
-  the closing time, the counted pot, **Reset betting**, the Horses list, and the race
+  the counted pot, **Reset betting**, the Horses list, and the race
   state, read-only. It is also in the dashboard's menu (☰ → La Quiniela Admin).
 
 pi5 and the splash start on their own when DevPi boots (section 0). Commands are typed on DevPi
@@ -171,7 +171,7 @@ cd ~/DDM-Multimedia && python3 pi5/tools/wipe.py --dry-run
 python3 pi5/tools/wipe.py
 ```
 
-- **Clears:** La Quiniela's names, race info, scratches, closing time, race state (back to
+- **Clears:** La Quiniela's names, race info, scratches, race state (back to
   0 PRE-RACE), figures at the post, counted pot, results, cup cache and readings, and logs,
   plus the old Race Setup file; La Subasta's guests, bids, owners, payouts, auction state
   and changed settings; the splash's old betting log.
@@ -293,11 +293,10 @@ Cups must be **empty** for this.
 - [ ] Drop one token in one cup: `ADMIN` → Race shows Pot $1 (the TV board and its toast
       only show from BETTING OPEN). Take it out: Pot $0.
 
-### 5. Set the close time
+### 5. No close time to set
 
-`ADMIN` → Betting closes → pick the time and `Set` (or `+60 min`) → `CLOSES IN` appears
-under the banner once betting opens.
-Set it for a few minutes before post time; you still close by hand (next section).
+There is none (it went on 2026-10-30): nothing counts down on the TV, which shows the state
+in its banner, and you call every state yourself (sections 6 and 7). Go on to section 6.
 
 ## 6. Open betting
 
@@ -471,7 +470,7 @@ computation is `payout_for` in `pi5/la_quiniela/betting.py`, served as the model
       their numbers; names and scratches stay; the figures at the post and the hand count
       go. The line says `Reset. Pot $0`; if it names horses with tokens still
       in their cups, empty those (each count drops to 0 by itself) and press it again.
-- [ ] Section 5 (close time), then section 6 (`DASH` → **60 MIN**).
+- [ ] Section 6 (`DASH` → **60 MIN**).
 - [ ] A different field next race: `ADMIN` → Horse names → paste the new names → Save
       names, and undo / redo the scratches, before opening.
 

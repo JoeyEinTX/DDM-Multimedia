@@ -48,7 +48,7 @@ from la_quiniela.betting import (  # noqa: E402
 from la_quiniela.blueprint import init_la_quiniela, la_quiniela_bp  # noqa: E402
 from la_quiniela.bridge import LqBridge  # noqa: E402
 from la_quiniela.board import (  # noqa: E402
-    DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_CLOSES_AT, USAGE_ODDS, USAGE_RACE, USAGE_STATE,
+    DEMO_REFUSED, JSON_REFUSED, REPLACEMENT_SHAPE, USAGE_ODDS, USAGE_RACE, USAGE_STATE,
     get_board, init_board, migrate_race_setup, quiniela_board_bp, start_board, stop_board,
 )
 from la_quiniela import odds as odds_mod  # noqa: E402
@@ -63,7 +63,7 @@ from la_quiniela.test_smoke import cup_entry as status_cup  # noqa: E402  (a sta
 MODEL_KEYS = {"link_ok", "race_state", "race_state_name", "token_value", "pot", "total_tokens",
               "horses", "leader", "events", "updated", "board_states",
               # additive since the payout model: see "Betting board" in LQ_BRIDGE.md
-              "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
+              "now", "prizes", "split", "chyron", "names_rev", "scratches",
               # additive since protocol v2
               "cups_online", "cups_no_horse", "results", "payout",
               # additive since pi5 holds the figures at the post
@@ -253,7 +253,7 @@ def test_empty_snapshot_model_shape():
     b, wall, _ = fresh_board()
     _check("an empty BETTING_OPEN snapshot changes the model", b.apply_snapshot(snap(phase=1)))
     m = b.model()
-    _check("exactly the 30 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 30, str(sorted(m)))
+    _check("exactly the 29 model keys", set(m) == MODEL_KEYS and len(MODEL_KEYS) == 29, str(sorted(m)))
     _check("link_ok true from port_open + gateway_online", m["link_ok"] is True)
     _check("race_state 1 / BETTING_OPEN", (m["race_state"], m["race_state_name"]) == (1, "BETTING_OPEN"))
     _check("token_value from settings", m["token_value"] == float(DEFAULTS["TOKEN_VALUE"]))
@@ -1222,7 +1222,7 @@ def test_round_half_up_and_prizes():
     m = b.model()
     _check("the empty model carries the split, zero prizes and the chyron",
            m["split"] == SPLIT and m["prizes"] == {"win": 0, "place": 0, "show": 0}
-           and m["chyron"] == DEFAULTS["LQ_CHYRON_LINES"] and m["closes_at"] is None and m["names_rev"] == 0
+           and m["chyron"] == DEFAULTS["LQ_CHYRON_LINES"] and m["names_rev"] == 0
            and m["scratches"] == [], str(m))
     b.apply_snapshot(snap(cups=[cup_entry(1, horse=7, count=154, online=True)]))
     m = b.model()
@@ -1365,12 +1365,11 @@ def test_names_and_replacement_scratch_in_the_model():
     # An injected store is used as given, and the empty model already carries its names.
     store = HorseStore()
     store.set_names({4: "Catching Freedom"})
-    store.set_closes_at(1_700_000_900.0)
     b3 = BettingBoard(store=store, wall=FakeClock(1_700_000_000.0), results_path=tmpdir() / "r.json")
     _check("an injected store is the board's store", b3.store is store and store.on_change == b3.wake)
     m = b3.model()
-    _check("the empty model already carries the store's names and closing time",
-           m["horses"]["4"]["name"] == "CATCHING FREEDOM" and m["closes_at"] == 1_700_000_900.0 and m["names_rev"] == 1)
+    _check("the empty model already carries the store's names",
+           m["horses"]["4"]["name"] == "CATCHING FREEDOM" and m["names_rev"] == 1)
 
 
 def test_in_field_rules():
@@ -1869,7 +1868,7 @@ def test_undo_puts_the_name_back():
     b.close()
 
 
-def test_reset_clears_closes_at_and_keeps_names():
+def test_reset_keeps_names_and_records():
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
     board, wall, _ = fresh_board(bridge=b)
@@ -1878,27 +1877,21 @@ def test_reset_clears_closes_at_and_keeps_names():
     board.refresh()
     board.store.set_names({9: "Encino", 3: "Fierceness"})
     board.store.scratch_replace(3, 21, "Late Entry")
-    board.store.set_closes_at(1_700_000_600.0)
     board.refresh()
     m = board.model()
     record = {"was": {"number": 3, "name": "FIERCENESS"}, "now": {"number": 21, "name": "LATE ENTRY"}, "rebet": False, "refund": False}
-    _check("before the reset: names, a record, closes_at", m["horses"]["9"]["name"] == "ENCINO"
-           and m["scratches"] == [record] and m["closes_at"] == 1_700_000_600.0, str(m["scratches"]))
-    _check("persisted: a second store on the same db reads them", HorseStore(b.db).closes_at == 1_700_000_600.0
-           and HorseStore(b.db).horses()[9]["name"] == "Encino" and HorseStore(b.db).names_rev == 2
+    _check("before the reset: names, a record", m["horses"]["9"]["name"] == "ENCINO"
+           and m["scratches"] == [record], str(m["scratches"]))
+    _check("persisted: a second store on the same db reads them",
+           HorseStore(b.db).horses()[9]["name"] == "Encino" and HorseStore(b.db).names_rev == 2
            and HorseStore(b.db).scratches() == {3: 21})
     board.reset_betting()
     m = board.model()
-    _check("after the reset: closes_at cleared", m["closes_at"] is None and board.store.closes_at is None)
-    _check("...in the database too", HorseStore(b.db).closes_at is None)
-    _check("...names and the record stay, names_rev untouched (its pair goes out when a cup says 3: none here)",
+    _check("after the reset: names and the record stay, names_rev untouched (its pair goes out when a cup says 3: none here)",
            m["horses"]["9"]["name"] == "ENCINO"
            and m["scratches"] == [record] and m["names_rev"] == 2 and m["horses"]["21"]["in_field"] is True and b.renum == [])
     _check("...PRE_RACE, the cup still on its horse, no ghosts", m["race_state"] == 0 and m["events"] == []
            and m["horses"]["9"]["cup"] == MAC_A and m["pot"] == 10.0)
-    board.store.set_closes_at(1_700_000_900.0)
-    board.refresh()
-    _check("a second refresh without a reset keeps a new closes_at", board.model()["closes_at"] == 1_700_000_900.0)
     # A database with only the bridge's tables: check_shape passes and init_schema adds the three.
     path = str(tmpdir() / "old.db")
     db = LqDb(path)
@@ -1907,14 +1900,14 @@ def test_reset_clears_closes_at_and_keeps_names():
     _check("check_shape() passes on a database without the board's tables", db.check_shape() is None)
     db.init_schema()
     _check("init_schema() adds them, empty", db.load_horses() == {} and db.load_scratches() == {}
-           and db.load_board() == {"names_rev": 0, "closes_at": None})
+           and db.load_board() == {"names_rev": 0})
     db.save_horse(9, "Encino")
     db.save_horse(9, "Epic Ride")
-    db.save_board(3, 12.5)
+    db.save_board(3)
     _check("save_horse upserts, save_board updates", db.load_horses() == {9: {"name": "Epic Ride", "replaced": None}}
-           and db.load_board() == {"names_rev": 3, "closes_at": 12.5})
+           and db.load_board() == {"names_rev": 3})
     _check("a store loads them", HorseStore(db).horses()[9] == {"name": "Epic Ride"}
-           and HorseStore(db).names_rev == 3 and HorseStore(db).closes_at == 12.5)
+           and HorseStore(db).names_rev == 3)
     db.conn.executescript("DROP TABLE lq_horses; DROP TABLE lq_scratches; DROP TABLE lq_board;")
     with capture_logs("la_quiniela.horses", logging.ERROR) as cap:
         store = HorseStore(db)
@@ -1954,7 +1947,7 @@ def test_lq_horses_migration_and_scratches_table():
     _check("...rows kept, the legacy replaced value included",
            db.load_horses() == {3: {"name": "Mystik Dan", "replaced": "Dornoch"}, 9: {"name": "Encino", "replaced": None},
                                 17: {"name": "Fierceness", "replaced": None}}, str(db.load_horses()))
-    _check("...lq_board untouched", db.load_board() == {"names_rev": 4, "closes_at": None})
+    _check("...lq_board kept, as the closing-time migration leaves it", db.load_board() == {"names_rev": 4})
     _check("...no lq_horses_new left behind, lq_scratches created empty",
            db.query_one("SELECT name FROM sqlite_master WHERE name = 'lq_horses_new'") is None and db.load_scratches() == {})
     _check("check_shape() still passes", db.check_shape() is None)
@@ -2071,29 +2064,38 @@ def test_routes_horses_get_and_put():
            and HorseStore(b.db).horses()[23] == {"name": "Epic Ride"})
 
 
-def test_routes_closes_at():
+def test_betting_closes_time_is_gone():
+    """The betting-closes time went (Joey, 2026-10-30): nothing in pi5 acted on it, the race states are the host's to
+    call and the board shows the state, not a countdown to a close. No route, no model key, no store call, no column;
+    a database that still has the column is rebuilt without it, its names counter kept."""
     b, port, sio, clk = _fresh_bridge()
     b._open_port()
-    wall = FakeClock(1_700_000_000.0)
-    client = _make_board_app(b, wall=wall).test_client()
-    r = client.put("/api/quiniela/closes_at", json={"at": 1_700_000_500})
-    _check("PUT at -> ok", r.status_code == 200 and r.get_json() == {"ok": True, "closes_at": 1_700_000_500.0}, str(r.get_json()))
-    _check("the model follows", client.get("/api/quiniela").get_json()["closes_at"] == 1_700_000_500.0)
-    _check("persisted: a second store on the same db", HorseStore(b.db).closes_at == 1_700_000_500.0)
+    client = _make_board_app(b).test_client()
     r = client.put("/api/quiniela/closes_at", json={"in_minutes": 30})
-    _check("PUT in_minutes 30 -> now + 1800 by the server's clock", r.get_json() == {"ok": True, "closes_at": wall.t + 1800.0}, str(r.get_json()))
-    _check("names_rev untouched by the closing time", client.get("/api/quiniela").get_json()["names_rev"] == 0)
-    r = client.put("/api/quiniela/closes_at", json={"at": None})
-    _check("PUT at null clears", r.get_json() == {"ok": True, "closes_at": None}
-           and client.get("/api/quiniela").get_json()["closes_at"] is None and HorseStore(b.db).closes_at is None)
-    for bad in ({}, {"at": "x"}, {"at": True}, {"in_minutes": -1}, {"in_minutes": "x"}, {"in_minutes": None}, {"when": 5}):
-        r = client.put("/api/quiniela/closes_at", json=bad)
-        _check(f"PUT {bad!r:.30} -> 400 usage", r.status_code == 400 and r.get_json() == {"ok": False, "error": USAGE_CLOSES_AT},
-               f"{r.status_code} {r.get_json()}")
-    r = client.put("/api/quiniela/closes_at", data="5", content_type="application/json")
-    _check("a non-object body -> 400", r.status_code == 400)
-    r = client.put("/api/quiniela/closes_at", json={"at": 1e400})
-    _check("an infinite time -> 400", r.status_code == 400 and "finite" in r.get_json()["error"], str(r.get_json()))
+    _check("PUT /api/quiniela/closes_at: no such route", r.status_code in (404, 405), str(r.status_code))
+    _check("the model has no closes_at, nor has the store a way to set one",
+           "closes_at" not in client.get("/api/quiniela").get_json()
+           and not hasattr(HorseStore(), "set_closes_at") and not hasattr(HorseStore(), "closes_at"))
+    path = str(tmpdir() / "closes.db")
+    db = LqDb(path)
+    db.conn.executescript("""
+        CREATE TABLE lq_board (
+            id        INTEGER PRIMARY KEY CHECK (id = 1),
+            names_rev INTEGER NOT NULL DEFAULT 0,
+            closes_at REAL
+        );
+        INSERT INTO lq_board VALUES (1, 4, 1700000900.0);
+    """)
+    _check("check_shape() accepts the board with its closing time (it is migrated, not refused)", db.check_shape() is None)
+    db.init_schema()
+    cols = [r["name"] for r in db.conn.execute("PRAGMA table_info(lq_board)").fetchall()]
+    _check("init_schema() rebuilt lq_board without closes_at, the names counter kept",
+           cols == ["id", "names_rev"] and db.load_board() == {"names_rev": 4}
+           and db.query_one("SELECT name FROM sqlite_master WHERE name = 'lq_board_new'") is None, str(cols))
+    _check("...and a store on it reads the counter, check_shape() passes, a second init_schema() changes nothing",
+           HorseStore(db).names_rev == 4 and db.check_shape() is None and (db.init_schema() or True)
+           and db.load_board() == {"names_rev": 4})
+    db.close()
 
 
 def test_routes_scratch_and_unscratch():
@@ -3625,12 +3627,12 @@ def test_admin_page():
     css = Path(_PI5_DIR, "static", "css", "quiniela_admin.css").read_text(encoding="utf-8")
     _check("its stylesheet is pi5/static/css/quiniela_admin.css (moved out of the page on 2026-10-07)",
            'href="/static/css/quiniela_admin.css' in html and "<style>" not in html and ".rowstatus.ask" in css)
-    for section in ("race", "names", "scratches", "closes"):
+    for section in ("race", "names", "scratches"):
         _check(f"section id={section!r} present", f'id="{section}"' in html)
     _check("the Race section comes first", html.index('id="race"') < html.index('id="names"'))
     _check("viewport meta for phones", 'name="viewport"' in html)
     _check("talks to the routes", all(path in html for path in ("/api/quiniela/horses", "/api/quiniela/scratch",
-                                                                "/api/quiniela/unscratch", "/api/quiniela/closes_at", "/api/quiniela",
+                                                                "/api/quiniela/unscratch", "/api/quiniela",
                                                                 "/api/quiniela/reset")))
     import re
     scripts = re.findall(r'<script src="([^"]+)"', html)
@@ -3922,14 +3924,13 @@ def test_reset_betting_route():
     b.handle_raw_line(telem(mac_of(3), horse=21, count=5))                   # the cup followed the pair
     r = client.post("/api/quiniela/scratch", json={"horse": 15})
     _check("setup: no-replacement scratch of 15", r.status_code == 200 and r.get_json()["cup"] == mac_of(15), r.get_data(as_text=True))
-    client.put("/api/quiniela/closes_at", json={"in_minutes": 30})
     write_results(board, 9, 21, 2)
     client.post("/api/quiniela/cmd", json={"cmd": "state 2"})
     board.refresh()
     m = board.model()
-    _check("before: FINAL_CALL, pot 15 (10 on 9, 5 on 21), a closing time, a record of each kind, results, 21 cups online, one unset",
+    _check("before: FINAL_CALL, pot 15 (10 on 9, 5 on 21), a record of each kind, results, 21 cups online, one unset",
            m["race_state"] == 2 and m["pot"] == 15.0 and m["horses"]["9"]["tokens"] == 10 and m["horses"]["21"]["tokens"] == 5
-           and m["closes_at"] is not None and [(s["was"]["number"], s["now"] and s["now"]["number"]) for s in m["scratches"]] == [(3, 21), (15, None)]
+           and [(s["was"]["number"], s["now"] and s["now"]["number"]) for s in m["scratches"]] == [(3, 21), (15, None)]
            and m["results"] == {"win": 9, "place": 21, "show": 2} and m["cups_online"] == 21 and m["cups_no_horse"] == 1, str(m["pot"]))
     names_rev = m["names_rev"]
     # Refused while a race is on: 1-5, each a 409 with the plain message, no line, nothing cleared.
@@ -3937,12 +3938,12 @@ def test_reset_betting_route():
     for state in (2, 1, 3, 4, 5):
         client.post("/api/quiniela/cmd", json={"cmd": f"state {state}"})
         board.refresh()
-        before = (b.state_rev, len(port.lines()), board.model()["closes_at"], board.model()["results"])
+        before = (b.state_rev, len(port.lines()), board.model()["results"])
         r = client.post("/api/quiniela/reset")
         board.refresh()
-        after = (b.state_rev, len(port.lines()), board.model()["closes_at"], board.model()["results"])
+        after = (b.state_rev, len(port.lines()), board.model()["results"])
         refused[state] = (r.status_code, r.get_json(), before == after and b.phase == state)
-    _check("Reset betting in states 1-5: 409, the message, and nothing moved (no state line, the results and closing time kept)",
+    _check("Reset betting in states 1-5: 409, the message, and nothing moved (no state line, the results kept)",
            all(code == 409 and body == {"ok": False, "error": board_mod.RESET_REFUSED} and still
                for code, body, still in refused.values()), str(refused))
     _check("...the message, word for word", board_mod.RESET_REFUSED == "Reset betting works only before the race (0) or after it (6). "
@@ -3957,24 +3958,24 @@ def test_reset_betting_route():
     _check("...PRE_RACE; the pot reads the tokens still in the cups and names those horses",
            body["race_state"] == 0 and body["pot"] == 15.0 and body["total_tokens"] == 15
            and body["horses_with_tokens"] == [9, 21], str(body))
-    _check("...events 0, closes_at null, cups_online 21, the new rev, gateway_online a bool",
-           body["events"] == 0 and body["closes_at"] is None and body["cups_online"] == 21 and body["rev"] == b.state_rev
+    _check("...events 0, cups_online 21, the new rev, gateway_online a bool, no closes_at",
+           body["events"] == 0 and "closes_at" not in body and body["cups_online"] == 21 and body["rev"] == b.state_rev
            and isinstance(body["gateway_online"], bool) and body["names_rev"] == names_rev, str(body))
     lines = port.lines()
     _check("exactly one line to the gateway: PRE_RACE with the same bit, the results cleared (no pair: the cup that was 3 "
            "says 21 already), byte-exact",
            len(lines) == n_lines + 1 and lines[-1] == state_line(b.state_rev, 0, [15]), str(lines[-1:]))
     m = board.model()
-    _check("the model: PRE_RACE, pot 15, tokens still on 9 and 21 on their cups, no events, no closes_at, no results",
+    _check("the model: PRE_RACE, pot 15, tokens still on 9 and 21 on their cups, no events, no results",
            m["race_state"] == 0 and m["pot"] == 15.0 and m["horses"]["9"]["tokens"] == 10 and m["horses"]["9"]["cup"] == mac_of(9)
            and m["horses"]["21"]["tokens"] == 5 and m["horses"]["21"]["cup"] == mac_of(3) and m["events"] == []
-           and m["closes_at"] is None and m["results"] == NO_RESULTS, str(m["events"]))
+           and m["results"] == NO_RESULTS, str(m["events"]))
     _check("...names, both scratch kinds and the also-eligible kept, names_rev untouched",
            m["horses"]["9"]["name"] == FIELD_24[8].upper() and m["horses"]["21"]["in_field"] is True
            and m["horses"]["21"]["replaced"] == FIELD_24[2].upper()
            and m["horses"]["15"]["scratched"] is True and m["horses"]["15"]["in_field"] is False
            and m["names_rev"] == names_rev and board.store.scratches() == {3: 21, 15: None})
-    _check("...persisted", HorseStore(b.db).closes_at is None and HorseStore(b.db).scratches() == {3: 21, 15: None})
+    _check("...persisted", HorseStore(b.db).scratches() == {3: 21, 15: None})
     _, log = log_lines(board._log_dir)
     _check("the log: a baseline record marked as the betting reset, with the state change",
            log[-1].get("baseline") is True and log[-1].get("reset") == "betting" and {"race_state": [6, 0]} in log[-1]["changes"], str(log[-1]))
@@ -4566,7 +4567,7 @@ def main():
     _run("scratch — a no-replacement scratch is about the horse, not the cup", test_no_replacement_scratch_is_about_the_horse)
     _run("scratch — the lq_scratches migration (now nullable)", test_lq_scratches_migration)
     _run("scratch — Undo puts a replacement's name back as it was before the scratch", test_undo_puts_the_name_back)
-    _run("payout — reset clears closes_at, keeps names; the tables", test_reset_clears_closes_at_and_keeps_names)
+    _run("payout — reset keeps names and records; the tables", test_reset_keeps_names_and_records)
     _run("renumber — the lq_horses migration and the lq_scratches table", test_lq_horses_migration_and_scratches_table)
     _run("payout — GET/PUT /api/quiniela/horses", test_routes_horses_get_and_put)
     _run("renumber — POST /api/quiniela/scratch and /unscratch on a real bridge", test_routes_scratch_and_unscratch)
@@ -4592,7 +4593,7 @@ def main():
     _run("closing — the results and the closing figures survive a restart", test_results_and_closing_survive_a_restart)
     _run("counted pot — the model: same function, held, dropped, refused, bad input", test_counted_pot_model)
     _run("counted pot — PUT /api/quiniela/counted_pot, a restart, Clear, Reset betting", test_counted_pot_route_and_restart)
-    _run("payout — PUT /api/quiniela/closes_at", test_routes_closes_at)
+    _run("the betting-closes time is gone: no route, no key, the column migrated", test_betting_closes_time_is_gone)
     _run("payout — GET /quiniela/admin", test_admin_page)
     _run("closing — dropped only by Reset betting or a reopen the host confirmed, in 3-6 alike (Joey, 2026-10-28)", test_reopening_needs_the_hosts_yes)
     _run("scratch — Undo of a replacement is refused while its cup holds bets (Joey, 2026-10-28)", test_undo_of_a_replacement_is_refused_while_its_cup_holds_bets)

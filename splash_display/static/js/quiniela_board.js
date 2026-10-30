@@ -39,7 +39,7 @@
 
    Freeze rule: once betting is closed (3 AT_THE_POST, 4 RUNNING, 5
    WINNER) the rows (the set and the counts), pot and prizes show the
-   figures at the post and the CLOSES IN line is hidden; the banner stays
+   figures at the post; the banner stays
    live, and so do the names and the chyron (a late name correction still
    shows). pi5 holds those figures (the model's closing: taken when
    betting closed, kept through the draw and a restart of pi5), so every
@@ -67,7 +67,7 @@
    The model (GET /api/quiniela, relayed from pi5 untouched). The board
    reads: race_state, board_states, link_ok, token_value, pot, horses[n]
    {tokens, in_field, scratched, online, cup, name, odds}, events[{horse,
-   delta, ts}], and the additive keys now, closes_at, prizes{win,place,
+   delta, ts}], and the additive keys now, prizes{win,place,
    show}, chyron[], scratches[{was:{number,name}, now:{number,name}|null}],
    names_rev, results{win,place,show}|null, closing{pot, prizes,
    total_tokens, horses{n: {tokens}}, at}|null, hand_counted (pi5 says it
@@ -205,7 +205,6 @@
     const CRAWL_TPS_MAX       = 60;
     const CRAWL_PITCH_PX      = 4;
     const CRAWL_PAD_TILES     = 1;
-    const CLOSES_TICK_MS = 250;     // the countdown is checked 4x a second, written once a second
     const LIVE_TICK_MS   = 1000;    // the crawl's clock and time to post, in place
     const POST_SECONDS_UNDER_S = 600;   // under ten minutes to post: minutes and seconds
 
@@ -270,9 +269,6 @@
     const prizeEls      = { win: $('qb-prize-win'), place: $('qb-prize-place'), show: $('qb-prize-show') };
     const bannerEl      = $('qb-banner');
     const bannerTextEl  = $('qb-banner-text');
-    const closesEl      = $('qb-closes');
-    const closesLabelEl = $('qb-closes-label');
-    const closesTimeEl  = $('qb-closes-time');
     const colEls        = [$('qb-col-left'), $('qb-col-right')];
     const rowTpl        = $('qb-row-tpl');
     const trackEl       = $('qb-track');
@@ -432,7 +428,7 @@
         renderCounted(m.hand_counted === true);   // after the paint: the tag hangs off the figure just written (99 -> 100 moves it)
         renderNames(m);            // live in every state
         renderResults(m, payout);  // the results screen, or back to the rows
-        renderCloses(m, state);
+        syncServerClock(m);
         fitHeader();               // the header's widths may have changed: fitted, and the tag placed again
 
         if (inBoard) show(); else hide();
@@ -1166,50 +1162,30 @@
         el.classList.add('is-pulse');
     }
 
-    // ---- CLOSES IN --------------------------------------------------
-    // The countdown runs on pi5's clock: closes_at against the model's
-    // "now", both stamped by pi5, so the TV's own clock never matters. It
-    // ticks locally between messages. pi5 stamps "now" when it serialises,
-    // but the splash re-serves the last message it received, so a model
-    // can arrive with a stale stamp (a page load on a quiet board, or the
-    // relay's link_ok flip). A clock only moves forward: the server-time
-    // estimate is the newest stamp seen plus the time since, and an older
-    // stamp never re-anchors it. With no stamp at all the TV's clock
-    // stands in. Hidden without a closes_at, and in states 3+ (betting is
-    // closed, the race is on or over).
+    // ---- pi5's clock ------------------------------------------------
+    // The crawl's clock and the time to post run on pi5's clock: the model's
+    // "now", stamped by pi5, so the TV's own clock never matters. It ticks
+    // locally between messages. pi5 stamps "now" when it serialises, but the
+    // splash re-serves the last message it received, so a model can arrive
+    // with a stale stamp (a page load on a quiet board, or the relay's
+    // link_ok flip). A clock only moves forward: the server-time estimate is
+    // the newest stamp seen plus the time since, and an older stamp never
+    // re-anchors it. With no stamp at all the TV's clock stands in.
     const NOW_SLACK_S = 2;        // a stamp this little behind the estimate is fresh (latency)
-    let closesAtS = null;         // the model's closes_at, pi5 time
     let serverNowS = null;        // the newest "now" seen ...
     let serverAnchor = 0;         // ... and the performance.now() it arrived at
-    let closesHiddenByState = false;
 
     function serverNow() {
         if (serverNowS == null) return Date.now() / 1000;
         return serverNowS + (performance.now() - serverAnchor) / 1000;
     }
 
-    function renderCloses(m, state) {
+    function syncServerClock(m) {
         const now = Number(m.now);
         if (m.now != null && Number.isFinite(now) && (serverNowS == null || now > serverNow() - NOW_SLACK_S)) {
             serverNowS = now;
             serverAnchor = performance.now();
         }
-        const ca = Number(m.closes_at);
-        closesAtS = (m.closes_at != null && Number.isFinite(ca)) ? ca : null;
-        closesHiddenByState = Number.isFinite(state) && state >= 3;
-        tickCloses();
-    }
-
-    function tickCloses() {
-        const on = closesAtS != null && !closesHiddenByState;
-        closesEl.classList.toggle('is-visible', on);
-        if (!on) return;
-        const remaining = closesAtS - serverNow();
-        const secs = Math.max(0, Math.ceil(remaining));
-        const mm = Math.floor(secs / 60);
-        const ss = secs % 60;
-        setText(closesTimeEl, mm + ':' + (ss < 10 ? '0' : '') + ss);
-        setText(closesLabelEl, secs === 0 ? 'Closing' : 'Closes in');
     }
 
     // ---- Toast ------------------------------------------------------
@@ -1427,7 +1403,7 @@
 
     // "Post in 1:14" (hours:minutes), "Post in 9:42" under ten minutes
     // (minutes:seconds), null once the post time has passed or while none
-    // is set. Counted on pi5's clock, like CLOSES IN.
+    // is set. Counted on pi5's clock.
     function postText(race, nowS) {
         if (!race || race.post_at == null) return null;
         const at = Number(race.post_at);
@@ -1936,7 +1912,6 @@
     fetchOnce();
     connect();
     setInterval(updateNoLink, 1000);
-    setInterval(tickCloses, CLOSES_TICK_MS);
     setInterval(tickLive, LIVE_TICK_MS);
     // Anton arrives late where Impact is missing: the names' widths change,
     // and the header is fitted again, its tag with it. So does every dotted

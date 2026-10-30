@@ -869,7 +869,7 @@ class BettingBoard:
     it); wall is unix time, for the timestamps in the model and the log.
     Both are injectable for tests, as are log_dir and results_path.
 
-    store is the HorseStore of names, scratches and the closing time: by
+    store is the HorseStore of names and scratches: by
     default one on the bridge's database (memory-only without a bridge). Its
     on_change is wired to wake(), so an admin write refreshes the model.
     """
@@ -1043,7 +1043,6 @@ class BettingBoard:
             "events": [],
             "updated": self._wall(),
             "board_states": self._board_states(),
-            "closes_at": self.store.closes_at,
             "prizes": money["prizes"],
             "split": split,
             "chyron": self._chyron(),
@@ -1379,7 +1378,6 @@ class BettingBoard:
                 "events": list(self._events),
                 "updated": old["updated"],
                 "board_states": self._board_states(),
-                "closes_at": self.store.closes_at,
                 "prizes": money["prizes"],
                 "split": split,
                 "chyron": self._chyron(),
@@ -1497,7 +1495,7 @@ class BettingBoard:
         """Take the bridge's snapshot, apply it, and keep the gateway's state
         line in step with the store and the results file. Returns True if the
         model changed. With no bridge the empty picture is applied instead
-        (link down, no cups), so names and the closing time from the store
+        (link down, no cups), so names from the store
         still reach the model; that is a change only if the store moved.
 
         Serialised: two overlapping calls (the board thread and a
@@ -1906,8 +1904,8 @@ class BettingBoard:
 
     def reset_betting(self) -> Dict[str, Any]:
         """The between-races reset: betting starts over. PRE_RACE, the
-        results cleared (the dashboard's file too), the closing time and the
-        closing figures cleared, and the bridge's picture applied as a fresh
+        results cleared (the dashboard's file too), the closing
+        figures cleared, and the bridge's picture applied as a fresh
         baseline: the events are cleared and no count is diffed, so what
         sits in a cup right now is the starting point, not a bet. Tokens
         still in a cup are not an error, the pot simply reads them, and the
@@ -1929,7 +1927,6 @@ class BettingBoard:
                 snap: Any = bridge.get_snapshot()
             else:
                 snap = {}
-            self.store.clear_closes_at()
             self.apply_snapshot(snap, baseline=True)
         model = self.model()
         if not isinstance(snap, dict):
@@ -1945,7 +1942,6 @@ class BettingBoard:
             "horses_with_tokens": with_tokens,
             "cups_online": model["cups_online"],
             "events": len(model["events"]),
-            "closes_at": model["closes_at"],
             "rev": rev,
             "gateway_online": bool(link.get("gateway_online", False)),
             "names_rev": model["names_rev"],

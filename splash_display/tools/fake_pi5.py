@@ -36,8 +36,8 @@ Nothing leaves loopback: no serial port, no dashboard poller.
     python tools/fake_pi5.py --phase bench         # the 2026-09-25 bench picture: 50/42/8/3 tokens
     python tools/fake_pi5.py --phase bench-reset   # bench, then a reset (counts 0, events cleared, state 0), then state 1 again; repeats
     python tools/fake_pi5.py --phase redesign      # the 2026 Derby field: three also-eligibles drawn in (5 -> 21, 9 -> 22,
-                                                   # 13 -> 23), 20 scratched at the gateway, 19 rows, POT $150, closes in
-                                                   # 15 min, a bet on horse 7 every 4 s (toast)
+                                                   # 13 -> 23), 20 scratched at the gateway, 19 rows, POT $150,
+                                                   # a bet on horse 7 every 4 s (toast)
     python tools/fake_pi5.py --phase redesign-static   # the same picture, nothing moving (screenshots)
     python tools/fake_pi5.py --phase counted       # AT_THE_POST on the 2026 race (scale pot $154, WIN $92 / PLACE $39 /
                                                    # SHOW $23), nothing counted yet: post `counted 152` to the fake and the
@@ -105,7 +105,7 @@ The model carries every key of pi5's contract: horses ``"1"``..``"24"``
 (1-20 the field, 21-24 the also-eligibles, in the field only while standing
 in for a scratched horse), each with ``in_field``, ``name``, ``replaced``,
 ``conflict`` and ``cups``; ``now`` (stamped when the JSON is built),
-``closes_at``, ``prizes`` (whole dollars, place and show rounded half up,
+``prizes`` (whole dollars, place and show rounded half up,
 win the remainder), ``split``, ``chyron``, ``names_rev``, ``scratches`` (one
 record per scratch: ``{"was": {"number", "name"}, "now": {"number",
 "name"}}`` for a replacement, ``"now": null`` for a gateway scratch, ordered
@@ -205,7 +205,7 @@ SEED_EVENTS = [7, 3, 15, 7, 10, 7, 18]
 # each keeping its own program number), 20 scratched at the gateway with
 # nobody drawn in (its 4 tokens out of the pot). tools/board_reference.html's
 # counts for the numbered cups (154 tokens in all, so POT $150 -> WIN $89,
-# PLACE $38, SHOW $23), betting closes in 15 minutes. Nineteen rows: the
+# PLACE $38, SHOW $23). Nineteen rows: the
 # last slot is blank, 22 and 23 sit at the bottom of the right column.
 DERBY_2026 = [
     "Renegade", "Albus", "Intrepido", "Litmus Test", "Right to Party",
@@ -225,7 +225,6 @@ REDESIGN_TOKENS = {           # by horse before the renumbers: 5's count lands o
     16: 0, 17: 19, 18: 5, 19: 0, 20: 4,
 }
 REDESIGN_EVENTS = [2, 17, 7]          # oldest first
-REDESIGN_CLOSES_IN_S = 15 * 60
 REDESIGN_BUMP_EVERY_S = 4.0
 REDESIGN_BUMP_HORSE = 7
 
@@ -339,7 +338,6 @@ def build_model(
     names: Optional[Dict[int, str]] = None,
     cup_of: Optional[Dict[int, int]] = None,
     replacements: Optional[Dict[int, int]] = None,
-    closes_at: Optional[float] = None,
     names_rev: int = 0,
     chyron: Optional[List[str]] = None,
     results: Optional[Iterable[int]] = None,
@@ -430,7 +428,6 @@ def build_model(
         "updated": float(updated if updated is not None else time.time()),
         "board_states": list(BOARD_STATES),
         "now": time.time(),
-        "closes_at": float(closes_at) if closes_at is not None else None,
         "prizes": prizes_for(pot),
         "split": dict(SPLIT),
         "chyron": list(CHYRON_LINES if chyron is None else chyron),
@@ -521,7 +518,7 @@ class FakePi5:
                  events: Optional[List[Dict[str, Any]]] = None,
                  names: Optional[Dict[int, str]] = None,
                  renumbers: Iterable[Tuple[int, int]] = (),
-                 closes_at: Optional[float] = None, names_rev: int = 0,
+                 names_rev: int = 0,
                  results: Optional[Iterable[int]] = None, post_at: Any = _DEFAULT,
                  weather: Any = _DEFAULT, odds: Any = _DEFAULT) -> None:
         self._lock = threading.Lock()
@@ -534,7 +531,6 @@ class FakePi5:
         self.names: Dict[int, str] = dict(names or {})
         self.cup_of: Dict[int, int] = default_cups()
         self.replacements: Dict[int, int] = {}       # now -> was
-        self.closes_at: Optional[float] = closes_at
         self.names_rev = int(names_rev)
         self.results: Optional[Tuple[int, int, int]] = None      # (win, place, show)
         if results is not None and not self._set_results_locked(results):
@@ -559,7 +555,7 @@ class FakePi5:
         (apply_count)."""
         model = build_model(self.phase, self.tokens, self.scratched, self.offline, self.events,
                             names=self.names, cup_of=self.cup_of, replacements=self.replacements,
-                            closes_at=self.closes_at, names_rev=self.names_rev, results=self.results,
+                            names_rev=self.names_rev, results=self.results,
                             race=race_for(self.post_at), weather=self.weather, odds=self.odds)
         if self.phase in REOPEN_STATES:
             self.closing = None
@@ -1125,7 +1121,7 @@ def main() -> None:
     elif args.phase in ("redesign", "redesign-static"):
         fake = FakePi5(PHASES["open"], tokens=REDESIGN_TOKENS, scratched=REDESIGN_SCRATCHED, offline=(),
                        events=redesign_events(), names=REDESIGN_NAMES, renumbers=REDESIGN_RENUMBERS,
-                       closes_at=time.time() + REDESIGN_CLOSES_IN_S, names_rev=2)
+                       names_rev=2)
     elif args.phase in ("results", "results-static"):
         fake = FakePi5(PHASES["running" if args.phase == "results" else "winner"], tokens=RESULTS_TOKENS,
                        scratched=REDESIGN_SCRATCHED, offline=(), events=[], names=REDESIGN_NAMES,

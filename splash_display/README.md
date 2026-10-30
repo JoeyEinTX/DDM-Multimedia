@@ -287,7 +287,6 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   "updated": 1695400000.0,
   "board_states": [1, 2, 3, 4, 5],
   "now": 1695400003.2,
-  "closes_at": 1695400900.0,
   "prizes": {"win": 89, "place": 38, "show": 23},
   "split": {"win": 0.60, "place": 0.25, "show": 0.15},
   "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED",
@@ -347,9 +346,8 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   part of change detection, so the stream stays quiet between real
   changes). pi5 stamps it, and this relay stamps its own on every serve and
   publish rather than re-serving pi5's, so a page that loads on a quiet
-  board gets a fresh clock, not one as old as the last bet. `closes_at` is
-  when betting closes on that same clock, or `null`. The board counts down
-  from their difference. `names_rev` is the names
+  board gets a fresh clock, not one as old as the last bet. The crawl's
+  clock and time to post run on it. `names_rev` is the names
   store's revision: it bumps on any name change, replacement scratch or
   its undo and is persisted; a gateway (no-replacement) scratch is pi5's
   bridge state, versioned separately, and leaves it alone.
@@ -406,7 +404,7 @@ pi5 builds it; the splash serves it untouched apart from `link_ok`:
   own sets and read only that it is not empty (pi5 heard). Until pi5 has been heard the
   splash serves an empty model: `link_ok` false, race state 0,
   `token_value` 1.0, every horse unassigned, `board_states` `[]` (so the
-  board stays hidden), and none of the additive keys (`now`, `closes_at`,
+  board stays hidden), and none of the additive keys (`now`,
   `prizes`, `split`, `chyron`, `names_rev`, `scratches`, `results`,
   `closing`, `pot_scale`, `pot_counted`, `hand_counted`, `cups_online`,
   `cups_no_horse`, `race`, `weather`, `name`, `replaced`, `odds`,
@@ -501,9 +499,9 @@ contain `race_state`:
 
 | State | Banner | Rows, pot, prizes |
 | --- | --- | --- |
-| 1 `BETTING_OPEN` | BETTING OPEN (green), CLOSES IN under it | live |
-| 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing), CLOSES IN under it | live |
-| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED, no CLOSES IN line | **frozen**: the figures at the post, pi5's `closing` (names and the chyron stay live); back in 1 or 2 they go live again |
+| 1 `BETTING_OPEN` | BETTING OPEN (green) | live |
+| 2 `FINAL_CALL` | FINAL CALL (scarlet, pulsing) | live |
+| 3 `AT_THE_POST`, 4 `RUNNING` | BETTING CLOSED | **frozen**: the figures at the post, pi5's `closing` (names and the chyron stay live); back in 1 or 2 they go live again |
 | 5 `WINNER`, `payout` null | OFFICIAL RESULTS COMING (the text shrinks until the sign fits its 480 px cell) | still **frozen**: the betting board with the figures at the post |
 | 5 `WINNER`, `payout` in | OFFICIAL RESULTS (gold) | the **results screen** (below): who pays, from the same figures |
 
@@ -602,13 +600,13 @@ the live board follows pixel for pixel where practical):
   muted beside it (from `token_value`: `$1` while it is a whole number,
   else `$1.50`), the pot at 104 px (whole dollars while the token is,
   else two decimals), and under it three prize tiles `WIN $92` (gold
-  outline) `PLACE $39` `SHOW $23` from `prizes`. Right: the state banner
-  and under it `CLOSES IN 14:22`, counted down locally from `closes_at`
-  against the newest `now` the model carried (an older stamp never moves
-  it back), so the TV's clock never matters; at zero it reads
-  `CLOSING 0:00`; hidden when `closes_at` is null and in states 3 and
-  above. Every message carries a fresh `now` (pi5 and the relay both stamp
-  it at serve time), so a page that loads on a quiet board starts right.
+  outline) `PLACE $39` `SHOW $23` from `prizes`. Right: the state banner,
+  and nothing under it: no time for betting to close, the race states are
+  the host's to call (the countdown went on 2026-10-30). Every message
+  carries a fresh `now` (pi5 and the relay both stamp it at serve time), so
+  a page that loads on a quiet board starts right; the crawl's clock runs on
+  the newest `now` (an older stamp never moves it back), so the TV's clock
+  never matters.
   Tested at 16:9 (1920x1080) and 4:3 (1366x1024, a 12.9-inch iPad Pro in
   landscape): a board narrower than this layout (any 4:3 iPad, 1280x720)
   gets the header scaled down as one piece to the frame (`fitHeader`, 81 %
@@ -779,7 +777,7 @@ too, and under the results screen).
 
 **What the board reads.** Of the model: `race_state`, `board_states`,
 `link_ok`, `token_value`, `pot`, `horses[n].tokens / in_field / scratched /
-online / cup / name`, `events`, and the additive keys `now`, `closes_at`,
+online / cup / name`, `events`, and the additive keys `now`,
 `prizes`, `chyron`, `scratches`, `names_rev`, `results`, `closing`,
 `hand_counted` (the tag), `race` (the crawl's clock and time to post) and
 `weather`; the race
@@ -826,8 +824,7 @@ logged once. The page carries the look in the board's `data-look`.
   the state banner and the toast,
   which are signs, not tote fields; the `HAND COUNTED` tag, a label in
   Impact in every look; every label (`POT`, `WIN`, `HORSE`,
-  `BETS`, the results' `WIN / PLACE / SHOW`, the line under them) and the
-  `CLOSES IN` clock.
+  `BETS`, the results' `WIN / PLACE / SHOW`, the line under them).
 - **One layout.** Every box of the Impact look is where it was: header,
   columns, rows, cloths, chyron, the results rows. Measured on both
   screens, 79 boxes each: all within half a pixel of their Impact place
@@ -1069,7 +1066,7 @@ python tools/fake_pi5.py --phase results-static --counted 152   # the results sc
 
 The older phases carry no horse names, so the board shows `HORSE n`;
 every phase carries the full contract (horses 1-24 with `in_field`,
-`name`, `odds`, `replaced`, `conflict` and `cups`, `now`, `closes_at`, `prizes`,
+`name`, `odds`, `replaced`, `conflict` and `cups`, `now`, `prizes`,
 `split`, `chyron`, `names_rev`, `scratches` in the record shape,
 `cups_online`, `cups_no_horse`, `results`, `race`, `weather`, and `closing`, taken and dropped
 by pi5's rule: the first time the state is 3, 4 or 5 with none held, and in

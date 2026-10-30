@@ -127,8 +127,8 @@ class BoardRelay:
     when the model is serialised (model(), model_json(), each publish), never
     stored and never part of the changed-comparison. pi5 stamps its own at
     its serialisation, so re-serving that text would hand a TV that loads on
-    a quiet board a clock as old as the last bet, and its CLOSES IN countdown
-    would run long by that much. The stamp is only added once pi5 has sent a
+    a quiet board a clock as old as the last bet, and the crawl's time to
+    post would run long by that much. The stamp is only added once pi5 has sent a
     model with one, so the empty model keeps its shape.
 
     clock is a monotonic seconds source (contact timing); wall is unix time

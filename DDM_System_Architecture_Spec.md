@@ -152,7 +152,7 @@ All tables live in pi5's one SQLite file, `pi5/data/la_subasta.db`, shared with 
 | `lq_horses` | Names for horses 1–24 (1–20 the field, 21–24 the also-eligibles) |
 | `lq_scratches` | One row per scratch: the horse that left, and the horse standing in (or none) |
 | `lq_scratch_names` | What a replacement scratch did to the new number's name, so Undo can put it back |
-| `lq_board` | Names revision, the betting close time |
+| `lq_board` | Names revision |
 | `lq_closing` | The figures at the post (section 6) |
 | `lq_race` | Race name, year, post time |
 | `pi5/data/results.json` | The race's result: WIN, PLACE, SHOW horse numbers, the real finish, and `next`, the finishers after SHOW when one of the three had no bets at the post. The single store: the dashboard writes it, La Quiniela reads the three (`read_results()`) and whoever pays reads the record (`BettingBoard.results()`) |
@@ -538,7 +538,7 @@ Rules for either:
 | SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [BUILT] | Figures: pot, prizes, bets |
 | RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
 | Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept; only in 0 or 6 |
-| | Race info, horse names, scratches and undo, the betting close time |
+| | Race info, horse names, scratches and undo |
 
 - **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, BUILT]
 - **Nothing drops the figures at the post by accident.** [DECIDED 2026-10-13, BUILT]

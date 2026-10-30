@@ -132,7 +132,7 @@ for n in range(1, 22):
 c.execute("UPDATE lq_race SET name='TEST DERBY', year=2027, post_at=1809208620 WHERE id=1")
 c.execute("INSERT INTO lq_scratches (was, now) VALUES (9, 22)")
 c.execute("INSERT INTO lq_scratch_names (was, now, name_before, name_set) VALUES (9, 22, '', ?)", (f"{mark} OCELLI",))
-c.execute("UPDATE lq_board SET names_rev=7, closes_at=1809205000 WHERE id=1")
+c.execute("UPDATE lq_board SET names_rev=7 WHERE id=1")
 c.execute("UPDATE lq_link_state SET state_rev=33, state_json=? WHERE id=1",
           (json.dumps({"phase": 5, "scratched": [9, 14], "renum": [[9, 22]], "results": [7, 3, 12]}),))
 c.execute("UPDATE lq_closing SET closing=? WHERE id=1", (json.dumps(
@@ -414,7 +414,6 @@ def test_dry_run_changes_nothing():
         "Horse names .......... 22 named: 1-22",              # 22 is only in the -wal
         "Race info ............ TEST DERBY 2027, post 2027-05-",
         "Scratches ............ 2: 9 -> 22, 14 no replacement (and 1 name for Undo)",
-        "Betting closes ....... 2027-05-0",
         "Race state ........... 5 WINNER",
         "Figures at the post .. present: pot $34, 34 tokens",
         "Counted pot .......... $36 (the hand count)",
@@ -621,7 +620,7 @@ def test_pi5_starts_fresh_after_the_wipe():
                m.get("closing") is None and m.get("pot_counted") is None and not m.get("hand_counted"))
         _check("no results", m.get("results") is None)
         _check("no race info", m["race"].get("post_at") is None and m["race"].get("year") is None)
-        _check("no closing time, names counter 0", m.get("closes_at") is None and m.get("names_rev") == 0)
+        _check("names counter 0", m.get("names_rev") == 0)
         _check("pot 0, no tokens", m.get("pot") == 0 and m.get("total_tokens") == 0)
     status, s = wiped["/la-subasta/api/state"]
     _check("La Subasta: not started, no guests, no bids, pot 0",

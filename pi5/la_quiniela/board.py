@@ -7,8 +7,8 @@
 # headers are part of the contract with the page.
 #
 # Then the operator's side: horse names (1..24; 21..24 the also-eligibles),
-# the two kinds of scratch, the closing time (GET/PUT /api/quiniela/horses,
-# POST /api/quiniela/scratch and /unscratch, PUT /api/quiniela/closes_at),
+# the two kinds of scratch (GET/PUT /api/quiniela/horses,
+# POST /api/quiniela/scratch and /unscratch),
 # the race itself (GET/PUT /api/quiniela/race: its name and post time, the
 # one store of race information), the real track's odds for the slideshow
 # (GET/PUT /api/quiniela/odds, POST /api/quiniela/odds/start and /stop), the
@@ -66,7 +66,6 @@ DEMO_REFUSED = ("demo is not routed through pi5: the bridge speaks the JSON line
 JSON_REFUSED = ("json is not routed through pi5: the bridge already reads the gateway's "
                 "protocol, and the up state line is the gateway's report, not a command")
 USAGE_STATE = "usage: state 0-6"
-USAGE_CLOSES_AT = 'usage: {"at": <unix time>} | {"in_minutes": N} | {"at": null}'
 REPLACEMENT_SHAPE = 'replacement must be {"number": N, "name": "..."}'
 USAGE_RACE = ('usage: {"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"} (the race\'s clock; '
               '"" for both clears the post time) | {"post_at": <unix time> | null}')
@@ -342,20 +341,20 @@ def api_quiniela_mode_set():
 
 
 # -----------------------------------------------------------------------------
-# Names, scratches, closing time, the reset and the admin page
+# Names, scratches, the reset and the admin page
 # -----------------------------------------------------------------------------
 
 @quiniela_board_bp.route("/api/quiniela/reset", methods=["POST"])
 def api_quiniela_reset():
     """The between-races reset. Not a dev route: it is the button on the
     admin page. Betting starts over: PRE_RACE, the results cleared (the
-    dashboard's file too), the closing time cleared, the ticker cleared, the
+    dashboard's file too), the ticker cleared, the
     cups' current counts the new baseline so nothing shows as a bet. Names
     and both kinds of scratch are untouched; the cups keep their numbers,
     which are theirs. Tokens still in a cup are not an error: the pot reads
     them and "horses_with_tokens" says which horses. Reply: {"ok": true,
     "race_state": 0, "pot", "total_tokens", "horses_with_tokens",
-    "cups_online", "events": 0, "closes_at": null, "rev", "gateway_online",
+    "cups_online", "events": 0, "rev", "gateway_online",
     "names_rev"}. Only before the race (0) or after it (6): in 1-5 it is a
     409 with RESET_REFUSED and nothing moves."""
     board = get_board()
@@ -656,33 +655,6 @@ def api_quiniela_counted_pot():
     return jsonify({"ok": True, **done})
 
 
-@quiniela_board_bp.route("/api/quiniela/closes_at", methods=["PUT"])
-def api_quiniela_closes_at():
-    """{"at": <unix time>} sets it, {"in_minutes": 30} counts from the
-    server's clock, {"at": null} clears it."""
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
-        return _bad("body must be a JSON object")
-    board = get_board()
-    if "at" in body:
-        when = body["at"]
-        if when is not None and (isinstance(when, bool) or not isinstance(when, (int, float))):
-            return _bad(USAGE_CLOSES_AT)
-    elif "in_minutes" in body:
-        minutes = body["in_minutes"]
-        if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or minutes < 0:
-            return _bad(USAGE_CLOSES_AT)
-        when = board.now() + float(minutes) * 60.0
-    else:
-        return _bad(USAGE_CLOSES_AT)
-    try:
-        board.store.set_closes_at(when)
-    except ValueError as exc:
-        return _bad(str(exc))
-    board.refresh()
-    return jsonify({"ok": True, "closes_at": board.store.closes_at})
-
-
 @quiniela_board_bp.route("/api/quiniela/race", methods=["GET"])
 def api_quiniela_race():
     """The race as the model has it, plus the post time's date and time on
@@ -796,8 +768,8 @@ def api_quiniela_odds_stop():
 @quiniela_board_bp.route("/quiniela/admin", methods=["GET"])
 def quiniela_admin_page():
     """The phone page: the Race section (the race state read-only, the
-    figures, Reset betting, the Horses list), then the race's name and post time, names,
-    scratches and the closing time. It carries pi5's page revision and
+    figures, Reset betting, the Horses list), then the race's name and post time,
+    names and scratches. It carries pi5's page revision and
     reloads itself, when idle, once a model read says pi5 serves another
     (page_rev.py, static/js/page_rev.js)."""
     return render_template("quiniela_admin.html")

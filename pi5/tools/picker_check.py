@@ -1034,10 +1034,6 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "names Reload", "#names-reload", False),
     ("admin page", "names Save names", "#names-save", False),
     ("admin page", "race info Save race info", "#race-save", False),
-    ("admin page", "close time field", "#closes-input", False),
-    ("admin page", "close time Set", "#closes-set", False),
-    ("admin page", "close time +15 / +30 / +60", "#closes button[data-min]", True),
-    ("admin page", "close time Clear", "#closes-clear", False),
 ]
 WHERE = ("Control Center", "drawer", "SET WINNERS", "SET WINNERS dead heat", "reveal", "ask first", "admin page before the gate", "admin page")
 

@@ -81,7 +81,7 @@ CONTRACT_KEYS = {
 # the keys added with the payout model, those added with protocol v2, and the
 # figures at the post (closing).
 PI5_MODEL_KEYS = CONTRACT_KEYS | {
-    "now", "closes_at", "prizes", "split", "chyron", "names_rev", "scratches",
+    "now", "prizes", "split", "chyron", "names_rev", "scratches",
     "cups_online", "cups_no_horse", "results", "closing",
     "payout",                               # La Quiniela's payout from the record and the figures at the post (M6)
     "race", "weather",                      # race info lives in La Quiniela; pi5's weather for the crawl
@@ -393,24 +393,21 @@ class RelayTests(RelayCase):
 
     def test_now_is_stamped_at_serve_time_never_stored(self) -> None:
         # pi5 stamps "now" when it serialises; the relay must do the same, or a
-        # TV loading on a quiet board would anchor CLOSES IN to a clock as old
+        # TV loading on a quiet board would anchor the crawl's clock to one as old
         # as the last bet. Found on the 2026-09-25 verification run.
         self.assertNotIn("now", self.board.model(), "no stamp before pi5 has sent one")
-        m = pi5_model(tokens={7: 1}, closes_at=1_600_001_000.0, now=1_600_000_000.0)
+        m = pi5_model(tokens={7: 1}, now=1_600_000_000.0)
         self.assertTrue(self.board.apply_model(m))
         self.wall.advance(218)
         served = self.board.model()
         self.assertEqual(served["now"], self.wall.now, "fresh, not pi5's 218 s old stamp")
-        self.assertEqual(served["closes_at"], 1_600_001_000.0)
         self.assertEqual(json.loads(self.board.model_json())["now"], self.wall.now)
         # The same picture with a newer stamp is not a change.
-        self.assertFalse(self.board.apply_model(pi5_model(tokens={7: 1}, closes_at=1_600_001_000.0,
-                                                          now=1_600_000_100.0)))
+        self.assertFalse(self.board.apply_model(pi5_model(tokens={7: 1}, now=1_600_000_100.0)))
         # A publish carries a fresh stamp too.
         q = self.board.subscribe()
         self.wall.advance(1)
-        self.assertTrue(self.board.apply_model(pi5_model(tokens={7: 2}, closes_at=1_600_001_000.0,
-                                                         now=1_600_000_200.0)))
+        self.assertTrue(self.board.apply_model(pi5_model(tokens={7: 2}, now=1_600_000_200.0)))
         self.assertEqual(json.loads(q.get_nowait())["now"], self.wall.now)
         # ...and so does the link_ok flip a tick publishes.
         self.clock.advance(quiniela.LINK_TIMEOUT_S + 1)
@@ -1208,11 +1205,10 @@ BOARD_PROBE_JS = r"""
         fig.selectNodeContents(document.getElementById('qb-pot'));
         const fb = fig.getBoundingClientRect();
         const tag = document.getElementById('qb-counted');
-        const closes = document.getElementById('qb-closes');
         const header = { pot: box('#qb-pot'), figure: [r2(fb.left), r2(fb.top), r2(fb.width), r2(fb.height)],
                          label: box('.qb-pot-label'), win: box('.qb-prize--win'), place: box('.qb-prizes .qb-prize:nth-child(2)'),
                          show: box('.qb-prizes .qb-prize:nth-child(3)'), banner: box('#qb-banner'), logo: box('.qb-logo'),
-                         frame: box('#quiniela-board'), closes: closes.classList.contains('is-visible') ? box('#qb-closes') : null,
+                         frame: box('#quiniela-board'),
                          sign: document.getElementById('qb-banner-text').textContent,
                          transform: getComputedStyle(document.querySelector('.qb-header')).transform };
         // The tag's lettering: its computed face, size, colour and box; the width of its text (a Range, so the pill's
@@ -1769,8 +1765,8 @@ class HeaderFitTests(unittest.TestCase):
     on a narrower board the JS scales it down as one piece to the frame
     (fitHeader), and at 16:9 it sets nothing. In headless Chrome with the
     stylesheet and the faces, in all three looks, at 1366 x 1024 and 1920 x
-    1080, through every state that shows the board: BETTING OPEN with the
-    CLOSES IN clock, FINAL CALL, BETTING CLOSED at the post with a hand count,
+    1080, through every state that shows the board: BETTING OPEN,
+    FINAL CALL, BETTING CLOSED at the post with a hand count,
     RUNNING, OFFICIAL RESULTS COMING and the results screen. The feed is
     tools/fake_pi5.py's 2026 race."""
 
@@ -1783,9 +1779,9 @@ class HeaderFitTests(unittest.TestCase):
         fake = fake_pi5.FakePi5(fake_pi5.PHASES["open"], tokens=fake_pi5.RESULTS_TOKENS,
                                 scratched=fake_pi5.REDESIGN_SCRATCHED, offline=(), events=[],
                                 names=fake_pi5.REDESIGN_NAMES, renumbers=fake_pi5.REDESIGN_RENUMBERS,
-                                closes_at=time.time() + 15 * 60, names_rev=2)
+                                names_rev=2)
         snap = lambda: json.loads(fake.model_json())          # noqa: E731
-        models = [snap()]                                     # 1, CLOSES IN under the sign
+        models = [snap()]                                     # 1
         fake.set_phase(fake_pi5.PHASES["final"])
         models.append(snap())                                 # 2
         fake.set_phase(fake_pi5.PHASES["closed"])
@@ -1849,8 +1845,17 @@ class HeaderFitTests(unittest.TestCase):
     def test_the_models_are_what_the_tests_say(self) -> None:
         self.assertEqual([m["race_state"] for m in self.models], [1, 2, 3, 4, 5, 5])
         self.assertEqual([m["hand_counted"] for m in self.models], [False, False, True, True, True, True])
-        self.assertIsNotNone(self.models[0]["closes_at"])
         self.assertEqual((self.models[4]["results"], self.models[5]["results"] is not None), (None, True))
+
+    def test_nothing_counts_down_to_a_close(self) -> None:
+        """The betting-closes time went (2026-10-30): the race states are the host's to call, so the board shows the
+        state in its banner and nothing else under it. No model carries a time, and the page, its script and its
+        styles have no line for one."""
+        self.assertTrue(all("closes_at" not in m for m in self.models))
+        for path in ("templates/splash/quiniela_live.html", "static/js/quiniela_board.js", "static/css/quiniela_board.css"):
+            text = (HERE / path).read_text(encoding="utf-8")
+            for word in ("closes_at", "qb-closes", "CLOSES IN"):
+                self.assertNotIn(word, text, f"{path}: {word}")
 
     def test_the_sign_is_whole_inside_the_frame_and_clear_of_the_pot_and_the_prizes(self) -> None:
         for run, sign, reading in self.readings():
@@ -1863,7 +1868,7 @@ class HeaderFitTests(unittest.TestCase):
             self.assertFalse(self.overlap(head["banner"], self.figure(head)), f"{where}: the sign clear of the POT figure")
 
     def test_the_rest_of_the_header_is_inside_the_frame_and_nothing_overlaps(self) -> None:
-        # The logo, the POT label, the prizes, CLOSES IN under the sign and the HAND COUNTED tag by the figure: each
+        # The logo, the POT label, the prizes, the sign and the HAND COUNTED tag by the figure: each
         # whole in the frame, and none on another (the tag was placed before the results screen took the prizes away
         # and narrowed the header's middle column, and stayed on the figure).
         for run, sign, reading in self.readings():
@@ -1871,8 +1876,6 @@ class HeaderFitTests(unittest.TestCase):
             parts = {name: head[name] for name in ("logo", "label", "win", "place", "show") if head[name][2]}
             parts["figure"] = self.figure(head)
             parts["sign"] = head["banner"]
-            if head["closes"]:
-                parts["closes in"] = head["closes"]
             if reading["counted"]["on"]:
                 parts["hand counted"] = reading["counted"]["rect"]
             for name, box in parts.items():
@@ -2717,7 +2720,7 @@ class StepCrawlSourceTests(unittest.TestCase):
         self.assertIn("requestAnimationFrame(crawlFrame)", self.JS)
         self.assertIn("function crawlFrame(now)", self.JS)
         timers = re.findall(r"setInterval\((\w+)", self.JS)
-        self.assertEqual(sorted(timers), ["tickCloses", "tickLive", "updateNoLink"], "no timer steps the crawl: " + str(timers))
+        self.assertEqual(sorted(timers), ["tickLive", "updateNoLink"], "no timer steps the crawl: " + str(timers))
         frame = self.JS[self.JS.index("function crawlFrame(now)"):self.JS.index("function crawlStart()")]
         self.assertNotIn("setTimeout", frame)
         self.assertIn("(now - crawlClock.t0) / stepMs", frame, "step n is due at n / rate after the crawl started: a late frame does not drift it")
@@ -3160,7 +3163,7 @@ class HarnessTests(unittest.TestCase):
             self.assertIn(name, names.values())
         too_long = sorted(n for n, name in names.items() if len(name) > 20 - len(str(counts[n])) - 1)
         self.assertEqual(too_long, [6, 11, 20], "three rows scroll at 1920 px, and 2 from 10 bets")
-        self.assertIsNone(m["closes_at"], "no countdown: nothing on the board ticks by itself")
+        self.assertNotIn("closes_at", m, "no countdown: nothing on the board ticks by itself")
         self.assertEqual(counts[fake_pi5.STRIP_BUMP_HORSE], 7)
         seen = [fake_pi5.strip_bet(fake) for _ in range(7)]
         self.assertEqual(seen, [8, 9, 10, 11, 12, 7, 8], "7 -> 12, crossing 9 -> 10, then back to 7")

@@ -119,22 +119,6 @@
   <div id="scratch-status" class="status"></div>
 </section>
 
-<section id="closes">
-  <h2>Betting closes</h2>
-  <div id="closes-current" class="note">not set</div>
-  <div class="row">
-    <input id="closes-input" type="datetime-local" step="60">
-    <button id="closes-set" class="primary">Set</button>
-  </div>
-  <div class="row">
-    <button data-min="15">+15 min</button>
-    <button data-min="30">+30 min</button>
-    <button data-min="60">+60 min</button>
-    <button id="closes-clear" class="danger">Clear</button>
-  </div>
-  <div id="closes-status" class="status"></div>
-</section>
-
 <script>
 (function () {
   "use strict";
@@ -216,8 +200,7 @@
     for (n in model.horses) { m = model.horses[n]; if (!m.scratched) { bets += m.tokens || 0; } }
     $("pills").innerHTML =
       '<span class="pill ' + (model.link_ok ? "up" : "down") + '">' + (model.link_ok ? "LINK OK" : "NO LINK") + "</span>" +
-      '<span class="pill">' + (model.cups_online || 0) + " cups online</span>" +
-      (model.closes_at != null ? '<span class="pill">closes set</span>' : "");
+      '<span class="pill">' + (model.cups_online || 0) + " cups online</span>";
     var line = stateLine(model.race_state);
     renderState(line || "unknown state", !!line);
     var p = model.prizes || {}, outOfPot = (model.total_tokens || 0) - bets;
@@ -227,7 +210,6 @@
     $("fig-bets-lbl").textContent = "Bets" + (outOfPot > 0 ? " (+" + outOfPot + " in scratched cups)" : "");
     renderFigureLabels();
     renderCounted();
-    renderCloses();
     renderHorses();
     renderResults();
   }
@@ -287,7 +269,7 @@
     var gone = ["the results"];
     if (model && model.pot_scale != null) { gone.push("the figures at the post (pot " + money(model.pot_scale) + ")"); }
     if (model && model.pot_counted != null) { gone.push("the hand count (" + money(model.pot_counted) + ")"); }
-    gone.push("the ticker", "the closing time");
+    gone.push("the ticker");
     return gone.slice(0, -1).join(", ") + " and " + gone[gone.length - 1];
   }
   $("reset-betting").onclick = function () {
@@ -703,35 +685,6 @@
   });
   $("scratched-list").addEventListener("click", onScratchClick);
 
-  // ---- betting closes ----------------------------------------------------------
-  function localInputValue(epoch) {
-    var d = new Date(epoch * 1000), pad = function (x) { return (x < 10 ? "0" : "") + x; };
-    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
-  }
-  function renderCloses() {
-    var at = model && model.closes_at;
-    if (at == null) { $("closes-current").textContent = "not set"; return; }
-    var mins = Math.round((at - (model.now || Date.now() / 1000)) / 60);
-    $("closes-current").textContent = "closes " + new Date(at * 1000).toLocaleString() +
-      (mins >= 0 ? " (in " + mins + " min)" : " (" + (-mins) + " min ago)");
-    if (document.activeElement !== $("closes-input")) { $("closes-input").value = localInputValue(at); }
-  }
-  function putCloses(body) {
-    say("closes-status", "saving…");
-    holding([].slice.call(document.querySelectorAll("#closes button")), api("PUT", "/api/quiniela/closes_at", body).then(function (r) {
-      if (!r.ok) { say("closes-status", r.body.error || "error " + r.status, "err"); return; }
-      say("closes-status", r.body.closes_at == null ? "Cleared" : "Set", "ok"); loadModel();
-    }).catch(fail("closes-status")));
-  }
-  $("closes-set").onclick = function () {
-    var v = $("closes-input").value; if (!v) { say("closes-status", "pick a date and time", "err"); return; }
-    putCloses({ at: new Date(v).getTime() / 1000 });
-  };
-  $("closes-clear").onclick = function () { putCloses({ at: null }); };
-  Array.prototype.forEach.call(document.querySelectorAll("#closes button[data-min]"), function (b) {
-    b.onclick = function () { putCloses({ in_minutes: Number(b.getAttribute("data-min")) }); };
-  });
-
   // Opened from the iPad's Home Screen, the page runs full screen: no tabs, so
   // the link to the Control Center opens in place, not in its named tab, and
   // replaces this page rather than stacking on it (a Control Center kept for
@@ -748,7 +701,7 @@
 
   loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
   loadRace().catch(fail("race-status"));
-  // Reset betting, the race info, the names, Set/Clear and Scratch/Undo each
+  // Reset betting, the race info, the names and Scratch/Undo each
   // report into their own status line; nothing on this page fails silently.
   setInterval(function () { loadModel(false); }, 5000);
 })();

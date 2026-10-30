@@ -110,7 +110,7 @@ then refuses to start. The one exception is the protocol v1 shape, which
 | `lq_scratch_entered` | one row per scratch record entered since it exists: `was` (PK), `state` (the race state at entry, 0..6), `at` (unix time). The model's `rebet` comes from it; a record without a row is from before it and reads as before. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`) |
 | `lq_scratch_names` | one row per replacement record whose scratch changed its now's name: `was` (PK, the record's), `now`, `name_before` (`''` for none), `name_set`. Undo puts `name_before` back while the name is still `name_set`, and drops the row; a record without a row (one from before this table, or one whose scratch kept the stored name) leaves the name. Added at start like `lq_closing` |
 | `lq_renum_undo` | one row per undone replacement whose cup may still need bringing back: `now` (PK, 1..24, the number the cup took), `was` (the number it goes back to), `undone_at` (unix time). Written by Undo; dropped once the undo is settled or `now` is a replacement again ("Renumber pairs: derived and acknowledged", below), so an undo outlives a restart. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`) |
-| `lq_board` | one row: `names_rev`, `closes_at` (unix time or NULL) |
+| `lq_board` | one row: `names_rev` (a database from before 2026-10-30 had a `closes_at` column too: the betting-closes time went, and `init_schema()` rebuilds the table without it) |
 | `lq_closing` | one row: `closing`, the board's figures at the post as JSON (the model's `closing`, below), or NULL while there are none. A database from before it gains it at start (`CREATE TABLE IF NOT EXISTS`); nothing else changes. While the host's hand count is held it is one more key of this JSON, `pot_counted` (whole dollars), so the count is saved, held and dropped exactly as the figures are ("The counted pot", below); no schema change |
 | `lq_race` | one row, the race: `name` (as typed, `''` for the default KENTUCKY DERBY), `year`, `post_at` (unix time; NULL while unset), `migrated` (1 once the old Race Setup file has been looked at). Reset betting never touches it. Added at start like `lq_closing` |
 
@@ -974,7 +974,6 @@ its appendix. Top to bottom:
   picked is `Test`, in the confirm step and the record; another horse's
   number in front is refused in the row, nothing sent: `You typed #22 but
   #21 is selected. Pick #22 in the list, or take it out of the name.`
-- **Betting closes**: a date-time picker plus +15 / +30 / +60 min and Clear.
 
 Everything refreshes every 5 s from `GET /api/quiniela` alone, and every
 button reports into its own status line (the pressed row's, for a scratch),
@@ -1139,7 +1138,6 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `POST /api/quiniela/scratch` | `{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}` -> the renumber (kind 1): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 9, or null>", "renum": [9, 22], "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}, "now": {"number": 22, "name": "Ocelli"}}` (names as typed). `name` is optional (22 keeps its stored name). 400 `horse 9 is not in the field`, `horse 9 is already scratched`, `22 is in use`, `replacement number must be 1-24`, `replacement must be {"number": N, "name": "..."}` (a bare string or any other shape); 409 `The results are in, so the field is frozen: ...` while a result stands (either kind, and `unscratch`). `{"horse": 9}` (or `"replacement": null`) -> kind 2: recorded (`was` 9, `now` NULL) whether or not a cup says 9, the bit in the state line: `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": true, "refund": false, "rev": R, "gateway_online": bool, "names_rev": N, "was": {"number": 9, "name": "Encino"}}`. From AT THE GATE on (race states 3 to 6, `POST_HELD_STATES`) the field is set and a scratch has no replacement (Joey, 2026-10-23): a replacement is refused, 409 `The field is set at the gate: from AT THE GATE on a scratch has no replacement, and the tokens in its cup are refunded in cash. Scratch it with no replacement.`, and a scratch with no replacement answers `"refund": true`. Both work without a bridge (recorded, `cup` null, `rev` null). |
 | `POST /api/quiniela/unscratch` | `{"horse": 9}` reverses either kind: if 9 is the `was` of a record, the record is removed (22's name goes back to what it was before the scratch: cleared if the scratch gave it, kept if it was entered ahead), `names_rev` bumps and the undo is kept (`lq_renum_undo`): the pair `[22, 9]` goes down whenever a cup reports 22, with no time limit, until the cups have settled on 9 ("Renumber pairs: derived and acknowledged", above): `{"ok": true, "kind": "replacement", "cup": "<MAC of the cup saying 22, or null>", "renum": [22, 9], "rev": R, "gateway_online": bool, "names_rev": N, "was": {...}, "now": {...}}` (400 `horse 9: undo 22 first` while a record 22 -> 23 stands: a chain is undone last record first; 409 `Cup 9 holds 4 tokens bet on #22. Hand them back and empty the cup, then Undo.` from 60 MIN to WINNER while 22's cup holds tokens: they are bets on 22 and would go with the cup to 9 (`BETS_STAND_STATES`; Joey, 2026-10-28)); else the kind 2 undo: the record goes and the bit leaves the line, `{"ok": true, "kind": "gateway", "horse": 9, "cup": "<MAC or null>", "scratched": false, "rev": R, "gateway_online": bool, "names_rev": N}`; 400 `horse 9 is not scratched` when neither applies. |
 | `GET /api/quiniela/field` | The field by post, for the dashboard's SET WINNERS pickers and its results tote: `{"names_rev": N, "posts": [{"post": 9, "horse": 22, "name": "OCELLI", "label": "22 · OCELLI", "replaces": 9}, ...], "names": {"1": "DORNOCH", ..., "24": ""}}`, `Cache-Control: no-store`. A post is a place on the mantle, 1..20, and the LED cup there. `posts` has one entry per post somebody runs from, in post order (the SET WINNERS page sorts them by horse for its grid): the post's own horse, or the one standing in for it (the cup was renumbered and nothing moved, so 22 runs from post 9 and `replaces` says so; a chain 9 -> 22 -> 23 gives 23); a post whose horse was scratched with no replacement has no entry. Names are upper-cased, `""` where none is stored (the label then says `HORSE n`); `names` carries all 24. Works without a bridge. |
-| `PUT /api/quiniela/closes_at` | `{"at": <unix time>}`, `{"in_minutes": 30}` (from the server's clock) or `{"at": null}` -> `{"ok": true, "closes_at": ...}`. |
 | `PUT /api/quiniela/counted_pot` | The host's hand count of the cash box: `{"amount": 152}` sets it (whole dollars, 0 to 10000; again overwrites), `{"amount": null}` clears it. `{"ok": true, "pot_counted": 152, "pot_scale": 154.0, "pot": 152.0, "prizes": {"win": 91, "place": 38, "show": 23}, "hand_counted": true, "race_state": 3, "saved": true}`. 400 `the count must be a whole number of dollars, 0 to 10000 ...` for anything else (a float, a string, a bool, a negative, over the ceiling) or a body with no `amount`; 409 when the race is not in 3, 4 or 5 (in 6 a saved count is read-only) or there are no figures at the post yet. See "The counted pot". |
 | `GET /api/quiniela/race` | `{"ok": true, "race": {...the model's race...}, "name": "Kentucky Derby", "date": "2027-05-01", "time": "17:57"}`: the name as typed, the post time's date and time on the race's clock (null while unset), what the admin page's form shows. `Cache-Control: no-store`. |
 | `PUT /api/quiniela/race` | `{"name": "...", "date": "YYYY-MM-DD", "time": "HH:MM"}`, any part left out left alone; date and time on the race's clock and together (400 `date and time go together ...`), both `""` clear the post time and the year. Or `{"post_at": <unix time> or null}`. 400 for a date or time that does not parse, a name over 80 characters. Returns what GET does. |
@@ -1147,7 +1145,7 @@ The blueprint `quiniela_board_bp` has no URL prefix, so the paths are exactly:
 | `PUT /api/quiniela/odds` | `{"odds": {"1": "5-2", ...}}` replaces them all (by hand: the morning line), `{"odds": null}` clears them. Numbers 1..24, non-empty values of at most 7 characters, upper-cased; the rest dropped. |
 | `POST /api/quiniela/odds/start` | `{"interval": 300}` (optional; 60 at least): the poller runs. 503 `ANTHROPIC_API_KEY not configured`, 409 when it already runs. |
 | `POST /api/quiniela/odds/stop` | `{"ok": true, "stopped": bool}`. |
-| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing time and the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). Only before the race (0) or after it (6): in 1–5 a 409, `{"ok": false, "error": "Reset betting works only before the race (0) or after it (6). Change the race state on the Control Center."}`, and nothing moves (Joey, 2026-10-13: the Control Center stays the one place that changes the race state). `reset_betting()` itself does not check; the route does. |
+| `POST /api/quiniela/reset` | The between-races reset, `reset_betting()`: PRE_RACE and the results cleared (the dashboard's file too) in one state line, the scratched bits and renumber pairs kept; the closing figures (`closing`) cleared, the ticker cleared, the cups' current counts the new baseline so nothing shows as a bet; names and both kinds of scratch untouched; the cups keep their numbers, which are theirs. Tokens still in a cup are not an error, the pot reads them: `{"ok": true, "race_state": 0, "pot": 15.0, "total_tokens": 15, "horses_with_tokens": [9, 21], "cups_online": 20, "events": 0, "closes_at": null, "rev": R or null, "gateway_online": bool, "names_rev": N}`. Works without a bridge (`rev` null). Only before the race (0) or after it (6): in 1–5 a 409, `{"ok": false, "error": "Reset betting works only before the race (0) or after it (6). Change the race state on the Control Center."}`, and nothing moves (Joey, 2026-10-13: the Control Center stays the one place that changes the race state). `reset_betting()` itself does not check; the route does. |
 | `GET /quiniela/admin` | The admin page above. |
 
 These operator routes refresh the model synchronously before answering, so a
@@ -1160,8 +1158,6 @@ curl -X PUT  localhost:5000/api/quiniela/horses    -H 'Content-Type: application
 curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9, "replacement": {"number": 22, "name": "Ocelli"}}'
 curl -X POST localhost:5000/api/quiniela/scratch   -H 'Content-Type: application/json' -d '{"horse": 9}'
 curl -X POST localhost:5000/api/quiniela/unscratch -H 'Content-Type: application/json' -d '{"horse": 9}'
-curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"in_minutes": 30}'
-curl -X PUT  localhost:5000/api/quiniela/closes_at -H 'Content-Type: application/json' -d '{"at": null}'
 curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": 152}'
 curl -X PUT  localhost:5000/api/quiniela/counted_pot -H 'Content-Type: application/json' -d '{"amount": null}'
 curl -X POST localhost:5000/api/quiniela/reset
@@ -1190,7 +1186,6 @@ rewrites `Cache-Control`.
  "updated": 1777662847.2,
  "board_states": [1, 2, 3, 4, 5],
  "now": 1777662850.4,
- "closes_at": 1777664400.0,
  "prizes": {"win": 20, "place": 8, "show": 5},
  "split": {"win": 0.6, "place": 0.25, "show": 0.15},
  "chyron": ["TOTALS BASED ON CHEAP CHINESE ELECTRONICS - FINAL RESULTS HAND COUNTED",
@@ -1293,9 +1288,10 @@ the store and the results file as follows:
 - `now`: the server's clock, stamped when the model is serialised (`GET
   /api/quiniela`, every SSE chunk), never stored and never part of the
   changed-comparison, so the stream stays quiet between real changes. The
-  page counts down `closes_at` against it rather than the phone's clock.
-- `closes_at`: unix time or `null`, from `PUT /api/quiniela/closes_at`.
-  `reset_betting()` clears it; names survive.
+  TV's crawl counts the time to post against it rather than its own clock.
+  There is no time for betting to close: the race states are the host's to
+  call, and the board shows the state (the betting-closes time and the TV's
+  CLOSES IN went on 2026-10-30).
 - `prizes`: `{"win", "place", "show"}` whole dollars summing to `pot`, by the
   rule above (from the count when the pot is hand counted). `split`: the
   three fractions from config.
@@ -1433,7 +1429,6 @@ Two modes of one state (60 MIN, then 30 MIN) send nothing the second time.
   dashboard reads the state back every 5 s, and again when a tap could
   reopen betting, so a state set by a curl is what its confirm goes by (it
   has no ticker since 2026-10-13: the TV's crawl is the only crawl).
-- `closes_at` is untouched by all of it: the countdown is still manual.
 - Not part of it: the mock racing service (`/api/racing/*`, the dashboard's
   AUTO / MANUAL switch, states DORMANT .. OFFICIAL). In AUTO it drives the
   LEDs by itself and the mode buttons are disabled; La Quiniela does not
@@ -1581,12 +1576,12 @@ holding an undo, the ten-minute rule (heard 11 minutes before a scratch:
 not late; 9 minutes: late), a ghost that turns up following its pair,
 no model change every second while a cup is late, the four-slot cap; a scratch before any cup says the horse; the in_field rule; the unused-number and not-in-the-field
 rejections), the results file into the state line and out again on reset,
-the names text parser for 24 lines, the closing time, the between-races
+the names text parser for 24 lines, the between-races
 one race state (each of the dashboard's twelve modes against the table,
 `TEST` refused, byte-exact lines, the cmd route setting the
 same value, WINNER and the results in one line), the between-races
 reset (one byte-exact PRE_RACE line with the bits and pairs kept and the
-results cleared, the ticker and `closes_at` zeroed, the tokens still in the
+results cleared, the ticker zeroed, the tokens still in the
 cups read and their horses named; a 409 with nothing moved in each of 1–5),
 the closing figures (taken on 2 -> 3,
 0 -> 3, 1 -> 4 and 1 -> 5, in the very model that first says the closed

@@ -1,4 +1,4 @@
-# la_quiniela/horses.py - Horse names, replacement scratches and the closing time
+# la_quiniela/horses.py - Horse names and replacement scratches
 #
 # What the betting board knows about a horse beyond its cup: a name typed by
 # the operator, and the scratches. Horses are numbers 1..24: 1..20 are the
@@ -15,9 +15,8 @@
 # into the horse's bit in the state line. The board's model derives
 # in_field / replaced / scratches from the records and the names.
 #
-# For the board as a whole, when betting closes, and the figures as they were
-# when it did (the board's closing figures, which only the board writes).
-# And the race itself: its name, its year and its post time, the one store
+# For the board as a whole, the figures as they were when betting closed (the
+# board's closing figures, which only the board writes). And the race itself: its name, its year and its post time, the one store
 # of race information (the TV's countdown and roster slides and /api/race
 # read it through the board's model; Reset betting leaves it alone). None of
 # it comes from the gateway, so none of it lives in the bridge; the board
@@ -194,8 +193,8 @@ def _finite_time(value: Any, what: str) -> Optional[float]:
 
 
 class HorseStore:
-    """Names for horses 1..24, the scratch records, closes_at, the board's
-    closing figures and the race (name, year, post time).
+    """Names for horses 1..24, the scratch records, the board's closing
+    figures and the race (name, year, post time).
 
     A record is was -> now: a replacement scratch (the cup that was `was`
     becomes `now`, through the renumber pair the board sends) or, with now
@@ -228,7 +227,6 @@ class HorseStore:
         self._entered: Dict[int, Tuple[int, float]] = {}       # was -> (race state at entry, unix time); none: from before
         self._undone: Dict[int, Tuple[int, float]] = {}       # now -> (was, undone_at): undone replacements to bring cups back from
         self._names_rev = 0
-        self._closes_at: Optional[float] = None
         self._closing: Optional[Dict[str, Any]] = None
         self._race: Dict[str, Any] = {"name": "", "year": None, "post_at": None}
         self._race_migrated = False
@@ -253,8 +251,6 @@ class HorseStore:
                     self._scratches[was] = now
             board = self._db.load_board()
             self._names_rev = int(board.get("names_rev") or 0)
-            closes = board.get("closes_at")
-            self._closes_at = float(closes) if closes is not None else None
         except (sqlite3.Error, TypeError, ValueError) as exc:
             # A database without the tables (schema refused) must not take the
             # board down: carry on in memory, and say so once.
@@ -395,7 +391,7 @@ class HorseStore:
 
     def _save_board(self) -> None:
         if self._db is not None:
-            self._db.save_board(self._names_rev, self._closes_at)
+            self._db.save_board(self._names_rev)
 
     def _save_race(self) -> None:
         if self._db is not None:
@@ -528,11 +524,6 @@ class HorseStore:
     def names_rev(self) -> int:
         with self._lock:
             return self._names_rev
-
-    @property
-    def closes_at(self) -> Optional[float]:
-        with self._lock:
-            return self._closes_at
 
     @property
     def closing(self) -> Optional[Dict[str, Any]]:
@@ -694,30 +685,6 @@ class HorseStore:
             self._save_board()
         self._changed()
         return True
-
-    # -- closing time ---------------------------------------------------------
-
-    def set_closes_at(self, when: Optional[float]) -> Optional[float]:
-        """Persisted; no names_rev bump. None clears."""
-        if when is not None:
-            if isinstance(when, bool):
-                raise ValueError("closes_at must be a unix time or null")
-            try:
-                when = float(when)
-            except (TypeError, ValueError):
-                raise ValueError("closes_at must be a unix time or null") from None
-            if when != when or when in (float("inf"), float("-inf")):
-                raise ValueError("closes_at must be a finite unix time")
-        with self._lock:
-            if when == self._closes_at:
-                return when
-            self._closes_at = when
-            self._save_board()
-        self._changed()
-        return when
-
-    def clear_closes_at(self) -> None:
-        self.set_closes_at(None)
 
     # -- the race -----------------------------------------------------------------
 

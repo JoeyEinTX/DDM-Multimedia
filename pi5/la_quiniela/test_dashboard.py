@@ -1859,7 +1859,7 @@ def _reset_confirm(picker_check, requests, slow):
         time.sleep(0.5)
         asked = chrome.eval("window.__confirms")
         _check("AFTER PARTY with the figures and a count held: Reset betting asks, naming the results, the figures at the post and the hand count",
-               len(asked) == 1 and "This clears the results, the figures at the post (pot $85), the hand count ($80), the ticker and the closing time."
+               len(asked) == 1 and "This clears the results, the figures at the post (pot $85), the hand count ($80) and the ticker."
                in asked[0], str(asked))
         _check("...and Cancel clears nothing", rig.model()["closing"] is not None and rig.model()["pot_counted"] == 80 and rig.bridge.phase == 6)
         chrome.eval("window.confirm = (m) => { window.__confirms.push(m); return true; }; 1")
@@ -1871,7 +1871,7 @@ def _reset_confirm(picker_check, requests, slow):
         time.sleep(0.5)
         asked = chrome.eval("window.__confirms")
         _check("with nothing held it names no figures and no count",
-               len(asked) == 1 and "This clears the results, the ticker and the closing time." in asked[0], str(asked))
+               len(asked) == 1 and "This clears the results and the ticker." in asked[0], str(asked))
         _check("no page errors", not chrome.page_errors(), "; ".join(chrome.page_errors())[:300])
     finally:
         chrome.close()
@@ -2395,20 +2395,12 @@ def _admin_one_tap(picker_check, touch, requests, slow):
         rig.post("/api/quiniela/unscratch", {"horse": 3})
         # Every other action, a double tap each while pi5 takes its time
         for key in (("GET", "/api/quiniela/horses"), ("PUT", "/api/quiniela/horses"), ("PUT", "/api/quiniela/race"),
-                    ("PUT", "/api/quiniela/closes_at"), ("PUT", "/api/quiniela/counted_pot"), ("POST", "/api/quiniela/reset")):
+                    ("PUT", "/api/quiniela/counted_pot"), ("POST", "/api/quiniela/reset")):
             slow[key] = 0.6
         load()
-        chrome.eval("(() => { const d = new Date(Date.now() + 3600e3); const p = (x) => String(x).padStart(2, '0');"
-                    " document.getElementById('closes-input').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())"
-                    " + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); return 1; })()")
         actions = [("Names: Reload", "#names-reload", "GET", "/api/quiniela/horses"),
                    ("Names: Save names", "#names-save", "PUT", "/api/quiniela/horses"),
-                   ("Race info: Save race info", "#race-save", "PUT", "/api/quiniela/race"),
-                   ("Betting closes: Set", "#closes-set", "PUT", "/api/quiniela/closes_at"),
-                   ("Betting closes: +15 min", '#closes button[data-min="15"]', "PUT", "/api/quiniela/closes_at"),
-                   ("Betting closes: +30 min", '#closes button[data-min="30"]', "PUT", "/api/quiniela/closes_at"),
-                   ("Betting closes: +60 min", '#closes button[data-min="60"]', "PUT", "/api/quiniela/closes_at"),
-                   ("Betting closes: Clear", "#closes-clear", "PUT", "/api/quiniela/closes_at")]
+                   ("Race info: Save race info", "#race-save", "PUT", "/api/quiniela/race")]
         for name, sel, method, path in actions:
             t = time.monotonic()
             double_tap(sel)

@@ -84,7 +84,7 @@ INSERT OR IGNORE INTO lq_link_state (id) VALUES (1);
 
 -- The betting board's own rows (la_quiniela/horses.py): horse names (1..20
 -- the field, 21..24 the also-eligibles; 24 is protocol.MAX_HORSE), the
--- scratches, and when betting closes. lq_horses.replaced is a legacy column
+-- scratches. lq_horses.replaced is a legacy column
 -- from the name-swap replacement (kept NULL, never read for anything but a
 -- warning); a database created with CHECK (horse BETWEEN 1 AND 20) is
 -- rebuilt by init_schema() (see _migrate_lq_horses).
@@ -146,8 +146,7 @@ CREATE TABLE IF NOT EXISTS lq_renum_undo (
 
 CREATE TABLE IF NOT EXISTS lq_board (
     id        INTEGER PRIMARY KEY CHECK (id = 1),
-    names_rev INTEGER NOT NULL DEFAULT 0,
-    closes_at REAL
+    names_rev INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO lq_board (id) VALUES (1);
 
@@ -194,14 +193,16 @@ EXPECTED_COLUMNS: Dict[str, List[str]] = {
     "lq_scratch_entered": ["was", "state", "at"],
     "lq_scratch_names": ["was", "now", "name_before", "name_set"],
     "lq_renum_undo": ["now", "was", "undone_at"],
-    "lq_board": ["id", "names_rev", "closes_at"],
+    "lq_board": ["id", "names_rev"],
     "lq_closing": ["id", "closing"],
     "lq_race": ["id", "name", "year", "post_at", "migrated"],
 }
 
-# Protocol v1 (cup slots), live on DevPi until the v2 flash: accepted by
-# check_shape() because init_schema() rebuilds them (see _migrate_v2).
-V1_COLUMNS: Dict[str, List[str]] = {
+# Earlier shapes check_shape() accepts because init_schema() migrates them:
+# protocol v1 (cup slots, live on DevPi until the v2 flash; _migrate_v2) and
+# lq_board with the betting-closes time (_migrate_lq_board).
+OLD_COLUMNS: Dict[str, List[str]] = {
+    "lq_board": ["id", "names_rev", "closes_at"],
     "telemetry": ["id", "ts", "cup_id", "mac", "raw_weight", "token_count",
                   "seq", "dropped", "rssi", "up_rssi", "reason"],
     "events": ["id", "ts", "type", "cup_id", "detail"],
@@ -239,15 +240,15 @@ class LqDb:
 
     def check_shape(self) -> Optional[str]:
         """Return a description of the first existing table whose columns
-        differ from EXPECTED_COLUMNS (or the v1 shape init_schema() knows how
-        to rebuild), or None when every table is absent or matches. Nothing
+        differ from EXPECTED_COLUMNS (or an older shape init_schema() knows how
+        to migrate), or None when every table is absent or matches. Nothing
         is altered."""
         with self.lock:
             for table, expected in EXPECTED_COLUMNS.items():
                 have = self._columns(table)
                 if not have:
                     continue
-                if have != expected and have != V1_COLUMNS.get(table):
+                if have != expected and have != OLD_COLUMNS.get(table):
                     return (f"table {table} already exists with columns {have}, "
                             f"expected {expected}; not altering it")
         return None
@@ -259,6 +260,7 @@ class LqDb:
             self._migrate_v2()
             self._migrate_lq_horses()
             self._migrate_lq_scratches()
+            self._migrate_lq_board()
             self.conn.executescript(SCHEMA_SQL)
 
     def _migrate_v2(self) -> List[str]:
@@ -358,6 +360,20 @@ class LqDb:
             conn.execute("DROP TABLE lq_horses")
             conn.execute("ALTER TABLE lq_horses_new RENAME TO lq_horses")
         return True
+
+    def _migrate_lq_board(self) -> None:
+        """The betting-closes time went (2026-10-30): a table that still has
+        its closes_at column is rebuilt without it (SQLite before 3.35 cannot
+        drop a column), so it is the shape check_shape() wants."""
+        if "closes_at" not in self._columns("lq_board"):
+            return
+        with self.txn() as conn:
+            conn.execute("DROP TABLE IF EXISTS lq_board_new")
+            conn.execute("CREATE TABLE lq_board_new (id INTEGER PRIMARY KEY CHECK (id = 1), "
+                         "names_rev INTEGER NOT NULL DEFAULT 0)")
+            conn.execute("INSERT INTO lq_board_new (id, names_rev) SELECT id, names_rev FROM lq_board")
+            conn.execute("DROP TABLE lq_board")
+            conn.execute("ALTER TABLE lq_board_new RENAME TO lq_board")
 
     def _migrate_lq_scratches(self) -> bool:
         """lq_scratches was created with `now INTEGER NOT NULL` (c70d894) and
@@ -478,7 +494,7 @@ class LqDb:
             conn.execute("INSERT INTO events (ts, type, horse, detail) VALUES (?, ?, ?, ?)",
                          (ts, type_, horse, detail))
 
-    # -- betting board: horse names, scratches, closing time -------------------
+    # -- betting board: horse names, scratches ---------------------------------
 
     def load_horses(self) -> Dict[int, Dict[str, Optional[str]]]:
         """{horse: {"name": str, "replaced": str | None}} for every row present
@@ -565,17 +581,13 @@ class LqDb:
             conn.execute("DELETE FROM lq_renum_undo WHERE now = ?", (int(now),))
 
     def load_board(self) -> Dict[str, Any]:
-        row = self.query_one("SELECT names_rev, closes_at FROM lq_board WHERE id = 1")
-        if row is None:
-            return {"names_rev": 0, "closes_at": None}
-        return {"names_rev": int(row["names_rev"] or 0),
-                "closes_at": float(row["closes_at"]) if row["closes_at"] is not None else None}
+        row = self.query_one("SELECT names_rev FROM lq_board WHERE id = 1")
+        return {"names_rev": int(row["names_rev"] or 0) if row is not None else 0}
 
-    def save_board(self, names_rev: int, closes_at: Optional[float]) -> None:
+    def save_board(self, names_rev: int) -> None:
         with self.txn() as conn:
             conn.execute("INSERT OR IGNORE INTO lq_board (id) VALUES (1)")
-            conn.execute("UPDATE lq_board SET names_rev = ?, closes_at = ? WHERE id = 1",
-                         (int(names_rev), float(closes_at) if closes_at is not None else None))
+            conn.execute("UPDATE lq_board SET names_rev = ? WHERE id = 1", (int(names_rev),))
 
     def load_closing(self) -> Optional[str]:
         """The closing figures as stored (JSON text), or None."""

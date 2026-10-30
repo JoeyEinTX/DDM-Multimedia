@@ -363,8 +363,8 @@ def _survey(conn) -> Dict[str, object]:
     race = _rows(conn, "SELECT name, year, post_at FROM lq_race WHERE id = 1")
     d["race"] = race[0] if race else None
     d["scratches"] = _rows(conn, "SELECT was, now FROM lq_scratches ORDER BY was") or []
-    board = _rows(conn, "SELECT names_rev, closes_at FROM lq_board WHERE id = 1")
-    d["names_rev"], d["closes_at"] = board[0] if board else (0, None)
+    board = _rows(conn, "SELECT names_rev FROM lq_board WHERE id = 1")
+    d["names_rev"] = board[0][0] if board else 0
     link = _rows(conn, "SELECT state_rev, state_json FROM lq_link_state WHERE id = 1")
     d["state_rev"], d["state"] = (link[0][0], _parse(link[0][1])) if link else (0, None)
     closing = _rows(conn, "SELECT closing FROM lq_closing WHERE id = 1")
@@ -394,7 +394,7 @@ def one_row_fresh(table: str, d) -> bool:
                 and not state.get("scratched") and not state.get("renum")
                 and not any(state.get("results") or []))
     if table == "lq_board":
-        return not d["names_rev"] and d["closes_at"] is None
+        return not d["names_rev"]
     if table == "lq_closing":
         return d["closing"] is None
     if table == "lq_race":
@@ -495,7 +495,7 @@ def _read_json(path: Path):
 
 
 def report_lines(s: Survey) -> List[Tuple[str, List[Tuple[str, str]]]]:
-    d = s.db or {"tables": {}, "names": [], "race": None, "scratches": [], "names_rev": 0, "closes_at": None,
+    d = s.db or {"tables": {}, "names": [], "race": None, "scratches": [], "names_rev": 0,
                  "state_rev": 0, "state": None, "closing": None, "cups_sim": 0, "auction": [], "paid": 0,
                  "bids_voided": 0, "owners_voided": 0, "payout_slots": [], "overrides": []}
     rows = d["tables"]
@@ -520,7 +520,6 @@ def report_lines(s: Survey) -> List[Tuple[str, List[Tuple[str, str]]]]:
         lq.append(("Scratches", text))
     else:
         lq.append(("Scratches", f"none (but {', '.join(extra)})" if extra else none))
-    lq.append(("Betting closes", when(d["closes_at"]) if d["closes_at"] is not None else none))
     state = d["state"] if isinstance(d["state"], dict) else {}
     phase = state.get("phase", 0) if d["state"] != "unreadable" else None
     lq.append(("Race state", "unreadable" if phase is None else f"{phase} {STATE_NAMES.get(phase, '?')}"))
