@@ -920,22 +920,7 @@ its appendix. Top to bottom:
   **Reset betting** behind a `confirm()` that names what it clears (the results, the figures at the post and the hand count while they are held), calling `POST /api/quiniela/reset`
   and reporting `Reset. Pot $N (M tokens still in the cup(s) of horse(s) ...)
   · K cups online` (only in 0 or 6: in 1–5 pi5 answers 409 and the page,
-  asking nothing first, shows its reason in red); and **Horses**, one row per horse 1..24 from the model
-  and nothing to click: the number in its cloth colour, the name, the status
-  (`● online`, `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup
-  claims the horse; an offline row says under it when its cup was last
-  heard, `heard 40 s ago`, `heard 3 min ago`, or a date such as `heard
-  Sep 20` for a record restored from an old database, a ghost rather than
-  a dead cup, from the model's `heard`), the tokens, and `WIN` / `PLACE` /
-  `SHOW` / `SCR` tags from the results and the scratches, and `⏳
-  renumbering` (amber) on the row a cup should have renumbered to while
-  that cup is a minute late (the model's `renumbering`; the tag's tooltip
-  says `cup <MAC> still says 22 (off)`; "Renumber pairs: derived and
-  acknowledged", above). The line above it reads `N cups online
-  · M with no horse` (`cups_online` and `cups_no_horse` from the model; a cup
-  showing `NO HORSE` is counted there and appears in no row). There is no
-  cups table, no picker, nothing to adopt and nothing to forget: a cup's
-  number is set on the cup.
+  asking nothing first, shows its reason in red).
 - **Counted pot**, in the Race section under the figures, in states 3 to 5
   (read-only in 6 while a count is saved; not shown in 0 to 2, before the
   figures at the post exist): the scale pot at the post, the counted pot and
@@ -947,36 +932,53 @@ its appendix. Top to bottom:
   and `Pot · hand counted` once a count is saved, when Pot, WIN, PLACE and
   SHOW are the count's: the page shows the model's `pot` and `prizes` and
   works nothing out.
-- **Race info**, first of the setup sections: the race's name (empty for
-  KENTUCKY DERBY), the date and the post time as they read on the race's
-  clock (`LQ_RACE_TZ`, Central), **Save race info** with its reply line
-  (`Saved · post 5:57 PM CDT`, the server's error verbatim in red), and the
-  line above it showing what is stored. Both date and time empty clear the
-  post time (the TV's countdown slide then leaves the slideshow). Read from
-  `GET /api/quiniela/race` at load and after a save; `PUT` to save.
-- **Horse names**: the 24 names in a textarea (`1. NAME` lines, 21..24
-  labelled as the also-eligibles in the caption, Save puts them back as text).
-- **Scratches**: a row per horse **in the field** with a picker of the unused
-  numbers (21..24 not claimed by a cup or in any record; a 1..20 number is
-  always in use, in the field or scratched), a name box prefilled from the
-  store when the picked number has a name (re-prefilled when the pick
-  changes), Scratch, and a "No replacement" checkbox that makes it the
-  no-replacement kind; below that a row per scratched horse of either kind
-  showing was -> now (or "no replacement") with Undo (withheld, with the
-  reason, on a record whose `now` was scratched in turn: the later record is
-  undone first). The 5 s refresh never rebuilds the scratch rows while the
-  operator is in them and carries a pick, a typed name or a ticked box over
-  into rebuilt rows; only what the operator picked or typed comes over, so a
-  row's default number follows the model (after an Undo the cup still says
-  21 for a report or two, which makes 21 in use; once it is back on 19
-  every untouched row offers #21 again). A replacement name typed with its
-  number in front (`#21 Test`, `21 Test`, `21. Test`, `21 - Test`) with #21
-  picked is `Test`, in the confirm step and the record; another horse's
-  number in front is refused in the row, nothing sent: `You typed #22 but
-  #21 is selected. Pick #22 in the list, or take it out of the name.`
+- **Horses**, one list, one row per horse 1..24 from the model: the number in its
+  cloth colour; the name as a field, saved when it is left or on Enter (`PUT
+  /api/quiniela/horses` with that one horse, `{"7": {"name": "..."}}`; an empty name
+  clears it) and reported in the row: `Saved`, or pi5's error or `cannot reach pi5` in
+  red, with what was typed still in the field (the 5 s refresh leaves a field with
+  typing in it alone; leaving it again tries again); the status (`● online`,
+  `● offline`, `○ no cup`, or `⚠ 2 CUPS` when more than one cup claims the horse; an
+  offline row says under it when its cup was last heard, `heard 40 s ago`, `heard 3
+  min ago`, or a date such as `heard Sep 20` for a record restored from an old
+  database, a ghost rather than a dead cup, from the model's `heard`); the tokens;
+  `WIN` / `PLACE` / `SHOW` tags from the results; `⏳ renumbering` (amber) on the row a
+  cup should have renumbered to while that cup is a minute late (the model's
+  `renumbering`; the tag's tooltip says `cup <MAC> still says 22 (off)`; "Renumber
+  pairs: derived and acknowledged", above); and **Scratch**. Horses 1..20 and any
+  also-eligible that has drawn into the field are in program-number order; the rest of
+  21..24 are under a thin rule, to name ahead. The line above the list reads `N cups
+  online · M with no horse` (`cups_online` and `cups_no_horse` from the model; a cup
+  showing `NO HORSE` is counted there and appears in no row). There is no cups table,
+  no picker, nothing to adopt and nothing to forget: a cup's number is set on the cup.
+  **Scratch** opens one window: the horse, the replacement (an unused number, 21..24
+  not claimed by a cup or in any record, with its name, or *No replacement*; from AT THE
+  GATE on only *No replacement*) and the step in words, as pi5 will do it (the
+  betting-open line, the refund line); **Confirm scratch** sends it, **Cancel** closes
+  the window and the next one starts over, and a refusal from pi5 stands in the window.
+  A replacement name typed with its number in front (`#21 Test`, `21 Test`, `21. Test`,
+  `21 - Test`) with #21 picked is `Test`, in the step and the record; another horse's
+  number in front is refused in the window, nothing sent: `You typed #22 but #21 is
+  selected. Pick #22 in the list, or take it out of the name.` A scratched horse stays in
+  its row, greyed, reading `replaced by #21 TEST · re-bet`, `no replacement: out of the
+  race, tokens refunded in cash` or `no replacement: out of the race, tokens out of the
+  pot`, with **Undo** (withheld, with `· undo #21 first`, on a record whose `now` was
+  scratched in turn: the later record is undone first); the also-eligible that took its
+  place is in the field like any other, and says whose place it took. An Undo that pi5
+  refuses (a result in, the replacement's cup holding bets) says why in the row, in red.
+  The list takes no taps while a Scratch or an Undo is in flight.
+- **Race info**, last: once saved, one line, `KENTUCKY DERBY · Sat May 1 · post 5:57 PM
+  CDT`, and **Edit**; the fields (the race's name, empty for KENTUCKY DERBY, the date and
+  the post time as they read on the race's clock, `LQ_RACE_TZ`, Central, and **Save race
+  info**) show before anything is saved and after Edit, and Save collapses them again
+  with its reply line (`Saved · post 5:57 PM CDT`, the server's error verbatim in red).
+  Both date and time empty clear the post time (the TV's countdown slide then leaves the
+  slideshow). Read from `GET /api/quiniela/race` at load and after a save; `PUT` to save.
 
-Everything refreshes every 5 s from `GET /api/quiniela` alone, and every
-button reports into its own status line (the pressed row's, for a scratch),
+Everything refreshes every 5 s from `GET /api/quiniela` (the names as typed,
+`GET /api/quiniela/horses`, are read again whenever the model's `names_rev` is new), and every
+button reports into its own status line (the horse's row, for a name, an Undo and
+a scratch's result),
 errors verbatim in red, network and non-JSON failures named. Vanilla JS, no
 CDN.
 

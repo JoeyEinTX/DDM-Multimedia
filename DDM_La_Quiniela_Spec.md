@@ -561,6 +561,23 @@ LQ MODULE HANDLER (on weight data received):
 | `/api/la-quiniela/status` | GET | LQ Controller connection status |
 | `/ws/la-quiniela` | WebSocket | Real-time updates |
 
+### The LQ admin page
+
+`/quiniela/admin` (the table above is the early plan; the routes as built are in `pi5/LQ_BRIDGE.md`).
+Four sections, top to bottom [BUILT 2026-10-30]:
+
+1. **Race**: link status, cups online, the race state (read-only: it changes on the Control Center),
+   the figures, the counted pot once betting has closed, and **Reset betting**.
+2. **Results**: what La Quiniela pays, shown only while a result is in.
+3. **Horses**: one list, 1 to 24, in program-number order with the also-eligibles that have drawn in.
+   Each row holds the number, the name (a field, saved when it is left), what pi5 hears from its
+   cup, its tokens, and **Scratch** (one window) or, once scratched, what became of the horse and
+   **Undo**.
+4. **Race info**: one line once saved (name, day, post time) with **Edit**.
+
+There is no betting-closes time: the state banner is the truth. The host calls every state on the
+Control Center, and the TV shows the state, not a countdown to a close.
+
 ---
 
 ## Dashboard UI Concept

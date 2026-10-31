@@ -5,9 +5,10 @@ as two tabs (section 2):
 
 - `DASH`, the Control Center at `http://joeydevpi.local:5000/`. Its buttons run the LEDs
   **and** the race: it is the one place the race state changes.
-- `ADMIN`, the page at `http://joeydevpi.local:5000/quiniela/admin`: names, scratches,
-  the counted pot, **Reset betting**, the Horses list, and the race
-  state, read-only. It is also in the dashboard's menu (☰ → La Quiniela Admin).
+- `ADMIN`, the page at `http://joeydevpi.local:5000/quiniela/admin`: the race state
+  (read-only) and its figures, the counted pot, **Reset betting**, one **Horses** list (each
+  horse's name, what pi5 hears from its cup, Scratch and Undo) and the race info. It is
+  also in the dashboard's menu (☰ → La Quiniela Admin).
 
 pi5 and the splash start on their own when DevPi boots (section 0). Commands are typed on DevPi
 only to set that up and to start fresh before the party, and in the appendix (if the pages are
@@ -198,34 +199,37 @@ python3 pi5/tools/wipe.py
 
 - [ ] Tuesday after the draw: `ADMIN` → Race info → the race's name (leave it empty for
       KENTUCKY DERBY), the date and the post time on a Central clock (5:57 PM for
-      Churchill's 6:57 PM ET) → Save race info. The line under it reads back
-      `KENTUCKY DERBY 2027 · post 2027-05-01 5:57 PM CDT`. The TV's countdown slide
+      Churchill's 6:57 PM ET) → Save race info. Saved, it is one line,
+      `KENTUCKY DERBY · Sat May 1 · post 5:57 PM CDT`; **Edit** brings the fields back. The TV's countdown slide
       counts down to it (it stays out of the slideshow while no post time is set), the
       roster slide prints it, and Reset betting never clears it.
-- [ ] Same visit: `ADMIN` → Horse names → paste the twenty names in post order, one per
-      line, plus the also-eligibles on lines 21–24 → Save names.
-- [ ] Each scratch before Friday 9 a.m. ET: `ADMIN` → Scratches → In the field → that
-      horse's row → pick the replacement number (the list offers the unused
-      also-eligibles, 21 first) and its name → Scratch. The board lists the new number at
-      the bottom and the cup that was that horse becomes the new number on its own, tokens
+- [ ] Same visit: `ADMIN` → Horses → type each name in its row, 1 to 20 in post order, and the
+      also-eligibles in rows 21–24 under the thin line. A name saves when you leave its field (or
+      press Enter): the row says `Saved`, or says why not and keeps what you typed.
+- [ ] Each scratch before Friday 9 a.m. ET: `ADMIN` → Horses → that horse's row → Scratch →
+      pick the replacement number (the window offers the unused also-eligibles, 21 first) and its
+      name. The scratched horse stays in its row, greyed, reading `replaced by #22 OCELLI`; the
+      board lists the new number at the bottom, the new number moves up into the list in number
+      order, and the cup that was that horse becomes the new number on its own, tokens
       and all (nothing moves on the mantle; a cup set to the old number later becomes the
       new one the moment it hears the gateway).
-- Every Scratch asks first, in its row, and sends nothing until you answer: it says what it will do
+- Every Scratch asks first, in its window, and sends nothing until you answer: it says what it will do
   (`Scratch #9 THE PUMA: #22 OCELLI draws in.`, or `…, no replacement: its tokens are handed back to
-  re-bet.`); check it, then **Confirm scratch** (Cancel keeps what you typed). With no name and
-  *No replacement* unticked it asks which it is.
-- [ ] Wrong? `ADMIN` → Scratches → Scratched → `Undo` on that line. Undo the most recent
-      scratch first if there were several (the page greys out the others). Undo puts the
+  re-bet.`); check it, then **Confirm scratch** (Cancel closes the window; the next one starts over).
+  With a number picked and no name it asks which it is: pick *No replacement* or type the name.
+- [ ] Wrong? `ADMIN` → Horses → `Undo` on the scratched horse's row. Undo the most recent
+      scratch first if there were several (the page holds Undo back on the others and says which
+      to undo first). Undo puts the
       names back as they were before the scratch: a name the scratch gave the new number
-      is cleared, one entered ahead in Horse names stays.
+      is cleared, one entered ahead in its row stays.
       Undo of a replacement is refused from 60 MIN to WINNER while the replacement's cup
       holds tokens: they are bets on the new number, and they would go with the cup back to the
       old one. The row says `Cup 9 holds 4 tokens bet on #22. Hand them back and empty the
       cup, then Undo.` Hand the tokens back (empty the cup), and Undo goes through as ever.
       Undo works at any time, however soon after the scratch; a cup that was off catches up
-      when it's back on. `⏳ renumbering` on a row (Race → Horses, not the Scratches rows) means
+      when it's back on. `⏳ renumbering` on a row (`ADMIN` → Horses) means
       a cup hasn't followed for a minute (hover or tap it: which cup, and whether it's off);
-      switch it on or check its screen. An offline row (Race → Horses, not the Scratches rows)
+      switch it on or check its screen. An offline row
       says when its cup was last heard: a date (`heard Sep 20`) is a leftover record from an
       old database, not a cup to look for.
 - The names and scratches entered here feed La Subasta too: the auction at
@@ -319,8 +323,8 @@ While open:
   means: empty that cup and hand the tokens back to re-bet. If a replacement is known, enter
   it: it draws in with the empty cup (the row and the TV say `re-bet`). From **AT THE GATE** on
   there is no replacement (section 7).
-- A same-day scratch (vet scratch, gate scratch): `ADMIN` → Scratches → In the field →
-  that horse's row → tick *No replacement* → Scratch. The row leaves the board, the crawl
+- A same-day scratch (vet scratch, gate scratch): `ADMIN` → Horses → that horse's row →
+  Scratch → *No replacement* → Confirm scratch. The horse leaves the board, the crawl
   says `RE-BET YOUR TOKENS`, its tokens leave the pot. Empty that cup and hand the tokens
   back to re-drop in other cups; one not re-bet is settled by the counted pot.
 - Something's wrong with a count: pull the tokens, count by hand, put them back in one
@@ -352,9 +356,9 @@ three are RUNNING).
 `4 · RUNNING`.)
 
 A horse scratched at the post or after has no replacement: the field was set at the gate. `ADMIN` →
-Scratches offers only *No replacement*, ticked (pi5 refuses a replacement, `409 The field is set at the
+Horses → Scratch offers only *No replacement* (pi5 refuses a replacement, `409 The field is set at the
 gate`); its cup's tokens are refunded in cash, not re-bet, the crawl says `TOKENS REFUNDED`, and
-section 8 lists the refund. If the row still offers a number list, the race is not in AT THE POST,
+section 8 lists the refund. If the window still offers a number list, the race is not in AT THE POST,
 RUNNING or WINNER: check the state on `ADMIN` → Race.
 
 ## 8. Results and the draw
@@ -473,8 +477,8 @@ computation is `payout_for` in `pi5/la_quiniela/betting.py`, served as the model
       go. The line says `Reset. Pot $0`; if it names horses with tokens still
       in their cups, empty those (each count drops to 0 by itself) and press it again.
 - [ ] Section 6 (`DASH` → **60 MIN**).
-- [ ] A different field next race: `ADMIN` → Horse names → paste the new names → Save
-      names, and undo / redo the scratches, before opening.
+- [ ] A different field next race: `ADMIN` → Horses → type the new names in their rows,
+      and undo / redo the scratches, before opening.
 
 ---
 
@@ -626,7 +630,8 @@ the restart).
 | A cup rebooted (power blip) with tokens in it | it comes back with its count: it reports the count it saved through its 30 s warm-up, then re-reads the pile from the weight (`[boot] … keep zero, count N` on its serial) | Nothing. Leave it alone for the first 35 s. |
 | An empty cup comes back from a power blip reporting 1 | its empty reading drifted more than half a token across the power-off, so the boot read took the cup for a pile of one | Hold the screen → `TARE` → `YES` (cup empty). A pull-and-refill does not clear it. |
 | No countdown slide, or the wrong race on it; the roster's post time blank | Race info has no post time, or last year's | `ADMIN` → Race info → the date and the post time → Save race info (section 1). A countdown on screen shows it on its next second; one left out of the slideshow comes back on the next lap (the playlist is rebuilt every ~35 slides, a few minutes). |
-| No roster slide | no horse in the field has a name | `ADMIN` → Horse names → Save names (section 1); it joins on the next lap. |
+| No roster slide | no horse in the field has a name | `ADMIN` → Horses → type a name in a row (section 1); it joins on the next lap. |
+| A horse's row on `ADMIN` says `non-JSON reply (HTTP 503)` or `cannot reach pi5 (network error)` under a name you typed | pi5 did not take the save; the name is still in the field and not stored | Check pi5 is up (`systemctl status ddm-pi5`), then tap into the field and away again; the row says `Saved`. |
 | The crawl has no weather | `pi5/.env` has no `DDM_WEATHER_API_KEY` (pi5's log says `no weather key` at start), or no internet yet | Nothing needed: the item is left out. To have it: the key in `pi5/.env`, `sudo systemctl restart ddm-pi5`; it shows within `WEATHER_CACHE_MINUTES` of pi5's start. |
 | The `LED wall` pill on `DASH` says `off` | `pi5/.env` has no `DDM_ESP32_IP` (pi5's log says `no LED controller set` at start) | The race goes on. The LEDs: the controller's address in the device panel on `DASH` (tap the pills; it is saved to `pi5/.env` and tried at once), or in `pi5/.env` and `sudo systemctl restart ddm-pi5`. |
 | Board shows old pot/bets, or last race's results, on startup | pi5 persisted last session (it keeps the results, the figures at the post and the hand count until **Reset betting**) | Empty the cups, then `ADMIN` → Race → **Reset betting**. `DASH` drops the old results tote by itself within 5 s. If it refuses (next row), `DASH` → **STANDBY** first. |

@@ -1032,13 +1032,13 @@ TAPS: List[Tuple[str, str, str, bool]] = [
     ("admin page", "Counted pot field", "#counted-input", False),
     ("admin page", "Counted pot Save count", "#counted-save", False),
     ("admin page", "Counted pot Clear", "#counted-clear", False),
-    ("admin page before the gate", "scratch: replacement number", "#scratch-list select", True),
-    ("admin page before the gate", "scratch: replacement name", "#scratch-list input[data-repl-name]", True),
-    ("admin page", "scratch: No replacement (its label)", "#scratch-list label:has(input[data-norepl])", True),
-    ("admin page", "scratch: Scratch", "#scratch-list button[data-scratch]", True),
-    ("admin page", "scratch: Undo", "#scratched-list button[data-undo]", True),
-    ("admin page", "names Reload", "#names-reload", False),
-    ("admin page", "names Save names", "#names-save", False),
+    ("admin page before the gate", "Scratch window: replacement number", "#scratch-modal select", False),
+    ("admin page before the gate", "Scratch window: replacement name", "#scratch-modal input[data-repl-name]", False),
+    ("admin page before the gate", "Scratch window: Confirm scratch", "#scratch-modal [data-confirm]", False),
+    ("admin page before the gate", "Scratch window: Cancel", "#scratch-modal [data-cancel]", False),
+    ("admin page", "horses: name fields", "#horse-list input[data-name]", True),
+    ("admin page", "horses: Scratch", "#horse-list button[data-scratch]", True),
+    ("admin page", "horses: Undo", "#horse-list button[data-undo]", True),
     ("admin page", "race info Save race info", "#race-save", False),
 ]
 WHERE = ("Control Center", "drawer", "SET WINNERS", "SET WINNERS dead heat", "reveal", "ask first", "admin page before the gate", "admin page")
@@ -1161,20 +1161,24 @@ def tap_targets(rig: Any, sizes=TAP_SIZES) -> List[dict]:
                 rows += _measure(chrome, "ask first")
                 chrome.eval("askAnswer(false); 1")
                 chrome.wait_for("!document.getElementById('ask-modal').classList.contains('active')", timeout=10)
-                # the admin page before the gate: a Scratches row still has its number list and its name field (the
+                # the admin page before the gate: the Scratch window still has its number list and its name field (the
                 # run at the size before this one left the race at the gate: betting open again)
                 rig.post("/api/quiniela/mode", {"mode": "BETTING_60", "reopen": True})
                 chrome.call("Page.navigate", url=server.url + "quiniela/admin")
-                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#scratch-list select')", timeout=20)
+                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#horse-list button[data-scratch]:not([hidden])')", timeout=20)
+                time.sleep(0.3)
+                chrome.tap("#horse-list button[data-scratch]:not([hidden])")
+                chrome.wait_for("!document.getElementById('scratch-modal').hidden", timeout=10)
                 time.sleep(0.3)
                 rows += _measure(chrome, "admin page before the gate")
-                # the admin page: betting closed (AT THE GATE), so the counted pot shows and a row has only its No replacement box; a horse scratched, for Undo
+                chrome.eval("document.querySelector('#scratch-modal [data-cancel]').click(); 1")
+                # the admin page: betting closed (AT THE GATE), so the counted pot shows; a horse scratched, for Undo
                 rig.post("/api/quiniela/mode", {"mode": "AT_THE_GATE"})
                 if not rig.model().get("scratches"):
                     rig.post("/api/quiniela/scratch", {"horse": 20})
                 chrome.call("Page.navigate", url=server.url + "quiniela/admin")
-                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#scratch-list button[data-scratch]')"
-                                " && !!document.querySelector('#scratched-list button[data-undo]')"
+                chrome.wait_for("document.readyState === 'complete' && !!document.querySelector('#horse-list button[data-scratch]:not([hidden])')"
+                                " && !!document.querySelector('#horse-list button[data-undo]:not([hidden])')"
                                 " && !document.getElementById('counted').hidden", timeout=20)
                 time.sleep(0.3)
                 admin = chrome.eval(PAGE_JS)

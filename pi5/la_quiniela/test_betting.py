@@ -3626,10 +3626,12 @@ def test_admin_page():
     html = r.get_data(as_text=True)
     css = Path(_PI5_DIR, "static", "css", "quiniela_admin.css").read_text(encoding="utf-8")
     _check("its stylesheet is pi5/static/css/quiniela_admin.css (moved out of the page on 2026-10-07)",
-           'href="/static/css/quiniela_admin.css' in html and "<style>" not in html and ".rowstatus.ask" in css)
-    for section in ("race", "names", "scratches"):
+           'href="/static/css/quiniela_admin.css' in html and "<style>" not in html and ".modal-card" in css)
+    for section in ("race", "results", "horses", "race-info"):
         _check(f"section id={section!r} present", f'id="{section}"' in html)
-    _check("the Race section comes first", html.index('id="race"') < html.index('id="names"'))
+    _check("the Race section comes first", html.index('id="race"') < html.index('id="horses"'))
+    _check("the Horse names and Scratches sections are gone: one list does both",
+           'id="names"' not in html and 'id="scratches"' not in html and "<textarea" not in html)
     _check("viewport meta for phones", 'name="viewport"' in html)
     _check("talks to the routes", all(path in html for path in ("/api/quiniela/horses", "/api/quiniela/scratch",
                                                                 "/api/quiniela/unscratch", "/api/quiniela",
@@ -3654,35 +3656,39 @@ def test_admin_page():
     _check("the figures and Reset betting behind a confirm()",
            all(s in html for s in ("fig-pot", "fig-win", "fig-place", "fig-show", "fig-bets", "reset-betting"))
            and 'confirm("Reset betting?' in html and "horses_with_tokens" in html)
-    _check("the Horses list: one row per horse from the model, the four statuses, nothing to click",
-           all(s in html for s in ('id="horses"', 'id="horses-line"', "renderHorses", "\\u26a0", "\\u25cb no cup", "\\u25cf online",
-                                   "\\u25cf offline", "cups_online", "cups_no_horse", "with no horse", "CLOTH"))
+    _check("the Horses list: one row per horse from the model, the four statuses, no cup to pick",
+           all(s in html for s in ('id="horses"', 'id="horses-line"', 'id="horse-list"', "renderHorses", chr(0x26A0), chr(0x25CB) + " no cup",
+                                   chr(0x25CF) + " online", chr(0x25CF) + " offline", "cups_online", "cups_no_horse", "with no horse", "CLOTH"))
            and "data-cup-horse" not in html and "<select data-cup" not in html)
     _check("the cups table, the picker, Adopt, Forget cups, the snapshot and the CUP n note are gone",
            not any(s in html for s in ("cups-adopt", "cups-forget", "/api/lq/", 'id="cups"', "CUP n", "plus one", "horse command takes",
                                        'cmd: "horse "', "dev_endpoints")))
     _check("WIN / PLACE / SHOW tags from the results", all(s in html for s in ('class="tag win"', 'class="tag place"', 'class="tag show"'))
            and "res.win === n" in html)
-    _check("24 name lines and the also-eligibles caption", 'rows="24"' in html and "also-eligibles" in html)
-    _check("a replacement number picker, a name box, No replacement and Undo",
-           all(s in html for s in ("<select", "data-repl-num", "data-repl-name", "data-norepl", "data-undo", "No replacement")))
-    _check("sends the replacement as {number, name}", "replacement = { number:" in html)
-    _check("Scratch asks first, in the row: the question, the confirm step of both kinds, the betting-open line, the refund line from the gate on, Confirm and Cancel",
-           all(s in html for s in ("No replacement? Tick No replacement, or enter the replacement's name.", "data-ask-norepl",
+    _check("a name field in every row, 80 characters, and the rule over the also-eligibles",
+           'data-name maxlength="80"' in html and 'rule.className = "rule"' in html and "also-eligibles" in html)
+    _check("a name is saved when its field is left or on Enter: one horse, PUT /api/quiniela/horses, no Save and no Reload",
+           'api("PUT", "/api/quiniela/horses", body)' in html and 'addEventListener("focusout"' in html and 'ev.key === "Enter"' in html
+           and "body[n] = { name: sent }" in html and 'id="names-save"' not in html and 'id="names-reload"' not in html)
+    _check("one Scratch window: a replacement number list, a name box, No replacement, Confirm and Cancel; Undo in the row",
+           all(s in html for s in ('id="scratch-modal"', "<select data-repl-num>", "data-repl-name", "data-confirm>Confirm scratch", "data-cancel>Cancel",
+                                   "data-undo", "No replacement")) and "data-norepl" not in html)
+    _check("sends the replacement as {number, name}", "replacement: { number:" in html)
+    _check("the window asks first: the question, the confirm step of both kinds, the betting-open line, the refund line from the gate on",
+           all(s in html for s in ("No replacement? Choose No replacement, or enter the replacement's name.",
                                    ", no replacement: its tokens are ", "handed back to re-bet.", "refunded in cash at token value.", " draws in.",
-                                   "model.race_state >= 1 && model.race_state <= 5", "data-confirm>Confirm scratch", "data-cancel>Cancel"))
+                                   "model.betting_open"))
            and "Betting is open: the tokens in this cup will ride on #" not in html
-           and "confirm(" not in html.split("function onScratchClick")[1].split("function ")[0])
-    _check("the Horse names help: a number with nothing after it clears that horse's name, a blank line leaves it alone",
-           "A number with nothing after it (<code>21.</code>) clears that horse's name; a blank line leaves it alone." in html)
+           and "confirm(" not in html.split("function confirmScratch")[1].split("function undo")[0])
     _check("Undo is withheld on a chained record, with the reason", '" · undo #"' in html and "disabled" in html)
     _check("reads in_field and scratches from the model", "in_field" in html and "scratches" in html)
     _check("loadModel exists, runs at load, every 5 s and after every action (it went missing once)",
-           "function loadModel(" in html and "loadModel(true)" in html and "setInterval(function () { loadModel(false); }, 5000)" in html
+           "function loadModel(" in html and "loadModel().catch(" in html and "setInterval(loadModel, 5000)" in html
            and html.count("loadModel(") >= 6, str(html.count("loadModel(")))
     _check("no gateway-flag wording", "at the gateway" not in html)
-    _check("Race info at the top of the setup area: after the Race section, before the names",
-           html.index('id="race"') < html.index('id="race-info"') < html.index('id="names"'))
+    _check("Race info after the Horses: one line and Edit once it is saved, the fields before that or after Edit",
+           html.index('id="race"') < html.index('id="horses"') < html.index('id="race-info"')
+           and all(s in html for s in ('id="race-line"', 'id="race-text"', 'id="race-edit"', 'id="race-form"', "raceLine(")))
     _check("...a name, a date, a post time, Save and its reply line, talking to /api/quiniela/race",
            all(s in html for s in ('id="race-name"', 'type="date"', 'id="race-date"', 'type="time"', 'id="race-time"',
                                    'id="race-save"', 'id="race-status"', '"/api/quiniela/race"', '"PUT", "/api/quiniela/race"'))

@@ -60,11 +60,6 @@
     <button id="reset-betting" class="danger">Reset betting</button>
   </div>
   <div id="reset-status" class="status"></div>
-  <h3>Horses</h3>
-  <p class="note">Every cup knows its own horse (hold its screen → HORSE). This list is what pi5 hears:
-     a cup online, a cup that has gone quiet, no cup at all, or two cups claiming one number.</p>
-  <div id="horses-line" class="note">loading…</div>
-  <div id="horses"></div>
 </section>
 
 <!-- What La Quiniela pays, from SET WINNERS' record and the figures at the post (the model's payout): read with the
@@ -76,50 +71,55 @@
   <div id="results-refunds"></div>
 </section>
 
+<!-- The horses, one list: the number, the name as a field (saved when it is left), what pi5 hears for it, its tokens,
+     Scratch (a window, scratchModal below) or, once scratched, what became of it and Undo. 1-20 and any
+     also-eligible that has drawn in, in program-number order; the rest of 21-24 under a thin rule. -->
+<section id="horses">
+  <h2>Horses</h2>
+  <p class="note">Every cup knows its own horse (hold its screen → HORSE). The status on each row is what pi5 hears:
+     a cup online, a cup that has gone quiet, no cup at all, or two cups claiming one number.</p>
+  <div id="horses-line" class="note">loading…</div>
+  <div id="horse-list"></div>
+</section>
+
 <section id="race-info">
   <h2>Race info</h2>
-  <p class="note">The race the TV counts down to and lists: its name, and the date and post time
-     on <b id="race-tz">Central</b> time. The countdown slide needs the post time (without one it
-     is left out of the slideshow). Reset betting keeps all of it.</p>
-  <label class="field">Race name <input id="race-name" type="text" placeholder="KENTUCKY DERBY" spellcheck="false"></label>
-  <div class="row">
-    <label class="field">Date <input id="race-date" type="date"></label>
-    <label class="field">Post time <input id="race-time" type="time" step="60"></label>
+  <div id="race-line" class="row" hidden>
+    <span id="race-text"></span>
+    <button id="race-edit">Edit</button>
   </div>
-  <div id="race-current" class="note">loading…</div>
-  <div class="row">
-    <button id="race-save" class="primary">Save race info</button>
+  <div id="race-form" hidden>
+    <p class="note">The race the TV counts down to and lists: its name, and the date and post time
+       on <b id="race-tz">Central</b> time. The countdown slide needs the post time (without one it
+       is left out of the slideshow). Reset betting keeps all of it.</p>
+    <label class="field">Race name <input id="race-name" type="text" placeholder="KENTUCKY DERBY" spellcheck="false"></label>
+    <div class="row">
+      <label class="field">Date <input id="race-date" type="date"></label>
+      <label class="field">Post time <input id="race-time" type="time" step="60"></label>
+    </div>
+    <div class="row">
+      <button id="race-save" class="primary">Save race info</button>
+    </div>
   </div>
   <div id="race-status" class="status"></div>
 </section>
 
-<section id="names">
-  <h2>Horse names</h2>
-  <p class="note">One per line in program order. A leading <code>7.</code> names that horse.
-     <b>Lines 21–24 are the also-eligibles</b>: name them ahead
-     of time; they join the field only when they replace a scratched horse.</p>
-  <textarea id="names-text" rows="24" spellcheck="false"></textarea>
-  <p class="note">A number with nothing after it (<code>21.</code>) clears that horse's name; a blank line leaves it alone.</p>
-  <div class="row">
-    <button id="names-reload">Reload</button>
-    <button id="names-save" class="primary">Save names</button>
+<!-- Scratch: the horse's number and name, what takes its place (one of 21-24 not yet used, with its name, or no
+     replacement: the only choice from AT THE GATE on), and the step in words; Confirm scratch sends it, Cancel
+     closes. A refusal from pi5 stands in the window, to fix and confirm again. -->
+<div id="scratch-modal" class="modal" role="dialog" aria-modal="true" hidden>
+  <div class="modal-card">
+    <h2 id="scratch-title"></h2>
+    <label class="field">Takes its place <select data-repl-num></select></label>
+    <label class="field" id="scratch-name-field">Its name <input type="text" data-repl-name placeholder="Replacement name" spellcheck="false"></label>
+    <div id="scratch-say" class="status say"></div>
+    <div id="scratch-error" class="status err"></div>
+    <div class="row">
+      <button class="danger" data-confirm>Confirm scratch</button>
+      <button data-cancel>Cancel</button>
+    </div>
   </div>
-  <div id="names-status" class="status"></div>
-</section>
-
-<section id="scratches">
-  <h2>Scratches</h2>
-  <p class="note">A scratched horse is replaced <b>by number</b>, as at Churchill: pick the number
-     that draws in (one of 21–24 not yet used) and the cup that was the scratched horse becomes that number
-     on its own, tokens and all. Nothing moves on the mantle. Tick <b>No replacement</b> to scratch the
-     horse outright: its cup shows the X and its tokens leave the pot.</p>
-  <h3>In the field</h3>
-  <div id="scratch-list"></div>
-  <h3>Scratched</h3>
-  <div id="scratched-list"></div>
-  <div id="scratch-status" class="status"></div>
-</section>
-
+</div>
 <script>
 (function () {
   "use strict";
@@ -142,8 +142,7 @@
   document.addEventListener("input", function () { edited = true; }, true);
   function idle() {
     var a = document.activeElement;
-    return !edited && !scratchBusy && !document.querySelector("[data-confirm]") &&
-           !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+    return !edited && !busy && !scratch && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
   }
   function newerPage(rev) {
     if (!window.DDMPageRev) { return; }
@@ -353,59 +352,132 @@
   });
 
   // ---- the model ---------------------------------------------------------------
-  // GET /api/quiniela is the one thing this page reads (at load, every 5 s and
-  // after every action); every section renders from it. force rebuilds the
-  // scratch rows even while the operator is in them (after their own action).
-  // A model that cannot be read leaves the figures as they were, but the race
-  // state line says so: never an old state shown as the live one.
-  function loadModel(force) {
+  // GET /api/quiniela is the one thing this page reads about the race (at load, every 5 s and
+  // after every action); every section renders from it. A model that cannot be read leaves the
+  // figures as they were, but the race state line says so: never an old state shown as the live
+  // one. The names as typed are read again before a model that carries a new names_rev is shown
+  // (a name saved here or on another device, a scratch that gave a number its name, an Undo).
+  var namesRev = null;
+  function loadNames() {
+    return api("GET", "/api/quiniela/horses").then(function (r) {
+      if (r.ok) { horses = r.body; }
+      return r.ok;
+    });
+  }
+  function loadModel() {
     return api("GET", "/api/quiniela").then(function (r) {
       if (!r.ok) {
         var why = "pi5: " + (r.body.error || ("error " + r.status));
         $("pills").textContent = why; renderState(why, false); return;
       }
-      model = r.body; renderStatus(); renderScratches(force === true);
-      newerPage(r.rev);
+      var fresh = r.body;
+      return (fresh.names_rev === namesRev ? Promise.resolve(true) : loadNames()).then(function (named) {
+        if (named) { namesRev = fresh.names_rev; }
+        model = fresh; renderStatus();
+        newerPage(r.rev);
+      });
     }).catch(function () {
       $("pills").textContent = "cannot reach pi5 (/api/quiniela)"; renderState("cannot reach pi5", false);
     });
   }
 
   // ---- horses ----------------------------------------------------------------
-  // One row per horse 1..24 from the model: the number on its cloth, the name,
-  // what pi5 hears for it (a cup online, a cup gone quiet, no cup, or two cups
-  // claiming the number), the tokens, and WIN / PLACE / SHOW once the results
-  // are in. Nothing to click: a cup's number is set on the cup.
+  // One row per horse 1..24, built once and updated in place, so a name being typed is never
+  // rebuilt under the finger: the number on its cloth, the name as a field, what pi5 hears for
+  // the horse (a cup online, a cup gone quiet, no cup, or two cups claiming the number), its
+  // tokens, WIN / PLACE / SHOW once the results are in, and Scratch. A scratched horse stays in
+  // its row, greyed, with what became of it and Undo. The field is listed in program-number
+  // order (1-20, and an also-eligible that has drawn in); the rest of 21-24 sit under a thin rule.
+  var rows = {}, order = null, rowNotes = {}, dirty = {}, saving = {}, busy = false;   // busy: a Scratch or an Undo is in flight; its buttons are held
+  var rule = document.createElement("div");
+  rule.className = "rule";
+  rule.textContent = "21–24 · also-eligibles: name them ahead; each joins the field when it takes a scratched horse's place";
+  function horseState(n) { return (model && model.horses && model.horses[n]) || {}; }
+  function scratchOf(n) {
+    return ((model && model.scratches) || []).filter(function (s) { return s.was && s.was.number === n; })[0];
+  }
+  // From AT THE GATE on (race states 3 to 6) the field is set (Joey, 2026-10-23): a scratch has no replacement, pi5
+  // refuses one, and the tokens in its cup are refunded in cash.
+  function afterTheGate() { var s = model && model.race_state; return s >= 3 && s <= 6; }
+  function horseOf(el) { return Number(el.closest(".hrow").getAttribute("data-horse")); }
+  function buildRow(n) {
+    var c = CLOTH[n] || ["#808080", "#fff"], row = document.createElement("div");
+    row.className = "hrow"; row.setAttribute("data-horse", n);
+    row.innerHTML = '<div class="cloth" style="background:' + c[0] + ';color:' + c[1] + '">' + n + "</div>" +
+      '<div class="hmain"><input type="text" data-name maxlength="80" spellcheck="false" autocomplete="off" placeholder="' +
+        (n > FIELD ? "(also-eligible)" : "(no name)") + '" aria-label="Name of horse ' + n + '"><div class="hsub" data-sub></div></div>' +
+      '<div class="hstat" data-stat></div><div class="htok" data-tokens></div>' +
+      '<button class="danger" data-scratch>Scratch</button><button class="undo" data-undo>Undo</button>' +
+      '<div class="status rowstatus" data-rowstatus></div>';
+    return row;
+  }
+  function updateRow(n) {
+    var row = rows[n], m = horseState(n), res = model.results || {}, scr = scratchOf(n), input = row.querySelector("[data-name]");
+    var stat, cls, tag, late, chained, sub;
+    if (m.conflict) { stat = "⚠ " + (m.cups || []).length + " CUPS"; cls = "warn"; }
+    else if (m.cup == null) { stat = "○ no cup"; cls = ""; }
+    else if (m.online) { stat = "● online"; cls = "on"; }
+    else { stat = "● offline" + heardAgo(m.heard); cls = ""; }
+    tag = res.win === n ? '<span class="tag win">WIN</span>' : res.place === n ? '<span class="tag place">PLACE</span>' :
+          res.show === n ? '<span class="tag show">SHOW</span>' : "";
+    // A cup that should be this horse but has still not followed its renumber pair after a minute
+    // (it is off, or out of range): pi5 keeps sending the pair until it does.
+    late = (model.renumbering || []).filter(function (r) { return r.to === n; });
+    if (late.length) {
+      tag += '<span class="tag ren" title="' + esc(late.map(function (r) {
+        return "cup " + r.mac + " still says " + r.from + (r.online ? "" : " (off)");
+      }).join("; ")) + '">⏳ renumbering</span>';
+    }
+    // A chain (9 -> 22, then 22 -> 23) is undone last record first; the route refuses the other order, so the
+    // button is withheld with the reason.
+    chained = !!scr && !!scr.now && model.scratches.some(function (o) { return o.was && o.now && o.was.number === scr.now.number; });
+    sub = scr ? (scr.now ? "replaced by #" + scr.now.number + " " + esc(scr.now.name || "(no name)") + (scr.rebet ? " · re-bet" : "") +
+                           (chained ? " · undo #" + scr.now.number + " first" : "")
+                         : scr.refund ? "no replacement: out of the race, tokens refunded in cash"
+                                      : "no replacement: out of the race, tokens out of the pot")
+              : (m.replaced != null ? "replaces " + esc(m.replaced || "(unnamed)") : "");
+    row.classList.toggle("scratched", !!scr);
+    row.classList.toggle("dimmed", !scr && (m.cup == null || !m.online || !m.in_field));
+    input.disabled = !!scr;
+    if (document.activeElement !== input && !dirty[n]) { input.value = storedName(n); }
+    row.querySelector("[data-sub]").innerHTML = tag + (sub ? '<span class="note' + (scr ? " scr" : "") + '">' + sub + "</span>" : "");
+    row.querySelector("[data-stat]").innerHTML = stat;
+    row.querySelector("[data-stat]").className = "hstat " + cls;
+    row.querySelector("[data-tokens]").textContent = m.tokens || 0;
+    row.querySelector("[data-scratch]").hidden = !!scr || !m.in_field;
+    row.querySelector("[data-undo]").hidden = !scr;
+    row.querySelector("[data-undo]").disabled = chained || busy;
+    row.querySelector("[data-scratch]").disabled = busy;
+    var note = rowNotes[n], el = row.querySelector("[data-rowstatus]");
+    el.textContent = note ? note.text : "";
+    el.className = "status rowstatus" + (note && note.cls ? " " + note.cls : "");
+  }
+  // The rows in order, 1-20 and the also-eligibles in the field above a thin rule's worth of the rest; not moved
+  // while a name is being typed (a row moved under the finger loses its keyboard): the next refresh does it.
+  function layoutRows() {
+    var list = $("horse-list"), above = [], below = [], n, key;
+    for (n = 1; n <= HORSES; n++) { (n <= FIELD || horseState(n).in_field || scratchOf(n) ? above : below).push(n); }
+    key = above.join() + "|" + below.join();
+    if (key === order || list.contains(document.activeElement)) { return; }
+    order = key;
+    above.forEach(function (h) { list.appendChild(rows[h]); });
+    if (below.length) { list.appendChild(rule); } else { rule.remove(); }
+    below.forEach(function (h) { list.appendChild(rows[h]); });
+  }
   function renderHorses() {
     if (!model) { return; }
-    var res = model.results || {}, html = "", n, m, stat, cls, tag, c, late;
-    for (n = 1; n <= HORSES; n++) {
-      m = horseState(n);
-      if (m.conflict) { stat = "\u26a0 " + (m.cups || []).length + " CUPS"; cls = "warn"; }
-      else if (m.cup == null) { stat = "\u25cb no cup"; cls = ""; }
-      else if (m.online) { stat = "\u25cf online"; cls = "on"; }
-      else { stat = "\u25cf offline" + heardAgo(m.heard); cls = ""; }
-      tag = res.win === n ? '<span class="tag win">WIN</span>' : res.place === n ? '<span class="tag place">PLACE</span>' :
-            res.show === n ? '<span class="tag show">SHOW</span>' : "";
-      if (m.scratched) { tag += '<span class="tag scr">SCR</span>'; }
-      // A cup that should be this horse but has still not followed its renumber pair after a minute
-      // (it is off, or out of range): pi5 keeps sending the pair until it does.
-      late = (model.renumbering || []).filter(function (r) { return r.to === n; });
-      if (late.length) {
-        tag += '<span class="tag ren" title="' + esc(late.map(function (r) {
-          return "cup " + r.mac + " still says " + r.from + (r.online ? "" : " (off)");
-        }).join("; ")) + '">⏳ renumbering</span>';
-      }
-      c = CLOTH[n] || ["#808080", "#fff"];
-      html += '<div class="hrow' + (m.cup == null || !m.online || !m.in_field ? " dimmed" : "") + '" data-horse="' + n + '">' +
-        '<div class="cloth" style="background:' + c[0] + ';color:' + c[1] + '">' + n + "</div>" +
-        '<div class="hname">' + esc(storedName(n) || (n > FIELD ? "(also-eligible)" : "(no name)")) + tag + "</div>" +
-        '<div class="hstat ' + cls + '">' + stat + "</div>" +
-        '<div class="htok">' + (m.tokens || 0) + "</div></div>";
-    }
-    $("horses").innerHTML = html;
-    $("horses-line").textContent = (model.cups_online || 0) + " cups online \u00b7 " + (model.cups_no_horse || 0) + " with no horse";
+    var n;
+    for (n = 1; n <= HORSES; n++) { if (!rows[n]) { rows[n] = buildRow(n); } }
+    layoutRows();
+    for (n = 1; n <= HORSES; n++) { updateRow(n); }
+    $("horses-line").textContent = (model.cups_online || 0) + " cups online · " + (model.cups_no_horse || 0) + " with no horse";
+    renderScratch();
   }
+  // Every outcome of a name save, a Scratch or an Undo is written once, into the row of the horse it was about:
+  // the server's error text verbatim in red, a short confirmation in green, a network failure or a non-JSON reply
+  // as such. It stays until the next action.
+  function noteRow(n, text, cls) { rowNotes[n] = { text: text, cls: cls }; renderHorses(); }
+  function clearRowNotes() { rowNotes = {}; }
 
   // When an offline horse's cup was last heard, under its status: seconds or minutes for a cup that
   // just went quiet, the date for a record an old database left in the cup cache (a ghost, not a dead cup).
@@ -419,88 +491,34 @@
     return '<span class="heard">heard ' + when + "</span>";
   }
 
-  // ---- race info -------------------------------------------------------------
-  // GET /api/quiniela/race has the race as the model does plus the name as
-  // typed and the post time's date and time on the race's clock, which is
-  // what the form shows. Save sends the three fields; the server reads the
-  // date and time on the race's clock, and both empty clear the post time.
-  function renderRaceForm(f) {
-    var race = (f && f.race) || {};
-    $("race-tz").textContent = race.tz || "Central";
-    $("race-name").value = (f && f.name) || "";
-    $("race-date").value = (f && f.date) || "";
-    $("race-time").value = (f && f.time) || "";
-    $("race-current").textContent = race.post_at == null
-      ? (race.name || "KENTUCKY DERBY") + " · no post time set"
-      : race.name + (race.year ? " " + race.year : "") + " · post " + f.date + " " + race.post_local;
+  // ---- a name: saved when its field is left, or on Enter ------------------------
+  // PUT /api/quiniela/horses takes one horse ({"7": {"name": "..."}}; an empty name clears it). A save that fails
+  // says so on the row and keeps what was typed (the refresh leaves a field with typing in it alone, and leaving
+  // the field again tries again); one that was typed over while it flew is sent again when it lands.
+  function saveName(n) {
+    var input = rows[n].querySelector("[data-name]"), sent = input.value, body = {}, again = false;
+    if (sent === storedName(n)) { dirty[n] = false; return; }
+    if (saving[n]) { return; }
+    saving[n] = true; clearRowNotes(); noteRow(n, "saving…");
+    body[n] = { name: sent };
+    api("PUT", "/api/quiniela/horses", body).then(function (r) {
+      if (!r.ok) { noteRow(n, r.body.error || ("error " + r.status), "err"); return; }
+      horses = r.body.horses; namesRev = r.body.names_rev;
+      again = input.value !== sent;
+      if (!again) { dirty[n] = false; input.value = storedName(n); }
+      noteRow(n, "Saved", "ok");
+      return loadModel();
+    }).catch(function () { noteRow(n, "cannot reach pi5 (network error)", "err"); })
+      .then(function () { saving[n] = false; if (again && document.activeElement !== input) { saveName(n); } });
   }
-  function loadRace() {
-    return api("GET", "/api/quiniela/race").then(function (r) {
-      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
-      renderRaceForm(r.body);
-    });
-  }
-  $("race-save").onclick = function () {
-    say("race-status", "saving…");
-    holding([$("race-save")], api("PUT", "/api/quiniela/race", { name: $("race-name").value, date: $("race-date").value,
-                                                                time: $("race-time").value }).then(function (r) {
-      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
-      renderRaceForm(r.body);
-      say("race-status", r.body.race.post_at == null ? "Saved · no post time" : "Saved · post " + r.body.race.post_local, "ok");
-      loadModel();
-    }).catch(fail("race-status")));
-  };
 
-  // ---- names -----------------------------------------------------------------
-  function namesText() {
-    var lines = [], n;
-    for (n = 1; n <= HORSES; n++) { lines.push(n + ". " + storedName(n)); }
-    return lines.join("\n");
-  }
-  function loadHorses() {
-    return api("GET", "/api/quiniela/horses").then(function (r) {
-      horses = r.body; $("names-text").value = namesText(); renderScratches(true);
-    });
-  }
-  var nameButtons = function () { return [$("names-reload"), $("names-save")]; };
-  $("names-reload").onclick = function () {
-    holding(nameButtons(), loadHorses().then(function () { say("names-status", "Reloaded", "ok"); }).catch(fail("names-status")));
-  };
-  $("names-save").onclick = function () {
-    say("names-status", "saving…");
-    holding(nameButtons(), api("PUT", "/api/quiniela/horses", { text: $("names-text").value }).then(function (r) {
-      if (!r.ok) { say("names-status", r.body.error || "error " + r.status, "err"); return; }
-      horses = r.body.horses; $("names-text").value = namesText(); renderScratches(true);
-      say("names-status", "Saved", "ok"); loadModel(true);
-    }).catch(fail("names-status")));
-  };
-
-  // ---- scratches -------------------------------------------------------------
-  // Two lists from the model: a row per horse in the field (in_field), with
-  // the replacement number to pick and the name to give it, and a row per
-  // scratched horse (the model's scratches: a record, or a cup scratched at
-  // the gateway) with Undo. The rows are rebuilt with innerHTML, which would
-  // wipe a number being picked, a name being typed and a ticked "No
-  // replacement" box. So the 5 s refresh only rebuilds when what the rows
-  // show (names, who is in the field, cups, scratches) actually changed,
-  // never while the operator is in the list or a Scratch or Undo is in
-  // flight, and whatever was picked, typed or ticked is carried over. After
-  // Save names it always rebuilds, carrying them over; after a Scratch or Undo
-  // that went through, fresh (each row's first free number and its stored
-  // name); a refused one leaves the rows as they were, to fix and press again.
-  var scratchKey = null, scratchBusy = false, freshRows = false;     // busy: further taps in the lists are ignored
-  function horseState(n) { return (model && model.horses && model.horses[n]) || {}; }
-  // From AT THE GATE on (race states 3 to 6) the field is set (Joey, 2026-10-23): a scratch has no replacement, pi5
-  // refuses one, and the tokens in its cup are refunded in cash. A row then offers only the No replacement box, ticked.
-  function afterTheGate() { var s = model && model.race_state; return s >= 3 && s <= 6; }
-  function scratchSignature() {
-    var flags = [], n, m;
-    for (n = 1; n <= HORSES; n++) { m = horseState(n); flags.push([m.in_field ? 1 : 0, m.scratched ? 1 : 0, m.cup == null ? 0 : m.cup]); }
-    return JSON.stringify([horses, flags, (model && model.scratches) || [], afterTheGate()]);
-  }
-  // A number nobody has: no cup carries it, it is not in the field, and it
-  // is not the was or now of any scratch. Only an also-eligible can be one:
-  // a 1-20 number is either in the field or scratched (the was of an entry),
+  // ---- scratch and undo ------------------------------------------------------
+  // Scratch opens one window (scratch.horse: its number): the replacement, one of 21-24 not yet used with its name,
+  // or No replacement, and the step in words; Confirm scratch sends it, Cancel closes. The step is not sent until
+  // Confirm, and says what it would do (Joey, 2026-10-07). Undo has no step: one tap, one request.
+  var scratch = null, scratchKey = null;
+  // A number nobody has: no cup carries it, it is not in the field, and it is not the was or now of any scratch.
+  // Only an also-eligible can be one: a 1-20 number is either in the field or scratched (the was of an entry),
   // and the route refuses it either way ("15 is in use").
   function unusedNumbers() {
     var used = {}, out = [], n, m;
@@ -512,180 +530,150 @@
     for (n = FIELD + 1; n <= HORSES; n++) { if (!used[n]) { out.push(n); } }
     return out;
   }
-  function renderScratches(force) {
-    var list = $("scratch-list"), done = $("scratched-list"), key = scratchSignature();
-    if (!force) {
-      if (scratchBusy) { return; }                                   // its own reload rebuilds the rows
-      if (key === scratchKey) { return; }
-      if (list.contains(document.activeElement) || done.contains(document.activeElement)) { return; }     // mid-typing: next tick
+  function scratchStep() {
+    var n = scratch.horse, sel = $("scratch-modal").querySelector("[data-repl-num]").value, name = $("scratch-modal").querySelector("[data-repl-name]").value.trim();
+    var who = label(n), typed, open = !!(model && model.betting_open);
+    if (sel === "") {
+      return { text: "Scratch " + who + ", no replacement: its tokens are " +
+                     (afterTheGate() ? "refunded in cash at token value." : "handed back to re-bet."), body: { horse: n } };
     }
-    // Only a pick or a name the host made comes over (data-picked, data-typed): a default follows the model.
-    var saved = {};
-    Array.prototype.forEach.call(freshRows ? [] : list.querySelectorAll(".horse"), function (row) {
-      var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]"), c = row.querySelector("[data-norepl]");
-      saved[row.getAttribute("data-horse")] = { num: s && s.hasAttribute("data-picked") ? s.value : "",
-                                                name: r && r.hasAttribute("data-typed") ? r.value : null, norepl: !!(c && c.checked && !c.disabled) };
-    });
-    buildScratches(list, done);
-    scratchKey = key;
-    Object.keys(saved).forEach(function (n) {
-      var row = list.querySelector('.horse[data-horse="' + n + '"]');
-      if (!row) { return; }                                          // just scratched: nothing left to carry
-      var s = row.querySelector("[data-repl-num]"), r = row.querySelector("[data-repl-name]");
-      if (!s) { return; }                                            // from AT THE GATE on a row has neither: nothing to carry over
-      if (saved[n].num && s.querySelector('option[value="' + saved[n].num + '"]')) {
-        s.value = saved[n].num; s.setAttribute("data-picked", ""); r.value = storedName(Number(saved[n].num));
+    typed = /^#?\s*(\d{1,2})(?:\s*[-.:)]\s*|\s+)(\S.*)$/.exec(name);       // #21 Test, 21 Test, 21. Test, 21 - Test
+    if (typed && Number(typed[1]) >= 1 && Number(typed[1]) <= HORSES) {
+      if (Number(typed[1]) !== Number(sel)) {
+        return { error: "You typed #" + Number(typed[1]) + " but #" + sel + " is selected. Pick #" + Number(typed[1]) + " in the list, or take it out of the name." };
       }
-      if (saved[n].name !== null) { r.value = saved[n].name; r.setAttribute("data-typed", ""); }   // else the pick's prefill
-      row.querySelector("[data-norepl]").checked = saved[n].norepl;
-    });
-  }
-  function optionsHtml(free) {
-    if (!free.length) { return '<option value="">(no free number)</option>'; }
-    return free.map(function (n) { return '<option value="' + n + '">' + esc(label(n)) + "</option>"; }).join("");
-  }
-  function buildScratches(list, done) {
-    var html = "", n, m, free = unusedNumbers(), first = free.length ? free[0] : null, late = afterTheGate();
-    for (n = 1; n <= HORSES; n++) {
-      m = horseState(n);
-      if (!m.in_field) { continue; }
-      html += '<div class="horse" data-horse="' + n + '">' +
-        '<div class="num' + (n > FIELD ? " ae" : "") + '">' + n + "</div>" +
-        '<div><div class="name">' + esc(storedName(n) || "(no name)") + "</div>" +
-          '<div class="note">' + (m.cup == null ? "no cup yet" : (m.conflict ? "\u26a0 " + m.cups.length + " cups" : (m.online ? "cup online" : "cup offline"))) +
-          (m.replaced != null ? " · replaces " + esc(m.replaced || "(unnamed)") : "") + "</div></div>" +
-        '<div class="controls">' +
-          (late ? "" : '<select data-repl-num' + (free.length ? "" : " disabled") + ">" + optionsHtml(free) + "</select>" +
-            '<input type="text" placeholder="Replacement name" data-repl-name value="' + esc(first ? storedName(first) : "") + '">') +
-          '<button class="danger" data-scratch>Scratch</button>' +
-          '<label><input type="checkbox" data-norepl' + (late ? " checked disabled" : "") + "> No replacement (the horse is out: its tokens are " +
-            (late ? "refunded in cash" : "handed back to re-bet") + ")</label>" +
-          '<div class="status rowstatus" data-rowstatus></div>' +
-        "</div></div>";
+      name = typed[2].trim();
     }
-    list.innerHTML = html || '<div class="empty">nobody in the field</div>';
-    if (ask && !horseState(ask.horse).in_field) { ask = null; }      // scratched meanwhile: its step is gone
-    html = "";
-    var scratches = (model && model.scratches) || [];
-    scratches.forEach(function (s) {
-      var was = s.was || {}, now = s.now;
-      // A chain (9 -> 22, then 22 -> 23) is undone last record first; the
-      // route refuses the other order, so the button is withheld with the reason.
-      var chained = !!now && scratches.some(function (o) { return o.was && o.now && o.was.number === now.number; });
-      html += '<div class="horse" data-horse="' + was.number + '">' +
-        '<div class="num' + (was.number > FIELD ? " ae" : "") + '">' + was.number + "</div>" +
-        '<div><div class="name">' + esc(was.name || "(no name)") + "</div>" +
-          '<div class="note scr">' + (now ? "replaced by #" + now.number + " " + esc(now.name || "(no name)") + (s.rebet ? " · re-bet" : "") +
-                                            (chained ? " · undo #" + now.number + " first" : "")
-                                          : s.refund ? "no replacement: out of the race, tokens refunded in cash"
-                                                     : "no replacement: out of the race, tokens out of the pot") + "</div></div>" +
-        '<button class="undo" data-undo' + (chained ? " disabled" : "") + ">Undo</button>" +
-        '<div class="status rowstatus" data-rowstatus></div>' +
-        "</div>";
-    });
-    done.innerHTML = html || '<div class="empty">no scratches</div>';
-    applyRowNotes();
+    if (!name) { return { text: "No replacement? Choose No replacement, or enter the replacement's name." }; }
+    return { text: "Scratch " + who + ": #" + sel + " " + name.toUpperCase() + " draws in." + (open ? " Betting is open: " +
+                   "empty this cup and hand the tokens back to re-bet; #" + sel + " starts empty." : ""),
+             body: { horse: n, replacement: { number: Number(sel), name: name } } };
   }
-  $("scratch-list").addEventListener("change", function (ev) {
-    var sel = ev.target.closest("[data-repl-num]"); if (!sel) { return; }
-    var r = sel.closest(".horse").querySelector("[data-repl-name]");
-    sel.setAttribute("data-picked", ""); r.value = storedName(Number(sel.value)); r.removeAttribute("data-typed");
-  });
-  // Every outcome of a Scratch or Undo is written once, into the row of the
-  // horse it was about (a scratched one's under its Scratched line): the
-  // server's error text verbatim in red, a short confirmation in green, a
-  // network failure or a non-JSON reply as such. It stays until the next action.
-  // The rows are rebuilt after a success (and by the 5 s refresh when something
-  // changed), so the notes live in a map and are re-applied to the new rows.
-  var rowNotes = {};
-  // Scratch sends nothing: it asks, in the row (Joey, 2026-10-07). With No
-  // replacement unticked and no name, which it is (its No replacement button
-  // ticks the box and goes on); otherwise what the scratch will do, with
-  // Confirm scratch and Cancel. Only Confirm sends, the body the step showed;
-  // Cancel, or a change to the row, drops the step and keeps what was typed.
-  var ask = null;                     // {horse, body}: the step in that horse's row (no body: the question)
-  function askHtml() {
-    var who = "#" + ask.horse + (storedName(ask.horse) ? " " + storedName(ask.horse).toUpperCase() : ""), r = ask.body && ask.body.replacement;
-    if (!ask.body) { return "<p>No replacement? Tick No replacement, or enter the replacement's name.</p><button data-ask-norepl>No replacement</button>"; }
-    // Betting open (the model's betting_open): tokens never move to another horse (Joey, 2026-10-14).
-    var open = !!(model && model.betting_open);
-    return "<p>" + esc(r ? "Scratch " + who + ": #" + r.number + " " + r.name.toUpperCase() + " draws in." + (open ? " Betting is open: " +
-                           "empty this cup and hand the tokens back to re-bet; #" + r.number + " starts empty." : "")
-                         : "Scratch " + who + ", no replacement: its tokens are " +
-                           (afterTheGate() ? "refunded in cash at token value." : "handed back to re-bet.")) + "</p>" +
-      '<button class="danger" data-confirm>Confirm scratch</button><button data-cancel>Cancel</button>';
-  }
-  function applyRowNotes() {
-    Array.prototype.forEach.call(document.querySelectorAll("#scratch-list .horse, #scratched-list .horse"), function (row) {
-      var el = row.querySelector("[data-rowstatus]"), note = rowNotes[row.getAttribute("data-horse")];
-      if (!el) { return; }
-      if (ask && ask.horse === Number(row.getAttribute("data-horse")) && row.querySelector("[data-scratch]")) {
-        el.innerHTML = askHtml(); el.className = "status rowstatus ask"; return;
-      }
-      el.textContent = note ? note.text : "";
-      el.className = "status rowstatus" + (note && note.cls ? " " + note.cls : "");
-    });
-  }
-  function noteRow(horse, text, cls) { rowNotes[horse] = { text: text, cls: cls }; applyRowNotes(); }
-  function clearRowNotes() { rowNotes = {}; applyRowNotes(); }
-  function onScratchClick(ev) {
-    var btn = ev.target.closest("button"); if (!btn || scratchBusy) { return; }
-    var row = btn.closest(".horse"), horse = Number(row.getAttribute("data-horse"));
-    var body = { horse: horse }, path, what;
-    var report = function (text, cls) { noteRow(horse, text, cls); };
-    if (btn.hasAttribute("data-undo")) {
-      path = "/api/quiniela/unscratch";
-    } else if (btn.hasAttribute("data-confirm")) {
-      if (!ask) { return; }
-      path = "/api/quiniela/scratch"; body = ask.body; ask = null;
-    } else if (btn.hasAttribute("data-cancel")) {
-      ask = null; applyRowNotes(); return;
-    } else {                                       // Scratch, or the question's No replacement: the step, nothing sent
-      if (btn.hasAttribute("data-ask-norepl")) { row.querySelector("[data-norepl]").checked = true; }
-      var pick = row.querySelector("[data-repl-num]");                // none from AT THE GATE on
-      var num = pick ? pick.value : "";
-      var name = pick ? row.querySelector("[data-repl-name]").value.trim() : "";
-      var norepl = row.querySelector("[data-norepl]").checked;
-      if (!norepl && !num) { clearRowNotes(); report("no free number: tick No replacement", "err"); return; }
-      var typed = /^#?\s*(\d{1,2})(?:\s*[-.:)]\s*|\s+)(\S.*)$/.exec(name);   // #21 Test, 21 Test, 21. Test, 21 - Test
-      if (typed && !norepl && Number(typed[1]) >= 1 && Number(typed[1]) <= HORSES) {
-        if (Number(typed[1]) !== Number(num)) { clearRowNotes(); return report("You typed #" + Number(typed[1]) + " but #" + num + " is selected. Pick #" + Number(typed[1]) + " in the list, or take it out of the name.", "err"); }
-        name = typed[2].trim();
-      }
-      if (!norepl && name) { body.replacement = { number: Number(num), name: name }; }
-      ask = { horse: horse, body: (norepl || name) ? body : null };
-      clearRowNotes(); return;
+  function renderScratch() {
+    var modal = $("scratch-modal"), sel = modal.querySelector("[data-repl-num]"), name = modal.querySelector("[data-repl-name]"), free, key, step;
+    if (!scratch) { return; }
+    if (!horseState(scratch.horse).in_field) { closeScratch(); return; }              // scratched meanwhile: its step is gone
+    free = afterTheGate() ? [] : unusedNumbers();
+    key = free.map(function (n) { return n + ":" + storedName(n); }).join() + "|" + afterTheGate();
+    if (key !== scratchKey) {                                                          // the choices changed: keep a pick that is still there
+      var before = sel.options.length ? sel.value : null;                              // null: just opened
+      sel.innerHTML = free.map(function (n) { return '<option value="' + n + '">' + esc(label(n)) + "</option>"; }).join("") +
+                      '<option value="">No replacement</option>';
+      sel.value = before !== null && sel.querySelector('option[value="' + before + '"]') ? before : (free.length ? String(free[0]) : "");
+      if (!name.hasAttribute("data-typed")) { name.value = sel.value ? storedName(Number(sel.value)) : ""; }
+      scratchKey = key;
     }
-    clearRowNotes();
-    report("working\u2026");
-    scratchBusy = true;
-    btn.disabled = true;
-    api("POST", path, body).then(function (r) {
-      if (!r.ok) { report(r.body.error || ("error " + r.status), "err"); return; }
-      if (path.indexOf("unscratch") >= 0) {
-        what = "Undone " + horse;
-      } else if (r.body.kind === "gateway") {
-        what = "Scratched " + horse + (r.body.cup == null ? " (no cup is on that number yet)" : "") + (r.body.refund ? " \u00b7 tokens refunded" : "");
-      } else {
-        what = "Scratched " + horse + " \u2192 #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "") +
-               (r.body.rebet ? " · re-bet" : "");
-      }
-      report(what, "ok");
-      freshRows = true;
-      return loadHorses().then(function () { return loadModel(true); });
-    }).catch(function () { report("cannot reach pi5 (network error)", "err"); })
-      .then(function () { scratchBusy = false; freshRows = false; btn.disabled = false; });
+    sel.disabled = !free.length || busy;
+    name.closest("label").hidden = sel.value === "";
+    step = scratchStep();
+    $("scratch-title").textContent = "Scratch " + label(scratch.horse);
+    $("scratch-say").textContent = step.text || step.error;
+    $("scratch-say").className = "status say" + (step.error ? " err" : "");
+    modal.querySelector("[data-confirm]").disabled = !step.body || busy;
   }
-  $("scratch-list").addEventListener("click", onScratchClick);
-  ["input", "change"].forEach(function (type) {    // a pick, a name or the box changed: the step no longer says what it would send
-    $("scratch-list").addEventListener(type, function (ev) {
-      var row = ev.target.closest(".horse");
-      if (type === "input" && ev.target.hasAttribute("data-repl-name")) { ev.target.setAttribute("data-typed", ""); }
-      if (ask && row && Number(row.getAttribute("data-horse")) === ask.horse) { ask = null; applyRowNotes(); }
-    });
-  });
-  $("scratched-list").addEventListener("click", onScratchClick);
+  function openScratch(n) {
+    var name = $("scratch-modal").querySelector("[data-repl-name]");
+    clearRowNotes(); renderHorses();
+    name.removeAttribute("data-typed");
+    $("scratch-modal").querySelector("[data-repl-num]").innerHTML = "";
+    $("scratch-error").textContent = "";
+    scratch = { horse: n }; scratchKey = null;
+    $("scratch-modal").hidden = false;
+    renderScratch();
+  }
+  function closeScratch() { scratch = null; $("scratch-modal").hidden = true; }
+  function confirmScratch() {
+    var step = scratchStep(), n = scratch.horse;
+    if (!step.body) { return; }
+    busy = true; $("scratch-error").textContent = ""; renderScratch();
+    api("POST", "/api/quiniela/scratch", step.body).then(function (r) {
+      if (!r.ok) { $("scratch-error").textContent = r.body.error || ("error " + r.status); return; }
+      closeScratch();
+      noteRow(n, r.body.kind === "gateway"
+        ? "Scratched " + n + (r.body.cup == null ? " (no cup is on that number yet)" : "") + (r.body.refund ? " · tokens refunded" : "")
+        : "Scratched " + n + " → #" + r.body.now.number + (r.body.now.name ? " " + r.body.now.name.toUpperCase() : "") +
+          (r.body.rebet ? " · re-bet" : ""), "ok");
+      return loadModel();
+    }).catch(function () { $("scratch-error").textContent = "cannot reach pi5 (network error)"; })
+      .then(function () { busy = false; renderHorses(); });
+  }
+  function undo(n) {
+    clearRowNotes(); busy = true; noteRow(n, "working…");
+    api("POST", "/api/quiniela/unscratch", { horse: n }).then(function (r) {
+      if (!r.ok) { noteRow(n, r.body.error || ("error " + r.status), "err"); return; }
+      noteRow(n, "Undone " + n, "ok");
+      return loadModel();
+    }).catch(function () { noteRow(n, "cannot reach pi5 (network error)", "err"); })
+      .then(function () { busy = false; renderHorses(); });
+  }
 
+  var list = $("horse-list"), modal = $("scratch-modal");
+  list.addEventListener("input", function (ev) { if (ev.target.hasAttribute("data-name")) { dirty[horseOf(ev.target)] = true; } });
+  list.addEventListener("focusout", function (ev) { if (ev.target.hasAttribute("data-name")) { saveName(horseOf(ev.target)); } });
+  list.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && ev.target.hasAttribute("data-name")) { ev.preventDefault(); ev.target.blur(); }
+  });
+  list.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button");
+    if (!btn) { return; }
+    if (btn.hasAttribute("data-scratch")) { openScratch(horseOf(btn)); }
+    else if (btn.hasAttribute("data-undo")) { undo(horseOf(btn)); }
+  });
+  modal.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button");
+    if (!btn) { return; }
+    if (btn.hasAttribute("data-confirm")) { confirmScratch(); }
+    else if (btn.hasAttribute("data-cancel")) { closeScratch(); }
+  });
+  modal.addEventListener("change", function (ev) {                    // a pick: the name of that number, unless one was typed
+    var name = modal.querySelector("[data-repl-name]");
+    if (ev.target.hasAttribute("data-repl-num")) { name.removeAttribute("data-typed"); name.value = ev.target.value ? storedName(Number(ev.target.value)) : ""; }
+    renderScratch();
+  });
+  modal.addEventListener("input", function (ev) {
+    if (ev.target.hasAttribute("data-repl-name")) { ev.target.setAttribute("data-typed", ""); }
+    renderScratch();
+  });
+
+  // ---- race info -------------------------------------------------------------
+  // GET /api/quiniela/race has the race as the model does plus the name as typed and the post
+  // time's date and time on the race's clock, which is what the form shows. Save sends the three
+  // fields; the server reads the date and time on the race's clock, and both empty clear the post
+  // time. Once there is a post time the section is one line (the name, the date, the time and the
+  // clock) with Edit; the fields show before anything is saved, and after Edit until Save.
+  var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function raceLine(f) {
+    var d = f.date.split("-"), day = new Date(Number(d[0]), Number(d[1]) - 1, Number(d[2]));
+    return (f.race.name || "Kentucky Derby").toUpperCase() + " · " + DAYS[day.getDay()] + " " + MONTHS[day.getMonth()] + " " + day.getDate() +
+           " · post " + f.race.post_local;
+  }
+  function renderRaceForm(f) {
+    var race = (f && f.race) || {}, saved = race.post_at != null;
+    $("race-tz").textContent = race.tz || "Central";
+    $("race-name").value = (f && f.name) || "";
+    $("race-date").value = (f && f.date) || "";
+    $("race-time").value = (f && f.time) || "";
+    if (saved) { $("race-text").textContent = raceLine(f); }
+    $("race-line").hidden = !saved;
+    $("race-form").hidden = saved;
+  }
+  function loadRace() {
+    return api("GET", "/api/quiniela/race").then(function (r) {
+      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
+      renderRaceForm(r.body);
+    });
+  }
+  $("race-edit").onclick = function () { $("race-line").hidden = true; $("race-form").hidden = false; $("race-name").focus(); };
+  $("race-save").onclick = function () {
+    say("race-status", "saving…");
+    holding([$("race-save")], api("PUT", "/api/quiniela/race", { name: $("race-name").value, date: $("race-date").value,
+                                                                time: $("race-time").value }).then(function (r) {
+      if (!r.ok) { say("race-status", r.body.error || ("error " + r.status), "err"); return; }
+      renderRaceForm(r.body);
+      say("race-status", r.body.race.post_at == null ? "Saved · no post time" : "Saved · post " + r.body.race.post_local, "ok");
+      loadModel();
+    }).catch(fail("race-status")));
+  };
   // Opened from the iPad's Home Screen, the page runs full screen: no tabs, so
   // the link to the Control Center opens in place, not in its named tab, and
   // replaces this page rather than stacking on it (a Control Center kept for
@@ -700,11 +688,11 @@
     });
   }
 
-  loadHorses().then(function () { return loadModel(true); }).catch(fail("scratch-status"));
+  loadModel().catch(fail("page-note"));
   loadRace().catch(fail("race-status"));
-  // Reset betting, the race info, the names and Scratch/Undo each
+  // Reset betting, the race info, a name and Scratch/Undo each
   // report into their own status line; nothing on this page fails silently.
-  setInterval(function () { loadModel(false); }, 5000);
+  setInterval(loadModel, 5000);
 })();
 </script>
 </body>

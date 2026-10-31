@@ -349,8 +349,8 @@ There is no roster line. A v1 `roster` line is ignored.
    re-bet; a replacement entered then still draws in, with an empty cup, and the board says
    `· RE-BET YOUR TOKENS` after it. **From the post on the field is set: a scratch has no replacement** and
    its cup's tokens are refunded in cash (OD3). [DECIDED 2026-10-23, BUILT] A replacement entered in race
-   states 3 to 6 is refused (`POST /api/quiniela/scratch`, 409), the admin page then offers only the No
-   replacement box, ticked, and the board says `· TOKENS REFUNDED` after the horse (the model's `refund`
+   states 3 to 6 is refused (`POST /api/quiniela/scratch`, 409), the admin page's Scratch window then offers
+   only No replacement, and the board says `· TOKENS REFUNDED` after the horse (the model's `refund`
    flag, from `lq_scratch_entered`). First thing to check when a row still offers a replacement late: the
    race state on the admin page.
 2. **Same day, no replacement: re-bet.** [DECIDED]
@@ -372,7 +372,7 @@ There is no roster line. A v1 `roster` line is ignored.
   when it returns; a cup a minute late is logged and tagged `⏳ renumbering` on the admin
   page (gap review M7, B11). [BUILT]
 - Undo puts a replacement's name back as it was before the scratch: a name the scratch gave
-  the also-eligible is cleared, one entered ahead in Horse names stays. [BUILT]
+  the also-eligible is cleared, one entered ahead in its row stays. [BUILT]
 - La Subasta must read the same scratch. [BUILT, section 8]
 - **While a result stands the field is frozen.** [DECIDED 2026-10-20, BUILT] A scratch or
   an undo on the admin page is refused with `The results are in, so the field is frozen:
@@ -485,7 +485,7 @@ information. [BUILT]
 
 - **Race info**: the race's name, date and post time, entered on the admin page on Central
   time (`LQ_RACE_TZ`). The TV's countdown and roster slides and the crawl read it.
-- **Horse names**: 24 lines pasted into the admin page's names box.
+- **Horse names**: a field in each row of the admin page's Horses list, saved when it is left.
 - **Track odds**, for the roster slide only. La Quiniela pays no odds, and the LQ board
   shows none; a horse's line is its bets. The odds come from the odds poller
   (`pi5/la_quiniela/odds.py`, Claude with web search every 5 min, needs `DDM_ANTHROPIC_API_KEY` in `pi5/.env`
@@ -500,7 +500,7 @@ behind it with `qwen2.5:7b-instruct`. It can plug in at two points:
 
 1. **The odds poller's fetch** (`OddsPoller.fetch` in `odds.py`): JoeyAI first, Claude as
    the fallback.
-2. **A "fill names" helper** that proposes the field into the admin page's names box.
+2. **A "fill names" helper** that proposes the field into the name fields of the admin page's Horses list.
 
 Rules for either:
 
@@ -532,14 +532,23 @@ Rules for either:
 
 | DDM Control Center (touchscreen, `joeydevpi.local:5000/`) | LQ admin page (phone, `joeydevpi.local:5000/quiniela/admin`) |
 |---|---|
-| LED animations and the Animation Library | Link status, cups online, the Horses list (read-only) |
+| LED animations and the Animation Library | Link status, cups online |
 | The mode buttons: LEDs **and** race state; TEST is LEDs only | The current race state, read-only [DECIDED 2026-10-02, BUILT] |
 | SET WINNERS: results, WINNER, the three LED cups; the no-bets marker [BUILT] | Figures: pot, prizes, bets |
 | RESET: end of the race, clears results, LEDs off, AFTER_PARTY | Counted pot [BUILT] |
 | Menu links to the admin page and the board | Reset betting: between races, back to PRE_RACE, new baseline; names, scratches and cup numbers kept; only in 0 or 6 |
-| | Race info, horse names, scratches and undo |
+| | The Horses list (name, status, Scratch, Undo) and Race info |
 
 - **The admin page's seven race-state buttons are removed.** [DECIDED 2026-09-29, BUILT]
+- **The admin page has one list for the horses.** [BUILT 2026-10-30] Each horse's row holds its name
+  (saved when the field is left), what pi5 hears from its cup, Scratch (a window) or, once scratched,
+  what became of it and Undo; the Horse names and Scratches sections are gone. First thing to check
+  when a name does not stick: the row says `Saved`, or why not.
+- **No betting-closes time.** [BUILT 2026-10-30] The host calls every race state on the Control
+  Center and the TV shows the state in its banner, never a countdown to a close; the model key, the
+  route, the store column and the admin page's section are gone (a database from before is
+  migrated on pi5's first start). First thing to check if La Quiniela is off after the pull: the
+  schema error in pi5's log names the table and the columns it found.
 - **Nothing drops the figures at the post by accident.** [DECIDED 2026-10-13, BUILT]
   - TEST is an LED test only and never sets a race state.
   - From 3–5, WELCOME, STANDBY, 60 MIN, 30 MIN and FINAL CALL show an in-page confirm that
